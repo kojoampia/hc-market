@@ -1,0 +1,265 @@
+# The hc-market stack on jacserver: seeded, at a hostname, behind the same proxy chain as production.
+#
+# Started by ./startup.sh, which generates the .env this file reads. Shaped after
+# hc-admin/quality/compose.yml deliberately, so the two read side by side; the differences below are
+# the ones that matter.
+#
+# --- THE FRONT DOOR IS THE GATEWAY, NOT A WEB CONTAINER ---------------------------------------
+#
+# Every sibling quality stack has a `web` container that serves an Angular app and proxies the API
+# paths onward. hc-market has none, and will not: spec §2 settled that this product is API-only and
+# JHipster generates no SPA for it. So jacserver's nginx proxies straight to the gateway, and the
+# chain is one hop shorter than the siblings'. That is a real difference in what this stack can
+# rehearse — the class of bug that lives between two nginxes cannot appear here, because there is
+# only one.
+#
+# --- CONSUL IS OFF -----------------------------------------------------------------------------
+#
+# As in every sibling quality stack, and for the same reason production does it: the gateway routes
+# statically. Discovery is a development convenience, and leaving it on here would mean testing a
+# routing mechanism that production does not use.
+name: hc-market-quality
+
+x-service: &service
+  restart: unless-stopped
+  networks: [quality]
+  environment: &service-env
+    # BOTH profiles, and that is load-bearing rather than habit. SeedDataLoader is
+    # @Profile("test & dev") — it requires both, never one alone — so `dev,test` is precisely what
+    # makes this stack seeded. Change it to `dev` and the estate comes up correct and empty.
+    SPRING_PROFILES_ACTIVE: dev,test
+    SERVER_PORT: "8080"
+    SPRING_CLOUD_CONSUL_ENABLED: "false"
+    SPRING_CLOUD_CONSUL_CONFIG_ENABLED: "false"
+    SPRING_CLOUD_CONSUL_DISCOVERY_ENABLED: "false"
+    SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    # One signing key across the estate, as in production. A per-service override silently wins and
+    # presents as a successful login followed by 401s from the services — a broken route, seemingly.
+    JHIPSTER_SECURITY_AUTHENTICATION_JWT_BASE64_SECRET: ${JWT_BASE64_SECRET:?set by startup.sh}
+    JAVA_OPTS: -Xmx512m -Xms256m
+  # The images are built by Jib and contain NO curl and NO wget — a CMD-based HTTP healthcheck fails
+  # with "executable file not found" on every attempt and the container never leaves `starting`.
+  # They do contain bash, so this speaks HTTP over bash's /dev/tcp with no external tools at all.
+  healthcheck: &health
+    test:
+      - CMD
+      - bash
+      - -c
+      - 'exec 3<>/dev/tcp/localhost/8080 && printf "GET /management/health HTTP/1.0\r\n\r\n" >&3 && grep -q UP <&3'
+    interval: 10s
+    timeout: 5s
+    retries: 40
+    start_period: 60s
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "3" }
+
+x-postgres: &postgres
+  image: postgres:17
+  restart: unless-stopped
+  networks: [quality]
+  environment: &pg-env
+    POSTGRES_HOST_AUTH_METHOD: trust
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
+    interval: 10s
+    timeout: 5s
+    retries: 20
+    start_period: 10s
+
+services:
+  # ------------------------------------------------------------------ infrastructure --
+  # apache/kafka, NOT apache/kafka-native. The native image is a GraalVM binary carrying only
+  # kafka.Kafka — no /opt/kafka/bin at all — so the healthcheck below can never pass and every
+  # service blocks on `condition: service_healthy` for ever.
+  kafka:
+    image: apache/kafka:3.9.0
+    container_name: hc-market-quality-kafka
+    restart: unless-stopped
+    networks: [quality]
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 20s
+
+  # The gateway owns users on MongoDB (decisions.md D1) — a SQL gateway is forced to Spring Boot 3
+  # by JHipster's springBoot4 rule, and this estate is uniformly Boot 4.
+  gateway-db:
+    image: mongo:8
+    container_name: hc-market-quality-gateway-db
+    restart: unless-stopped
+    networks: [quality]
+    volumes: [gateway-data:/data/db]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+
+  catalog-db:
+    <<: *postgres
+    container_name: hc-market-quality-catalog-db
+    environment: { <<: *pg-env, POSTGRES_USER: healthconnectCatalog, POSTGRES_DB: healthconnectCatalog }
+    volumes: [catalog-data:/var/lib/postgresql/data]
+
+  booking-db:
+    <<: *postgres
+    container_name: hc-market-quality-booking-db
+    environment: { <<: *pg-env, POSTGRES_USER: healthconnectBooking, POSTGRES_DB: healthconnectBooking }
+    volumes: [booking-data:/var/lib/postgresql/data]
+
+  messaging-db:
+    <<: *postgres
+    container_name: hc-market-quality-messaging-db
+    environment: { <<: *pg-env, POSTGRES_USER: healthconnectMessaging, POSTGRES_DB: healthconnectMessaging }
+    volumes: [messaging-data:/var/lib/postgresql/data]
+
+  payout-db:
+    <<: *postgres
+    container_name: hc-market-quality-payout-db
+    environment: { <<: *pg-env, POSTGRES_USER: healthconnectPayout, POSTGRES_DB: healthconnectPayout }
+    volumes: [payout-data:/var/lib/postgresql/data]
+
+  # ----------------------------------------------------------------------- services --
+  #
+  # The gateway is the edge. jacserver's nginx proxies to GATEWAY_PORT and nothing else needs to be
+  # reachable — but the four domain services publish on 127.0.0.1 anyway, because diagnosing "the
+  # gateway returns 502" without being able to ask the service directly is guesswork.
+  gateway:
+    <<: *service
+    image: ${REGISTRY:-healthconnect}/gateway:${TAG:?set by startup.sh}
+    container_name: hc-market-quality-gateway
+    ports: ["127.0.0.1:${GATEWAY_PORT:-15509}:8080"]
+    environment:
+      <<: *service-env
+      # SPRING_MONGODB_URI, not SPRING_DATA_MONGODB_URI: Spring Boot 4 moved the MongoDB properties,
+      # and the old name sets something nothing reads — the gateway then dies inside Mongock with
+      # "Connection refused ... localhost:27017", pointing at the database rather than the variable.
+      SPRING_MONGODB_URI: mongodb://gateway-db:27017/healthconnectGateway
+      # Static routes, because Consul is off. Without these the gateway starts, answers /management
+      # perfectly, and 404s every /services/** path — a healthy edge in front of nothing.
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_DISCOVERY_LOCATOR_ENABLED: "false"
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_0_ID: healthconnectcatalog
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_0_URI: http://catalog:8080
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_0_PREDICATES_0: Path=/services/healthconnectcatalog/**
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_0_FILTERS_0: StripPrefix=2
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_1_ID: healthconnectbooking
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_1_URI: http://booking:8080
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_1_PREDICATES_0: Path=/services/healthconnectbooking/**
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_1_FILTERS_0: StripPrefix=2
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_2_ID: healthconnectmessaging
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_2_URI: http://messaging:8080
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_2_PREDICATES_0: Path=/services/healthconnectmessaging/**
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_2_FILTERS_0: StripPrefix=2
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_3_ID: healthconnectpayout
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_3_URI: http://payout:8080
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_3_PREDICATES_0: Path=/services/healthconnectpayout/**
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_3_FILTERS_0: StripPrefix=2
+    depends_on:
+      gateway-db: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+
+  catalog:
+    <<: *service
+    image: ${REGISTRY:-healthconnect}/catalog:${TAG:?set by startup.sh}
+    container_name: hc-market-quality-catalog
+    ports: ["127.0.0.1:${CATALOG_PORT:-18100}:8080"]
+    environment:
+      <<: *service-env
+      SPRING_DATASOURCE_URL: jdbc:postgresql://catalog-db:5432/healthconnectCatalog
+      SPRING_DATASOURCE_USERNAME: healthconnectCatalog
+      # 'faker' omitted deliberately: it loads 30 nonsense rows per entity, and because the seed
+      # loader is idempotent on "are there any professionals yet?", those rows make it SKIP the real
+      # seed and log "seed already present". The symptom is 30 professionals instead of 18.
+      SPRING_LIQUIBASE_CONTEXTS: dev
+      HEALTHCONNECT_SEED_ENABLED: "true"
+      HEALTHCONNECT_SEED_FILE: /app/seed/seed-data.json
+      # Dates loaded exactly as written, so the figures this stack shows are the prototype's own and
+      # can be compared against it directly. A shifting seed is right for a demo and wrong for a
+      # place whose purpose is catching drift.
+      HEALTHCONNECT_SEED_ANCHOR_DATES: "true"
+      HEALTHCONNECT_BOOKING_BASE_URL: http://booking:8080
+    volumes: ["${SEED_DIR:-./seed}:/app/seed:ro"]
+    depends_on:
+      catalog-db: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+
+  booking:
+    <<: *service
+    image: ${REGISTRY:-healthconnect}/booking:${TAG:?set by startup.sh}
+    container_name: hc-market-quality-booking
+    ports: ["127.0.0.1:${BOOKING_PORT:-18101}:8080"]
+    environment:
+      <<: *service-env
+      SPRING_DATASOURCE_URL: jdbc:postgresql://booking-db:5432/healthconnectBooking
+      SPRING_DATASOURCE_USERNAME: healthconnectBooking
+      SPRING_LIQUIBASE_CONTEXTS: dev
+      HEALTHCONNECT_SEED_ENABLED: "true"
+      HEALTHCONNECT_SEED_FILE: /app/seed/seed-data.json
+      HEALTHCONNECT_SEED_ANCHOR_DATES: "true"
+    volumes: ["${SEED_DIR:-./seed}:/app/seed:ro"]
+    depends_on:
+      booking-db: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+
+  messaging:
+    <<: *service
+    image: ${REGISTRY:-healthconnect}/messaging:${TAG:?set by startup.sh}
+    container_name: hc-market-quality-messaging
+    ports: ["127.0.0.1:${MESSAGING_PORT:-18102}:8080"]
+    environment:
+      <<: *service-env
+      SPRING_DATASOURCE_URL: jdbc:postgresql://messaging-db:5432/healthconnectMessaging
+      SPRING_DATASOURCE_USERNAME: healthconnectMessaging
+      SPRING_LIQUIBASE_CONTEXTS: dev
+      HEALTHCONNECT_SEED_ENABLED: "true"
+      HEALTHCONNECT_SEED_FILE: /app/seed/seed-data.json
+      HEALTHCONNECT_SEED_ANCHOR_DATES: "true"
+    volumes: ["${SEED_DIR:-./seed}:/app/seed:ro"]
+    depends_on:
+      messaging-db: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+
+  payout:
+    <<: *service
+    image: ${REGISTRY:-healthconnect}/payout:${TAG:?set by startup.sh}
+    container_name: hc-market-quality-payout
+    ports: ["127.0.0.1:${PAYOUT_PORT:-18103}:8080"]
+    environment:
+      <<: *service-env
+      SPRING_DATASOURCE_URL: jdbc:postgresql://payout-db:5432/healthconnectPayout
+      SPRING_DATASOURCE_USERNAME: healthconnectPayout
+      SPRING_LIQUIBASE_CONTEXTS: dev
+      HEALTHCONNECT_SEED_ENABLED: "true"
+      HEALTHCONNECT_SEED_FILE: /app/seed/seed-data.json
+      HEALTHCONNECT_SEED_ANCHOR_DATES: "true"
+    volumes: ["${SEED_DIR:-./seed}:/app/seed:ro"]
+    depends_on:
+      payout-db: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+
+networks:
+  quality:
+    name: hc-market-quality
+
+volumes:
+  gateway-data:
+  catalog-data:
+  booking-data:
+  messaging-data:
+  payout-data:
