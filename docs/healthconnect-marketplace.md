@@ -688,8 +688,10 @@ Carried over from the prototype's verification discipline, adapted to a backend.
       a second professional's token returns `0`, and a token signed with the wrong key returns 401.
 
 **Not yet verified — the services these depend on are scaffolded but unwired:**
-- [ ] Booking a slot, accepting it, completing it, then reviewing it moves the rating and creates
-      exactly one ledger row. *(Needs `booking` + `payout`.)*
+- [x] **Booking a slot, accepting it, completing it, then reviewing it moves the rating and creates
+      exactly one ledger row.** Automated as `deploy/verify-cycle.sh`; crosses catalog, booking,
+      Kafka and payout. Last run: rating 4.7 (7) → 4.3 (8) on a one-star review, ledger 257 → 258,
+      gross +28000, commission 3360, second review refused with 409, booking flagged reviewed.
 - [ ] Killing Kafka mid-accept leaves the booking accepted and the notification pending in the
       outbox, delivered on recovery. *(Needs the outbox, which is unbuilt.)*
 - [ ] A deliberately failing deploy rolls back and the previous tag serves traffic. *(Needs a host.)*
