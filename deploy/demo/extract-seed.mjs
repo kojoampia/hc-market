@@ -200,6 +200,8 @@ function build(p) {
     bookingReference: `b-${r.id}`,
   }));
 
+  const proLoginOf = ref => professionals.find(p => p.ref === ref)?.userLogin ?? fail(`no professional ${ref}`);
+
   const serviceIndex = new Map();
   for (const pro of p.PROS) for (const s of pro.services) serviceIndex.set(s.id, { ...s, pro: pro.id });
   const serviceOf = ref => serviceIndex.get(ref) ?? fail(`unknown service ref: ${ref}`);
@@ -212,6 +214,7 @@ function build(p) {
       customerLogin: me.userLogin,
       customerName: me.displayName,
       professionalRef: b.pro,
+      professionalLogin: proLoginOf(b.pro),
       serviceRef: b.svc,
       serviceName: serviceOf(b.svc).name,
       scheduledDate: b.date,
@@ -233,7 +236,12 @@ function build(p) {
       customerRef: c.ref,
       customerLogin: c.userLogin,
       customerName: c.displayName,
-      professionalRef: 'p1', // the professional workspace is always p1 in the prototype
+      // The professional workspace is always p1 in the prototype. `professionalLogin` is carried
+      // alongside the ref so the payout and booking services can match a JWT subject against a row
+      // without asking the catalog service what p1's login is -- each service reads only its own
+      // sections of this file, so a cross-section lookup would break that rule.
+      professionalRef: 'p1',
+      professionalLogin: proLoginOf('p1'),
       serviceRef: r.svc,
       serviceName: serviceOf(r.svc).name,
       deliveryMode: mode(r.mode),

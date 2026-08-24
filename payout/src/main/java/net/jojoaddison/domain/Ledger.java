@@ -6,12 +6,29 @@ import jakarta.validation.constraints.*;
 import java.io.Serial;
 import java.io.Serializable;
 import java.time.LocalDate;
+import net.jojoaddison.domain.enumeration.DeliveryMode;
 import org.hibernate.annotations.Cache;
 import org.hibernate.annotations.CacheConcurrencyStrategy;
 
 /**
  * One row per completed or late-cancelled booking. `bookingReference` is unique, so a replayed
  * booking.completed event cannot double-credit a professional.
+ *
+ * AMENDED, for the same reason `Review` gained `customerLogin` (decisions.md D8): the spec requires
+ * `/api/pro/**` to resolve the professional from the token and refuse anything that is not the
+ * caller's, but the specified entity carried only `professionalRef` — nothing a JWT subject can be
+ * matched against without asking the catalog service. `professionalLogin` makes the ownership check
+ * local to one row.
+ *
+ * `deliveryMode` is denormalised here on purpose, exactly as `grossMinor` already is. The earnings
+ * screen breaks sessions down by format, and a ledger row must keep saying what it said when it was
+ * written even if the booking is later corrected — the same rule that stops a receipt changing when
+ * a price is edited.
+ *
+ * The money columns are all stored rather than derived, and that is not a contradiction of the
+ * derived-not-stored rule: commission depends on the BrokerageConfig *in force when the booking
+ * completed*, so recomputing it later from today's rate would rewrite history. What must never be
+ * stored is a total ACROSS rows — there is no professional.total_earnings anywhere.
  */
 @Entity
 @Table(name = "ledger")
@@ -37,6 +54,10 @@ public class Ledger implements Serializable {
     private String professionalRef;
 
     @NotNull
+    @Column(name = "professional_login", nullable = false)
+    private String professionalLogin;
+
+    @NotNull
     @Column(name = "gross_minor", nullable = false)
     private Long grossMinor;
 
@@ -52,6 +73,17 @@ public class Ledger implements Serializable {
     @Size(max = 3)
     @Column(name = "currency", length = 3, nullable = false)
     private String currency;
+
+    @NotNull
+    @Enumerated(EnumType.STRING)
+    @Column(name = "delivery_mode", nullable = false)
+    private DeliveryMode deliveryMode;
+
+    @Column(name = "service_ref")
+    private String serviceRef;
+
+    @Column(name = "service_name")
+    private String serviceName;
 
     @NotNull
     @Column(name = "earned_on", nullable = false)
@@ -100,6 +132,19 @@ public class Ledger implements Serializable {
 
     public void setProfessionalRef(String professionalRef) {
         this.professionalRef = professionalRef;
+    }
+
+    public String getProfessionalLogin() {
+        return this.professionalLogin;
+    }
+
+    public Ledger professionalLogin(String professionalLogin) {
+        this.setProfessionalLogin(professionalLogin);
+        return this;
+    }
+
+    public void setProfessionalLogin(String professionalLogin) {
+        this.professionalLogin = professionalLogin;
     }
 
     public Long getGrossMinor() {
@@ -154,6 +199,45 @@ public class Ledger implements Serializable {
         this.currency = currency;
     }
 
+    public DeliveryMode getDeliveryMode() {
+        return this.deliveryMode;
+    }
+
+    public Ledger deliveryMode(DeliveryMode deliveryMode) {
+        this.setDeliveryMode(deliveryMode);
+        return this;
+    }
+
+    public void setDeliveryMode(DeliveryMode deliveryMode) {
+        this.deliveryMode = deliveryMode;
+    }
+
+    public String getServiceRef() {
+        return this.serviceRef;
+    }
+
+    public Ledger serviceRef(String serviceRef) {
+        this.setServiceRef(serviceRef);
+        return this;
+    }
+
+    public void setServiceRef(String serviceRef) {
+        this.serviceRef = serviceRef;
+    }
+
+    public String getServiceName() {
+        return this.serviceName;
+    }
+
+    public Ledger serviceName(String serviceName) {
+        this.setServiceName(serviceName);
+        return this;
+    }
+
+    public void setServiceName(String serviceName) {
+        this.serviceName = serviceName;
+    }
+
     public LocalDate getEarnedOn() {
         return this.earnedOn;
     }
@@ -206,10 +290,14 @@ public class Ledger implements Serializable {
             "id=" + getId() +
             ", bookingReference='" + getBookingReference() + "'" +
             ", professionalRef='" + getProfessionalRef() + "'" +
+            ", professionalLogin='" + getProfessionalLogin() + "'" +
             ", grossMinor=" + getGrossMinor() +
             ", commissionMinor=" + getCommissionMinor() +
             ", netMinor=" + getNetMinor() +
             ", currency='" + getCurrency() + "'" +
+            ", deliveryMode='" + getDeliveryMode() + "'" +
+            ", serviceRef='" + getServiceRef() + "'" +
+            ", serviceName='" + getServiceName() + "'" +
             ", earnedOn='" + getEarnedOn() + "'" +
             "}";
     }

@@ -83,10 +83,14 @@ public class LedgerQueryService extends QueryService<Ledger> {
                     buildRangeSpecification(criteria.getId(), Ledger_.id),
                     buildStringSpecification(criteria.getBookingReference(), Ledger_.bookingReference),
                     buildStringSpecification(criteria.getProfessionalRef(), Ledger_.professionalRef),
+                    buildStringSpecification(criteria.getProfessionalLogin(), Ledger_.professionalLogin),
                     buildRangeSpecification(criteria.getGrossMinor(), Ledger_.grossMinor),
                     buildRangeSpecification(criteria.getCommissionMinor(), Ledger_.commissionMinor),
                     buildRangeSpecification(criteria.getNetMinor(), Ledger_.netMinor),
                     buildStringSpecification(criteria.getCurrency(), Ledger_.currency),
+                    buildSpecification(criteria.getDeliveryMode(), Ledger_.deliveryMode),
+                    buildStringSpecification(criteria.getServiceRef(), Ledger_.serviceRef),
+                    buildStringSpecification(criteria.getServiceName(), Ledger_.serviceName),
                     buildRangeSpecification(criteria.getEarnedOn(), Ledger_.earnedOn),
                     buildSpecification(criteria.getPayoutId(), root -> root.join(Ledger_.payout, JoinType.LEFT).get(Payout_.id))
                 )

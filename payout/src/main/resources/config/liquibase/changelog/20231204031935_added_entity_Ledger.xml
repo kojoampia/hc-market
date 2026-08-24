@@ -10,7 +10,7 @@
         Added the entity Ledger.
     -->
     <changeSet id="20231204031935-1" author="jhipster">
-        <createTable tableName="ledger" remarks="One row per completed or late-cancelled booking. `bookingReference` is unique, so a replayed\nbooking.completed event cannot double-credit a professional.">
+        <createTable tableName="ledger" remarks="One row per completed or late-cancelled booking. `bookingReference` is unique, so a replayed\nbooking.completed event cannot double-credit a professional.\n\nAMENDED, for the same reason `Review` gained `customerLogin` (decisions.md D8): the spec requires\n`/api/pro/**` to resolve the professional from the token and refuse anything that is not the\ncaller&apos;s, but the specified entity carried only `professionalRef` — nothing a JWT subject can be\nmatched against without asking the catalog service. `professionalLogin` makes the ownership check\nlocal to one row.\n\n`deliveryMode` is denormalised here on purpose, exactly as `grossMinor` already is. The earnings\nscreen breaks sessions down by format, and a ledger row must keep saying what it said when it was\nwritten even if the booking is later corrected — the same rule that stops a receipt changing when\na price is edited.\n\nThe money columns are all stored rather than derived, and that is not a contradiction of the\nderived-not-stored rule: commission depends on the BrokerageConfig *in force when the booking\ncompleted*, so recomputing it later from today&apos;s rate would rewrite history. What must never be\nstored is a total ACROSS rows — there is no professional.total_earnings anywhere.">
             <column name="id" type="bigint">
                 <constraints primaryKey="true" nullable="false"/>
             </column>
@@ -18,6 +18,9 @@
                 <constraints nullable="false" unique="true" uniqueConstraintName="ux_ledger__booking_reference" />
             </column>
             <column name="professional_ref" type="varchar(255)">
+                <constraints nullable="false" />
+            </column>
+            <column name="professional_login" type="varchar(255)">
                 <constraints nullable="false" />
             </column>
             <column name="gross_minor" type="bigint">
@@ -31,6 +34,15 @@
             </column>
             <column name="currency" type="varchar(3)">
                 <constraints nullable="false" />
+            </column>
+            <column name="delivery_mode" type="varchar(255)">
+                <constraints nullable="false" />
+            </column>
+            <column name="service_ref" type="varchar(255)">
+                <constraints nullable="true" />
+            </column>
+            <column name="service_name" type="varchar(255)">
+                <constraints nullable="true" />
             </column>
             <column name="earned_on" type="date">
                 <constraints nullable="false" />
@@ -62,10 +74,14 @@
             <column name="id" type="numeric"/>
             <column name="booking_reference" type="string"/>
             <column name="professional_ref" type="string"/>
+            <column name="professional_login" type="string"/>
             <column name="gross_minor" type="numeric"/>
             <column name="commission_minor" type="numeric"/>
             <column name="net_minor" type="numeric"/>
             <column name="currency" type="string"/>
+            <column name="delivery_mode" type="string"/>
+            <column name="service_ref" type="string"/>
+            <column name="service_name" type="string"/>
             <column name="earned_on" type="date"/>
             <!-- jhipster-needle-liquibase-add-loadcolumn - JHipster (and/or extensions) can add load columns here -->
         </loadData>

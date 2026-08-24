@@ -241,3 +241,14 @@ jhipster:
 # ===================================================================
 
 # application:
+
+# ===================================================================
+# HealthConnect Marketplace
+# NOTE: `jhipster jdl --force` rewrites this file and drops this block. Re-add it after any
+# regeneration. SeedProperties itself is @Component-annotated so it needs no App-class edit.
+# ===================================================================
+healthconnect:
+  seed:
+    enabled: false
+    file: demo/seed-data.json
+    anchor-dates: false

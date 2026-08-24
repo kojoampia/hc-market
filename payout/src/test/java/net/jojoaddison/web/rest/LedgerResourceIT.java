@@ -15,6 +15,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import net.jojoaddison.IntegrationTest;
 import net.jojoaddison.domain.Ledger;
 import net.jojoaddison.domain.Payout;
+import net.jojoaddison.domain.enumeration.DeliveryMode;
 import net.jojoaddison.repository.LedgerRepository;
 import net.jojoaddison.service.dto.LedgerDTO;
 import net.jojoaddison.service.mapper.LedgerMapper;
@@ -42,6 +43,9 @@ class LedgerResourceIT {
     private static final String DEFAULT_PROFESSIONAL_REF = "AAAAAAAAAA";
     private static final String UPDATED_PROFESSIONAL_REF = "BBBBBBBBBB";
 
+    private static final String DEFAULT_PROFESSIONAL_LOGIN = "AAAAAAAAAA";
+    private static final String UPDATED_PROFESSIONAL_LOGIN = "BBBBBBBBBB";
+
     private static final Long DEFAULT_GROSS_MINOR = 1L;
     private static final Long UPDATED_GROSS_MINOR = 2L;
     private static final Long SMALLER_GROSS_MINOR = 1L - 1L;
@@ -56,6 +60,15 @@ class LedgerResourceIT {
 
     private static final String DEFAULT_CURRENCY = "AAA";
     private static final String UPDATED_CURRENCY = "BBB";
+
+    private static final DeliveryMode DEFAULT_DELIVERY_MODE = DeliveryMode.IN_PERSON;
+    private static final DeliveryMode UPDATED_DELIVERY_MODE = DeliveryMode.ONLINE;
+
+    private static final String DEFAULT_SERVICE_REF = "AAAAAAAAAA";
+    private static final String UPDATED_SERVICE_REF = "BBBBBBBBBB";
+
+    private static final String DEFAULT_SERVICE_NAME = "AAAAAAAAAA";
+    private static final String UPDATED_SERVICE_NAME = "BBBBBBBBBB";
 
     private static final LocalDate DEFAULT_EARNED_ON = LocalDate.ofEpochDay(0L);
     private static final LocalDate UPDATED_EARNED_ON = LocalDate.parse("2023-12-04");
@@ -96,10 +109,14 @@ class LedgerResourceIT {
         return new Ledger()
             .bookingReference(DEFAULT_BOOKING_REFERENCE)
             .professionalRef(DEFAULT_PROFESSIONAL_REF)
+            .professionalLogin(DEFAULT_PROFESSIONAL_LOGIN)
             .grossMinor(DEFAULT_GROSS_MINOR)
             .commissionMinor(DEFAULT_COMMISSION_MINOR)
             .netMinor(DEFAULT_NET_MINOR)
             .currency(DEFAULT_CURRENCY)
+            .deliveryMode(DEFAULT_DELIVERY_MODE)
+            .serviceRef(DEFAULT_SERVICE_REF)
+            .serviceName(DEFAULT_SERVICE_NAME)
             .earnedOn(DEFAULT_EARNED_ON);
     }
 
@@ -113,10 +130,14 @@ class LedgerResourceIT {
         return new Ledger()
             .bookingReference(UPDATED_BOOKING_REFERENCE)
             .professionalRef(UPDATED_PROFESSIONAL_REF)
+            .professionalLogin(UPDATED_PROFESSIONAL_LOGIN)
             .grossMinor(UPDATED_GROSS_MINOR)
             .commissionMinor(UPDATED_COMMISSION_MINOR)
             .netMinor(UPDATED_NET_MINOR)
             .currency(UPDATED_CURRENCY)
+            .deliveryMode(UPDATED_DELIVERY_MODE)
+            .serviceRef(UPDATED_SERVICE_REF)
+            .serviceName(UPDATED_SERVICE_NAME)
             .earnedOn(UPDATED_EARNED_ON);
     }
 
@@ -211,6 +232,23 @@ class LedgerResourceIT {
 
     @Test
     @Transactional
+    void checkProfessionalLoginIsRequired() throws Exception {
+        long databaseSizeBeforeTest = getRepositoryCount();
+        // set the field null
+        ledger.setProfessionalLogin(null);
+
+        // Create the Ledger, which fails.
+        LedgerDTO ledgerDTO = ledgerMapper.toDto(ledger);
+
+        restLedgerMockMvc
+            .perform(post(ENTITY_API_URL).contentType(MediaType.APPLICATION_JSON).content(om.writeValueAsBytes(ledgerDTO)))
+            .andExpect(status().isBadRequest());
+
+        assertSameRepositoryCount(databaseSizeBeforeTest);
+    }
+
+    @Test
+    @Transactional
     void checkGrossMinorIsRequired() throws Exception {
         long databaseSizeBeforeTest = getRepositoryCount();
         // set the field null
@@ -279,6 +317,23 @@ class LedgerResourceIT {
 
     @Test
     @Transactional
+    void checkDeliveryModeIsRequired() throws Exception {
+        long databaseSizeBeforeTest = getRepositoryCount();
+        // set the field null
+        ledger.setDeliveryMode(null);
+
+        // Create the Ledger, which fails.
+        LedgerDTO ledgerDTO = ledgerMapper.toDto(ledger);
+
+        restLedgerMockMvc
+            .perform(post(ENTITY_API_URL).contentType(MediaType.APPLICATION_JSON).content(om.writeValueAsBytes(ledgerDTO)))
+            .andExpect(status().isBadRequest());
+
+        assertSameRepositoryCount(databaseSizeBeforeTest);
+    }
+
+    @Test
+    @Transactional
     void checkEarnedOnIsRequired() throws Exception {
         long databaseSizeBeforeTest = getRepositoryCount();
         // set the field null
@@ -308,10 +363,14 @@ class LedgerResourceIT {
             .andExpect(jsonPath("$.[*].id").value(hasItem(ledger.getId().intValue())))
             .andExpect(jsonPath("$.[*].bookingReference").value(hasItem(DEFAULT_BOOKING_REFERENCE)))
             .andExpect(jsonPath("$.[*].professionalRef").value(hasItem(DEFAULT_PROFESSIONAL_REF)))
+            .andExpect(jsonPath("$.[*].professionalLogin").value(hasItem(DEFAULT_PROFESSIONAL_LOGIN)))
             .andExpect(jsonPath("$.[*].grossMinor").value(hasItem(DEFAULT_GROSS_MINOR.intValue())))
             .andExpect(jsonPath("$.[*].commissionMinor").value(hasItem(DEFAULT_COMMISSION_MINOR.intValue())))
             .andExpect(jsonPath("$.[*].netMinor").value(hasItem(DEFAULT_NET_MINOR.intValue())))
             .andExpect(jsonPath("$.[*].currency").value(hasItem(DEFAULT_CURRENCY)))
+            .andExpect(jsonPath("$.[*].deliveryMode").value(hasItem(DEFAULT_DELIVERY_MODE.toString())))
+            .andExpect(jsonPath("$.[*].serviceRef").value(hasItem(DEFAULT_SERVICE_REF)))
+            .andExpect(jsonPath("$.[*].serviceName").value(hasItem(DEFAULT_SERVICE_NAME)))
             .andExpect(jsonPath("$.[*].earnedOn").value(hasItem(DEFAULT_EARNED_ON.toString())));
     }
 
@@ -329,10 +388,14 @@ class LedgerResourceIT {
             .andExpect(jsonPath("$.id").value(ledger.getId().intValue()))
             .andExpect(jsonPath("$.bookingReference").value(DEFAULT_BOOKING_REFERENCE))
             .andExpect(jsonPath("$.professionalRef").value(DEFAULT_PROFESSIONAL_REF))
+            .andExpect(jsonPath("$.professionalLogin").value(DEFAULT_PROFESSIONAL_LOGIN))
             .andExpect(jsonPath("$.grossMinor").value(DEFAULT_GROSS_MINOR.intValue()))
             .andExpect(jsonPath("$.commissionMinor").value(DEFAULT_COMMISSION_MINOR.intValue()))
             .andExpect(jsonPath("$.netMinor").value(DEFAULT_NET_MINOR.intValue()))
             .andExpect(jsonPath("$.currency").value(DEFAULT_CURRENCY))
+            .andExpect(jsonPath("$.deliveryMode").value(DEFAULT_DELIVERY_MODE.toString()))
+            .andExpect(jsonPath("$.serviceRef").value(DEFAULT_SERVICE_REF))
+            .andExpect(jsonPath("$.serviceName").value(DEFAULT_SERVICE_NAME))
             .andExpect(jsonPath("$.earnedOn").value(DEFAULT_EARNED_ON.toString()));
     }
 
@@ -469,6 +532,68 @@ class LedgerResourceIT {
         defaultLedgerFiltering(
             "professionalRef.doesNotContain=" + UPDATED_PROFESSIONAL_REF,
             "professionalRef.doesNotContain=" + DEFAULT_PROFESSIONAL_REF
+        );
+    }
+
+    @Test
+    @Transactional
+    void getAllLedgersByProfessionalLoginIsEqualToSomething() throws Exception {
+        // Initialize the database
+        insertedLedger = ledgerRepository.saveAndFlush(ledger);
+
+        // Get all the ledgerList where professionalLogin equals to
+        defaultLedgerFiltering(
+            "professionalLogin.equals=" + DEFAULT_PROFESSIONAL_LOGIN,
+            "professionalLogin.equals=" + UPDATED_PROFESSIONAL_LOGIN
+        );
+    }
+
+    @Test
+    @Transactional
+    void getAllLedgersByProfessionalLoginIsInShouldWork() throws Exception {
+        // Initialize the database
+        insertedLedger = ledgerRepository.saveAndFlush(ledger);
+
+        // Get all the ledgerList where professionalLogin in
+        defaultLedgerFiltering(
+            "professionalLogin.in=" + DEFAULT_PROFESSIONAL_LOGIN + "," + UPDATED_PROFESSIONAL_LOGIN,
+            "professionalLogin.in=" + UPDATED_PROFESSIONAL_LOGIN
+        );
+    }
+
+    @Test
+    @Transactional
+    void getAllLedgersByProfessionalLoginIsNullOrNotNull() throws Exception {
+        // Initialize the database
+        insertedLedger = ledgerRepository.saveAndFlush(ledger);
+
+        // Get all the ledgerList where professionalLogin is not null
+        defaultLedgerFiltering("professionalLogin.specified=true", "professionalLogin.specified=false");
+    }
+
+    @Test
+    @Transactional
+    void getAllLedgersByProfessionalLoginContainsSomething() throws Exception {
+        // Initialize the database
+        insertedLedger = ledgerRepository.saveAndFlush(ledger);
+
+        // Get all the ledgerList where professionalLogin contains
+        defaultLedgerFiltering(
+            "professionalLogin.contains=" + DEFAULT_PROFESSIONAL_LOGIN,
+            "professionalLogin.contains=" + UPDATED_PROFESSIONAL_LOGIN
+        );
+    }
+
+    @Test
+    @Transactional
+    void getAllLedgersByProfessionalLoginNotContainsSomething() throws Exception {
+        // Initialize the database
+        insertedLedger = ledgerRepository.saveAndFlush(ledger);
+
+        // Get all the ledgerList where professionalLogin does not contain
+        defaultLedgerFiltering(
+            "professionalLogin.doesNotContain=" + UPDATED_PROFESSIONAL_LOGIN,
+            "professionalLogin.doesNotContain=" + DEFAULT_PROFESSIONAL_LOGIN
         );
     }
 
@@ -752,6 +877,142 @@ class LedgerResourceIT {
 
     @Test
     @Transactional
+    void getAllLedgersByDeliveryModeIsEqualToSomething() throws Exception {
+        // Initialize the database
+        insertedLedger = ledgerRepository.saveAndFlush(ledger);
+
+        // Get all the ledgerList where deliveryMode equals to
+        defaultLedgerFiltering("deliveryMode.equals=" + DEFAULT_DELIVERY_MODE, "deliveryMode.equals=" + UPDATED_DELIVERY_MODE);
+    }
+
+    @Test
+    @Transactional
+    void getAllLedgersByDeliveryModeIsInShouldWork() throws Exception {
+        // Initialize the database
+        insertedLedger = ledgerRepository.saveAndFlush(ledger);
+
+        // Get all the ledgerList where deliveryMode in
+        defaultLedgerFiltering(
+            "deliveryMode.in=" + DEFAULT_DELIVERY_MODE + "," + UPDATED_DELIVERY_MODE,
+            "deliveryMode.in=" + UPDATED_DELIVERY_MODE
+        );
+    }
+
+    @Test
+    @Transactional
+    void getAllLedgersByDeliveryModeIsNullOrNotNull() throws Exception {
+        // Initialize the database
+        insertedLedger = ledgerRepository.saveAndFlush(ledger);
+
+        // Get all the ledgerList where deliveryMode is not null
+        defaultLedgerFiltering("deliveryMode.specified=true", "deliveryMode.specified=false");
+    }
+
+    @Test
+    @Transactional
+    void getAllLedgersByServiceRefIsEqualToSomething() throws Exception {
+        // Initialize the database
+        insertedLedger = ledgerRepository.saveAndFlush(ledger);
+
+        // Get all the ledgerList where serviceRef equals to
+        defaultLedgerFiltering("serviceRef.equals=" + DEFAULT_SERVICE_REF, "serviceRef.equals=" + UPDATED_SERVICE_REF);
+    }
+
+    @Test
+    @Transactional
+    void getAllLedgersByServiceRefIsInShouldWork() throws Exception {
+        // Initialize the database
+        insertedLedger = ledgerRepository.saveAndFlush(ledger);
+
+        // Get all the ledgerList where serviceRef in
+        defaultLedgerFiltering("serviceRef.in=" + DEFAULT_SERVICE_REF + "," + UPDATED_SERVICE_REF, "serviceRef.in=" + UPDATED_SERVICE_REF);
+    }
+
+    @Test
+    @Transactional
+    void getAllLedgersByServiceRefIsNullOrNotNull() throws Exception {
+        // Initialize the database
+        insertedLedger = ledgerRepository.saveAndFlush(ledger);
+
+        // Get all the ledgerList where serviceRef is not null
+        defaultLedgerFiltering("serviceRef.specified=true", "serviceRef.specified=false");
+    }
+
+    @Test
+    @Transactional
+    void getAllLedgersByServiceRefContainsSomething() throws Exception {
+        // Initialize the database
+        insertedLedger = ledgerRepository.saveAndFlush(ledger);
+
+        // Get all the ledgerList where serviceRef contains
+        defaultLedgerFiltering("serviceRef.contains=" + DEFAULT_SERVICE_REF, "serviceRef.contains=" + UPDATED_SERVICE_REF);
+    }
+
+    @Test
+    @Transactional
+    void getAllLedgersByServiceRefNotContainsSomething() throws Exception {
+        // Initialize the database
+        insertedLedger = ledgerRepository.saveAndFlush(ledger);
+
+        // Get all the ledgerList where serviceRef does not contain
+        defaultLedgerFiltering("serviceRef.doesNotContain=" + UPDATED_SERVICE_REF, "serviceRef.doesNotContain=" + DEFAULT_SERVICE_REF);
+    }
+
+    @Test
+    @Transactional
+    void getAllLedgersByServiceNameIsEqualToSomething() throws Exception {
+        // Initialize the database
+        insertedLedger = ledgerRepository.saveAndFlush(ledger);
+
+        // Get all the ledgerList where serviceName equals to
+        defaultLedgerFiltering("serviceName.equals=" + DEFAULT_SERVICE_NAME, "serviceName.equals=" + UPDATED_SERVICE_NAME);
+    }
+
+    @Test
+    @Transactional
+    void getAllLedgersByServiceNameIsInShouldWork() throws Exception {
+        // Initialize the database
+        insertedLedger = ledgerRepository.saveAndFlush(ledger);
+
+        // Get all the ledgerList where serviceName in
+        defaultLedgerFiltering(
+            "serviceName.in=" + DEFAULT_SERVICE_NAME + "," + UPDATED_SERVICE_NAME,
+            "serviceName.in=" + UPDATED_SERVICE_NAME
+        );
+    }
+
+    @Test
+    @Transactional
+    void getAllLedgersByServiceNameIsNullOrNotNull() throws Exception {
+        // Initialize the database
+        insertedLedger = ledgerRepository.saveAndFlush(ledger);
+
+        // Get all the ledgerList where serviceName is not null
+        defaultLedgerFiltering("serviceName.specified=true", "serviceName.specified=false");
+    }
+
+    @Test
+    @Transactional
+    void getAllLedgersByServiceNameContainsSomething() throws Exception {
+        // Initialize the database
+        insertedLedger = ledgerRepository.saveAndFlush(ledger);
+
+        // Get all the ledgerList where serviceName contains
+        defaultLedgerFiltering("serviceName.contains=" + DEFAULT_SERVICE_NAME, "serviceName.contains=" + UPDATED_SERVICE_NAME);
+    }
+
+    @Test
+    @Transactional
+    void getAllLedgersByServiceNameNotContainsSomething() throws Exception {
+        // Initialize the database
+        insertedLedger = ledgerRepository.saveAndFlush(ledger);
+
+        // Get all the ledgerList where serviceName does not contain
+        defaultLedgerFiltering("serviceName.doesNotContain=" + UPDATED_SERVICE_NAME, "serviceName.doesNotContain=" + DEFAULT_SERVICE_NAME);
+    }
+
+    @Test
+    @Transactional
     void getAllLedgersByEarnedOnIsEqualToSomething() throws Exception {
         // Initialize the database
         insertedLedger = ledgerRepository.saveAndFlush(ledger);
@@ -858,10 +1119,14 @@ class LedgerResourceIT {
             .andExpect(jsonPath("$.[*].id").value(hasItem(ledger.getId().intValue())))
             .andExpect(jsonPath("$.[*].bookingReference").value(hasItem(DEFAULT_BOOKING_REFERENCE)))
             .andExpect(jsonPath("$.[*].professionalRef").value(hasItem(DEFAULT_PROFESSIONAL_REF)))
+            .andExpect(jsonPath("$.[*].professionalLogin").value(hasItem(DEFAULT_PROFESSIONAL_LOGIN)))
             .andExpect(jsonPath("$.[*].grossMinor").value(hasItem(DEFAULT_GROSS_MINOR.intValue())))
             .andExpect(jsonPath("$.[*].commissionMinor").value(hasItem(DEFAULT_COMMISSION_MINOR.intValue())))
             .andExpect(jsonPath("$.[*].netMinor").value(hasItem(DEFAULT_NET_MINOR.intValue())))
             .andExpect(jsonPath("$.[*].currency").value(hasItem(DEFAULT_CURRENCY)))
+            .andExpect(jsonPath("$.[*].deliveryMode").value(hasItem(DEFAULT_DELIVERY_MODE.toString())))
+            .andExpect(jsonPath("$.[*].serviceRef").value(hasItem(DEFAULT_SERVICE_REF)))
+            .andExpect(jsonPath("$.[*].serviceName").value(hasItem(DEFAULT_SERVICE_NAME)))
             .andExpect(jsonPath("$.[*].earnedOn").value(hasItem(DEFAULT_EARNED_ON.toString())));
 
         // Check, that the count call also returns 1
@@ -913,10 +1178,14 @@ class LedgerResourceIT {
         updatedLedger
             .bookingReference(UPDATED_BOOKING_REFERENCE)
             .professionalRef(UPDATED_PROFESSIONAL_REF)
+            .professionalLogin(UPDATED_PROFESSIONAL_LOGIN)
             .grossMinor(UPDATED_GROSS_MINOR)
             .commissionMinor(UPDATED_COMMISSION_MINOR)
             .netMinor(UPDATED_NET_MINOR)
             .currency(UPDATED_CURRENCY)
+            .deliveryMode(UPDATED_DELIVERY_MODE)
+            .serviceRef(UPDATED_SERVICE_REF)
+            .serviceName(UPDATED_SERVICE_NAME)
             .earnedOn(UPDATED_EARNED_ON);
         LedgerDTO ledgerDTO = ledgerMapper.toDto(updatedLedger);
 
@@ -1005,10 +1274,12 @@ class LedgerResourceIT {
 
         partialUpdatedLedger
             .bookingReference(UPDATED_BOOKING_REFERENCE)
+            .professionalLogin(UPDATED_PROFESSIONAL_LOGIN)
             .grossMinor(UPDATED_GROSS_MINOR)
             .commissionMinor(UPDATED_COMMISSION_MINOR)
             .netMinor(UPDATED_NET_MINOR)
-            .currency(UPDATED_CURRENCY);
+            .serviceRef(UPDATED_SERVICE_REF)
+            .earnedOn(UPDATED_EARNED_ON);
 
         restLedgerMockMvc
             .perform(
@@ -1039,10 +1310,14 @@ class LedgerResourceIT {
         partialUpdatedLedger
             .bookingReference(UPDATED_BOOKING_REFERENCE)
             .professionalRef(UPDATED_PROFESSIONAL_REF)
+            .professionalLogin(UPDATED_PROFESSIONAL_LOGIN)
             .grossMinor(UPDATED_GROSS_MINOR)
             .commissionMinor(UPDATED_COMMISSION_MINOR)
             .netMinor(UPDATED_NET_MINOR)
             .currency(UPDATED_CURRENCY)
+            .deliveryMode(UPDATED_DELIVERY_MODE)
+            .serviceRef(UPDATED_SERVICE_REF)
+            .serviceName(UPDATED_SERVICE_NAME)
             .earnedOn(UPDATED_EARNED_ON);
 
         restLedgerMockMvc

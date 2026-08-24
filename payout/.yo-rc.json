@@ -16,11 +16,13 @@
     "jwtSecretKey": "ODg1NTAwNGRlYjFlMTEwMjY5NzY2OTIzNGNmNmMxNWE2ODcxMGVmOGNiZTM5N2I2ZTg3ODliY2RlYTM0Y2E3N2QyOTA0MGMwMzc3MTNjMWQ2ZmQxYmQyOWZjOTZjZjcwNDdkNmFjMGRiOTRiNjI2MDRiODNhYjVhMmNlNzFlYzI=",
     "lastLiquibaseTimestamp": 1701660035000,
     "messageBroker": "kafka",
+    "monorepository": true,
     "packageName": "net.jojoaddison",
     "prodDatabaseType": "postgresql",
     "serverPort": "8084",
     "serviceDiscoveryType": "consul",
     "skipClient": true,
+    "skipCommitHook": true,
     "skipUserManagement": true,
     "testFrameworks": ["cucumber"]
   }

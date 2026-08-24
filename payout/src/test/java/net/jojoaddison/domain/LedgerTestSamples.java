@@ -14,10 +14,13 @@ public class LedgerTestSamples {
             .id(1L)
             .bookingReference("bookingReference1")
             .professionalRef("professionalRef1")
+            .professionalLogin("professionalLogin1")
             .grossMinor(1L)
             .commissionMinor(1L)
             .netMinor(1L)
-            .currency("currency1");
+            .currency("currency1")
+            .serviceRef("serviceRef1")
+            .serviceName("serviceName1");
     }
 
     public static Ledger getLedgerSample2() {
@@ -25,10 +28,13 @@ public class LedgerTestSamples {
             .id(2L)
             .bookingReference("bookingReference2")
             .professionalRef("professionalRef2")
+            .professionalLogin("professionalLogin2")
             .grossMinor(2L)
             .commissionMinor(2L)
             .netMinor(2L)
-            .currency("currency2");
+            .currency("currency2")
+            .serviceRef("serviceRef2")
+            .serviceName("serviceName2");
     }
 
     public static Ledger getLedgerRandomSampleGenerator() {
@@ -36,9 +42,12 @@ public class LedgerTestSamples {
             .id(longCount.incrementAndGet())
             .bookingReference(UUID.randomUUID().toString())
             .professionalRef(UUID.randomUUID().toString())
+            .professionalLogin(UUID.randomUUID().toString())
             .grossMinor(longCount.incrementAndGet())
             .commissionMinor(longCount.incrementAndGet())
             .netMinor(longCount.incrementAndGet())
-            .currency(UUID.randomUUID().toString());
+            .currency(UUID.randomUUID().toString())
+            .serviceRef(UUID.randomUUID().toString())
+            .serviceName(UUID.randomUUID().toString());
     }
 }

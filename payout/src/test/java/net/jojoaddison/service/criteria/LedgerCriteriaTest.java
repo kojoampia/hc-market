@@ -74,10 +74,14 @@ class LedgerCriteriaTest {
         ledgerCriteria.id();
         ledgerCriteria.bookingReference();
         ledgerCriteria.professionalRef();
+        ledgerCriteria.professionalLogin();
         ledgerCriteria.grossMinor();
         ledgerCriteria.commissionMinor();
         ledgerCriteria.netMinor();
         ledgerCriteria.currency();
+        ledgerCriteria.deliveryMode();
+        ledgerCriteria.serviceRef();
+        ledgerCriteria.serviceName();
         ledgerCriteria.earnedOn();
         ledgerCriteria.payoutId();
         ledgerCriteria.distinct();
@@ -89,10 +93,14 @@ class LedgerCriteriaTest {
                 condition.apply(criteria.getId()) &&
                 condition.apply(criteria.getBookingReference()) &&
                 condition.apply(criteria.getProfessionalRef()) &&
+                condition.apply(criteria.getProfessionalLogin()) &&
                 condition.apply(criteria.getGrossMinor()) &&
                 condition.apply(criteria.getCommissionMinor()) &&
                 condition.apply(criteria.getNetMinor()) &&
                 condition.apply(criteria.getCurrency()) &&
+                condition.apply(criteria.getDeliveryMode()) &&
+                condition.apply(criteria.getServiceRef()) &&
+                condition.apply(criteria.getServiceName()) &&
                 condition.apply(criteria.getEarnedOn()) &&
                 condition.apply(criteria.getPayoutId()) &&
                 condition.apply(criteria.getDistinct()),
@@ -106,10 +114,14 @@ class LedgerCriteriaTest {
                 condition.apply(criteria.getId(), copy.getId()) &&
                 condition.apply(criteria.getBookingReference(), copy.getBookingReference()) &&
                 condition.apply(criteria.getProfessionalRef(), copy.getProfessionalRef()) &&
+                condition.apply(criteria.getProfessionalLogin(), copy.getProfessionalLogin()) &&
                 condition.apply(criteria.getGrossMinor(), copy.getGrossMinor()) &&
                 condition.apply(criteria.getCommissionMinor(), copy.getCommissionMinor()) &&
                 condition.apply(criteria.getNetMinor(), copy.getNetMinor()) &&
                 condition.apply(criteria.getCurrency(), copy.getCurrency()) &&
+                condition.apply(criteria.getDeliveryMode(), copy.getDeliveryMode()) &&
+                condition.apply(criteria.getServiceRef(), copy.getServiceRef()) &&
+                condition.apply(criteria.getServiceName(), copy.getServiceName()) &&
                 condition.apply(criteria.getEarnedOn(), copy.getEarnedOn()) &&
                 condition.apply(criteria.getPayoutId(), copy.getPayoutId()) &&
                 condition.apply(criteria.getDistinct(), copy.getDistinct()),

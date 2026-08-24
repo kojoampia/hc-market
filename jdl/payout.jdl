@@ -51,6 +51,14 @@ enum PayoutStatus {
   FAILED
 }
 
+/** Mirrors the booking service's enum. Duplicated rather than shared because each service owns its
+ *  own schema and must be deployable without the others. */
+enum DeliveryMode {
+  IN_PERSON,
+  ONLINE,
+  HOME_VISIT
+}
+
 // ===========================================================================
 // Entities
 // ===========================================================================
@@ -64,15 +72,37 @@ entity BrokerageConfig {
   effectiveFrom Instant required
 }
 
-/** One row per completed or late-cancelled booking. `bookingReference` is unique, so a replayed
- *  booking.completed event cannot double-credit a professional. */
+/**
+ * One row per completed or late-cancelled booking. `bookingReference` is unique, so a replayed
+ * booking.completed event cannot double-credit a professional.
+ *
+ * AMENDED, for the same reason `Review` gained `customerLogin` (decisions.md D8): the spec requires
+ * `/api/pro/**` to resolve the professional from the token and refuse anything that is not the
+ * caller's, but the specified entity carried only `professionalRef` — nothing a JWT subject can be
+ * matched against without asking the catalog service. `professionalLogin` makes the ownership check
+ * local to one row.
+ *
+ * `deliveryMode` is denormalised here on purpose, exactly as `grossMinor` already is. The earnings
+ * screen breaks sessions down by format, and a ledger row must keep saying what it said when it was
+ * written even if the booking is later corrected — the same rule that stops a receipt changing when
+ * a price is edited.
+ *
+ * The money columns are all stored rather than derived, and that is not a contradiction of the
+ * derived-not-stored rule: commission depends on the BrokerageConfig *in force when the booking
+ * completed*, so recomputing it later from today's rate would rewrite history. What must never be
+ * stored is a total ACROSS rows — there is no professional.total_earnings anywhere.
+ */
 entity Ledger {
   bookingReference String required unique
   professionalRef String required
+  professionalLogin String required
   grossMinor Long required
   commissionMinor Long required
   netMinor Long required
   currency String required maxlength(3)
+  deliveryMode DeliveryMode required
+  serviceRef String
+  serviceName String
   earnedOn LocalDate required
 }
 

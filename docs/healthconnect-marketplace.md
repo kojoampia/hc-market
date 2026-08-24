@@ -319,6 +319,12 @@ entity BrokerageConfig {
 entity Ledger {                       // one row per completed or late-cancelled booking
   bookingReference String required unique
   professionalRef String required
+  professionalLogin String required   // AMENDED: the ownership check needs something local to
+                                      // match the JWT subject against — same reason Review gained
+                                      // customerLogin. See decisions.md D12.
+  deliveryMode DeliveryMode required  // AMENDED: denormalised for the by-format breakdown, exactly
+  serviceRef String                   // as grossMinor already is
+  serviceName String
   grossMinor Long required
   commissionMinor Long required
   netMinor Long required
@@ -674,9 +680,14 @@ Carried over from the prototype's verification discipline, adapted to a backend.
 - [x] Public reads work **through the gateway** with no token, while `POST /api/reviews` still
       returns 401.
 
-**Not yet verified — the services these depend on are scaffolded but unwired:**
+- [x] **Lifetime gross from `/api/pro/earnings` equals ₵81,620** — `8162000` pesewas over 256
+      ledger rows, the prototype's figure unchanged by the migration. The per-month rows sum to the
+      lifetime totals, and both breakdowns (by format, by service) sum to 256 sessions.
+- [x] `gross − commission = net` holds on every one of the 256 ledger rows.
+- [x] `/api/pro/earnings` takes no professional parameter: the login comes from the JWT subject, so
+      a second professional's token returns `0`, and a token signed with the wrong key returns 401.
 
-- [ ] Lifetime gross from `/api/pro/earnings` equals ₵81,620. *(Needs `payout`.)*
+**Not yet verified — the services these depend on are scaffolded but unwired:**
 - [ ] Booking a slot, accepting it, completing it, then reviewing it moves the rating and creates
       exactly one ledger row. *(Needs `booking` + `payout`.)*
 - [ ] Killing Kafka mid-accept leaves the booking accepted and the notification pending in the

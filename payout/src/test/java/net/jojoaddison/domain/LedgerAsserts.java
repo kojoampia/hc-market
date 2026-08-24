@@ -49,10 +49,14 @@ public class LedgerAsserts {
             .as("Verify Ledger relevant properties")
             .satisfies(a -> assertThat(a.getBookingReference()).as("check bookingReference").isEqualTo(expected.getBookingReference()))
             .satisfies(a -> assertThat(a.getProfessionalRef()).as("check professionalRef").isEqualTo(expected.getProfessionalRef()))
+            .satisfies(a -> assertThat(a.getProfessionalLogin()).as("check professionalLogin").isEqualTo(expected.getProfessionalLogin()))
             .satisfies(a -> assertThat(a.getGrossMinor()).as("check grossMinor").isEqualTo(expected.getGrossMinor()))
             .satisfies(a -> assertThat(a.getCommissionMinor()).as("check commissionMinor").isEqualTo(expected.getCommissionMinor()))
             .satisfies(a -> assertThat(a.getNetMinor()).as("check netMinor").isEqualTo(expected.getNetMinor()))
             .satisfies(a -> assertThat(a.getCurrency()).as("check currency").isEqualTo(expected.getCurrency()))
+            .satisfies(a -> assertThat(a.getDeliveryMode()).as("check deliveryMode").isEqualTo(expected.getDeliveryMode()))
+            .satisfies(a -> assertThat(a.getServiceRef()).as("check serviceRef").isEqualTo(expected.getServiceRef()))
+            .satisfies(a -> assertThat(a.getServiceName()).as("check serviceName").isEqualTo(expected.getServiceName()))
             .satisfies(a -> assertThat(a.getEarnedOn()).as("check earnedOn").isEqualTo(expected.getEarnedOn()));
     }
 

@@ -284,6 +284,38 @@ on the catalog's public paths and nothing else; `POST /api/reviews` still return
 
 All are fixed with the reasoning recorded inline, so none is re-introduced by someone tidying up.
 
+## D12 — `Ledger` carries the professional's login and the delivery mode
+
+Two amendments, both forced by making the earnings screen actually work.
+
+**`professionalLogin`.** Spec §9 requires `/api/pro/**` to resolve the professional from the token
+and refuse anything that is not the caller's, but the specified `Ledger` carried only
+`professionalRef` — nothing a JWT subject can be matched against without asking the catalog service
+what `p1`'s login is. That would make every earnings read depend on catalog being up, and would
+break the rule that each service reads only its own sections of the seed. Exactly the same reasoning
+as D8 for `Review.customerLogin`.
+
+The endpoint therefore takes **no professional parameter at all** — not even an admin override. The
+login comes from the JWT subject and nowhere else, so "refuse any reference that is not the
+caller's" is true by construction rather than by a check someone can forget. Verified: a second
+professional's token returns `0`, and a token signed with the wrong key returns 401.
+
+**`deliveryMode`, `serviceRef`, `serviceName`.** Denormalised onto the ledger row, exactly as
+`grossMinor` already was. The earnings screen breaks sessions down by format and by service, and a
+ledger row must keep saying what it said when it was written even if the booking is later corrected
+— the same rule that stops a receipt changing when a price is edited.
+
+**Why the money columns are stored at all**, given the derived-not-stored rule: commission depends on
+the `BrokerageConfig` *in force when the booking completed*, so recomputing it later from today's
+rate would rewrite history. What must never be stored is a total **across** rows — and none is.
+Every figure on the earnings screen is a SQL aggregate: per-month rows, lifetime totals, average
+session value, and the two breakdowns.
+
+Commission is rounded **per row**, never on a total. With the seeded prices every result is an exact
+integer so the two agree today, but they diverge the moment a price appears that does not divide
+cleanly — and at that point a total-first calculation disagrees with the sum of the receipts the
+customers were shown. The receipts are the truth.
+
 ---
 
 ## Still open — deferred, not blocking the slice

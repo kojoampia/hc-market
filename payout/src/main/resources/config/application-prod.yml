@@ -119,3 +119,10 @@ jhipster:
 # ===================================================================
 
 # application:
+
+# ===================================================================
+# HealthConnect Marketplace — the seed loader is unreachable under prod regardless of this flag.
+# ===================================================================
+healthconnect:
+  seed:
+    enabled: false
