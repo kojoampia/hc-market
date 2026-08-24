@@ -14,7 +14,7 @@ It was a design package until 24 August 2026 and is now a partly-built JHipster 
 gateway/    healthconnectGateway   MongoDB, reactive    RUNS — routes public reads to catalog
 catalog/    healthconnectCatalog   PostgreSQL 17        BUILT — seeded, serving, verified
 booking/    healthconnectBooking   PostgreSQL 17        BUILT — aggregate seeded, state machine live
-messaging/  healthconnectMessaging PostgreSQL 17        scaffolded, compiles, unwired
+messaging/  healthconnectMessaging PostgreSQL 17        BUILT — seeded, consumes booking events
 payout/     healthconnectPayout    PostgreSQL 17        BUILT — ledger seeded, earnings verified
 jdl/        the five JDL files — the model of record
 deploy/     deploy-dev.sh, deploy-prod.sh, docker/, demo/
@@ -129,6 +129,7 @@ one.** Confirmed the hard way. After any regeneration of `catalog`, re-apply:
 | The `healthconnect.seed` block | `config/application.yml`, `application-prod.yml` | seed never loads |
 | Delete `ProfessionalResource`, `CategoryResource`, `ReviewResource` | catalog `web/rest/` | **app will not start** — ambiguous mapping against `MarketplaceResource` |
 | Delete `BookingResource` | booking `web/rest/` | **app will not start** — ambiguous mapping against `CustomerBookingResource` |
+| Delete `NotificationResource` | messaging `web/rest/` | **app will not start** — ambiguous mapping against `MessagingResource` |
 
 **Never name a hand-written class after one the JDL generates.** `service Booking with
 serviceClass` makes JHipster generate `BookingService`, so hand-written logic there is silently

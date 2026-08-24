@@ -19,4 +19,6 @@
     <include file="config/liquibase/changelog/20231202202750_added_entity_constraints_Message.xml" relativeToChangelogFile="false"/>
     <!-- jhipster-needle-liquibase-add-constraints-changelog - JHipster will add liquibase constraints changelogs here -->
     <!-- jhipster-needle-liquibase-add-incremental-changelog - JHipster will add incremental liquibase changelogs here -->
+    <!-- HAND-WRITTEN: consumer idempotency keys. Regeneration drops this line. -->
+    <include file="config/liquibase/changelog/20260824210000_added_processed_event.xml" relativeToChangelogFile="false"/>
 </databaseChangeLog>

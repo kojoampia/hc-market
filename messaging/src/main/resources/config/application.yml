@@ -241,3 +241,19 @@ jhipster:
 # ===================================================================
 
 # application:
+
+# ===================================================================
+# HealthConnect Marketplace
+# NOTE: `jhipster jdl --force` rewrites this file and drops this block.
+# ===================================================================
+healthconnect:
+  seed:
+    enabled: false
+    file: demo/seed-data.json
+    anchor-dates: false
+
+# Liquibase must finish BEFORE the seed loader runs — JHipster's async start otherwise races the
+# schema and the service comes up healthy and empty. See CLAUDE.md.
+application:
+  liquibase:
+    async-start: false

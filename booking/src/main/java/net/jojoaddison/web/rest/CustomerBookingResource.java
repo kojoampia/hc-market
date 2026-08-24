@@ -71,7 +71,7 @@ public class CustomerBookingResource {
             // and emails, and b1/b2/b3 would let anyone walk the estate's bookings by hand.
             .reference("b-" + UUID.randomUUID().toString().substring(0, 8))
             .customerLogin(login)
-            .customerName(SecurityUtils.getCurrentUserLogin().orElse(login))
+            .customerName(request.customerName() == null || request.customerName().isBlank() ? login : request.customerName())
             .professionalRef(request.professionalRef())
             // Carried on the booking so the professional's inbox never has to ask catalog who
             // this ref belongs to. Supplied by the client from the profile it just read.

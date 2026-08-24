@@ -49,6 +49,12 @@ public final class BookingDtos {
     public record CreateBooking(
         String professionalRef,
         String professionalLogin,
+        /**
+         * The customer's display name. Supplied by the client because the JWT carries only a login,
+         * and "kojo.ampia.addison asked for a Follow-up consultation" is what a professional
+         * otherwise reads in their inbox. Falls back to the login when absent.
+         */
+        String customerName,
         String serviceRef,
         String serviceName,
         Long priceMinor,
