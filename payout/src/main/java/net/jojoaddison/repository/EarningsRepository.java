@@ -96,4 +96,12 @@ public interface EarningsRepository extends JpaRepository<Ledger, Long> {
         """
     )
     List<Object[]> grossBetween(@Param("login") String login, @Param("from") LocalDate from, @Param("to") LocalDate to);
+
+    /**
+     * Whether this booking already has a ledger entry.
+     *
+     * <p>An indexed existence check rather than scanning the ledger in memory: the consumer runs
+     * this on every redelivered event, and the ledger only ever grows.
+     */
+    boolean existsByBookingReference(String bookingReference);
 }

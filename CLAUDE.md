@@ -148,6 +148,29 @@ in a new `MarketplacePublicSecurityConfiguration` rather than as an edit to the 
 `src/test/.../ProfessionalResourceIT.java` is **not a test** — it holds fixtures that four generated
 ITs call. Keep the `...IT` name; the callers are generated and will keep referencing it.
 
+### Liquibase starts asynchronously in dev, and races the seed loader
+
+JHipster defaults `application.liquibase.async-start` to **true**, so Liquibase runs on a background
+executor and the app finishes booting without it. An `ApplicationRunner` then races the schema:
+`SeedDataLoader` queries a table that does not exist yet, the seed is skipped, and the service comes
+up **healthy and empty** — which reads as a broken seed file rather than a race. All three seeded
+services set `async-start: false`.
+
+### Changing a JDL entity invalidates its Liquibase checksum
+
+Adding a field and regenerating rewrites the entity's changelog, so a database that already ran the
+old one fails with `ValidationFailedException: 1 changesets check sum`. In dev the answer is to drop
+the schema and let it rebuild. In production it would need a real migration — the generated
+changelog is not a migration, it is a fresh install.
+
+### JHipster's Kafka producer serialises bytes, not strings
+
+Spring Cloud Stream configures the shared producer with `ByteArraySerializer`, so injecting the
+autoconfigured `KafkaTemplate` and sending a `String` fails at *publish* time with `Can't convert key
+of class java.lang.String`. `OutboxKafkaConfiguration` defines a named string-serialising template
+and the publisher injects it by qualifier. Note `spring-boot-starter-kafka` is **not** on the
+classpath, so `KafkaProperties` does not exist — read the brokers from configuration directly.
+
 ### A one-row aggregate comes back wrapped
 
 Declaring a Spring Data query method as `Object[]` when the query yields a single row hands you the

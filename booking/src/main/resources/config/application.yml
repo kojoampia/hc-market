@@ -253,3 +253,16 @@ healthconnect:
     anchor-dates: false
   booking:
     free-cancellation-hours: 24
+
+# ===================================================================
+# Liquibase must finish BEFORE the seed loader runs.
+#
+# JHipster defaults application.liquibase.async-start to true, which starts Liquibase on a
+# background executor and lets the application finish booting without it. An ApplicationRunner then
+# races the schema: SeedDataLoader queries a table Liquibase has not created yet and the seed is
+# skipped with "relation does not exist" -- the app comes up healthy and empty, which reads as a
+# broken seed file rather than a race.
+# ===================================================================
+application:
+  liquibase:
+    async-start: false

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+        The transactional outbox. Hand-written, not generated from JDL: it is infrastructure rather
+        than domain, and putting it in the JDL would give it REST endpoints nobody should call.
+        Regenerating booking from JDL with the force flag rewrites master.xml and DROPS the include
+        for this file - re-add it, or events are written to a table that does not exist and every
+        accept fails.
+    -->
+    <changeSet id="20260824200000-1" author="healthconnect">
+        <createTable tableName="outbox_event">
+            <column name="id" type="bigint" autoIncrement="${autoIncrement}">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="event_id" type="varchar(64)">
+                <constraints nullable="false" unique="true" uniqueConstraintName="ux_outbox_event_id"/>
+            </column>
+            <column name="type" type="varchar(128)"><constraints nullable="false"/></column>
+            <column name="topic" type="varchar(128)"><constraints nullable="false"/></column>
+            <column name="aggregate_ref" type="varchar(64)"><constraints nullable="false"/></column>
+            <column name="actor" type="varchar(128)"/>
+            <column name="payload" type="text"><constraints nullable="false"/></column>
+            <column name="occurred_at" type="${datetimeType}"><constraints nullable="false"/></column>
+            <column name="sent_at" type="${datetimeType}"/>
+            <column name="attempts" type="integer" defaultValueNumeric="0"><constraints nullable="false"/></column>
+            <column name="last_error" type="varchar(500)"/>
+        </createTable>
+    </changeSet>
+
+    <!--
+        The poller's whole query is "unsent, oldest first", so the index covers exactly that. A
+        partial index would be tighter still, but Liquibase cannot express one portably and this
+        table is drained continuously rather than accumulating.
+    -->
+    <changeSet id="20260824200000-2" author="healthconnect">
+        <createIndex indexName="idx_outbox_unsent" tableName="outbox_event">
+            <column name="sent_at"/>
+            <column name="occurred_at"/>
+        </createIndex>
+    </changeSet>
+</databaseChangeLog>

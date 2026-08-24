@@ -67,7 +67,7 @@ public class PayoutSeeder {
         long commission = 0;
         for (SeedFile.SeedSession s : seed.sessions()) {
             long grossMinor = s.grossMinor();
-            long commissionMinor = commissionOn(grossMinor, b.commissionRate());
+            long commissionMinor = net.jojoaddison.service.Commission.on(grossMinor, b.commissionRate());
             gross += grossMinor;
             commission += commissionMinor;
             ledgerRepository.save(
@@ -88,18 +88,4 @@ public class PayoutSeeder {
         LOG.info("seeded {} ledger entries — gross {} commission {} net {}", seed.sessions().size(), gross, commission, gross - commission);
     }
 
-    /**
-     * Commission on one booking, in minor units.
-     *
-     * <p>Rounded <strong>per row</strong> and never on a total. With the seeded prices every result
-     * is an exact integer, so the two agree today — but they stop agreeing the moment a price
-     * appears that does not divide cleanly, and at that point a total-first calculation would
-     * disagree with the sum of the receipts the customers were shown. The receipts are the truth.
-     *
-     * <p>HALF_UP, not HALF_EVEN: this is money owed to a person, and the rule that matches what a
-     * receipt shows is the one to use.
-     */
-    static long commissionOn(long grossMinor, BigDecimal rate) {
-        return BigDecimal.valueOf(grossMinor).multiply(rate).setScale(0, RoundingMode.HALF_UP).longValueExact();
-    }
 }

@@ -41,15 +41,18 @@ public class BookingWorkflow {
 
     private final BookingQueryRepository bookings;
     private final BookingHistoryRepository history;
+    private final OutboxRecorder outbox;
     private final int freeCancellationHours;
 
     public BookingWorkflow(
         BookingQueryRepository bookings,
         BookingHistoryRepository history,
+        OutboxRecorder outbox,
         @Value("${healthconnect.booking.free-cancellation-hours:24}") int freeCancellationHours
     ) {
         this.bookings = bookings;
         this.history = history;
+        this.outbox = outbox;
         this.freeCancellationHours = freeCancellationHours;
     }
 
@@ -122,8 +125,31 @@ public class BookingWorkflow {
                 .note(transition.action())
                 .booking(saved)
         );
+        // Same transaction as the booking write and the audit row. OutboxRecorder is MANDATORY,
+        // so if this ever ends up outside a transaction it fails loudly rather than quietly
+        // reintroducing the dual write.
+        outbox.record(eventNameFor(transition), saved, actor);
+
         LOG.info("booking {} {} -> {} by {}", saved.getReference(), current, saved.getStatus(), actor);
         return saved;
+    }
+
+    /**
+     * The topic each transition publishes on — spec §7.
+     *
+     * <p>{@code booking.accepted} is the event for accepting even though the resulting state is
+     * CONFIRMED: the topic names the act, not the state. Declining, proposing and no-show have no
+     * topic of their own in the spec, so they fan in through {@code notification.raised}.
+     */
+    private static String eventNameFor(BookingTransition transition) {
+        return switch (transition) {
+            case BookingTransition.Accept ignored -> "booking.accepted";
+            case BookingTransition.Decline ignored -> "booking.declined";
+            case BookingTransition.Cancel ignored -> "booking.cancelled";
+            case BookingTransition.Complete ignored -> "booking.completed";
+            case BookingTransition.ProposeReschedule ignored -> "notification.raised";
+            case BookingTransition.NoShow ignored -> "notification.raised";
+        };
     }
 
     /** Marks a booking reviewed, so one completed session yields exactly one review. */

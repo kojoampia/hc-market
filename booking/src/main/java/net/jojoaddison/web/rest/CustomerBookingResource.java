@@ -16,6 +16,7 @@ import net.jojoaddison.repository.BookingHistoryRepository;
 import net.jojoaddison.security.SecurityUtils;
 import net.jojoaddison.service.BookingMapper;
 import net.jojoaddison.service.BookingWorkflow;
+import net.jojoaddison.service.BookingCreator;
 import net.jojoaddison.service.BookingTransition;
 import net.jojoaddison.service.dto.BookingDtos.BookingDetail;
 import net.jojoaddison.service.dto.BookingDtos.BookingView;
@@ -45,17 +46,20 @@ public class CustomerBookingResource {
     private final BookingQueryRepository repository;
     private final BookingHistoryRepository history;
     private final BookingMapper mapper;
+    private final BookingCreator creator;
 
     public CustomerBookingResource(
         BookingWorkflow bookings,
         BookingQueryRepository repository,
         BookingHistoryRepository history,
-        BookingMapper mapper
+        BookingMapper mapper,
+        BookingCreator creator
     ) {
         this.bookings = bookings;
         this.repository = repository;
         this.history = history;
         this.mapper = mapper;
+        this.creator = creator;
     }
 
     /** Wizard step 4 — creates a booking in {@code REQUESTED}. */
@@ -86,7 +90,9 @@ public class CustomerBookingResource {
             .careSummaryShared(Boolean.TRUE.equals(request.careSummaryShared()))
             .raisedAt(Instant.now())
             .reviewed(false);
-        return ResponseEntity.status(HttpStatus.CREATED).body(mapper.toView(repository.save(booking)));
+        // Saved through BookingCreator so the row and its booking.requested event share one
+        // transaction — the same guarantee every transition gets.
+        return ResponseEntity.status(HttpStatus.CREATED).body(mapper.toView(creator.create(booking, login)));
     }
 
     /** My bookings — the prototype's four tabs are four calls to this one query. */
