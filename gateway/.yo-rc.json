@@ -1,0 +1,26 @@
+{
+  "generator-jhipster": {
+    "applicationType": "gateway",
+    "authenticationType": "jwt",
+    "baseName": "healthconnectGateway",
+    "buildTool": "maven",
+    "clientFramework": "no",
+    "creationTimestamp": 1703824261494,
+    "databaseType": "mongodb",
+    "defaultCommand": "app",
+    "devDatabaseType": "mongodb",
+    "enableTranslation": false,
+    "entities": [],
+    "javaVersion": "25",
+    "jhipsterVersion": "9.2.0",
+    "jwtSecretKey": "NjA1OGYxMWU0Mjg1YTI5YzBmMDNlMzdmN2RiM2I3NzYwNTMxN2I3NjU4OTJmODk1ODk3YzQ3MzU2MzkwMzI2YWMzYmNlMjFlMzAxNDNlMjU2MmJlNjBjZjUxNDgzZmFkOWJiYjFiMTVhMWE5Y2FiNWUyMTA0Y2I4NTFkYmFlNTg=",
+    "messageBroker": "kafka",
+    "packageName": "net.jojoaddison",
+    "prodDatabaseType": "mongodb",
+    "reactive": true,
+    "serverPort": "8080",
+    "serviceDiscoveryType": "consul",
+    "skipClient": true,
+    "testFrameworks": ["cucumber"]
+  }
+}

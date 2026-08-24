@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+        The read model behind the single most important rule this system inherits from the
+        prototype: a professional's rating is DERIVED from its reviews and is never stored.
+
+        `professional` has no `rating` and no `review_count` column, and must never acquire one.
+        A rating that disagrees with its reviews is a bug the schema should make impossible, and a
+        view is how the schema makes it impossible — there is no column to drift.
+
+        If review volume ever makes this too slow it becomes a MATERIALIZED VIEW refreshed on
+        `review.published`. The column still never appears on `professional`.
+
+        Not generated from JDL: JDL cannot express a view. Hand-written, and therefore hand-owned.
+    -->
+    <changeSet id="20260824120000-1" author="healthconnect">
+        <createView viewName="professional_rating" replaceIfExists="true">
+            SELECT r.professional_id       AS professional_id,
+                   ROUND(AVG(r.stars)::numeric, 1) AS rating,
+                   COUNT(*)                AS review_count
+            FROM review r
+            GROUP BY r.professional_id
+        </createView>
+    </changeSet>
+
+    <!--
+        Reads of the view always filter by professional_id; the grouping does too.
+    -->
+    <changeSet id="20260824120000-2" author="healthconnect">
+        <createIndex indexName="idx_review_professional_id" tableName="review">
+            <column name="professional_id"/>
+        </createIndex>
+    </changeSet>
+
+</databaseChangeLog>

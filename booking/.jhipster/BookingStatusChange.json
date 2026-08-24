@@ -1,0 +1,55 @@
+{
+  "annotations": {
+    "changelogDate": "20231209110509"
+  },
+  "applications": ["healthconnectBooking"],
+  "clientRootFolder": "healthconnectBooking",
+  "databaseType": "sql",
+  "documentation": "The append-only audit the prototype had no room for.",
+  "dto": "mapstruct",
+  "fields": [
+    {
+      "fieldName": "fromStatus",
+      "fieldType": "BookingStatus",
+      "fieldTypeDocumentation": "D7: the spec declared eight values but its transition diagram reached only six. ACCEPTED was\\nunreachable — accepting a request moves it straight to CONFIRMED, which is what the prototype's\\nPRO_SCHEDULE already assumed — so it is gone. NO_SHOW was equally unreachable but is worth\\nkeeping, and now has the transition it was missing.\\n\\nREQUESTED ──accept───▶ CONFIRMED ──complete──▶ COMPLETED\\n│                      │\\n├──decline──▶ DECLINED  ├──no-show──▶ NO_SHOW\\n├──propose──▶ RESCHEDULE_PROPOSED ──accept──▶ CONFIRMED\\n└──cancel───▶ CANCELLED ◀──cancel── CONFIRMED\\n\\nThe Kafka topic stays `healthconnect.booking.accepted`: it names the act, not the resulting\\nstate, and its payload carries status=CONFIRMED.",
+      "fieldValues": "REQUESTED,DECLINED,RESCHEDULE_PROPOSED,CONFIRMED,COMPLETED,CANCELLED,NO_SHOW"
+    },
+    {
+      "fieldName": "toStatus",
+      "fieldType": "BookingStatus",
+      "fieldTypeDocumentation": "D7: the spec declared eight values but its transition diagram reached only six. ACCEPTED was\\nunreachable — accepting a request moves it straight to CONFIRMED, which is what the prototype's\\nPRO_SCHEDULE already assumed — so it is gone. NO_SHOW was equally unreachable but is worth\\nkeeping, and now has the transition it was missing.\\n\\nREQUESTED ──accept───▶ CONFIRMED ──complete──▶ COMPLETED\\n│                      │\\n├──decline──▶ DECLINED  ├──no-show──▶ NO_SHOW\\n├──propose──▶ RESCHEDULE_PROPOSED ──accept──▶ CONFIRMED\\n└──cancel───▶ CANCELLED ◀──cancel── CONFIRMED\\n\\nThe Kafka topic stays `healthconnect.booking.accepted`: it names the act, not the resulting\\nstate, and its payload carries status=CONFIRMED.",
+      "fieldValidateRules": ["required"],
+      "fieldValues": "REQUESTED,DECLINED,RESCHEDULE_PROPOSED,CONFIRMED,COMPLETED,CANCELLED,NO_SHOW"
+    },
+    {
+      "fieldName": "actor",
+      "fieldType": "String",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "occurredAt",
+      "fieldType": "Instant",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "note",
+      "fieldType": "String",
+      "fieldValidateRules": ["maxlength"],
+      "fieldValidateRulesMaxlength": "400"
+    }
+  ],
+  "microserviceName": "healthconnectBooking",
+  "name": "BookingStatusChange",
+  "relationships": [
+    {
+      "otherEntityName": "booking",
+      "otherEntityRelationshipName": "history",
+      "relationshipName": "booking",
+      "relationshipSide": "right",
+      "relationshipType": "many-to-one",
+      "relationshipValidateRules": "required"
+    }
+  ],
+  "searchEngine": "no",
+  "service": "serviceClass"
+}

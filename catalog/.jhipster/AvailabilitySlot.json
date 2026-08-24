@@ -1,0 +1,41 @@
+{
+  "annotations": {
+    "changelogDate": "20231205141236"
+  },
+  "applications": ["healthconnectCatalog"],
+  "clientRootFolder": "healthconnectCatalog",
+  "databaseType": "sql",
+  "dto": "mapstruct",
+  "fields": [
+    {
+      "fieldName": "slotDate",
+      "fieldType": "LocalDate",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "slotTime",
+      "fieldType": "String",
+      "fieldValidateRules": ["required", "maxlength"],
+      "fieldValidateRulesMaxlength": "5"
+    },
+    {
+      "fieldName": "taken",
+      "fieldType": "Boolean",
+      "fieldValidateRules": ["required"]
+    }
+  ],
+  "microserviceName": "healthconnectCatalog",
+  "name": "AvailabilitySlot",
+  "relationships": [
+    {
+      "otherEntityName": "professional",
+      "otherEntityRelationshipName": "availability",
+      "relationshipName": "professional",
+      "relationshipSide": "right",
+      "relationshipType": "many-to-one",
+      "relationshipValidateRules": "required"
+    }
+  ],
+  "searchEngine": "no",
+  "service": "serviceClass"
+}

@@ -1,0 +1,27 @@
+{
+  "generator-jhipster": {
+    "applicationType": "microservice",
+    "authenticationType": "jwt",
+    "baseName": "healthconnectMessaging",
+    "buildTool": "maven",
+    "clientFramework": "no",
+    "creationTimestamp": 1701548750313,
+    "databaseType": "sql",
+    "defaultCommand": "app",
+    "devDatabaseType": "postgresql",
+    "enableTranslation": false,
+    "entities": ["Conversation", "Message", "Notification"],
+    "javaVersion": "25",
+    "jhipsterVersion": "9.2.0",
+    "jwtSecretKey": "Y2FlNjZkNDQwNWE0NzBiMzdjNGFjMDkwMDJlY2YwNTk4NzUyNWQwZDJkMGExNTc1MjJhNWMyMTQ3MmQ2ZjY3MDRmMTljZjNiNzQwNGZhYmYyOTlkNmE3N2I2YzQzZWQ2NjAxMTJkNDZjMTBhZWM2YWQ3NTY5ODdmM2NmYjRiZGE=",
+    "lastLiquibaseTimestamp": 1701548930000,
+    "messageBroker": "kafka",
+    "packageName": "net.jojoaddison",
+    "prodDatabaseType": "postgresql",
+    "serverPort": "8083",
+    "serviceDiscoveryType": "consul",
+    "skipClient": true,
+    "skipUserManagement": true,
+    "testFrameworks": ["cucumber"]
+  }
+}

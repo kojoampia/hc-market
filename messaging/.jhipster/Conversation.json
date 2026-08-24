@@ -1,0 +1,47 @@
+{
+  "annotations": {
+    "changelogDate": "20231202202650"
+  },
+  "applications": ["healthconnectMessaging"],
+  "clientRootFolder": "healthconnectMessaging",
+  "databaseType": "sql",
+  "dto": "mapstruct",
+  "fields": [
+    {
+      "fieldName": "reference",
+      "fieldType": "String",
+      "fieldValidateRules": ["required", "unique"]
+    },
+    {
+      "fieldName": "customerLogin",
+      "fieldType": "String",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "professionalRef",
+      "fieldType": "String",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "bookingReference",
+      "fieldType": "String"
+    },
+    {
+      "fieldName": "lastMessageAt",
+      "fieldType": "Instant"
+    }
+  ],
+  "microserviceName": "healthconnectMessaging",
+  "name": "Conversation",
+  "relationships": [
+    {
+      "otherEntityName": "message",
+      "otherEntityRelationshipName": "conversation",
+      "relationshipName": "messages",
+      "relationshipSide": "left",
+      "relationshipType": "one-to-many"
+    }
+  ],
+  "searchEngine": "no",
+  "service": "serviceClass"
+}

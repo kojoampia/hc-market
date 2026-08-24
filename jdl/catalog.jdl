@@ -1,0 +1,171 @@
+/**
+ * HealthConnect Marketplace — catalog service.
+ *
+ * Owns categories, professionals, their service offerings, availability and reviews.
+ * Spec: docs/healthconnect-marketplace.md §5.1. Decisions: docs/decisions.md.
+ *
+ * Import with:
+ *   jhipster jdl jdl/catalog.jdl
+ *
+ * THE RULE THIS FILE EXISTS TO ENFORCE
+ * ------------------------------------
+ * `Professional` has no `rating` and no `reviewCount` column, and must never acquire one.
+ * Both are derived from `Review` by the `professional_rating` view, mapped by an @Immutable
+ * entity and served on the professional DTO. A rating that disagrees with its reviews is a bug
+ * the schema should make impossible. The view is not expressible in JDL — it is added as a
+ * hand-written Liquibase changelog after generation.
+ *
+ * `Category` likewise has no `specialities` column even though the Browse filter needs the list
+ * and the seed file carries one: it is DISTINCT over the professionals in that category.
+ */
+
+application {
+  config {
+    baseName healthconnectCatalog
+    applicationType microservice
+    packageName net.jojoaddison
+    serverPort 8081
+    databaseType sql
+    prodDatabaseType postgresql
+    devDatabaseType postgresql
+    authenticationType jwt
+    messageBroker kafka
+    serviceDiscoveryType consul
+    buildTool maven
+    skipUserManagement true
+    clientFramework no
+    enableTranslation false
+    testFrameworks [cucumber]
+  }
+  entities Category, Professional, ServiceOffering, AvailabilitySlot, Review, Credential, Highlight
+}
+
+// ===========================================================================
+// Enumerations
+// ===========================================================================
+
+/** How a session is delivered. The seed carries these as prose ("In person"); the extractor
+ *  emits the enum name, so nothing downstream has to translate display text. */
+enum DeliveryMode {
+  IN_PERSON,
+  ONLINE,
+  HOME_VISIT
+}
+
+/** Where a professional sits in the trust chain. The prototype had only a boolean `verified`;
+ *  four states exist because suspension has to be distinguishable from never-verified. */
+enum VerificationState {
+  UNVERIFIED,
+  PENDING,
+  VERIFIED,
+  SUSPENDED
+}
+
+// ===========================================================================
+// Entities
+// ===========================================================================
+
+entity Category {
+  code String required unique maxlength(32)
+  name String required
+  blurb String maxlength(400)
+  icon String
+  sortOrder Integer required
+}
+
+entity Professional {
+  reference String required unique          // p1 … p18 in the seed
+  userLogin String required unique          // links to the gateway account
+  displayName String required
+  initials String maxlength(4)
+  headline String required maxlength(160)
+  speciality String required
+  city String required
+  countryCode String required maxlength(2)
+  yearsPractising Integer min(0)
+  verification VerificationState required
+  insured Boolean required
+  policeClearance Boolean required
+  responseMinutes Integer
+  rebookRatePct Integer min(0) max(100)
+  bio TextBlob
+  languages String                          // comma-separated, small and stable
+  deliveryModes String                      // comma-separated DeliveryMode names
+  avatarGradientFrom String maxlength(7)     // "#0D3058" — the prototype's duotone avatar
+  avatarGradientTo String maxlength(7)
+  publishedAt Instant
+}
+
+entity ServiceOffering {
+  reference String required unique
+  name String required
+  durationMinutes Integer min(0)
+  priceMinor Long required min(0)           // pesewas — never a float
+  currency String required maxlength(3)
+  description String maxlength(500)
+  active Boolean required
+  sortOrder Integer
+}
+
+entity AvailabilitySlot {
+  slotDate LocalDate required
+  slotTime String required maxlength(5)     // "07:00"
+  taken Boolean required
+}
+
+/**
+ * `customerLogin` is spec §9's missing half: it requires a review to be backed by a COMPLETED
+ * booking "for that customer", but the specified entity carried no customer identity to match
+ * against. It is never serialised to the public DTO — `authorName` and `authorInitials` are what
+ * a reader sees.
+ *
+ * `bookingReference` is unique, which is what makes "one review per booking" a schema guarantee
+ * rather than a service-layer hope.
+ */
+entity Review {
+  reference String required unique
+  customerLogin String required
+  authorName String required
+  authorInitials String maxlength(4)
+  stars Integer required min(1) max(5)
+  publishedOn LocalDate required
+  body TextBlob required
+  professionalReply TextBlob
+  bookingReference String required unique   // proves the review is earned
+}
+
+/**
+ * Credentials and highlights are child rows, not comma-separated strings, because the data
+ * defeats that idiom: "BSc Nutrition & Dietetics, University of Ghana" contains the separator.
+ * `languages` and `deliveryModes` stay comma-separated — those values are single words.
+ */
+entity Credential {
+  label String required maxlength(160)
+  sortOrder Integer required
+}
+
+entity Highlight {
+  label String required maxlength(160)
+  sortOrder Integer required
+}
+
+/**
+ * Relationship sides are named in the SINGULAR. JHipster pluralises the generated field itself, so
+ * `Professional{services}` produces `Set<ServiceOffering> serviceses` with a `getServiceses()`
+ * accessor — double-pluralised and permanent. `Professional{service}` produces `services`.
+ */
+relationship OneToMany {
+  Category{professional} to Professional{category required}
+  Professional{service} to ServiceOffering{professional required}
+  Professional{availability} to AvailabilitySlot{professional required}
+  Professional{review} to Review{professional required}
+  Professional{credential} to Credential{professional required}
+  Professional{highlight} to Highlight{professional required}
+}
+
+service Category, Professional, ServiceOffering, AvailabilitySlot, Review with serviceClass
+dto Category, Professional, ServiceOffering, AvailabilitySlot, Review with mapstruct
+paginate Professional, Review with pagination
+filter Professional
+
+microservice * with healthconnectCatalog

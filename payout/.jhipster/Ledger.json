@@ -1,0 +1,63 @@
+{
+  "annotations": {
+    "changelogDate": "20231204031935"
+  },
+  "applications": ["healthconnectPayout"],
+  "clientRootFolder": "healthconnectPayout",
+  "databaseType": "sql",
+  "documentation": "One row per completed or late-cancelled booking. `bookingReference` is unique, so a replayed\\nbooking.completed event cannot double-credit a professional.",
+  "dto": "mapstruct",
+  "fields": [
+    {
+      "fieldName": "bookingReference",
+      "fieldType": "String",
+      "fieldValidateRules": ["required", "unique"]
+    },
+    {
+      "fieldName": "professionalRef",
+      "fieldType": "String",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "grossMinor",
+      "fieldType": "Long",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "commissionMinor",
+      "fieldType": "Long",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "netMinor",
+      "fieldType": "Long",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "currency",
+      "fieldType": "String",
+      "fieldValidateRules": ["required", "maxlength"],
+      "fieldValidateRulesMaxlength": "3"
+    },
+    {
+      "fieldName": "earnedOn",
+      "fieldType": "LocalDate",
+      "fieldValidateRules": ["required"]
+    }
+  ],
+  "jpaMetamodelFiltering": true,
+  "microserviceName": "healthconnectPayout",
+  "name": "Ledger",
+  "pagination": "pagination",
+  "relationships": [
+    {
+      "otherEntityName": "payout",
+      "otherEntityRelationshipName": "entries",
+      "relationshipName": "payout",
+      "relationshipSide": "left",
+      "relationshipType": "many-to-one"
+    }
+  ],
+  "searchEngine": "no",
+  "service": "serviceClass"
+}

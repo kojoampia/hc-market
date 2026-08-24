@@ -1,0 +1,152 @@
+{
+  "annotations": {
+    "changelogDate": "20231209110409"
+  },
+  "applications": ["healthconnectBooking"],
+  "clientRootFolder": "healthconnectBooking",
+  "databaseType": "sql",
+  "dto": "mapstruct",
+  "fields": [
+    {
+      "fieldName": "reference",
+      "fieldType": "String",
+      "fieldValidateRules": ["required", "unique"]
+    },
+    {
+      "fieldName": "customerLogin",
+      "fieldType": "String",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "customerName",
+      "fieldType": "String",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "professionalRef",
+      "fieldType": "String",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "serviceRef",
+      "fieldType": "String",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "serviceName",
+      "fieldType": "String",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "priceMinor",
+      "fieldType": "Long",
+      "fieldValidateRules": ["required", "min"],
+      "fieldValidateRulesMin": "0"
+    },
+    {
+      "fieldName": "currency",
+      "fieldType": "String",
+      "fieldValidateRules": ["required", "maxlength"],
+      "fieldValidateRulesMaxlength": "3"
+    },
+    {
+      "fieldName": "scheduledDate",
+      "fieldType": "LocalDate",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "scheduledTime",
+      "fieldType": "String",
+      "fieldValidateRules": ["required", "maxlength"],
+      "fieldValidateRulesMaxlength": "5"
+    },
+    {
+      "fieldName": "deliveryMode",
+      "fieldType": "DeliveryMode",
+      "fieldValidateRules": ["required"],
+      "fieldValues": "IN_PERSON,ONLINE,HOME_VISIT"
+    },
+    {
+      "fieldName": "status",
+      "fieldType": "BookingStatus",
+      "fieldTypeDocumentation": "D7: the spec declared eight values but its transition diagram reached only six. ACCEPTED was\\nunreachable — accepting a request moves it straight to CONFIRMED, which is what the prototype's\\nPRO_SCHEDULE already assumed — so it is gone. NO_SHOW was equally unreachable but is worth\\nkeeping, and now has the transition it was missing.\\n\\nREQUESTED ──accept───▶ CONFIRMED ──complete──▶ COMPLETED\\n│                      │\\n├──decline──▶ DECLINED  ├──no-show──▶ NO_SHOW\\n├──propose──▶ RESCHEDULE_PROPOSED ──accept──▶ CONFIRMED\\n└──cancel───▶ CANCELLED ◀──cancel── CONFIRMED\\n\\nThe Kafka topic stays `healthconnect.booking.accepted`: it names the act, not the resulting\\nstate, and its payload carries status=CONFIRMED.",
+      "fieldValidateRules": ["required"],
+      "fieldValues": "REQUESTED,DECLINED,RESCHEDULE_PROPOSED,CONFIRMED,COMPLETED,CANCELLED,NO_SHOW"
+    },
+    {
+      "fieldName": "customerNote",
+      "fieldType": "String",
+      "fieldValidateRules": ["maxlength"],
+      "fieldValidateRulesMaxlength": "1000"
+    },
+    {
+      "fieldName": "onBehalfOf",
+      "fieldType": "String",
+      "fieldValidateRules": ["maxlength"],
+      "fieldValidateRulesMaxlength": "120"
+    },
+    {
+      "fieldName": "visitAddress",
+      "fieldType": "String",
+      "fieldValidateRules": ["maxlength"],
+      "fieldValidateRulesMaxlength": "400"
+    },
+    {
+      "fieldName": "careSummaryShared",
+      "fieldType": "Boolean",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "raisedAt",
+      "fieldType": "Instant",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "respondedAt",
+      "fieldType": "Instant"
+    },
+    {
+      "fieldName": "completedAt",
+      "fieldType": "Instant"
+    },
+    {
+      "fieldName": "cancelledAt",
+      "fieldType": "Instant"
+    },
+    {
+      "fieldName": "cancelledBy",
+      "fieldType": "CancelledBy",
+      "fieldValues": "CUSTOMER,PROFESSIONAL,PLATFORM"
+    },
+    {
+      "fieldName": "cancellationReason",
+      "fieldType": "String",
+      "fieldValidateRules": ["maxlength"],
+      "fieldValidateRulesMaxlength": "400"
+    },
+    {
+      "fieldName": "lateCancellation",
+      "fieldType": "Boolean"
+    },
+    {
+      "fieldName": "reviewed",
+      "fieldType": "Boolean",
+      "fieldValidateRules": ["required"]
+    }
+  ],
+  "jpaMetamodelFiltering": true,
+  "microserviceName": "healthconnectBooking",
+  "name": "Booking",
+  "pagination": "pagination",
+  "relationships": [
+    {
+      "otherEntityName": "bookingStatusChange",
+      "otherEntityRelationshipName": "booking",
+      "relationshipName": "history",
+      "relationshipSide": "left",
+      "relationshipType": "one-to-many"
+    }
+  ],
+  "searchEngine": "no",
+  "service": "serviceClass"
+}

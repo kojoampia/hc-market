@@ -1,0 +1,47 @@
+{
+  "annotations": {
+    "changelogDate": "20231202202750"
+  },
+  "applications": ["healthconnectMessaging"],
+  "clientRootFolder": "healthconnectMessaging",
+  "databaseType": "sql",
+  "dto": "mapstruct",
+  "fields": [
+    {
+      "fieldName": "direction",
+      "fieldType": "Direction",
+      "fieldTypeDocumentation": "SYSTEM covers anything raised by a domain event rather than typed by a person.",
+      "fieldValidateRules": ["required"],
+      "fieldValues": "CUSTOMER_TO_PROFESSIONAL,PROFESSIONAL_TO_CUSTOMER,SYSTEM"
+    },
+    {
+      "fieldName": "body",
+      "fieldType": "TextBlob",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "sentAt",
+      "fieldType": "Instant",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "readAt",
+      "fieldType": "Instant"
+    }
+  ],
+  "microserviceName": "healthconnectMessaging",
+  "name": "Message",
+  "pagination": "pagination",
+  "relationships": [
+    {
+      "otherEntityName": "conversation",
+      "otherEntityRelationshipName": "messages",
+      "relationshipName": "conversation",
+      "relationshipSide": "right",
+      "relationshipType": "many-to-one",
+      "relationshipValidateRules": "required"
+    }
+  ],
+  "searchEngine": "no",
+  "service": "serviceClass"
+}

@@ -1,0 +1,46 @@
+{
+  "annotations": {
+    "changelogDate": "20231202202850"
+  },
+  "applications": ["healthconnectMessaging"],
+  "clientRootFolder": "healthconnectMessaging",
+  "databaseType": "sql",
+  "dto": "mapstruct",
+  "fields": [
+    {
+      "fieldName": "recipientLogin",
+      "fieldType": "String",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "kind",
+      "fieldType": "String",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "body",
+      "fieldType": "String",
+      "fieldValidateRules": ["required", "maxlength"],
+      "fieldValidateRulesMaxlength": "400"
+    },
+    {
+      "fieldName": "raisedAt",
+      "fieldType": "Instant",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "readAt",
+      "fieldType": "Instant"
+    },
+    {
+      "fieldName": "deepLink",
+      "fieldType": "String"
+    }
+  ],
+  "microserviceName": "healthconnectMessaging",
+  "name": "Notification",
+  "pagination": "pagination",
+  "relationships": [],
+  "searchEngine": "no",
+  "service": "serviceClass"
+}

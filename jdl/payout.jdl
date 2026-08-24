@@ -1,0 +1,102 @@
+/**
+ * HealthConnect Marketplace — payout service.
+ *
+ * Brokerage configuration, the earnings ledger and monthly payouts.
+ * Spec: docs/healthconnect-marketplace.md §5.4.
+ *
+ * Import with:
+ *   jhipster jdl jdl/payout.jdl
+ *
+ * THE RULE THIS FILE EXISTS TO ENFORCE
+ * ------------------------------------
+ * There is no `professional.total_earnings` column, and there must never be one. Monthly earnings,
+ * gross-vs-net, sessions by service, sessions by format, lifetime totals, average session value and
+ * repeat rate are all SQL aggregates over Ledger joined to Booking. Month-to-date comparisons use
+ * the SAME SLICE OF DAYS in the previous month, so a partial month never reads as a collapse.
+ *
+ * BrokerageConfig is versioned by `effectiveFrom` rather than overwritten, so changing the
+ * commission rate never rewrites history: a booking is priced against the config in force when it
+ * completed. The prototype's hard-coded COMMISSION = 0.12 could not express that.
+ */
+
+application {
+  config {
+    baseName healthconnectPayout
+    applicationType microservice
+    packageName net.jojoaddison
+    serverPort 8084
+    databaseType sql
+    prodDatabaseType postgresql
+    devDatabaseType postgresql
+    authenticationType jwt
+    messageBroker kafka
+    serviceDiscoveryType consul
+    buildTool maven
+    skipUserManagement true
+    clientFramework no
+    enableTranslation false
+    testFrameworks [cucumber]
+  }
+  entities BrokerageConfig, Ledger, Payout
+}
+
+// ===========================================================================
+// Enumerations
+// ===========================================================================
+
+enum PayoutStatus {
+  OPEN,
+  IN_PROGRESS,
+  PAID,
+  FAILED
+}
+
+// ===========================================================================
+// Entities
+// ===========================================================================
+
+entity BrokerageConfig {
+  commissionRate BigDecimal required min(0) max(1)   // 0.12
+  payoutLagDays Integer required                     // 3
+  freeCancellationHours Integer required             // 24
+  lateCancellationPct BigDecimal required            // 0.50
+  currency String required maxlength(3)
+  effectiveFrom Instant required
+}
+
+/** One row per completed or late-cancelled booking. `bookingReference` is unique, so a replayed
+ *  booking.completed event cannot double-credit a professional. */
+entity Ledger {
+  bookingReference String required unique
+  professionalRef String required
+  grossMinor Long required
+  commissionMinor Long required
+  netMinor Long required
+  currency String required maxlength(3)
+  earnedOn LocalDate required
+}
+
+entity Payout {
+  reference String required unique    // PAY-202607-AM
+  professionalRef String required
+  periodStart LocalDate required
+  periodEnd LocalDate required
+  grossMinor Long required
+  commissionMinor Long required
+  netMinor Long required
+  currency String required maxlength(3)
+  status PayoutStatus required
+  settledOn LocalDate
+  bankReference String
+}
+
+relationship ManyToOne {
+  Ledger{payout} to Payout{entries}
+}
+
+service BrokerageConfig, Ledger, Payout with serviceClass
+dto BrokerageConfig, Ledger, Payout with mapstruct
+paginate Ledger, Payout with pagination
+filter Ledger
+
+microservice * with healthconnectPayout

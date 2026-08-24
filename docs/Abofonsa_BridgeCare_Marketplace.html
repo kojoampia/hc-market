@@ -1,0 +1,2604 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Abofonsa BridgeCare — Wellbeing Marketplace</title>
+<style>
+/* ============ TOKENS (carried from Abofonsa BridgeCare) ============ */
+:root{
+  --navy:#0D3058; --navy-2:#12406F; --navy-3:#1B5390; --navy-ink:#08213D;
+  --gold:#C59437; --gold-2:#E0B45B; --gold-soft:#F3E6CB;
+  --cream:#F7F4EE; --bg:#F2F0EA; --white:#fff;
+  --ink:#16202B; --ink-2:#41505F; --ink-3:#6B7A89; --line:#E2DED4; --line-2:#EDEAE2;
+  --green:#1BAF7A; --green-bg:#E4F6EF; --green-ink:#0C6A4A;
+  --amber:#D48806; --amber-bg:#FDF1DC; --amber-ink:#8A5A03;
+  --red:#C6392F; --red-bg:#FBE9E7; --red-ink:#8E241C;
+  --blue:#256ABF; --blue-bg:#E7F0FB;
+  --c1:#256ABF; --c2:#EDA100; --c3:#1BAF7A; --c4:#7A5AA8;
+  --r-s:8px; --r-m:12px; --r-l:18px; --r-xl:26px; --r-pill:999px;
+  --sh-1:0 1px 2px rgba(13,48,88,.06), 0 1px 3px rgba(13,48,88,.05);
+  --sh-2:0 2px 6px rgba(13,48,88,.07), 0 6px 18px rgba(13,48,88,.07);
+  --sh-3:0 10px 30px rgba(13,48,88,.13), 0 2px 8px rgba(13,48,88,.08);
+  --sh-in:inset 0 0 0 1px var(--line);
+  --topbar:64px; --side:250px;
+  --f:'Inter','Lato',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  font-family:var(--f); font-size:15px; line-height:1.55; color:var(--ink);
+  background:var(--bg); -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+}
+h1,h2,h3,h4{margin:0; font-weight:800; letter-spacing:-.02em; line-height:1.2; color:var(--navy-ink)}
+h1{font-size:31px} h2{font-size:22px} h3{font-size:17px} h4{font-size:15px}
+p{margin:0 0 10px}
+a{color:var(--navy-3); text-decoration:none}
+button{font-family:inherit; font-size:inherit; cursor:pointer}
+img{max-width:100%}
+::selection{background:var(--gold-soft)}
+.muted{color:var(--ink-3)}
+.small{font-size:13px}
+.tiny{font-size:12px}
+.micro{font-size:10.5px; letter-spacing:.11em; text-transform:uppercase; font-weight:800; color:var(--ink-3)}
+.strong{font-weight:700}
+.center{text-align:center}
+.nowrap{white-space:nowrap}
+.hide{display:none !important}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+/* ============ LAYOUT ============ */
+.app{min-height:100vh; display:flex; flex-direction:column}
+.wrap{width:100%; max-width:1240px; margin:0 auto; padding:0 22px}
+.main{flex:1; padding:26px 0 90px}
+.row{display:flex; align-items:center; gap:10px}
+.row.wrap-r{flex-wrap:wrap}
+.spread{display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap}
+.stack{display:flex; flex-direction:column; gap:14px}
+.grid{display:grid; gap:16px}
+.grid>*{min-width:0}
+.g2{grid-template-columns:repeat(2,1fr)}
+.split{grid-template-columns:1.45fr 1fr; align-items:start}
+.split-n{grid-template-columns:1fr 300px; align-items:start}
+.g3{grid-template-columns:repeat(3,1fr)}
+.g4{grid-template-columns:repeat(4,1fr)}
+.sec{margin-bottom:30px}
+.sec-head{display:flex; align-items:flex-end; justify-content:space-between; gap:14px; margin-bottom:14px}
+.sec-head p{margin:4px 0 0; color:var(--ink-3); font-size:13.5px}
+
+/* ============ TOPBAR ============ */
+.topbar{
+  position:sticky; top:0; z-index:60; height:var(--topbar);
+  background:rgba(247,244,238,.88); backdrop-filter:saturate(1.6) blur(14px);
+  -webkit-backdrop-filter:saturate(1.6) blur(14px); border-bottom:1px solid var(--line);
+}
+.topbar .wrap{height:100%; display:flex; align-items:center; gap:16px}
+.brand{display:flex; align-items:center; gap:10px; flex-shrink:0}
+.brand .mark{
+  width:34px;height:34px;border-radius:10px;background:linear-gradient(150deg,var(--navy) 10%,var(--navy-3));
+  display:grid;place-items:center;color:var(--gold-2);font-weight:800;font-size:15px;letter-spacing:-.04em;
+  box-shadow:0 2px 8px rgba(13,48,88,.28)
+}
+.brand b{font-size:15.5px; letter-spacing:-.03em; color:var(--navy-ink); font-weight:800; line-height:1.05; display:block}
+.brand span{font-size:10.5px; letter-spacing:.13em; text-transform:uppercase; color:var(--gold); font-weight:800}
+.tnav{display:flex; gap:2px; margin-left:8px}
+.tnav a{
+  padding:8px 13px; border-radius:var(--r-pill); font-size:13.5px; font-weight:600; color:var(--ink-2);
+}
+.tnav a:hover{background:rgba(13,48,88,.06)}
+.tnav a.on{background:var(--navy); color:#fff}
+.tspace{flex:1}
+.tsearch{
+  display:flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--line);
+  border-radius:var(--r-pill); padding:7px 14px; flex:0 1 230px; min-width:0; box-shadow:var(--sh-1)
+}
+.roleswitch,.iconbtn,.uavatar{flex-shrink:0}
+.tsearch input{border:0;outline:0;font-family:inherit;font-size:13.5px;width:100%;background:transparent;color:var(--ink)}
+.roleswitch{display:flex; background:#EBE7DD; border-radius:var(--r-pill); padding:3px; gap:2px; border:1px solid var(--line)}
+.roleswitch button{
+  border:0; background:transparent; padding:6px 13px; border-radius:var(--r-pill);
+  font-size:12.5px; font-weight:700; color:var(--ink-2); white-space:nowrap
+}
+.roleswitch button.on{background:var(--navy); color:#fff; box-shadow:0 1px 4px rgba(13,48,88,.3)}
+.iconbtn{
+  width:36px;height:36px;border-radius:50%;border:1px solid var(--line);background:#fff;
+  display:grid;place-items:center;color:var(--navy);position:relative;box-shadow:var(--sh-1)
+}
+.iconbtn:hover{background:var(--cream)}
+.iconbtn .dot{position:absolute;top:5px;right:5px;width:8px;height:8px;border-radius:50%;background:var(--red);border:2px solid #fff}
+.uavatar{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;color:#fff;font-weight:800;font-size:12.5px;background:linear-gradient(150deg,var(--navy-2),var(--navy));border:2px solid #fff;box-shadow:var(--sh-1);cursor:pointer}
+.burger{display:none}
+
+/* ============ BUTTONS / PILLS ============ */
+.btn{
+  border:1px solid transparent; border-radius:var(--r-pill); padding:9px 18px; font-size:13.5px;
+  font-weight:700; display:inline-flex; align-items:center; gap:7px; justify-content:center;
+  transition:transform .08s ease, box-shadow .15s ease, background .15s ease;
+}
+.btn:active{transform:translateY(1px)}
+.btn-p{background:var(--navy); color:#fff; box-shadow:0 2px 8px rgba(13,48,88,.24)}
+.btn-p:hover{background:var(--navy-2)}
+.btn-g{background:var(--gold); color:#2A1D02; box-shadow:0 2px 8px rgba(197,148,55,.35)}
+.btn-g:hover{background:var(--gold-2)}
+.btn-o{background:#fff; color:var(--navy); border-color:var(--line); box-shadow:var(--sh-1)}
+.btn-o:hover{background:var(--cream); border-color:#D6D0C2}
+.btn-t{background:transparent;color:var(--navy);border-color:transparent}
+.btn-t:hover{background:rgba(13,48,88,.07)}
+.btn-d{background:var(--red-bg); color:var(--red-ink); border-color:#F3D4D0}
+.btn-d:hover{background:#F7DAD6}
+.btn-sm{padding:6px 13px; font-size:12.5px}
+.btn-lg{padding:13px 26px; font-size:15px}
+.btn-blk{width:100%}
+.btn[disabled]{opacity:.45; pointer-events:none}
+.pill{
+  display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:var(--r-pill);
+  font-size:11.5px;font-weight:700;background:var(--cream);color:var(--ink-2);border:1px solid var(--line-2)
+}
+.pill.ok{background:var(--green-bg);color:var(--green-ink);border-color:#CBEDE0}
+.pill.warn{background:var(--amber-bg);color:var(--amber-ink);border-color:#F6E2BC}
+.pill.bad{background:var(--red-bg);color:var(--red-ink);border-color:#F3D4D0}
+.pill.info{background:var(--blue-bg);color:#164B8A;border-color:#CFE0F5}
+.pill.gold{background:var(--gold-soft);color:#77551A;border-color:#E7D3A9}
+.pill.navy{background:var(--navy);color:#fff;border-color:var(--navy)}
+.chip{
+  display:inline-flex;align-items:center;gap:6px;padding:5px 8px 5px 12px;border-radius:var(--r-pill);
+  background:var(--navy);color:#fff;font-size:12px;font-weight:700
+}
+.chip button{border:0;background:rgba(255,255,255,.2);color:#fff;width:17px;height:17px;border-radius:50%;line-height:1;display:grid;place-items:center;font-size:12px}
+.chip button:hover{background:rgba(255,255,255,.36)}
+.demobadge{
+  position:fixed; right:16px; bottom:16px; z-index:70; background:var(--navy); color:var(--gold-2);
+  padding:8px 15px; border-radius:var(--r-pill); font-size:11.5px; font-weight:800; letter-spacing:.06em;
+  text-transform:uppercase; box-shadow:var(--sh-3); display:flex; align-items:center; gap:8px
+}
+.demobadge i{width:7px;height:7px;border-radius:50%;background:var(--green);display:block;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+/* ============ CARDS ============ */
+.card{background:#fff; border:1px solid var(--line); border-radius:var(--r-l); box-shadow:var(--sh-1)}
+.card.pad{padding:20px}
+.card.hov{transition:box-shadow .18s ease, transform .18s ease, border-color .18s ease; cursor:pointer}
+.card.hov:hover{box-shadow:var(--sh-3); transform:translateY(-3px); border-color:#D8D2C4}
+.card-h{padding:16px 20px; border-bottom:1px solid var(--line-2); display:flex; align-items:center; justify-content:space-between; gap:12px}
+.card-b{padding:18px 20px}
+.card-f{padding:13px 20px; border-top:1px solid var(--line-2); background:var(--cream); border-radius:0 0 var(--r-l) var(--r-l)}
+.stat{background:#fff;border:1px solid var(--line);border-radius:var(--r-l);padding:15px 17px;box-shadow:var(--sh-1);position:relative;overflow:hidden}
+.stat .k{font-size:26px;font-weight:800;letter-spacing:-.03em;color:var(--navy-ink);line-height:1.1}
+.stat .l{font-size:11px;letter-spacing:.1em;text-transform:uppercase;font-weight:800;color:var(--ink-3);margin-top:3px}
+.stat .d{font-size:12px;margin-top:7px;color:var(--ink-3)}
+.stat .spk{position:absolute;right:0;bottom:0;opacity:.9}
+.stat.clk{cursor:pointer;transition:box-shadow .18s,transform .18s}
+.stat.clk:hover{box-shadow:var(--sh-2);transform:translateY(-2px)}
+
+/* ============ HERO ============ */
+.hero{
+  border-radius:var(--r-xl); padding:44px 40px; color:#fff; position:relative; overflow:hidden;
+  background:linear-gradient(135deg,var(--navy-ink) 0%,var(--navy) 42%,var(--navy-3) 100%);
+  box-shadow:var(--sh-3);
+}
+.hero:before{content:"";position:absolute;inset:0;
+  background:radial-gradient(680px 300px at 88% -18%,rgba(197,148,55,.34),transparent 62%),
+             radial-gradient(420px 260px at 8% 118%,rgba(27,175,122,.20),transparent 65%)}
+.hero>*{position:relative}
+.hero h1{color:#fff; font-size:37px; max-width:660px}
+.hero p{color:rgba(255,255,255,.82); max-width:560px; margin-top:11px; font-size:15.5px}
+.hero .eyebrow{color:var(--gold-2); font-size:11px; letter-spacing:.16em; text-transform:uppercase; font-weight:800; margin-bottom:12px}
+.searchbar{
+  margin-top:24px; background:#fff; border-radius:var(--r-xl); padding:8px; display:flex; gap:6px;
+  box-shadow:0 14px 40px rgba(8,33,61,.3); max-width:720px; flex-wrap:wrap
+}
+.searchbar .f{flex:1 1 180px; padding:6px 14px; border-right:1px solid var(--line-2); min-width:0}
+.searchbar .f:last-of-type{border-right:0}
+.searchbar label{display:block; font-size:10px; letter-spacing:.11em; text-transform:uppercase; font-weight:800; color:var(--ink-3)}
+.searchbar input,.searchbar select{border:0;outline:0;font-family:inherit;font-size:14px;font-weight:600;width:100%;background:transparent;color:var(--ink);padding:1px 0}
+.herostats{display:flex;gap:30px;margin-top:26px;flex-wrap:wrap}
+.herostats div b{display:block;font-size:23px;font-weight:800;color:#fff;letter-spacing:-.02em}
+.herostats div span{font-size:11.5px;color:rgba(255,255,255,.7);letter-spacing:.07em;text-transform:uppercase;font-weight:700}
+
+/* ============ CATEGORY TILES ============ */
+.cats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.cat{
+  background:#fff;border:1px solid var(--line);border-radius:var(--r-l);padding:18px;cursor:pointer;
+  box-shadow:var(--sh-1);transition:.18s;position:relative;overflow:hidden
+}
+.cat:hover{transform:translateY(-3px);box-shadow:var(--sh-3);border-color:#D8D2C4}
+.cat .ic{width:42px;height:42px;border-radius:13px;display:grid;place-items:center;font-size:20px;margin-bottom:12px}
+.cat h4{font-size:15.5px;margin-bottom:3px}
+.cat p{font-size:12.5px;color:var(--ink-3);margin:0;line-height:1.45}
+.cat .n{position:absolute;top:16px;right:16px;font-size:11.5px;font-weight:800;color:var(--ink-3)}
+
+/* ============ PRO CARD ============ */
+.procard{display:flex;flex-direction:column;overflow:hidden}
+.procard .top{padding:17px 17px 13px;display:flex;gap:13px}
+.procard .body{padding:0 17px 14px;flex:1}
+.procard .foot{padding:12px 17px;border-top:1px solid var(--line-2);background:var(--cream);display:flex;align-items:center;justify-content:space-between;gap:8px}
+.avatar{
+  border-radius:15px;display:grid;place-items:center;color:#fff;font-weight:800;letter-spacing:-.02em;
+  flex-shrink:0; box-shadow:0 2px 8px rgba(13,48,88,.18); position:relative
+}
+.avatar.s{width:38px;height:38px;font-size:13px;border-radius:11px}
+.avatar.m{width:54px;height:54px;font-size:18px}
+.avatar.l{width:92px;height:92px;font-size:31px;border-radius:22px}
+.avatar .vf{position:absolute;bottom:-4px;right:-4px;width:19px;height:19px;border-radius:50%;background:var(--blue);border:2.5px solid #fff;display:grid;place-items:center;color:#fff;font-size:10px}
+.avatar.l .vf{width:26px;height:26px;font-size:13px;bottom:-3px;right:-3px}
+.stars{display:inline-flex;align-items:center;gap:3px;font-size:12.5px;font-weight:700;color:var(--ink-2)}
+.stars .s{color:var(--gold);letter-spacing:-1px;font-size:13px}
+.rate{font-size:17px;font-weight:800;color:var(--navy-ink);letter-spacing:-.02em}
+.rate small{font-size:11.5px;font-weight:600;color:var(--ink-3)}
+.tags{display:flex;flex-wrap:wrap;gap:5px;margin-top:9px}
+.fav{border:0;background:transparent;color:var(--ink-3);font-size:17px;line-height:1;padding:2px}
+.fav.on{color:var(--red)}
+
+/* ============ FILTERS ============ */
+.layout-f{display:grid;grid-template-columns:252px 1fr;gap:22px;align-items:start}
+.filters{position:sticky;top:calc(var(--topbar) + 18px)}
+.fgroup{padding:15px 17px;border-bottom:1px solid var(--line-2)}
+.fgroup:last-child{border-bottom:0}
+.fgroup h4{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);margin-bottom:10px}
+.opt{display:flex;align-items:center;gap:9px;padding:5px 0;cursor:pointer;font-size:13.5px;color:var(--ink-2)}
+.opt input{accent-color:var(--navy);width:15px;height:15px;cursor:pointer}
+.opt:hover{color:var(--navy)}
+.opt .c{margin-left:auto;font-size:11.5px;color:var(--ink-3);font-weight:700}
+input[type=range]{width:100%;accent-color:var(--gold)}
+.field{margin-bottom:13px}
+.field label{display:block;font-size:11px;letter-spacing:.09em;text-transform:uppercase;font-weight:800;color:var(--ink-3);margin-bottom:5px}
+.field input,.field select,.field textarea{
+  width:100%;padding:9px 12px;border:1px solid var(--line);border-radius:var(--r-s);font-family:inherit;
+  font-size:14px;color:var(--ink);background:#fff;outline:0
+}
+.field textarea{min-height:88px;resize:vertical;line-height:1.5}
+.field input:focus,.field select:focus,.field textarea:focus{border-color:var(--navy-3);box-shadow:0 0 0 3px rgba(27,83,144,.13)}
+.srch{display:flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--line);border-radius:var(--r-pill);padding:8px 15px;box-shadow:var(--sh-1)}
+.srch input{border:0;outline:0;font-family:inherit;font-size:13.5px;width:100%;background:transparent}
+
+/* ============ TABS / TABLE / PAGER ============ */
+.tabs{display:flex;gap:3px;border-bottom:1px solid var(--line);margin-bottom:18px;overflow-x:auto}
+.tabs button{
+  border:0;background:transparent;padding:10px 15px;font-size:13.5px;font-weight:700;color:var(--ink-3);
+  border-bottom:2.5px solid transparent;margin-bottom:-1px;white-space:nowrap
+}
+.tabs button.on{color:var(--navy);border-bottom-color:var(--gold)}
+.tabs button:hover{color:var(--navy)}
+.tbl{width:100%;border-collapse:collapse;font-size:13.5px}
+.tbl th{
+  text-align:left;padding:9px 13px;font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;
+  font-weight:800;color:var(--ink-3);border-bottom:1px solid var(--line);background:var(--cream);white-space:nowrap
+}
+.tbl th:first-child{border-radius:var(--r-s) 0 0 0}
+.tbl th:last-child{border-radius:0 var(--r-s) 0 0}
+.tbl td{padding:11px 13px;border-bottom:1px solid var(--line-2);vertical-align:middle}
+.tbl tr:last-child td{border-bottom:0}
+.tbl tbody tr:hover{background:#FBFAF7}
+.tblwrap{overflow-x:auto}
+.pager{display:flex;align-items:center;justify-content:space-between;gap:10px;padding-top:12px;font-size:12.5px;color:var(--ink-3)}
+.pager .pg{display:flex;gap:4px}
+.pager .pg button{
+  border:1px solid var(--line);background:#fff;width:29px;height:29px;border-radius:8px;font-size:12.5px;
+  font-weight:700;color:var(--ink-2)
+}
+.pager .pg button.on{background:var(--navy);color:#fff;border-color:var(--navy)}
+.pager .pg button[disabled]{opacity:.4}
+.lrow{display:flex;align-items:center;gap:13px;padding:13px 0;border-bottom:1px solid var(--line-2)}
+.lrow:last-child{border-bottom:0}
+.empty{padding:48px 20px;text-align:center;color:var(--ink-3)}
+.empty .ic{font-size:38px;opacity:.35;margin-bottom:10px}
+
+/* ============ STEPS / BOOKING ============ */
+.steps{display:flex;align-items:center;gap:0;margin-bottom:24px;overflow-x:auto;padding-bottom:4px}
+.step{display:flex;align-items:center;gap:9px;flex-shrink:0}
+.step .n{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font-size:12.5px;font-weight:800;background:#fff;border:1.5px solid var(--line);color:var(--ink-3)}
+.step .t{font-size:12.5px;font-weight:700;color:var(--ink-3);white-space:nowrap}
+.step.on .n{background:var(--navy);border-color:var(--navy);color:#fff}
+.step.on .t{color:var(--navy)}
+.step.done .n{background:var(--green);border-color:var(--green);color:#fff}
+.step.done .t{color:var(--ink-2)}
+.step .bar{width:38px;height:2px;background:var(--line);margin:0 11px}
+.slots{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:9px}
+.slot{
+  border:1px solid var(--line);background:#fff;border-radius:var(--r-s);padding:10px 6px;font-size:13px;
+  font-weight:700;color:var(--ink-2);text-align:center
+}
+.slot:hover:not([disabled]){border-color:var(--navy-3);background:var(--cream)}
+.slot.on{background:var(--navy);color:#fff;border-color:var(--navy)}
+.slot[disabled]{opacity:.35;text-decoration:line-through;cursor:not-allowed}
+.days{display:flex;gap:8px;overflow-x:auto;padding-bottom:6px}
+.day{
+  min-width:66px;border:1px solid var(--line);background:#fff;border-radius:var(--r-m);padding:9px 4px;text-align:center;flex-shrink:0
+}
+.day b{display:block;font-size:17px;font-weight:800;color:var(--navy-ink)}
+.day span{font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;font-weight:800;color:var(--ink-3)}
+.day.on{background:var(--navy);border-color:var(--navy)}
+.day.on b,.day.on span{color:#fff}
+.day[disabled]{opacity:.35;cursor:not-allowed}
+.sumrow{display:flex;justify-content:space-between;gap:12px;padding:8px 0;font-size:13.5px;border-bottom:1px dashed var(--line-2)}
+.sumrow:last-child{border-bottom:0}
+.sumrow.total{font-size:16px;font-weight:800;color:var(--navy-ink);padding-top:12px;border-top:1.5px solid var(--line);border-bottom:0;margin-top:5px}
+
+/* ============ SIDEBAR (pro dashboard) ============ */
+.dash{display:grid;grid-template-columns:var(--side) 1fr;gap:0;min-height:calc(100vh - var(--topbar))}
+.side{
+  background:var(--navy);color:#fff;padding:20px 14px;position:sticky;top:var(--topbar);
+  height:calc(100vh - var(--topbar));overflow-y:auto
+}
+.side .sh{font-size:10px;letter-spacing:.14em;text-transform:uppercase;font-weight:800;color:rgba(255,255,255,.42);padding:0 12px;margin:18px 0 7px}
+.side a{
+  display:flex;align-items:center;gap:11px;padding:9px 13px;border-radius:var(--r-pill);color:rgba(255,255,255,.76);
+  font-size:13.5px;font-weight:600;margin-bottom:2px
+}
+.side a:hover{background:rgba(255,255,255,.09);color:#fff}
+.side a.on{background:var(--gold);color:#2A1D02;font-weight:800;box-shadow:0 2px 10px rgba(197,148,55,.4)}
+.side a .b{margin-left:auto;background:rgba(255,255,255,.18);padding:1px 7px;border-radius:var(--r-pill);font-size:11px;font-weight:800}
+.side a.on .b{background:rgba(0,0,0,.16)}
+.side .prochip{background:rgba(255,255,255,.08);border-radius:var(--r-m);padding:12px;margin-bottom:6px;display:flex;gap:10px;align-items:center}
+.side .prochip b{font-size:13.5px;color:#fff;display:block;line-height:1.2}
+.side .prochip span{font-size:11.5px;color:rgba(255,255,255,.6)}
+.dashmain{padding:24px 26px 90px;min-width:0;background:var(--bg)}
+
+/* ============ MESSAGES ============ */
+.msgs{display:grid;grid-template-columns:290px 1fr;min-height:520px}
+.threads{border-right:1px solid var(--line-2);overflow-y:auto;max-height:600px}
+.thread{display:flex;gap:11px;padding:13px 15px;border-bottom:1px solid var(--line-2);cursor:pointer}
+.thread:hover{background:#FBFAF7}
+.thread.on{background:var(--cream);box-shadow:inset 3px 0 0 var(--gold)}
+.thread .tx{min-width:0;flex:1}
+.thread b{font-size:13.5px;display:block;color:var(--navy-ink)}
+.thread p{font-size:12.5px;color:var(--ink-3);margin:2px 0 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.convo{display:flex;flex-direction:column;max-height:600px}
+.convo .ch{padding:13px 18px;border-bottom:1px solid var(--line-2);display:flex;align-items:center;gap:11px}
+.convo .cb{flex:1;overflow-y:auto;padding:18px;background:var(--cream);display:flex;flex-direction:column;gap:11px}
+.convo .cf{padding:13px 18px;border-top:1px solid var(--line-2);display:flex;gap:9px}
+.msg{max-width:74%;padding:10px 14px;border-radius:15px;font-size:13.5px;line-height:1.5;box-shadow:var(--sh-1)}
+.msg.them{background:#fff;border:1px solid var(--line-2);align-self:flex-start;border-bottom-left-radius:5px}
+.msg.me{background:var(--navy);color:#fff;align-self:flex-end;border-bottom-right-radius:5px}
+.msg .t{font-size:10.5px;opacity:.62;margin-top:4px;display:block}
+
+/* ============ MODAL / TOAST / DRAWER ============ */
+.overlay{
+  position:fixed;inset:0;background:rgba(8,33,61,.52);backdrop-filter:blur(3px);z-index:100;
+  display:flex;align-items:center;justify-content:center;padding:20px;animation:fade .16s ease
+}
+@keyframes fade{from{opacity:0}to{opacity:1}}
+@keyframes pop{from{opacity:0;transform:translateY(14px) scale(.98)}to{opacity:1;transform:none}}
+.modal{
+  background:#fff;border-radius:var(--r-xl);width:100%;max-width:600px;max-height:88vh;display:flex;flex-direction:column;
+  box-shadow:var(--sh-3);animation:pop .2s cubic-bezier(.2,.9,.3,1)
+}
+.modal.wide{max-width:880px}
+.modal.narrow{max-width:440px}
+.modal-h{padding:19px 24px;border-bottom:1px solid var(--line-2);display:flex;align-items:center;justify-content:space-between;gap:12px}
+.modal-b{padding:22px 24px;overflow-y:auto}
+.modal-f{padding:15px 24px;border-top:1px solid var(--line-2);display:flex;gap:9px;justify-content:flex-end;background:var(--cream);border-radius:0 0 var(--r-xl) var(--r-xl);flex-wrap:wrap}
+.x{border:0;background:var(--cream);width:32px;height:32px;border-radius:50%;font-size:17px;color:var(--ink-2);line-height:1}
+.x:hover{background:#EBE7DD}
+.toasts{position:fixed;bottom:20px;left:20px;z-index:200;display:flex;flex-direction:column;gap:9px}
+.toast{
+  background:var(--navy-ink);color:#fff;padding:12px 17px;border-radius:var(--r-m);font-size:13.5px;font-weight:600;
+  box-shadow:var(--sh-3);display:flex;align-items:center;gap:10px;animation:pop .22s;max-width:370px
+}
+.toast .i{width:8px;height:8px;border-radius:50%;background:var(--green);flex-shrink:0}
+.toast.warn .i{background:var(--amber)} .toast.bad .i{background:var(--red)}
+
+/* ============ MISC ============ */
+.prohero{display:flex;gap:22px;flex-wrap:wrap;align-items:flex-start}
+.kv{display:flex;gap:10px;padding:9px 0;border-bottom:1px solid var(--line-2);font-size:13.5px}
+.kv:last-child{border-bottom:0}
+.kv .k{width:130px;flex-shrink:0;color:var(--ink-3);font-weight:600}
+.kv .v{color:var(--ink);font-weight:600}
+.svc{display:flex;gap:13px;align-items:center;padding:13px;border:1px solid var(--line);border-radius:var(--r-m);background:#fff;margin-bottom:10px}
+.svc:last-child{margin-bottom:0}
+.svc.sel{border-color:var(--navy);box-shadow:0 0 0 2px rgba(13,48,88,.13)}
+.bar{height:7px;background:var(--line-2);border-radius:var(--r-pill);overflow:hidden}
+.bar i{display:block;height:100%;background:linear-gradient(90deg,var(--gold),var(--gold-2));border-radius:var(--r-pill)}
+.rvw{padding:15px 0;border-bottom:1px solid var(--line-2)}
+.rvw:last-child{border-bottom:0}
+.rvw .reply{margin:11px 0 0 46px;padding:11px 14px;background:var(--cream);border-radius:var(--r-m);border-left:3px solid var(--gold);font-size:13px}
+.trust{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+.trust .t{padding:17px;background:#fff;border:1px solid var(--line);border-radius:var(--r-l);box-shadow:var(--sh-1)}
+.trust .t .ic{font-size:21px;margin-bottom:8px}
+.trust .t h4{font-size:14px;margin-bottom:3px}
+.trust .t p{font-size:12.5px;color:var(--ink-3);margin:0;line-height:1.5}
+.charthead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:4px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--ink-2);font-weight:600;margin-top:10px}
+.legend i{width:10px;height:10px;border-radius:3px;display:inline-block;margin-right:5px;vertical-align:-1px}
+.tgl{border:1px solid var(--line);background:#fff;border-radius:var(--r-pill);padding:4px 11px;font-size:11.5px;font-weight:700;color:var(--ink-2)}
+.tgl:hover{background:var(--cream)}
+.note{background:var(--gold-soft);border:1px solid #E7D3A9;border-radius:var(--r-m);padding:12px 15px;font-size:13px;color:#5E430F}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px}
+.tabbar{display:none}
+
+/* ============ RESPONSIVE ============ */
+@media (max-width:1080px){
+  .g4{grid-template-columns:repeat(2,1fr)} .cats{grid-template-columns:repeat(2,1fr)}
+  .split,.split-n{grid-template-columns:1fr}
+  .trust{grid-template-columns:repeat(2,1fr)}
+  .layout-f{grid-template-columns:1fr}
+  .filters{position:static}
+  .dash{grid-template-columns:1fr}
+  .side{display:none}
+  .tnav{display:none}
+}
+@media (max-width:820px){
+  .msgs{grid-template-columns:1fr} .threads{max-height:210px;border-right:0;border-bottom:1px solid var(--line-2)}
+}
+@media (max-width:720px){
+  :root{--topbar:58px}
+  .wrap{padding:0 15px}
+  .g2,.g3,.g4{grid-template-columns:1fr}
+  .hero{padding:30px 22px;border-radius:var(--r-l)} .hero h1{font-size:27px} h1{font-size:25px}
+  .searchbar{border-radius:var(--r-l)} .searchbar .f{border-right:0;border-bottom:1px solid var(--line-2);flex-basis:100%}
+  .searchbar .f:last-of-type{border-bottom:0}
+  .tsearch{display:none}
+  .roleswitch{display:none}
+  .burger{display:grid}
+  .topbar .wrap{gap:10px}
+  .main{padding-bottom:96px}
+  .dashmain{padding:18px 15px 96px}
+  .trust{grid-template-columns:1fr}
+  .brand span{display:none}
+  .roleswitch button{padding:6px 10px;font-size:11.5px}
+  .demobadge{bottom:78px;right:12px;font-size:10.5px;padding:6px 12px}
+  .toasts{left:12px;right:12px;bottom:78px}
+  .tabbar{
+    display:flex;position:fixed;bottom:0;left:0;right:0;z-index:65;background:rgba(255,255,255,.96);
+    backdrop-filter:blur(12px);border-top:1px solid var(--line);padding:6px 4px calc(6px + env(safe-area-inset-bottom))
+  }
+  .tabbar a{flex:1;text-align:center;padding:6px 2px;font-size:10px;font-weight:700;color:var(--ink-3);letter-spacing:.02em}
+  .tabbar a .ic{display:block;font-size:17px;line-height:1.35}
+  .tabbar a.on{color:var(--navy)}
+  .modal{max-height:92vh} .modal-f{justify-content:stretch} .modal-f .btn{flex:1}
+}
+@media print{
+  .topbar,.tabbar,.demobadge,.toasts,.noprint,.side{display:none !important}
+  body{background:#fff} .card{box-shadow:none;border-color:#ccc} .main{padding:0}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="wrap">
+      <div class="brand" onclick="go(state.role==='pro'?'#/pro/overview':'#/discover')" style="cursor:pointer">
+        <div class="mark">AB</div>
+        <div><b>Abofonsa BridgeCare</b><span>Wellbeing Marketplace</span></div>
+      </div>
+      <nav class="tnav" id="tnav"></nav>
+      <div class="tspace"></div>
+      <div class="tsearch" id="tsearchWrap">
+        <span>&#128269;</span>
+        <input id="topSearch" placeholder="Search coaches, therapists, carers…" onkeydown="if(event.key==='Enter')topSearchGo()">
+      </div>
+      <div class="roleswitch" id="roleswitch">
+        <button id="rsC" onclick="setRole('customer')">I need care</button>
+        <button id="rsP" onclick="setRole('pro')">I provide care</button>
+      </div>
+      <button class="iconbtn" onclick="openNotifications()" title="Notifications">&#128276;<span class="dot" id="notifDot"></span></button>
+      <div class="uavatar" id="topAvatar" onclick="openAccount()">KA</div>
+      <button class="iconbtn burger" onclick="openMobileNav()" title="Menu">&#9776;</button>
+    </div>
+  </header>
+  <div id="view"></div>
+</div>
+<nav class="tabbar" id="tabbar"></nav>
+<div class="demobadge"><i></i> Interactive demo</div>
+<div class="toasts" id="toasts"></div>
+<div id="modalRoot"></div>
+<script>
+/* ==========================================================================
+   ABOFONSA BRIDGECARE — WELLBEING MARKETPLACE
+   Single-file interactive prototype. No network. No storage APIs.
+   All state lives in memory for the life of the page.
+   ========================================================================== */
+
+/* ---------------------------------- utils ------------------------------- */
+const $  = (s,r)=> (r||document).querySelector(s);
+const $$ = (s,r)=> Array.from((r||document).querySelectorAll(s));
+const esc = s => String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const CUR = '₵';                                   // Ghana cedi
+const money = n => CUR + Number(n).toLocaleString('en-GB',{minimumFractionDigits:0,maximumFractionDigits:0});
+const money2 = n => CUR + Number(n).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2});
+const TODAY = new Date(2026,7,10);                      // Mon 10 Aug 2026
+const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+const d2 = n => (n<10?'0':'')+n;
+const iso = d => d.getFullYear()+'-'+d2(d.getMonth()+1)+'-'+d2(d.getDate());
+const parseD = s => { const p=s.split('-').map(Number); return new Date(p[0],p[1]-1,p[2]); };
+const fmtD = s => { const d=parseD(s); return d.getDate()+' '+MON[d.getMonth()]+' '+d.getFullYear(); };
+const fmtDS = s => { const d=parseD(s); return DOW[d.getDay()]+' '+d.getDate()+' '+MON[d.getMonth()]; };
+const addDays = (d,n)=>{ const x=new Date(d.getTime()); x.setDate(x.getDate()+n); return x; };
+const daysBetween = (a,b)=> Math.round((parseD(b)-parseD(a))/864e5);
+const relD = s => { const n=daysBetween(iso(TODAY),s);
+  if(n===0) return 'Today'; if(n===1) return 'Tomorrow'; if(n===-1) return 'Yesterday';
+  if(n>1&&n<7) return 'In '+n+' days'; if(n<-1&&n>-31) return Math.abs(n)+' days ago';
+  if(n<=-31) return Math.round(Math.abs(n)/30)+' months ago'; return fmtD(s); };
+const avg = a => a.length? a.reduce((x,y)=>x+y,0)/a.length : 0;
+const sum = a => a.reduce((x,y)=>x+y,0);
+const uniq = a => Array.from(new Set(a));
+/* small seeded PRNG so the generated history is identical on every load */
+function LCG(seed){ let s=seed>>>0; return ()=> (s=(s*1664525+1013904223)>>>0)/4294967296; }
+
+/* --------------------------------- taxonomy ----------------------------- */
+const CATS = [
+  { id:'fitness',   name:'Fitness & Movement',    icon:'🏃', bg:'#E7F0FB', fg:'#256ABF',
+    blurb:'Trainers, yoga and pilates teachers, movement and mobility coaches.',
+    subs:['Personal Trainer','Yoga Instructor','Pilates Instructor','Mobility Coach','Prenatal Fitness'] },
+  { id:'nutrition', name:'Nutrition & Lifestyle', icon:'🥗', bg:'#E4F6EF', fg:'#0C6A4A',
+    blurb:'Nutritionists, health and sleep coaches, lifestyle and weight support.',
+    subs:['Nutritionist','Health Coach','Sleep Coach','Weight & Lifestyle Coach'] },
+  { id:'wellness',  name:'Wellness & Therapy-adjacent', icon:'🧘', bg:'#F1EAF8', fg:'#5C3D8A',
+    blurb:'Massage, mindfulness, mental wellbeing coaching, doulas and reflexology.',
+    subs:['Massage Therapist','Mindfulness Practitioner','Mental Wellness Coach','Birth Doula','Reflexologist'] },
+  { id:'care',      name:'Home & Elder Care',     icon:'🤝', bg:'#F3E6CB', fg:'#77551A',
+    blurb:'Caregivers, home health aides, post-op companions and mobility assistants.',
+    subs:['Senior Caregiver','Home Health Aide','Post-op Companion','Mobility Assistant'] }
+];
+const catOf = id => CATS.find(c=>c.id===id) || CATS[0];
+const MODES = ['In person','Online','Home visit'];
+const CITIES = ['Accra','Tema','Kumasi','Takoradi','Cape Coast'];
+
+/* ------------------------------ professionals --------------------------- */
+/* rate = indicative "from" price, always equal to the cheapest active service */
+const PROS = [
+ { id:'p1', name:'Akosua Mensah', ini:'AM', c:['#0D3058','#256ABF'], cat:'nutrition', sub:'Nutritionist',
+   title:'Registered Nutritionist · Metabolic health', city:'Accra', modes:['In person','Online','Home visit'],
+   years:9, verified:true, insured:true, dbs:true, langs:['English','Twi','Ga'], responseMins:22, repeat:68,
+   creds:['BSc Nutrition & Dietetics, University of Ghana','Ghana Nutrition Association — Reg. GNA-4471','Certified Diabetes Prevention Coach (NDPP)'],
+   bio:'I build eating plans that survive real Ghanaian kitchens and real budgets. Most of my clients come to me with a new type-2 diagnosis, a stubborn plateau, or a doctor’s note they did not understand.',
+   highlights:['Type-2 diabetes & pre-diabetes','Family meal planning','Works alongside your clinician'],
+   services:[
+     {id:'s1a', name:'Nutrition assessment (first visit)', dur:60, price:280, desc:'Full dietary history, body composition, and a written plan you keep.'},
+     {id:'s1b', name:'Follow-up consultation',            dur:30, price:150, desc:'Review of logs, plan adjustment, next targets.'},
+     {id:'s1c', name:'Family meal-planning session',      dur:75, price:340, desc:'Cook-along planning for the whole household, in your kitchen or online.'},
+     {id:'s1d', name:'Monthly accountability (4 sessions)',dur:30, price:520, desc:'Four 30-minute check-ins plus message support between them.'}
+   ]},
+ { id:'p2', name:'Kwabena Osei', ini:'KO', c:['#12406F','#1B5390'], cat:'fitness', sub:'Personal Trainer',
+   title:'Strength coach · Return-to-fitness after 40', city:'Accra', modes:['In person','Home visit'],
+   years:7, verified:true, insured:true, dbs:true, langs:['English','Twi'], responseMins:14, repeat:74,
+   creds:['NASM Certified Personal Trainer','Precision Nutrition L1','First Aid & CPR (current)'],
+   bio:'I train people who have not lifted anything heavier than a laptop in a decade. We start embarrassingly light and you leave stronger than you were at thirty.',
+   highlights:['Beginners very welcome','Home gym or no equipment','Joint-friendly programming'],
+   services:[
+     {id:'s2a', name:'1:1 personal training',        dur:60, price:220, desc:'One-to-one session at the studio in Osu or your building gym.'},
+     {id:'s2b', name:'Home visit training',          dur:60, price:290, desc:'I bring bands, kettlebells and a mat to you.'},
+     {id:'s2c', name:'8-session starter block',      dur:60, price:1560, desc:'Two per week for a month, with a written programme.'}
+   ]},
+ { id:'p3', name:'Naa Adjeley Quaye', ini:'NQ', c:['#5C3D8A','#7A5AA8'], cat:'fitness', sub:'Yoga Instructor',
+   title:'Hatha & restorative yoga · Back care', city:'Accra', modes:['In person','Online'],
+   years:11, verified:true, insured:true, dbs:false, langs:['English','Ga','French'], responseMins:35, repeat:81,
+   creds:['RYT-500, Yoga Alliance','Yoga for Back Care (Yoga Medicine)','Prenatal Yoga certified'],
+   bio:'Slow, precise, unhurried yoga for people whose backs have opinions. Classes are small and nobody is asked to do anything their body has not agreed to.',
+   highlights:['Desk-worker back pain','Small group or private','Props provided'],
+   services:[
+     {id:'s3a', name:'Private yoga session',   dur:60, price:200, desc:'One-to-one, tailored to whatever is complaining that week.'},
+     {id:'s3b', name:'Online restorative class',dur:45, price:90,  desc:'Live small-group class, up to six people.'},
+     {id:'s3c', name:'Back care programme (6 weeks)',dur:60, price:1080, desc:'Six private sessions plus a short daily home sequence.'}
+   ]},
+ { id:'p4', name:'Selorm Agbeko', ini:'SA', c:['#0C6A4A','#1BAF7A'], cat:'fitness', sub:'Pilates Instructor',
+   title:'Mat & reformer pilates · Post-natal', city:'Tema', modes:['In person','Online'],
+   years:6, verified:true, insured:true, dbs:false, langs:['English','Ewe'], responseMins:41, repeat:63,
+   creds:['BASI Pilates Comprehensive','Post-natal Rehabilitation (Burrell Education)'],
+   bio:'Core work that is actually core work, not endless crunches. I see a lot of new mothers and a lot of runners who have been told to "strengthen the core" with no further instruction.',
+   highlights:['Post-natal recovery','Reformer studio in Tema','Runner-friendly'],
+   services:[
+     {id:'s4a', name:'Reformer session',      dur:55, price:240, desc:'Private studio session on the reformer.'},
+     {id:'s4b', name:'Mat pilates (online)',  dur:45, price:110, desc:'Live one-to-one mat class from home.'},
+     {id:'s4c', name:'Post-natal return block',dur:55, price:1320, desc:'Six sessions, cleared-for-exercise clients only.'}
+   ]},
+ { id:'p5', name:'Yaw Boateng', ini:'YB', c:['#8A5A03','#D48806'], cat:'fitness', sub:'Mobility Coach',
+   title:'Mobility & movement coach · Desk bodies', city:'Kumasi', modes:['In person','Online','Home visit'],
+   years:5, verified:true, insured:false, dbs:false, langs:['English','Twi'], responseMins:52, repeat:55,
+   creds:['FRC Mobility Specialist','Certified Strength & Conditioning Coach (CSCS)'],
+   bio:'Hips that do not hinge, shoulders that do not reach overhead, necks that live forward of the spine. That is my whole practice, and it is a large practice.',
+   highlights:['Desk posture','Pre-run and pre-lift prep','Short daily routines'],
+   services:[
+     {id:'s5a', name:'Mobility assessment',    dur:50, price:190, desc:'Screen of every major joint, with video and a routine you keep.'},
+     {id:'s5b', name:'Follow-up mobility session',dur:40, price:140, desc:'Progression and coaching on the routine.'},
+     {id:'s5c', name:'Office team workshop',   dur:90, price:900, desc:'On-site session for up to twelve colleagues.'}
+   ]},
+ { id:'p6', name:'Efua Nyarko', ini:'EN', c:['#B03A6E','#D4699A'], cat:'fitness', sub:'Prenatal Fitness',
+   title:'Prenatal & post-natal fitness coach', city:'Accra', modes:['In person','Online','Home visit'],
+   years:8, verified:true, insured:true, dbs:true, langs:['English','Fante'], responseMins:28, repeat:70,
+   creds:['Pre/Post-natal Coaching Certification (GGS)','NASM CPT','Paediatric & adult first aid'],
+   bio:'Safe, confident movement through all three trimesters and back out the other side. I work with your midwife where there is one, and I never guess.',
+   highlights:['All trimesters','Pelvic floor aware','Coordinates with your midwife'],
+   services:[
+     {id:'s6a', name:'Prenatal fitness session', dur:50, price:210, desc:'One-to-one, adjusted to trimester and how the week has gone.'},
+     {id:'s6b', name:'Post-natal rebuild',       dur:50, price:210, desc:'Gradual return, starting with breath and pelvic floor.'},
+     {id:'s6c', name:'Birth-prep movement (3 sessions)',dur:60, price:600, desc:'Positions, breathing and mobility for labour.'}
+   ]},
+ { id:'p7', name:'Kojo Frimpong', ini:'KF', c:['#256ABF','#4E8BD6'], cat:'nutrition', sub:'Health Coach',
+   title:'Diabetes health coach · Habit change', city:'Kumasi', modes:['Online','Home visit'],
+   years:10, verified:true, insured:true, dbs:true, langs:['English','Twi'], responseMins:19, repeat:77,
+   creds:['National Board Certified Health & Wellness Coach','Diabetes Self-Management Education (DSMES)'],
+   bio:'I do not hand out diets. I help people find the two or three changes they will still be making next year, and then I keep them honest about it.',
+   highlights:['Type-2 self-management','Glucose log review','Family involved by default'],
+   services:[
+     {id:'s7a', name:'Coaching intake',        dur:60, price:260, desc:'Where you are, what has failed before, what we will try first.'},
+     {id:'s7b', name:'Fortnightly coaching call',dur:30, price:130, desc:'Thirty minutes, log review, one change at a time.'},
+     {id:'s7c', name:'Household session',      dur:60, price:300, desc:'With whoever cooks and whoever shops.'}
+   ]},
+ { id:'p8', name:'Ama Darko', ini:'AD', c:['#2E4A7D','#5573A8'], cat:'nutrition', sub:'Sleep Coach',
+   title:'Adult sleep coach · CBT-I informed', city:'Accra', modes:['Online'],
+   years:6, verified:true, insured:false, dbs:false, langs:['English'], responseMins:44, repeat:59,
+   creds:['Certified Clinical Sleep Health Educator','CBT-I foundational training'],
+   bio:'Six weeks, a sleep diary and a lot of unglamorous consistency. I am not a doctor and I will tell you plainly when something needs one.',
+   highlights:['Insomnia & shift work','Diary-led, evidence-based','Refers on when needed'],
+   services:[
+     {id:'s8a', name:'Sleep assessment',      dur:60, price:250, desc:'History, diary set-up and the first week’s plan.'},
+     {id:'s8b', name:'Weekly sleep review',   dur:30, price:120, desc:'Diary review and schedule adjustment.'},
+     {id:'s8c', name:'6-week sleep programme',dur:30, price:820, desc:'Assessment plus five weekly reviews.'}
+   ]},
+ { id:'p9', name:'Nii Lantey Addo', ini:'NA', c:['#0D3058','#1B5390'], cat:'nutrition', sub:'Weight & Lifestyle Coach',
+   title:'Weight & lifestyle coach · Shift workers', city:'Takoradi', modes:['In person','Online'],
+   years:4, verified:false, insured:true, dbs:false, langs:['English','Fante'], responseMins:63, repeat:48,
+   creds:['Precision Nutrition L2','ACE Health Coach'],
+   bio:'Most of my clients work offshore rotations or long night shifts. Standard advice assumes three meals and a bedtime; mine does not.',
+   highlights:['Rotational shift patterns','Canteen and camp food','No calorie theatre'],
+   services:[
+     {id:'s9a', name:'Lifestyle intake',      dur:50, price:180, desc:'Rotation, sleep, food access, what is actually available to you.'},
+     {id:'s9b', name:'Check-in call',         dur:25, price:95,  desc:'Short, frequent, fits between shifts.'}
+   ]},
+ { id:'p10', name:'Adwoa Serwaa', ini:'AS', c:['#5C3D8A','#8A6BB8'], cat:'wellness', sub:'Massage Therapist',
+   title:'Remedial & sports massage therapist', city:'Accra', modes:['In person','Home visit'],
+   years:12, verified:true, insured:true, dbs:true, langs:['English','Twi'], responseMins:31, repeat:84,
+   creds:['ITEC Level 4 Sports Massage','Ghana Association of Massage Therapists','Lymphatic drainage certified'],
+   bio:'Twelve years of shoulders that live at ear height. Deep tissue when it helps and gentle when it does not — I will tell you which one you need.',
+   highlights:['Deep tissue & sports','Home visits across Accra','Post-event recovery'],
+   services:[
+     {id:'s10a', name:'Remedial massage (60 min)', dur:60, price:260, desc:'Focused work on one or two problem areas.'},
+     {id:'s10b', name:'Full body massage (90 min)',dur:90, price:360, desc:'Whole-body session, slower pace.'},
+     {id:'s10c', name:'Home visit (60 min)',       dur:60, price:330, desc:'Table, linens and oils brought to you.'}
+   ]},
+ { id:'p11', name:'Kofi Anane', ini:'KA', c:['#0C6A4A','#2FA37A'], cat:'wellness', sub:'Mindfulness Practitioner',
+   title:'Mindfulness & stress practitioner (MBSR)', city:'Cape Coast', modes:['Online','In person'],
+   years:14, verified:true, insured:true, dbs:false, langs:['English','Fante'], responseMins:57, repeat:66,
+   creds:['MBSR Teacher, Brown University certified','20 years personal practice'],
+   bio:'Eight weeks of MBSR, taught properly and without any mysticism. People arrive sceptical; the sceptics tend to be my best students.',
+   highlights:['Full 8-week MBSR course','Workplace stress','Secular and practical'],
+   services:[
+     {id:'s11a', name:'Intro session',          dur:45, price:140, desc:'What MBSR is, what it is not, and whether now is the time.'},
+     {id:'s11b', name:'8-week MBSR course',     dur:120,price:1450,desc:'Weekly group class plus one day of practice.'},
+     {id:'s11c', name:'1:1 practice support',   dur:45, price:190, desc:'For people already practising who are stuck.'}
+   ]},
+ { id:'p12', name:'Abena Owusu', ini:'AO', c:['#B03A6E','#C9628E'], cat:'wellness', sub:'Mental Wellness Coach',
+   title:'Mental wellness coach · Burnout & boundaries', city:'Accra', modes:['Online','In person'],
+   years:7, verified:true, insured:true, dbs:true, langs:['English','Twi','Ga'], responseMins:26, repeat:72,
+   creds:['ICF Associate Certified Coach (ACC)','Mental Health First Aid instructor'],
+   bio:'Coaching, not therapy — and I hold that line carefully. If what you bring belongs with a clinical psychologist, I will say so in the first session and help you find one.',
+   highlights:['Burnout & workload','Clear scope, refers on','Evening slots'],
+   services:[
+     {id:'s12a', name:'Discovery session',      dur:45, price:0,   desc:'Free. Whether coaching is the right thing at all.'},
+     {id:'s12b', name:'Coaching session',       dur:60, price:280, desc:'One-to-one, structured, with between-session actions.'},
+     {id:'s12c', name:'6-session burnout block',dur:60, price:1560,desc:'Six sessions over three months.'}
+   ]},
+ { id:'p13', name:'Hannah Tetteh', ini:'HT', c:['#8A5A03','#C59437'], cat:'wellness', sub:'Birth Doula',
+   title:'Birth & post-partum doula', city:'Tema', modes:['In person','Home visit','Online'],
+   years:9, verified:true, insured:true, dbs:true, langs:['English','Ga','Ewe'], responseMins:16, repeat:88,
+   creds:['DONA International Certified Birth Doula','Post-partum doula certification','Breastfeeding counsellor'],
+   bio:'I am the person in the room whose only job is you. I do not replace your midwife and I do not make medical decisions — I make sure you understand the ones being offered.',
+   highlights:['On call from 38 weeks','Partner support included','Post-partum home visits'],
+   services:[
+     {id:'s13a', name:'Doula consultation',        dur:60, price:0,   desc:'Free. Meet, ask everything, decide nothing.'},
+     {id:'s13b', name:'Birth package',             dur:0,  price:3200,desc:'Two antenatal visits, on call from 38 weeks, birth attendance, one post-natal visit.'},
+     {id:'s13c', name:'Post-partum visit (4 hrs)', dur:240,price:420, desc:'Feeding support, rest cover, and a hot meal made.'}
+   ]},
+ { id:'p14', name:'Yaa Asantewaa Boadu', ini:'YA', c:['#5C3D8A','#7A5AA8'], cat:'wellness', sub:'Reflexologist',
+   title:'Reflexology & aromatherapy', city:'Kumasi', modes:['In person','Home visit'],
+   years:15, verified:true, insured:true, dbs:false, langs:['English','Twi'], responseMins:70, repeat:79,
+   creds:['ITEC Reflexology Diploma','IFPA Aromatherapy Diploma'],
+   bio:'Fifteen years of feet. Relaxation first — I make no clinical claims and my clients come back because an hour on my table is an hour nobody can reach them.',
+   highlights:['Deeply relaxing','Blends made to order','Quiet home studio'],
+   services:[
+     {id:'s14a', name:'Reflexology session', dur:60, price:200, desc:'Full foot reflexology with a warm compress finish.'},
+     {id:'s14b', name:'Aromatherapy massage',dur:75, price:290, desc:'Blend chosen with you at the start of the session.'}
+   ]},
+ { id:'p15', name:'Grace Amponsah', ini:'GA', c:['#0D3058','#2E5C93'], cat:'care', sub:'Senior Caregiver',
+   title:'Senior caregiver · Dementia experienced', city:'Accra', modes:['Home visit'],
+   years:16, verified:true, insured:true, dbs:true, langs:['English','Twi','Ga'], responseMins:24, repeat:91,
+   creds:['Certified Nursing Assistant (CNA)','Dementia Care Specialist','Police clearance — renewed Mar 2026'],
+   bio:'Sixteen years with older adults, eleven of them with dementia. I keep a written day-book for every client so the family always knows exactly how the day went.',
+   highlights:['Dementia & memory care','Written daily day-book','Live-in cover available'],
+   services:[
+     {id:'s15a', name:'Day care visit (4 hrs)',  dur:240, price:280, desc:'Personal care, meals, medication reminders, company.'},
+     {id:'s15b', name:'Full day (8 hrs)',        dur:480, price:520, desc:'Full daytime cover with a written day-book.'},
+     {id:'s15c', name:'Overnight cover (12 hrs)',dur:720, price:700, desc:'Waking or sleeping night by arrangement.'}
+   ]},
+ { id:'p16', name:'Emmanuel Tetteh', ini:'ET', c:['#12406F','#3A6FA8'], cat:'care', sub:'Home Health Aide',
+   title:'Home health aide · Chronic condition support', city:'Accra', modes:['Home visit'],
+   years:8, verified:true, insured:true, dbs:true, langs:['English','Ga'], responseMins:33, repeat:76,
+   creds:['Home Health Aide certification','Basic Life Support (BLS)','Manual handling trained'],
+   bio:'I support people living at home with diabetes, COPD and heart failure — medication reminders, mobility, meals, and an eye on the things that change quietly.',
+   highlights:['Medication reminders','Vitals recorded for your clinician','Flexible half-days'],
+   services:[
+     {id:'s16a', name:'Half day (4 hrs)', dur:240, price:260, desc:'Personal care, meals, mobility and a written note.'},
+     {id:'s16b', name:'Full day (8 hrs)', dur:480, price:480, desc:'Full daytime support.'},
+     {id:'s16c', name:'Escort to appointment',dur:180,price:220,desc:'Door-to-door escort, waiting, and a summary afterwards.'}
+   ]},
+ { id:'p17', name:'Mavis Ofori', ini:'MO', c:['#0C6A4A','#26986E'], cat:'care', sub:'Post-op Companion',
+   title:'Post-operative companion & recovery aide', city:'Tema', modes:['Home visit'],
+   years:6, verified:true, insured:true, dbs:true, langs:['English','Ewe'], responseMins:38, repeat:64,
+   creds:['CNA certification','Post-surgical care training','First aid & CPR (current)'],
+   bio:'The first fortnight after surgery is when most things go wrong at home. I do wound-site watching, mobility, meals and the pharmacy run, and I escalate fast.',
+   highlights:['First 14 days after discharge','Discharge-note aware','Escalates to your surgeon'],
+   services:[
+     {id:'s17a', name:'Recovery day (6 hrs)', dur:360, price:380, desc:'Daytime support through the early recovery window.'},
+     {id:'s17b', name:'Discharge day package',dur:480, price:560, desc:'Collection from hospital, settling in, first-night set-up.'}
+   ]},
+ { id:'p18', name:'Daniel Asare', ini:'DA', c:['#8A5A03','#C59437'], cat:'care', sub:'Mobility Assistant',
+   title:'Mobility & transfer assistant', city:'Kumasi', modes:['Home visit','In person'],
+   years:5, verified:false, insured:true, dbs:true, langs:['English','Twi'], responseMins:49, repeat:57,
+   creds:['Manual handling & hoist trained','Basic Life Support (BLS)'],
+   bio:'Transfers, hoists, stairs and getting people safely out of the house again. A lot of my work is teaching families to do it without hurting themselves.',
+   highlights:['Hoist & transfer trained','Family technique coaching','Wheelchair outings'],
+   services:[
+     {id:'s18a', name:'Mobility visit (3 hrs)',dur:180, price:200, desc:'Transfers, walking practice and safe routine setting.'},
+     {id:'s18b', name:'Family training visit', dur:120, price:240, desc:'Teaching the household safe transfer technique.'},
+     {id:'s18c', name:'Assisted outing (4 hrs)',dur:240,price:300, desc:'Wheelchair-accessible outing with transport arranged.'}
+   ]}
+];
+const proById = id => PROS.find(p=>p.id===id);
+const svcById = (p,sid) => p.services.find(s=>s.id===sid);
+PROS.forEach(p=>{ p.rate = Math.min.apply(null, p.services.filter(s=>s.price>0).map(s=>s.price)); });
+
+/* --------------------------------- reviews ------------------------------ */
+/* [proId, author, initials, stars, date, text, proReply|''] */
+const REVIEWS = [
+ ['p1','Yaa Boakye','YB',5,'2026-07-28','Akosua rewrote my whole week of meals around what my mother already cooks. Six weeks in my fasting numbers are the best they have been since diagnosis.','Thank you Yaa — keep the Sunday prep going, it is doing the heavy lifting.'],
+ ['p1','Michael Owusu','MO',5,'2026-07-11','She read my lab results with me line by line instead of just handing me a leaflet. First time anyone has done that.',''],
+ ['p1','Comfort Adjei','CA',4,'2026-06-30','Very good plan and genuinely practical. Only note is that the first appointment ran slightly over and I had to rush off.','Fair point — I have moved first visits to a 75-minute slot because of feedback like this.'],
+ ['p1','Kwesi Danso','KD',5,'2026-06-14','My wife and I did the family session together. It ended an argument we had been having for two years about rice.',''],
+ ['p1','Linda Mensimah','LM',5,'2026-05-22','Lost 7kg without ever once feeling like I was on a diet. She is very calm about slip-ups.',''],
+ ['p1','Sarah Nkrumah','SN',4,'2026-04-19','Good, thorough, evidence-based. Online sessions work well.',''],
+ ['p1','Ebenezer Quaye','EQ',5,'2026-03-08','She coordinated directly with my endocrinologist. That never happens.','Always happy to — just ask and I will write to them.'],
+ ['p2','Selina Amoah','SA',5,'2026-08-01','I had not exercised in eleven years. Kwabena started me with a broomstick and I am now deadlifting my own bodyweight.',''],
+ ['p2','Frank Adjetey','FA',5,'2026-07-19','Comes to my building gym at 6am without fail. Never once cancelled.',''],
+ ['p2','Doris Ankomah','DA',4,'2026-06-25','Excellent trainer. The 8-session block is good value but book early, he fills up.',''],
+ ['p2','Nana Yaw Baffour','NB',5,'2026-05-30','He is the first trainer who asked about my knee before writing the programme rather than after I complained.',''],
+ ['p2','Gifty Sarpong','GS',5,'2026-04-27','Patient, funny, and does not shout. I dreaded it and now I look forward to it.',''],
+ ['p3','Priscilla Okine','PO',5,'2026-08-03','Twelve years of desk-hunched shoulders and Naa Adjeley has undone more in six weeks than physio did in six months.',''],
+ ['p3','Kojo Ampia-Addison','KA',5,'2026-07-15','Small class, very attentive. She noticed my knee was compensating before I did.','Glad it helped — keep the block under that knee in the seated poses.'],
+ ['p3','Adjoa Boateng','AB',5,'2026-06-21','The online restorative class is the only thing that gets me to sleep on Sunday nights.',''],
+ ['p3','Isaac Larbi','IL',4,'2026-05-16','Great teacher. Online class occasionally has audio lag on my connection.',''],
+ ['p3','Vera Mensah','VM',5,'2026-04-02','Deeply kind and completely unpushy. Nobody is compared to anybody.',''],
+ ['p4','Rita Agyeman','RA',5,'2026-07-24','Nine months post-partum and Selorm got me back to running without the leaking nobody warns you about.',''],
+ ['p4','Josephine Tetteh','JT',4,'2026-06-11','Very knowledgeable, studio is clean and quiet. Parking in Tema is the only annoyance.',''],
+ ['p4','Kwame Nti','KN',5,'2026-05-08','I came for core strength for running and got a lesson in breathing I did not know I needed.',''],
+ ['p5','Bernard Osei','BO',4,'2026-07-30','The assessment video he sent afterwards was genuinely useful. Routine takes eight minutes a day.',''],
+ ['p5','Akua Frimpong','AF',5,'2026-06-18','Ran the workshop for our whole office. Half the team have kept it up, which for our office is a miracle.',''],
+ ['p5','Ransford Mills','RM',4,'2026-05-02','Good coach. Sometimes slow to reply to messages.','Noted — I have added a fixed message window at 6pm daily.'],
+ ['p6','Nadia Hammond','NH',5,'2026-08-05','Efua trained me right through to 39 weeks and then straight back afterwards. She spoke to my midwife twice.',''],
+ ['p6','Charlotte Appiah','CA',5,'2026-07-02','Made me feel strong at a point when I felt like a passenger in my own body.',''],
+ ['p6','Georgina Asare','GA',5,'2026-05-27','The birth-prep sessions were worth every cedi. I actually knew what to do with my hips.',''],
+ ['p7','Solomon Adu','SA',5,'2026-08-04','Kojo does not lecture. He asked me what I was willing to change and we started with exactly that one thing.',''],
+ ['p7','Patience Owusu','PO',5,'2026-07-09','My HbA1c is down 1.4 points in eight months. My doctor asked what I had been doing.',''],
+ ['p7','Alfred Boakye','AB',4,'2026-06-05','Very good coach, very reliable. Online only, which did not suit me at first.',''],
+ ['p7','Mercy Danquah','MD',5,'2026-04-14','He included my husband in the sessions and that changed everything about how we shop.',''],
+ ['p8','Kojo Ampia-Addison','KA',4,'2026-06-28','The diary felt tedious for the first week and then suddenly the pattern was obvious. Sleeping through most nights now.','That first week is the tax everybody pays. Well done for sticking with it.'],
+ ['p8','Reginald Okyere','RO',5,'2026-06-02','Night shifts had wrecked me. Six weeks later I have a schedule that actually survives the rota.',''],
+ ['p8','Elizabeth Nartey','EN',4,'2026-04-30','Helpful and clear. She told me plainly that part of my issue needed a GP, which I respected.',''],
+ ['p9','Stephen Aidoo','SA',4,'2026-07-21','Understands offshore rotations, which no coach I have used before did.',''],
+ ['p9','Rebecca Yeboah','RY',4,'2026-05-19','Sensible advice, no gimmicks. Sessions are short and to the point.',''],
+ ['p10','Kojo Ampia-Addison','KA',5,'2026-07-31','Adwoa found the exact spot in my shoulder that three other people had missed. Slept like a stone that night.','Keep the doorway stretch going twice a day and it will hold.'],
+ ['p10','Naomi Ansah','NA',5,'2026-07-16','Home visits are immaculate. Table, linens, everything, and she leaves the room as she found it.',''],
+ ['p10','Prince Amoako','PA',5,'2026-06-27','Best sports massage in Accra, and I have tried most of them.',''],
+ ['p10','Hilda Mensah','HM',5,'2026-06-01','She talks you through exactly what she is doing and why. Never painful without warning.',''],
+ ['p10','Tony Bediako','TB',4,'2026-04-23','Excellent therapist, books out weeks ahead though.','I release new slots every Sunday evening if that helps.'],
+ ['p11','Emelia Quartey','EQ',5,'2026-07-26','I finished the eight weeks a sceptic and now I sit for twenty minutes every morning. I cannot fully explain it.',''],
+ ['p11','Douglas Ofosu','DO',5,'2026-06-09','Kofi is completely without woo. It is a course, with homework, and it works.',''],
+ ['p11','Angela Sackey','AS',4,'2026-04-08','Very good teacher. The all-day session is a serious time commitment — plan for it.',''],
+ ['p12','Belinda Asamoah','BA',5,'2026-08-06','Abena told me in session one that part of what I brought needed a psychologist, and helped me find one. Then we did excellent work on the rest.',''],
+ ['p12','Ken Amankwah','KA',5,'2026-07-13','Six sessions pulled me out of a burnout I had been in for two years.',''],
+ ['p12','Juliet Nyame','JN',5,'2026-06-16','Evening slots meant I did not have to explain anything to my employer.',''],
+ ['p12','Foster Agyapong','FA',4,'2026-05-11','Structured and useful. Homework between sessions is not optional, be warned.',''],
+ ['p13','Bridget Sowah','BS',5,'2026-08-02','Hannah was the calmest person in a very loud room. My husband says the same.',''],
+ ['p13','Akosua Brew','AB',5,'2026-06-23','She never once told me what to do. She made sure I understood every option offered to me.',''],
+ ['p13','Millicent Odoi','MO',5,'2026-05-05','The post-partum visits saved me. She made food and let me sleep.',''],
+ ['p14','Faustina Gyamfi','FG',5,'2026-07-20','An hour where nobody can reach me. Yaa is worth it for that alone, and my feet feel new.',''],
+ ['p14','Samuel Antwi','SA',4,'2026-05-25','Lovely, relaxing, professional. She is clear that it is relaxation, not treatment, which I appreciated.',''],
+ ['p15','Nana Ama Addo','NA',5,'2026-08-07','Grace has been with my mother for fourteen months. The day-book means I know exactly how every day went even from Kumasi.',''],
+ ['p15','Kojo Ampia-Addison','KA',5,'2026-07-05','We booked Grace for my father after his fall. Calm, unhurried, and he actually likes her, which is not nothing.','He is very good company. Tell him I said the stairs are still off-limits.'],
+ ['p15','Theresa Boadi','TB',5,'2026-06-13','Sixteen years of experience shows in ten minutes. She anticipated things we had not thought about.',''],
+ ['p15','Ivy Asamoah','IA',5,'2026-05-18','Overnight cover for three weeks while I travelled. Not one problem.',''],
+ ['p16','Rosemary Nkansah','RN',5,'2026-07-27','Emmanuel records my father’s blood pressure every visit and it goes straight to the doctor. Very organised.',''],
+ ['p16','Peter Kwarteng','PK',4,'2026-06-08','Reliable and kind. Half-days work well for us.',''],
+ ['p16','Dora Amissah','DA',5,'2026-04-21','He noticed my mother’s ankles swelling before anyone else did. That visit probably mattered a lot.',''],
+ ['p17','Cecilia Baidoo','CB',5,'2026-07-23','Mavis collected me from hospital and had the house ready. The first week would have been a disaster without her.',''],
+ ['p17','Andrew Kissi','AK',4,'2026-05-29','Very competent and watchful. Booked her for six days after my knee replacement.',''],
+ ['p18','Comfort Nyame','CN',4,'2026-07-18','Daniel taught my brother and me how to transfer our father properly. My back thanks him.',''],
+ ['p18','Eric Tawiah','ET',4,'2026-06-04','Good with the hoist and very safety-conscious. Outings have given my mother her weekends back.','']
+].map((r,i)=>({id:'r'+(i+1), pro:r[0], author:r[1], ini:r[2], stars:r[3], date:r[4], text:r[5], reply:r[6]}));
+
+/* ratings are COMPUTED from the reviews above — they cannot drift */
+PROS.forEach(p=>{
+  const rs = REVIEWS.filter(r=>r.pro===p.id);
+  p.reviewCount = rs.length;
+  p.rating = rs.length ? Math.round(avg(rs.map(r=>r.stars))*10)/10 : 0;
+});
+
+/* ------------------------- availability (deterministic) ----------------- */
+/* every professional gets a repeatable 21-day slot map generated from a seed */
+const SLOT_TIMES = ['07:00','08:30','10:00','11:30','13:00','14:30','16:00','17:30','19:00'];
+function availabilityFor(proId){
+  const seed = proId.split('').reduce((a,c)=>a+c.charCodeAt(0),17) * 7919;
+  const rnd = LCG(seed); const out = [];
+  for(let i=0;i<21;i++){
+    const d = addDays(TODAY,i); const dow = d.getDay();
+    const open = dow===0 ? rnd()<.25 : (dow===6 ? rnd()<.7 : rnd()<.94);
+    const times = open ? SLOT_TIMES.filter(()=> rnd()<.55) : [];
+    out.push({date:iso(d), dow, times});
+  }
+  if(!out.some(x=>x.times.length)) out[1].times = ['10:00','14:30'];
+  return out;
+}
+const AVAIL = {}; PROS.forEach(p=> AVAIL[p.id] = availabilityFor(p.id));
+function nextAvailable(proId){
+  const a = AVAIL[proId].find(x=>x.times.length);
+  return a ? {date:a.date, time:a.times[0]} : null;
+}
+
+/* ------------------------------ the customer ---------------------------- */
+const ME = { name:'Kojo Ampia-Addison', ini:'KA', email:'kojo.ampia@abofonsa.demo', phone:'+233 24 118 6042',
+  city:'Accra', address:'14 Nortei Ababio Loop, Airport Residential, Accra', dob:'1962-11-04',
+  member:'BridgeCare Plus — renews 1 Feb 2027', notes:'Type-2 diabetes (2019). Monitored prostate. Fall in May 2026 — mobility improving.' };
+
+/* customer bookings — [id, pro, service, date, time, mode, status, price, note] */
+let BOOKINGS = [
+  {id:'b1', pro:'p1',  svc:'s1b', date:'2026-08-12', time:'10:00', mode:'Online',     status:'confirmed', price:150, note:'Bring the last two weeks of glucose readings.'},
+  {id:'b2', pro:'p10', svc:'s10c',date:'2026-08-14', time:'17:30', mode:'Home visit', status:'confirmed', price:330, note:'Right shoulder again.'},
+  {id:'b3', pro:'p3',  svc:'s3a', date:'2026-08-18', time:'08:30', mode:'In person',  status:'pending',   price:200, note:'Asked for the block under the left knee.'},
+  {id:'b4', pro:'p15', svc:'s15a',date:'2026-08-20', time:'08:30', mode:'Home visit', status:'confirmed', price:280, note:'For my father — Thursday cover.'},
+  {id:'b5', pro:'p5',  svc:'s5a', date:'2026-08-25', time:'16:00', mode:'Online',     status:'pending',   price:190, note:''},
+  {id:'b6', pro:'p10', svc:'s10a',date:'2026-07-31', time:'16:00', mode:'In person',  status:'completed', price:260, note:'', reviewed:true},
+  {id:'b7', pro:'p3',  svc:'s3a', date:'2026-07-15', time:'08:30', mode:'In person',  status:'completed', price:200, note:'', reviewed:true},
+  {id:'b8', pro:'p15', svc:'s15b',date:'2026-07-05', time:'08:00', mode:'Home visit', status:'completed', price:520, note:'', reviewed:true},
+  {id:'b9', pro:'p8',  svc:'s8c', date:'2026-06-28', time:'19:00', mode:'Online',     status:'completed', price:820, note:'', reviewed:true},
+  {id:'b10',pro:'p1',  svc:'s1a', date:'2026-06-16', time:'11:30', mode:'In person',  status:'completed', price:280, note:'', reviewed:false},
+  {id:'b11',pro:'p2',  svc:'s2b', date:'2026-06-09', time:'07:00', mode:'Home visit', status:'completed', price:290, note:'', reviewed:false},
+  {id:'b12',pro:'p14', svc:'s14a',date:'2026-05-30', time:'14:30', mode:'In person',  status:'cancelled', price:200, note:'Cancelled after the fall.'},
+  {id:'b13',pro:'p16', svc:'s16c',date:'2026-05-21', time:'10:00', mode:'Home visit', status:'completed', price:220, note:'Escort to the fracture clinic.', reviewed:false}
+];
+let FAVOURITES = ['p1','p10','p15','p3'];
+
+/* ------------------------------ conversations --------------------------- */
+let THREADS = [
+  {id:'t1', pro:'p1', unread:1, msgs:[
+    {from:'them', t:'2026-08-08 09:12', x:'Morning Kojo — ahead of Wednesday, could you send the glucose log? Even a photo of the notebook is fine.'},
+    {from:'me',   t:'2026-08-08 09:40', x:'Will do. The evening readings are still high on the days I eat late.'},
+    {from:'them', t:'2026-08-08 10:02', x:'That is useful in itself. Let us look at the timing rather than the food on Wednesday.'},
+    {from:'them', t:'2026-08-10 07:31', x:'Also — your last HbA1c came through from the clinic. It is down. We will go through it properly.'}
+  ]},
+  {id:'t2', pro:'p10', unread:0, msgs:[
+    {from:'me',   t:'2026-08-06 18:22', x:'Shoulder is tight again. Any chance of a home visit on the 14th?'},
+    {from:'them', t:'2026-08-06 18:39', x:'17:30 on the 14th works. I will bring the table — same room as last time?'},
+    {from:'me',   t:'2026-08-06 18:44', x:'Same room. Thank you.'},
+    {from:'them', t:'2026-08-06 18:45', x:'Booked. Keep the doorway stretch going until then.'}
+  ]},
+  {id:'t3', pro:'p15', unread:2, msgs:[
+    {from:'them', t:'2026-08-09 16:05', x:'Day-book for Thursday is written up. He walked to the gate and back twice, no wobble.'},
+    {from:'them', t:'2026-08-09 16:06', x:'He has asked me twice about the stairs. I have held the line.'},
+    {from:'me',   t:'2026-08-09 18:11', x:'Thank you Grace. Hold it a while longer.'},
+    {from:'them', t:'2026-08-10 07:58', x:'Understood. I can add a second visit on Mondays if that would help while he is still unsteady.'},
+    {from:'them', t:'2026-08-10 07:59', x:'No rush — let me know by Friday.'}
+  ]},
+  {id:'t4', pro:'p3', unread:0, msgs:[
+    {from:'me',   t:'2026-08-05 12:40', x:'Requested the 18th at 08:30. Is the knee block still on hand?'},
+    {from:'them', t:'2026-08-05 13:15', x:'It is. I will confirm the slot once I have moved a group class — by Tuesday at the latest.'}
+  ]}
+];
+
+/* ------------------------- professional side (as p1) -------------------- */
+const CLIENTS = ['Yaa Boakye','Michael Owusu','Comfort Adjei','Kwesi Danso','Linda Mensimah','Sarah Nkrumah',
+  'Ebenezer Quaye','Kojo Ampia-Addison','Doris Ankomah','Nana Yaw Baffour','Gifty Sarpong','Isaac Larbi',
+  'Vera Mensah','Bernard Osei','Akua Frimpong','Patience Owusu','Solomon Adu','Mercy Danquah','Naomi Ansah','Hilda Mensah'];
+const initialsOf = n => n.split(' ').filter(Boolean).slice(0,2).map(w=>w[0]).join('').toUpperCase();
+
+/* Six months of completed work, generated once from a fixed seed so the
+   dashboard figures, the charts and the payout table always agree.        */
+const ME_PRO = PROS[0];
+const PRO_HISTORY = (function(){
+  const rnd = LCG(20260810); const out = []; let n = 0;
+  const svcs = ME_PRO.services;
+  for(let back=182; back>=1; back--){
+    const d = addDays(TODAY,-back); const dow = d.getDay();
+    if(dow===0) continue;
+    const load = dow===6 ? 1 : 3;
+    for(let k=0;k<load;k++){
+      if(rnd() > (dow===6?.42:.62)) continue;
+      const s = svcs[Math.floor(rnd()*svcs.length)];
+      const client = CLIENTS[Math.floor(rnd()*CLIENTS.length)];
+      const mode = ME_PRO.modes[Math.floor(rnd()*ME_PRO.modes.length)];
+      out.push({ id:'h'+(++n), date:iso(d), time:SLOT_TIMES[Math.floor(rnd()*SLOT_TIMES.length)],
+        client, ini:initialsOf(client), svc:s.id, price:s.price, mode, status:'completed' });
+    }
+  }
+  return out.sort((a,b)=> a.date<b.date?1:-1);
+})();
+
+/* live pipeline — hand-authored so the narrative reads properly */
+let PRO_REQUESTS = [
+  {id:'q1', client:'Kojo Ampia-Addison', ini:'KA', svc:'s1b', date:'2026-08-12', time:'10:00', mode:'Online',
+   note:'Follow-up. Will send the glucose log beforehand.', made:'2026-08-08', status:'pending'},
+  {id:'q2', client:'Abigail Nsiah', ini:'AN', svc:'s1a', date:'2026-08-13', time:'14:30', mode:'In person',
+   note:'Newly diagnosed pre-diabetes. Referred by Dr Adom at Nyaho.', made:'2026-08-09', status:'pending'},
+  {id:'q3', client:'Kwesi Danso', ini:'KD', svc:'s1c', date:'2026-08-15', time:'11:30', mode:'Home visit',
+   note:'Second family session — my mother will join this time.', made:'2026-08-09', status:'pending'},
+  {id:'q4', client:'Theresa Boadi', ini:'TB', svc:'s1d', date:'2026-08-17', time:'08:30', mode:'Online',
+   note:'Would like to start the monthly block.', made:'2026-08-10', status:'pending'},
+  {id:'q5', client:'Samuel Antwi', ini:'SA', svc:'s1a', date:'2026-08-11', time:'07:00', mode:'In person',
+   note:'Asked for the earliest slot available.', made:'2026-08-10', status:'pending'}
+];
+let PRO_SCHEDULE = [
+  {id:'a1', client:'Yaa Boakye',        ini:'YB', svc:'s1b', date:'2026-08-10', time:'14:30', mode:'Online',     status:'confirmed', note:'Week 6 review.'},
+  {id:'a2', client:'Michael Owusu',     ini:'MO', svc:'s1b', date:'2026-08-10', time:'16:00', mode:'In person',  status:'confirmed', note:'Bringing new labs.'},
+  {id:'a3', client:'Linda Mensimah',    ini:'LM', svc:'s1d', date:'2026-08-11', time:'10:00', mode:'Online',     status:'confirmed', note:'Block session 2 of 4.'},
+  {id:'a4', client:'Patience Owusu',    ini:'PO', svc:'s1b', date:'2026-08-11', time:'13:00', mode:'Online',     status:'confirmed', note:''},
+  {id:'a5', client:'Comfort Adjei',     ini:'CA', svc:'s1a', date:'2026-08-12', time:'11:30', mode:'In person',  status:'confirmed', note:'First visit — 75 min slot.'},
+  {id:'a6', client:'Ebenezer Quaye',    ini:'EQ', svc:'s1b', date:'2026-08-13', time:'08:30', mode:'Online',     status:'confirmed', note:'Copy notes to endocrinologist.'},
+  {id:'a7', client:'Mercy Danquah',     ini:'MD', svc:'s1c', date:'2026-08-14', time:'16:00', mode:'Home visit', status:'confirmed', note:'Husband attending.'},
+  {id:'a8', client:'Sarah Nkrumah',     ini:'SN', svc:'s1b', date:'2026-08-14', time:'17:30', mode:'Online',     status:'confirmed', note:''},
+  {id:'a9', client:'Gifty Sarpong',     ini:'GS', svc:'s1a', date:'2026-08-17', time:'10:00', mode:'In person',  status:'confirmed', note:'Rescheduled from 4 Aug.'},
+  {id:'a10',client:'Nana Yaw Baffour',  ini:'NB', svc:'s1b', date:'2026-08-18', time:'13:00', mode:'Online',     status:'confirmed', note:''},
+  {id:'a11',client:'Vera Mensah',       ini:'VM', svc:'s1d', date:'2026-08-19', time:'08:30', mode:'Online',     status:'confirmed', note:'Block session 3 of 4.'},
+  {id:'a12',client:'Isaac Larbi',       ini:'IL', svc:'s1b', date:'2026-08-20', time:'16:00', mode:'In person',  status:'confirmed', note:''}
+];
+let PRO_SERVICES_ACTIVE = {s1a:true, s1b:true, s1c:true, s1d:true};
+const COMMISSION = 0.12;   // platform brokerage fee
+const PAYOUT_LAG = 3;      // days
+
+let NOTIFICATIONS = [
+  {id:'n1', icon:'📅', t:'Booking confirmed', x:'Adwoa Serwaa confirmed your home visit on Fri 14 Aug at 17:30.', when:'2026-08-09', read:false},
+  {id:'n2', icon:'💬', t:'New message', x:'Grace Amponsah sent you two messages about Thursday cover.', when:'2026-08-10', read:false},
+  {id:'n3', icon:'⭐', t:'Review requested', x:'How was your nutrition assessment with Akosua Mensah on 16 Jun?', when:'2026-08-07', read:false},
+  {id:'n4', icon:'🕒', t:'Awaiting confirmation', x:'Naa Adjeley Quaye has not yet confirmed 18 Aug at 08:30.', when:'2026-08-06', read:true}
+];
+</script>
+<script>
+/* ==========================================================================
+   STATE · ROUTER · SHELL · SHARED COMPONENTS
+   ========================================================================== */
+const state = {
+  role:'customer',
+  route:'#/discover',
+  filters:{ cats:[], subs:[], modes:[], cities:[], maxPrice:3500, minRating:0, verifiedOnly:false, q:'' },
+  sort:'relevance',
+  browsePage:1,
+  bookingsTab:'upcoming',
+  proReviewPage:1,
+  threadId:'t1',
+  proTab:'overview',
+  booking:null,           // in-flight booking wizard
+  chartMode:{},           // per-chart "chart | table"
+  toastSeq:0
+};
+
+/* --------------------------------- toasts ------------------------------- */
+function toast(msg, kind){
+  const el = document.createElement('div');
+  el.className = 'toast' + (kind? ' '+kind : '');
+  el.innerHTML = '<span class="i"></span><span>'+esc(msg)+'</span>';
+  $('#toasts').appendChild(el);
+  setTimeout(()=>{ el.style.transition='opacity .3s, transform .3s'; el.style.opacity='0'; el.style.transform='translateY(8px)';
+    setTimeout(()=>el.remove(),320); }, 3400);
+}
+
+/* --------------------------------- modals ------------------------------- */
+let modalStack = [];
+function modal(html, opts){
+  opts = opts||{};
+  const o = document.createElement('div');
+  o.className = 'overlay';
+  o.innerHTML = '<div class="modal '+(opts.size||'')+'" role="dialog" aria-modal="true">'+html+'</div>';
+  o.addEventListener('mousedown', e=>{ if(e.target===o) closeModal(); });
+  $('#modalRoot').appendChild(o); modalStack.push(o);
+  document.body.style.overflow='hidden';
+  return o;
+}
+function closeModal(){
+  const o = modalStack.pop(); if(o) o.remove();
+  if(!modalStack.length) document.body.style.overflow='';
+}
+function closeAllModals(){ while(modalStack.length) closeModal(); }
+document.addEventListener('keydown', e=>{ if(e.key==='Escape' && modalStack.length) closeModal(); });
+
+/* -------------------------------- fragments ----------------------------- */
+function starsHTML(n, showN){
+  const full = Math.round(n);
+  let s = '<span class="stars"><span class="s">';
+  for(let i=1;i<=5;i++) s += (i<=full? '★':'☆');
+  s += '</span>' + (showN===false? '' : ' '+n.toFixed(1)) + '</span>';
+  return s;
+}
+function avatarHTML(ini, colors, size, verified){
+  return '<div class="avatar '+(size||'m')+'" style="background:linear-gradient(150deg,'+colors[0]+','+colors[1]+')">'+esc(ini)+
+    (verified? '<span class="vf" title="Identity &amp; credentials verified">✓</span>':'')+'</div>';
+}
+function modePill(m){
+  const map = {'Online':'info','In person':'', 'Home visit':'gold'};
+  const ic  = {'Online':'💻','In person':'📍','Home visit':'🏠'};
+  return '<span class="pill '+(map[m]||'')+'">'+ic[m]+' '+esc(m)+'</span>';
+}
+function statusPill(s){
+  const map = {confirmed:['ok','Confirmed'], pending:['warn','Awaiting confirmation'], completed:['','Completed'],
+               cancelled:['bad','Cancelled'], declined:['bad','Declined'], accepted:['ok','Accepted']};
+  const v = map[s]||['',s];
+  return '<span class="pill '+v[0]+'">'+esc(v[1])+'</span>';
+}
+function isFav(id){ return FAVOURITES.indexOf(id)>=0; }
+function toggleFav(id, ev){
+  if(ev){ ev.stopPropagation(); }
+  const i = FAVOURITES.indexOf(id);
+  if(i>=0){ FAVOURITES.splice(i,1); toast(proById(id).name+' removed from saved'); }
+  else { FAVOURITES.push(id); toast(proById(id).name+' saved'); }
+  render();
+}
+
+function proCardHTML(p){
+  const na = nextAvailable(p.id);
+  return '<article class="card hov procard" onclick="go(\'#/pro/'+p.id+'\')">'
+   + '<div class="top">'+avatarHTML(p.ini,p.c,'m',p.verified)
+   + '<div style="min-width:0;flex:1">'
+     + '<div class="row" style="justify-content:space-between;align-items:flex-start;gap:8px">'
+       + '<div style="min-width:0"><h4 style="font-size:15.5px">'+esc(p.name)+'</h4>'
+       + '<div class="small muted" style="line-height:1.35">'+esc(p.sub)+' · '+esc(p.city)+'</div></div>'
+       + '<button class="fav '+(isFav(p.id)?'on':'')+'" onclick="toggleFav(\''+p.id+'\',event)" title="Save">'+(isFav(p.id)?'♥':'♡')+'</button>'
+     + '</div>'
+     + '<div class="row" style="margin-top:6px;gap:8px">'+starsHTML(p.rating)+'<span class="tiny muted">('+p.reviewCount+')</span></div>'
+   + '</div></div>'
+   + '<div class="body"><p class="small" style="color:var(--ink-2);margin:0">'+esc(p.title)+'</p>'
+   + '<div class="tags">'+p.modes.map(modePill).join('')+(p.verified?'<span class="pill ok">✓ Verified</span>':'')+'</div></div>'
+   + '<div class="foot"><div><span class="rate">'+money(p.rate)+'</span> <small class="muted">from / session</small></div>'
+   + '<div class="tiny muted nowrap">'+(na? 'Next: '+(daysBetween(iso(TODAY),na.date)<2? relD(na.date)+' '+na.time : fmtDS(na.date)) : 'Enquire')+'</div></div>'
+   + '</article>';
+}
+
+/* --------------------------------- charts ------------------------------- */
+/* hand-drawn on canvas; every series carries a direct label and a table view */
+function chartCard(id, title, sub, drawFn, tableFn, legend){
+  const mode = state.chartMode[id]||'chart';
+  return '<div class="card pad">'
+    + '<div class="charthead"><div><h3>'+esc(title)+'</h3><div class="tiny muted">'+esc(sub)+'</div></div>'
+    + '<button class="tgl" onclick="state.chartMode[\''+id+'\']=\''+(mode==='chart'?'table':'chart')+'\';render()">'
+    + (mode==='chart'?'Table view':'Chart view')+'</button></div>'
+    + (mode==='chart'
+        ? '<canvas id="'+id+'" height="230" style="width:100%;height:230px;margin-top:10px"></canvas>'+(legend||'')
+        : '<div style="margin-top:12px">'+tableFn()+'</div>')
+    + '</div>';
+}
+const pendingCharts = [];
+function queueChart(id, fn){ pendingCharts.push({id, fn}); }
+function flushCharts(){
+  while(pendingCharts.length){
+    const c = pendingCharts.shift();
+    const cv = document.getElementById(c.id);
+    if(cv) try{ c.fn(cv); }catch(e){ console.warn('chart',c.id,e); }
+  }
+}
+function prep(cv){
+  const dpr = window.devicePixelRatio||1;
+  const w = cv.clientWidth||600, h = cv.clientHeight||230;
+  cv.width = w*dpr; cv.height = h*dpr;
+  const g = cv.getContext('2d'); g.scale(dpr,dpr);
+  g.clearRect(0,0,w,h);
+  g.font = '600 11px '+getComputedStyle(document.body).fontFamily;
+  return {g,w,h};
+}
+function barChart(cv, labels, values, color, fmt){
+  const {g,w,h} = prep(cv);
+  const padL=44,padR=12,padT=22,padB=28;
+  const max = Math.max.apply(null, values.concat([1]))*1.15;
+  const iw = w-padL-padR, ih = h-padT-padB;
+  g.strokeStyle='#EDEAE2'; g.fillStyle='#6B7A89'; g.textAlign='right';
+  for(let i=0;i<=4;i++){
+    const y = padT + ih - (ih*i/4);
+    g.beginPath(); g.moveTo(padL,y); g.lineTo(w-padR,y); g.stroke();
+    g.fillText(fmt? fmt(max*i/4,true) : Math.round(max*i/4), padL-8, y+4);
+  }
+  const bw = iw/values.length;
+  values.forEach((v,i)=>{
+    const bh = ih*(v/max), x = padL+bw*i+bw*.20, y = padT+ih-bh;
+    g.fillStyle=color; g.beginPath();
+    const r=4, ww=bw*.6;
+    g.moveTo(x,y+bh); g.lineTo(x,y+r); g.quadraticCurveTo(x,y,x+r,y);
+    g.lineTo(x+ww-r,y); g.quadraticCurveTo(x+ww,y,x+ww,y+r); g.lineTo(x+ww,y+bh); g.closePath(); g.fill();
+    g.fillStyle='#41505F'; g.textAlign='center';
+    g.fillText(fmt? fmt(v) : v, x+ww/2, y-6);
+    g.fillStyle='#6B7A89'; g.fillText(labels[i], x+ww/2, h-9);
+  });
+}
+function lineChart(cv, labels, series, fmt){
+  const {g,w,h} = prep(cv);
+  const padL=44,padR=14,padT=22,padB=28;
+  const all = series.reduce((a,s)=>a.concat(s.v),[]);
+  const max = Math.max.apply(null, all.concat([1]))*1.2;
+  const iw=w-padL-padR, ih=h-padT-padB;
+  g.strokeStyle='#EDEAE2'; g.fillStyle='#6B7A89'; g.textAlign='right';
+  for(let i=0;i<=4;i++){ const y=padT+ih-(ih*i/4);
+    g.beginPath(); g.moveTo(padL,y); g.lineTo(w-padR,y); g.stroke();
+    g.fillText(fmt? fmt(max*i/4,true):Math.round(max*i/4), padL-8, y+4); }
+  const X = i => padL + (iw*(labels.length===1?0.5:i/(labels.length-1)));
+  const Y = v => padT + ih - ih*(v/max);
+  series.forEach(s=>{
+    g.strokeStyle=s.c; g.lineWidth=2.4; g.beginPath();
+    s.v.forEach((v,i)=> i? g.lineTo(X(i),Y(v)) : g.moveTo(X(i),Y(v)));
+    g.stroke();
+    g.fillStyle=s.c;
+    s.v.forEach((v,i)=>{ g.beginPath(); g.arc(X(i),Y(v),3.4,0,6.3); g.fill(); });
+  });
+  /* direct end-labels, pushed apart so converging series stay legible */
+  const li = labels.length-1;
+  const marks = series.map(s=>({s, y:Y(s.v[li])-9})).sort((a,b)=>a.y-b.y);
+  for(let i=1;i<marks.length;i++) if(marks[i].y - marks[i-1].y < 15) marks[i].y = marks[i-1].y + 15;
+  g.textAlign='right'; g.font='800 11px '+getComputedStyle(document.body).fontFamily;
+  marks.forEach(m=>{
+    const y = Math.max(padT+9, Math.min(h-padB-2, m.y));
+    g.fillStyle=m.s.c;
+    g.fillText(m.s.n+' '+(fmt?fmt(m.s.v[li]):m.s.v[li]), X(li), y);
+  });
+  g.font='600 11px '+getComputedStyle(document.body).fontFamily;
+  g.fillStyle='#6B7A89'; g.textAlign='center';
+  labels.forEach((l,i)=>{ if(labels.length>8 && i%2) return; g.fillText(l, X(i), h-9); });
+}
+function donutChart(cv, items){
+  const {g,w,h} = prep(cv);
+  const cx = Math.min(120, w*.28), cy=h/2, R=Math.min(cy-12,84), r=R*.6;
+  const tot = sum(items.map(i=>i.v))||1;
+  let a = -Math.PI/2;
+  items.forEach(it=>{
+    const s = (it.v/tot)*Math.PI*2;
+    g.beginPath(); g.moveTo(cx,cy); g.arc(cx,cy,R,a,a+s); g.closePath();
+    g.fillStyle=it.c; g.fill();
+    a+=s;
+  });
+  g.globalCompositeOperation='destination-out';
+  g.beginPath(); g.arc(cx,cy,r,0,6.3); g.fill();
+  g.globalCompositeOperation='source-over';
+  g.fillStyle='#08213D'; g.textAlign='center'; g.font='800 19px '+getComputedStyle(document.body).fontFamily;
+  g.fillText(tot, cx, cy+3);
+  g.font='700 9.5px '+getComputedStyle(document.body).fontFamily; g.fillStyle='#6B7A89';
+  g.fillText('TOTAL', cx, cy+17);
+  /* direct labels to the right */
+  g.textAlign='left'; g.font='600 12px '+getComputedStyle(document.body).fontFamily;
+  const lx = cx+R+26; let ly = cy - (items.length*20)/2 + 12;
+  items.forEach(it=>{
+    g.fillStyle=it.c; g.fillRect(lx,ly-9,10,10);
+    g.fillStyle='#41505F';
+    const pct = Math.round(it.v/tot*100);
+    g.fillText(it.n+' — '+it.v+' ('+pct+'%)', lx+16, ly);
+    ly+=20;
+  });
+}
+function sparkline(cv, values, color){
+  const {g,w,h} = prep(cv);
+  const max=Math.max.apply(null,values), min=Math.min.apply(null,values), rng=(max-min)||1;
+  g.strokeStyle=color; g.lineWidth=1.8; g.beginPath();
+  values.forEach((v,i)=>{ const x=(w-4)*(i/(values.length-1))+2, y=h-4-((v-min)/rng)*(h-10);
+    i?g.lineTo(x,y):g.moveTo(x,y); });
+  g.stroke();
+  g.lineTo(w,h); g.lineTo(0,h); g.closePath();
+  g.globalAlpha=.10; g.fillStyle=color; g.fill(); g.globalAlpha=1;
+}
+
+/* --------------------------------- router ------------------------------- */
+function go(route){
+  if(route === state.route){ render(); return; }
+  state.route = route;
+  if(location.hash !== route) location.hash = route;
+  window.scrollTo(0,0);
+  render();
+}
+window.addEventListener('hashchange', ()=>{
+  if(location.hash && location.hash !== state.route){ state.route = location.hash; window.scrollTo(0,0); render(); }
+});
+function setRole(r){
+  state.role = r;
+  state.route = r==='pro' ? '#/pro/overview' : '#/discover';
+  location.hash = state.route;
+  window.scrollTo(0,0);
+  toast(r==='pro' ? 'Switched to your professional workspace — you are Akosua Mensah' : 'Switched to the customer marketplace — you are Kojo Ampia-Addison');
+  render();
+}
+function topSearchGo(){
+  const v = $('#topSearch').value.trim();
+  state.filters.q = v; state.browsePage = 1;
+  if(state.role==='pro') setRole('customer');
+  go('#/browse');
+}
+
+/* ------------------------------ nav definitions ------------------------- */
+const CUST_NAV = [
+  {r:'#/discover', l:'Discover', ic:'🔎'},
+  {r:'#/browse',   l:'Browse',   ic:'🗂️'},
+  {r:'#/bookings', l:'Bookings', ic:'📅'},
+  {r:'#/messages', l:'Messages', ic:'💬'},
+  {r:'#/saved',    l:'Saved',    ic:'♥'}
+];
+const PRO_NAV = [
+  {r:'#/pro/overview', l:'Overview',  ic:'📊'},
+  {r:'#/pro/requests', l:'Requests',  ic:'📥', badge:()=>PRO_REQUESTS.filter(r=>r.status==='pending').length},
+  {r:'#/pro/schedule', l:'Schedule',  ic:'📅'},
+  {r:'#/pro/services', l:'Services',  ic:'🏷️'},
+  {r:'#/pro/earnings', l:'Earnings',  ic:'💰'},
+  {r:'#/pro/reviews',  l:'Reviews',   ic:'⭐'},
+  {r:'#/pro/profile',  l:'Profile',   ic:'👤'}
+];
+function navFor(){ return state.role==='pro' ? PRO_NAV : CUST_NAV; }
+function routeMatches(nav){
+  return state.route===nav.r || state.route.indexOf(nav.r+'/')===0;
+}
+function renderNav(){
+  $('#rsC').className = state.role==='customer'?'on':'';
+  $('#rsP').className = state.role==='pro'?'on':'';
+  $('#topAvatar').textContent = state.role==='pro' ? ME_PRO.ini : ME.ini;
+  const items = navFor();
+  $('#tnav').innerHTML = state.role==='pro' ? '' : items.map(n=>
+    '<a href="javascript:void(0)" class="'+(routeMatches(n)?'on':'')+'" onclick="go(\''+n.r+'\')">'+esc(n.l)+'</a>').join('');
+  $('#tabbar').innerHTML = items.slice(0,5).map(n=>
+    '<a href="javascript:void(0)" class="'+(routeMatches(n)?'on':'')+'" onclick="go(\''+n.r+'\')"><span class="ic">'+n.ic+'</span>'+esc(n.l)+'</a>').join('');
+  const unread = NOTIFICATIONS.filter(n=>!n.read).length;
+  $('#notifDot').style.display = unread? 'block':'none';
+}
+function openMobileNav(){
+  const items = navFor();
+  modal('<div class="modal-h"><h3>Menu</h3><button class="x" onclick="closeModal()">×</button></div>'
+   + '<div class="modal-b"><div class="stack" style="gap:4px">'
+   + items.map(n=>'<button class="btn btn-o" style="justify-content:flex-start" onclick="closeModal();go(\''+n.r+'\')">'+n.ic+' '+esc(n.l)+'</button>').join('')
+   + '</div><div style="margin-top:16px"><div class="micro" style="margin-bottom:8px">Switch role</div>'
+   + '<button class="btn btn-p btn-blk" onclick="closeModal();setRole(\''+(state.role==='pro'?'customer':'pro')+'\')">'
+   + (state.role==='pro'?'Go to the customer marketplace':'Go to my professional workspace')+'</button></div></div>', {size:'narrow'});
+}
+function openNotifications(){
+  modal('<div class="modal-h"><h3>Notifications</h3><button class="x" onclick="closeModal()">×</button></div>'
+  + '<div class="modal-b">'+ NOTIFICATIONS.map(n=>
+      '<div class="lrow"><div style="font-size:19px">'+n.icon+'</div><div style="flex:1">'
+      + '<b style="font-size:13.5px">'+esc(n.t)+'</b> '+(n.read?'':'<span class="pill warn">New</span>')
+      + '<div class="small muted">'+esc(n.x)+'</div></div>'
+      + '<div class="tiny muted nowrap">'+relD(n.when)+'</div></div>').join('')
+  + '</div><div class="modal-f"><button class="btn btn-o" onclick="NOTIFICATIONS.forEach(n=>n.read=true);closeModal();render();toast(\'All notifications marked read\')">Mark all read</button>'
+  + '<button class="btn btn-p" onclick="closeModal()">Done</button></div>');
+}
+function openAccount(){
+  if(state.role==='pro'){ go('#/pro/profile'); return; }
+  go('#/account');
+}
+</script>
+<script>
+/* ==========================================================================
+   CUSTOMER MARKETPLACE VIEWS
+   ========================================================================== */
+
+/* ------------------------------ search engine --------------------------- */
+function matches(p){
+  const f = state.filters;
+  if(f.cats.length && f.cats.indexOf(p.cat)<0) return false;
+  if(f.subs.length && f.subs.indexOf(p.sub)<0) return false;
+  if(f.modes.length && !f.modes.some(m=>p.modes.indexOf(m)>=0)) return false;
+  if(f.cities.length && f.cities.indexOf(p.city)<0) return false;
+  if(p.rate > f.maxPrice) return false;
+  if(p.rating < f.minRating) return false;
+  if(f.verifiedOnly && !p.verified) return false;
+  if(f.q){
+    const q = f.q.toLowerCase();
+    const hay = [p.name,p.title,p.sub,p.city,p.bio,p.highlights.join(' '),p.services.map(s=>s.name).join(' '),catOf(p.cat).name].join(' ').toLowerCase();
+    if(hay.indexOf(q)<0) return false;
+  }
+  return true;
+}
+function sorted(list){
+  const l = list.slice();
+  const na = p => { const a=nextAvailable(p.id); return a? daysBetween(iso(TODAY),a.date) : 99; };
+  if(state.sort==='rating')     l.sort((a,b)=> b.rating-a.rating || b.reviewCount-a.reviewCount);
+  else if(state.sort==='price') l.sort((a,b)=> a.rate-b.rate);
+  else if(state.sort==='priced')l.sort((a,b)=> b.rate-a.rate);
+  else if(state.sort==='soon')  l.sort((a,b)=> na(a)-na(b));
+  else if(state.sort==='reviews')l.sort((a,b)=> b.reviewCount-a.reviewCount);
+  else l.sort((a,b)=> (b.rating*Math.log(1+b.reviewCount)) - (a.rating*Math.log(1+a.reviewCount)));
+  return l;
+}
+function activeChips(){
+  const f = state.filters, out=[];
+  f.cats.forEach(c=> out.push(['cat',c,catOf(c).name]));
+  f.subs.forEach(s=> out.push(['sub',s,s]));
+  f.modes.forEach(m=> out.push(['mode',m,m]));
+  f.cities.forEach(c=> out.push(['city',c,c]));
+  if(f.verifiedOnly) out.push(['verified','','Verified only']);
+  if(f.minRating>0) out.push(['rating','',f.minRating+'★ and up']);
+  if(f.maxPrice<3500) out.push(['price','','Up to '+money(f.maxPrice)]);
+  if(f.q) out.push(['q','','“'+f.q+'”']);
+  return out;
+}
+function dropChip(kind,val){
+  const f = state.filters;
+  if(kind==='cat') f.cats = f.cats.filter(x=>x!==val);
+  if(kind==='sub') f.subs = f.subs.filter(x=>x!==val);
+  if(kind==='mode') f.modes = f.modes.filter(x=>x!==val);
+  if(kind==='city') f.cities = f.cities.filter(x=>x!==val);
+  if(kind==='verified') f.verifiedOnly=false;
+  if(kind==='rating') f.minRating=0;
+  if(kind==='price') f.maxPrice=3500;
+  if(kind==='q'){ f.q=''; const t=$('#topSearch'); if(t) t.value=''; }
+  state.browsePage=1; render();
+}
+function clearFilters(){
+  state.filters = { cats:[], subs:[], modes:[], cities:[], maxPrice:3500, minRating:0, verifiedOnly:false, q:'' };
+  state.browsePage=1; const t=$('#topSearch'); if(t) t.value=''; render();
+}
+function toggleArr(key,val){
+  const a = state.filters[key], i = a.indexOf(val);
+  if(i>=0) a.splice(i,1); else a.push(val);
+  state.browsePage=1; render();
+}
+
+/* --------------------------------- DISCOVER ----------------------------- */
+function viewDiscover(){
+  const featured = sorted(PROS.filter(p=>p.verified)).slice(0,4);
+  const soon = PROS.slice().sort((a,b)=>{
+    const A=nextAvailable(a.id), B=nextAvailable(b.id);
+    return (A?daysBetween(iso(TODAY),A.date):99)-(B?daysBetween(iso(TODAY),B.date):99);
+  }).slice(0,4);
+  const nextBooking = BOOKINGS.filter(b=>b.status!=='completed'&&b.status!=='cancelled'&&b.date>=iso(TODAY))
+                              .sort((a,b)=>a.date<b.date?-1:1)[0];
+  const allSessions = PRO_HISTORY.length + BOOKINGS.length;
+  return '<main class="main"><div class="wrap">'
+  + '<section class="hero sec">'
+    + '<div class="eyebrow">Abofonsa BridgeCare · Wellbeing Marketplace</div>'
+    + '<h1>Find the person who actually helps, not the first one who answers.</h1>'
+    + '<p>Verified non-medical health professionals — coaches, therapists, trainers and carers — brokered, background-checked and booked in one place.</p>'
+    + '<div class="searchbar">'
+      + '<div class="f"><label>What do you need</label>'
+        + '<input id="hQ" placeholder="e.g. nutritionist, massage, elder care" value="'+esc(state.filters.q)+'" onkeydown="if(event.key===\'Enter\')heroSearch()"></div>'
+      + '<div class="f"><label>Where</label><select id="hCity"><option value="">Anywhere</option>'
+        + CITIES.map(c=>'<option>'+c+'</option>').join('')+'</select></div>'
+      + '<div class="f"><label>How</label><select id="hMode"><option value="">Any format</option>'
+        + MODES.map(m=>'<option>'+m+'</option>').join('')+'</select></div>'
+      + '<button class="btn btn-g btn-lg" onclick="heroSearch()">Search</button>'
+    + '</div>'
+    + '<div class="herostats">'
+      + '<div><b>'+PROS.length+'</b><span>Professionals</span></div>'
+      + '<div><b>'+PROS.filter(p=>p.verified).length+'</b><span>Verified</span></div>'
+      + '<div><b>'+REVIEWS.length+'</b><span>Reviews</span></div>'
+      + '<div><b>'+allSessions.toLocaleString('en-GB')+'</b><span>Sessions brokered</span></div>'
+    + '</div>'
+  + '</section>'
+
+  + (nextBooking ? '<section class="sec"><div class="card pad" style="border-left:4px solid var(--gold)">'
+      + '<div class="spread"><div class="row" style="gap:14px">'
+      + avatarHTML(proById(nextBooking.pro).ini, proById(nextBooking.pro).c,'m',proById(nextBooking.pro).verified)
+      + '<div><div class="micro">Your next appointment</div>'
+      + '<h3>'+esc(svcById(proById(nextBooking.pro),nextBooking.svc).name)+' with '+esc(proById(nextBooking.pro).name)+'</h3>'
+      + '<div class="small muted">'+fmtDS(nextBooking.date)+' at '+nextBooking.time+' · '+esc(nextBooking.mode)+' · '+relD(nextBooking.date)+'</div></div></div>'
+      + '<div class="row">'+statusPill(nextBooking.status)
+      + '<button class="btn btn-o btn-sm" onclick="go(\'#/bookings\')">Manage</button></div></div></div></section>' : '')
+
+  + '<section class="sec"><div class="sec-head"><div><h2>Browse by need</h2>'
+    + '<p>Four families of care. Everyone listed is non-medical — we broker alongside your clinician, never instead of one.</p></div></div>'
+    + '<div class="cats">'+CATS.map(c=>{
+        const n = PROS.filter(p=>p.cat===c.id).length;
+        return '<div class="cat" onclick="pickCat(\''+c.id+'\')">'
+          + '<div class="ic" style="background:'+c.bg+';color:'+c.fg+'">'+c.icon+'</div>'
+          + '<span class="n">'+n+'</span>'
+          + '<h4>'+esc(c.name)+'</h4><p>'+esc(c.blurb)+'</p></div>';
+      }).join('')+'</div></section>'
+
+  + '<section class="sec"><div class="sec-head"><div><h2>Highly rated near you</h2>'
+    + '<p>Ranked by rating weighted for review volume — not by what anyone paid us.</p></div>'
+    + '<button class="btn btn-o btn-sm" onclick="go(\'#/browse\')">See all '+PROS.length+'</button></div>'
+    + '<div class="grid g4">'+featured.map(proCardHTML).join('')+'</div></section>'
+
+  + '<section class="sec"><div class="sec-head"><div><h2>Available soonest</h2>'
+    + '<p>Openings within the next few days.</p></div>'
+    + '<button class="btn btn-o btn-sm" onclick="state.sort=\'soon\';go(\'#/browse\')">Sort all by availability</button></div>'
+    + '<div class="grid g4">'+soon.map(proCardHTML).join('')+'</div></section>'
+
+  + '<section class="sec"><div class="sec-head"><div><h2>How the brokerage works</h2>'
+    + '<p>Four steps, and money only moves after the session happens.</p></div></div>'
+    + '<div class="trust">'
+    + [['1 · Search','🔎','Filter by need, format, city, price and rating. Every profile shows credentials and real reviews.'],
+       ['2 · Request','📩','Send a request for a specific slot. The professional accepts or proposes another time.'],
+       ['3 · Meet','🤝','Online, at their studio, or at your home. Carers and home visitors are all background-checked.'],
+       ['4 · Settle','💳','We hold the fee and release it after the session, minus a '+Math.round(COMMISSION*100)+'% brokerage fee. Cancel free up to 24 hours before.']]
+      .map(t=>'<div class="t"><div class="ic">'+t[1]+'</div><h4>'+t[0]+'</h4><p>'+esc(t[2])+'</p></div>').join('')
+    + '</div></section>'
+
+  + '<section class="sec"><div class="note"><b>Scope note.</b> Everyone on this marketplace is a non-medical wellbeing professional. '
+    + 'They do not diagnose, prescribe or replace clinical care. Where a need is clinical, the platform routes it back to your '
+    + 'BridgeCare care team rather than to a listing.</div></section>'
+  + '</div></main>';
+}
+function heroSearch(){
+  state.filters.q = ($('#hQ')?$('#hQ').value.trim():'');
+  const c = $('#hCity') ? $('#hCity').value : '';
+  const m = $('#hMode') ? $('#hMode').value : '';
+  state.filters.cities = c? [c] : [];
+  state.filters.modes  = m? [m] : [];
+  state.browsePage=1;
+  const t = $('#topSearch'); if(t) t.value = state.filters.q;
+  go('#/browse');
+}
+function pickCat(id){ state.filters.cats=[id]; state.filters.subs=[]; state.browsePage=1; go('#/browse'); }
+
+/* --------------------------------- BROWSE ------------------------------- */
+const PER_PAGE = 6;
+function viewBrowse(){
+  const all = sorted(PROS.filter(matches));
+  const pages = Math.max(1, Math.ceil(all.length/PER_PAGE));
+  if(state.browsePage>pages) state.browsePage=pages;
+  const page = all.slice((state.browsePage-1)*PER_PAGE, state.browsePage*PER_PAGE);
+  const chips = activeChips();
+  const subsAvailable = state.filters.cats.length
+      ? CATS.filter(c=>state.filters.cats.indexOf(c.id)>=0).reduce((a,c)=>a.concat(c.subs),[])
+      : CATS.reduce((a,c)=>a.concat(c.subs),[]);
+
+  return '<main class="main"><div class="wrap">'
+  + '<div class="spread sec"><div><h1>Browse professionals</h1>'
+    + '<p class="muted small" style="margin:4px 0 0">'+all.length+' of '+PROS.length+' match your filters</p></div>'
+    + '<div class="row"><label class="micro">Sort</label>'
+    + '<select onchange="state.sort=this.value;state.browsePage=1;render()" style="padding:8px 12px;border:1px solid var(--line);border-radius:var(--r-pill);font-family:inherit;font-size:13px;background:#fff">'
+    + [['relevance','Most relevant'],['rating','Highest rated'],['reviews','Most reviewed'],['soon','Available soonest'],['price','Price: low to high'],['priced','Price: high to low']]
+        .map(o=>'<option value="'+o[0]+'"'+(state.sort===o[0]?' selected':'')+'>'+o[1]+'</option>').join('')
+    + '</select></div></div>'
+
+  + (chips.length? '<div class="row wrap-r sec" style="gap:7px">'
+      + chips.map(c=>'<span class="chip">'+esc(c[2])+'<button onclick="dropChip(\''+c[0]+'\',\''+esc(c[1])+'\')">×</button></span>').join('')
+      + '<button class="btn btn-t btn-sm" onclick="clearFilters()">Clear all</button></div>' : '')
+
+  + '<div class="layout-f">'
+    + '<aside class="filters"><div class="card">'
+      + '<div class="fgroup"><h4>Search</h4><div class="srch"><span>🔎</span>'
+        + '<input id="fq" value="'+esc(state.filters.q)+'" placeholder="Name, need, service…" oninput="state.filters.q=this.value;state.browsePage=1;renderKeepFocus(\'fq\')"></div></div>'
+      + '<div class="fgroup"><h4>Category</h4>'+CATS.map(c=>{
+          const n = PROS.filter(p=>p.cat===c.id&&matchesExcept(p,'cats')).length;
+          return '<label class="opt"><input type="checkbox" '+(state.filters.cats.indexOf(c.id)>=0?'checked':'')
+            + ' onchange="toggleArr(\'cats\',\''+c.id+'\')"> '+esc(c.name)+' <span class="c">'+n+'</span></label>';
+        }).join('')+'</div>'
+      + '<div class="fgroup"><h4>Speciality</h4><div style="max-height:190px;overflow:auto">'+subsAvailable.map(s=>{
+          const n = PROS.filter(p=>p.sub===s&&matchesExcept(p,'subs')).length;
+          if(!n && state.filters.subs.indexOf(s)<0) return '';
+          return '<label class="opt"><input type="checkbox" '+(state.filters.subs.indexOf(s)>=0?'checked':'')
+            + ' onchange="toggleArr(\'subs\',\''+esc(s)+'\')"> '+esc(s)+' <span class="c">'+n+'</span></label>';
+        }).join('')+'</div></div>'
+      + '<div class="fgroup"><h4>Format</h4>'+MODES.map(m=>{
+          const n = PROS.filter(p=>p.modes.indexOf(m)>=0&&matchesExcept(p,'modes')).length;
+          return '<label class="opt"><input type="checkbox" '+(state.filters.modes.indexOf(m)>=0?'checked':'')
+            + ' onchange="toggleArr(\'modes\',\''+m+'\')"> '+m+' <span class="c">'+n+'</span></label>';
+        }).join('')+'</div>'
+      + '<div class="fgroup"><h4>City</h4>'+CITIES.map(c=>{
+          const n = PROS.filter(p=>p.city===c&&matchesExcept(p,'cities')).length;
+          return '<label class="opt"><input type="checkbox" '+(state.filters.cities.indexOf(c)>=0?'checked':'')
+            + ' onchange="toggleArr(\'cities\',\''+c+'\')"> '+c+' <span class="c">'+n+'</span></label>';
+        }).join('')+'</div>'
+      + '<div class="fgroup"><h4>Price from — up to '+money(state.filters.maxPrice)+'</h4>'
+        + '<input type="range" min="90" max="3500" step="10" value="'+state.filters.maxPrice+'" '
+        + 'oninput="state.filters.maxPrice=+this.value;state.browsePage=1;render()">'
+        + '<div class="row" style="justify-content:space-between"><span class="tiny muted">'+money(90)+'</span><span class="tiny muted">'+money(3500)+'+</span></div></div>'
+      + '<div class="fgroup"><h4>Rating</h4>'+[0,4,4.5,4.8].map(r=>
+          '<label class="opt"><input type="radio" name="rt" '+(state.filters.minRating===r?'checked':'')
+          + ' onchange="state.filters.minRating='+r+';state.browsePage=1;render()"> '+(r?r+'★ and up':'Any rating')+'</label>').join('')+'</div>'
+      + '<div class="fgroup"><h4>Trust</h4><label class="opt"><input type="checkbox" '+(state.filters.verifiedOnly?'checked':'')
+        + ' onchange="state.filters.verifiedOnly=this.checked;state.browsePage=1;render()"> Verified professionals only</label>'
+        + '<div class="tiny muted" style="margin-top:6px">Verification covers identity, stated credentials and — for home visitors — a police clearance.</div></div>'
+    + '</div></aside>'
+
+    + '<div>'+(all.length
+      ? '<div class="grid g3">'+page.map(proCardHTML).join('')+'</div>'
+        + '<div class="pager"><span>Showing '+((state.browsePage-1)*PER_PAGE+1)+'–'+Math.min(all.length,state.browsePage*PER_PAGE)+' of '+all.length+'</span>'
+        + '<div class="pg"><button '+(state.browsePage===1?'disabled':'')+' onclick="state.browsePage--;render();window.scrollTo(0,0)">‹</button>'
+        + Array.from({length:pages},(_,i)=>'<button class="'+(state.browsePage===i+1?'on':'')+'" onclick="state.browsePage='+(i+1)+';render();window.scrollTo(0,0)">'+(i+1)+'</button>').join('')
+        + '<button '+(state.browsePage===pages?'disabled':'')+' onclick="state.browsePage++;render();window.scrollTo(0,0)">›</button></div></div>'
+      : '<div class="card"><div class="empty"><div class="ic">🔍</div><h3>Nothing matches those filters</h3>'
+        + '<p class="small">Try widening the price range or clearing a filter.</p>'
+        + '<button class="btn btn-p" onclick="clearFilters()">Clear all filters</button></div></div>')
+    + '</div></div></div></main>';
+}
+/* count helper: how many would match if we ignored one facet */
+function matchesExcept(p, facet){
+  const saved = state.filters[facet];
+  state.filters[facet] = Array.isArray(saved)? [] : saved;
+  const r = matches(p);
+  state.filters[facet] = saved;
+  return r;
+}
+function renderKeepFocus(id){
+  const el = document.getElementById(id);
+  const pos = el? el.selectionStart : 0;
+  render();
+  const el2 = document.getElementById(id);
+  if(el2){ el2.focus(); try{ el2.setSelectionRange(pos,pos); }catch(e){} }
+}
+
+/* ------------------------------- PROFESSIONAL --------------------------- */
+const RV_PER = 4;
+function viewPro(id){
+  const p = proById(id);
+  if(!p) return notFound();
+  const rs = REVIEWS.filter(r=>r.pro===p.id).sort((a,b)=>a.date<b.date?1:-1);
+  const pages = Math.max(1,Math.ceil(rs.length/RV_PER));
+  if(state.proReviewPage>pages) state.proReviewPage=1;
+  const rpage = rs.slice((state.proReviewPage-1)*RV_PER, state.proReviewPage*RV_PER);
+  const dist = [5,4,3,2,1].map(s=>({s, n:rs.filter(r=>r.stars===s).length}));
+  const av = AVAIL[p.id].slice(0,10);
+  const past = BOOKINGS.filter(b=>b.pro===p.id);
+  const c = catOf(p.cat);
+
+  return '<main class="main"><div class="wrap">'
+  + '<div class="row sec" style="gap:6px;font-size:13px" class="noprint">'
+    + '<a href="javascript:void(0)" onclick="go(\'#/discover\')" class="muted">Discover</a><span class="muted">›</span>'
+    + '<a href="javascript:void(0)" onclick="pickCat(\''+c.id+'\')" class="muted">'+esc(c.name)+'</a><span class="muted">›</span>'
+    + '<span class="strong">'+esc(p.name)+'</span></div>'
+
+  + '<div class="card pad sec"><div class="prohero">'
+    + avatarHTML(p.ini,p.c,'l',p.verified)
+    + '<div style="flex:1;min-width:240px">'
+      + '<div class="row" style="gap:8px;flex-wrap:wrap"><h1 style="font-size:27px">'+esc(p.name)+'</h1>'
+      + (p.verified?'<span class="pill ok">✓ Verified</span>':'<span class="pill warn">Verification in progress</span>')
+      + (p.insured?'<span class="pill info">Insured</span>':'')
+      + (p.dbs?'<span class="pill gold">Police clearance</span>':'')+'</div>'
+      + '<p style="color:var(--ink-2);margin:6px 0 0;font-size:15px">'+esc(p.title)+'</p>'
+      + '<div class="row wrap-r" style="gap:14px;margin-top:10px">'
+        + starsHTML(p.rating)+'<span class="small muted">'+rs.length+' reviews</span>'
+        + '<span class="small muted">📍 '+esc(p.city)+'</span>'
+        + '<span class="small muted">🗓️ '+p.years+' years practising</span>'
+        + '<span class="small muted">⏱️ Replies in ~'+p.responseMins+' min</span>'
+        + '<span class="small muted">🔁 '+p.repeat+'% rebook</span></div>'
+      + '<div class="tags" style="margin-top:12px">'+p.modes.map(modePill).join('')
+        + p.highlights.map(h=>'<span class="pill">'+esc(h)+'</span>').join('')+'</div>'
+    + '</div>'
+    + '<div style="min-width:210px" class="noprint">'
+      + '<div class="card pad" style="background:var(--cream)">'
+      + '<div class="micro">From</div><div class="rate" style="font-size:25px">'+money(p.rate)+' <small>/ session</small></div>'
+      + '<button class="btn btn-g btn-blk" style="margin-top:12px" onclick="startBooking(\''+p.id+'\')">Request a booking</button>'
+      + '<button class="btn btn-o btn-blk" style="margin-top:8px" onclick="messagePro(\''+p.id+'\')">Message</button>'
+      + '<button class="btn btn-t btn-blk" style="margin-top:4px" onclick="toggleFav(\''+p.id+'\')">'+(isFav(p.id)?'♥ Saved':'♡ Save for later')+'</button>'
+      + '</div></div>'
+  + '</div></div>'
+
+  + '<div class="grid split" id="proGrid">'
+    + '<div class="stack">'
+      + '<div class="card"><div class="card-h"><h3>About '+esc(p.name.split(' ')[0])+'</h3><span class="pill">'+esc(p.sub)+'</span></div>'
+        + '<div class="card-b"><p style="color:var(--ink-2)">'+esc(p.bio)+'</p>'
+        + '<div class="micro" style="margin:16px 0 8px">Credentials</div>'
+        + p.creds.map(cr=>'<div class="kv"><div class="k">✓</div><div class="v">'+esc(cr)+'</div></div>').join('')
+        + '<div class="micro" style="margin:16px 0 8px">Practicalities</div>'
+        + '<div class="kv"><div class="k">Languages</div><div class="v">'+p.langs.join(', ')+'</div></div>'
+        + '<div class="kv"><div class="k">Formats</div><div class="v">'+p.modes.join(' · ')+'</div></div>'
+        + '<div class="kv"><div class="k">Based in</div><div class="v">'+esc(p.city)+'</div></div>'
+        + '<div class="kv"><div class="k">Cancellation</div><div class="v">Free up to 24 hours before the session</div></div>'
+        + '</div></div>'
+
+      + '<div class="card"><div class="card-h"><h3>Services &amp; prices</h3>'
+        + '<span class="tiny muted">'+Math.round(COMMISSION*100)+'% brokerage fee included</span></div>'
+        + '<div class="card-b">'+p.services.map(s=>
+          '<div class="svc"><div style="flex:1"><b style="font-size:14px">'+esc(s.name)+'</b>'
+          + '<div class="small muted">'+esc(s.desc)+'</div>'
+          + '<div class="tiny muted" style="margin-top:4px">'+(s.dur? (s.dur>=60? (s.dur/60)+' hr'+(s.dur>60?'s':'') : s.dur+' min') : 'Package')+'</div></div>'
+          + '<div style="text-align:right"><div class="rate">'+(s.price? money(s.price):'Free')+'</div>'
+          + '<button class="btn btn-o btn-sm" style="margin-top:6px" onclick="startBooking(\''+p.id+'\',\''+s.id+'\')">Book</button></div></div>').join('')
+        + '</div></div>'
+
+      + '<div class="card"><div class="card-h"><h3>Reviews</h3>'
+        + '<div class="row">'+starsHTML(p.rating)+'<span class="small muted">'+rs.length+' verified</span></div></div>'
+        + '<div class="card-b">'
+        + '<div class="grid g2" style="gap:22px;margin-bottom:6px"><div>'
+        + dist.map(d=>'<div class="row" style="gap:9px;margin-bottom:5px"><span class="tiny" style="width:22px">'+d.s+'★</span>'
+          + '<div class="bar" style="flex:1"><i style="width:'+(rs.length? d.n/rs.length*100:0)+'%"></i></div>'
+          + '<span class="tiny muted" style="width:18px;text-align:right">'+d.n+'</span></div>').join('')
+        + '</div><div class="small muted">Only clients who completed and paid for a booking through BridgeCare can review. '
+        + p.repeat+'% of '+esc(p.name.split(' ')[0])+'’s clients book again.</div></div>'
+        + (rpage.length? rpage.map(r=>
+            '<div class="rvw"><div class="row" style="align-items:flex-start;gap:11px">'
+            + avatarHTML(r.ini,['#6B7A89','#8C99A6'],'s',false)
+            + '<div style="flex:1"><div class="row" style="justify-content:space-between"><b style="font-size:13.5px">'+esc(r.author)+'</b>'
+            + '<span class="tiny muted">'+fmtD(r.date)+'</span></div>'
+            + starsHTML(r.stars,false)
+            + '<p class="small" style="margin:5px 0 0;color:var(--ink-2)">'+esc(r.text)+'</p></div></div>'
+            + (r.reply? '<div class="reply"><b class="tiny">'+esc(p.name)+' replied</b><div>'+esc(r.reply)+'</div></div>':'')
+            + '</div>').join('')
+          : '<div class="empty small">No reviews yet.</div>')
+        + (pages>1? '<div class="pager"><span>Page '+state.proReviewPage+' of '+pages+'</span><div class="pg">'
+            + '<button '+(state.proReviewPage===1?'disabled':'')+' onclick="state.proReviewPage--;render()">‹</button>'
+            + Array.from({length:pages},(_,i)=>'<button class="'+(state.proReviewPage===i+1?'on':'')+'" onclick="state.proReviewPage='+(i+1)+';render()">'+(i+1)+'</button>').join('')
+            + '<button '+(state.proReviewPage===pages?'disabled':'')+' onclick="state.proReviewPage++;render()">›</button></div></div>' : '')
+        + '</div></div>'
+    + '</div>'
+
+    + '<div class="stack">'
+      + '<div class="card"><div class="card-h"><h3>Next 10 days</h3><span class="tiny muted">Times shown in GMT</span></div>'
+        + '<div class="card-b">'
+        + av.map(d=>'<div class="lrow" style="padding:9px 0">'
+            + '<div style="width:96px"><b class="small">'+fmtDS(d.date)+'</b></div>'
+            + '<div style="flex:1">'+(d.times.length
+                ? d.times.slice(0,4).map(t=>'<button class="pill" style="cursor:pointer;margin:2px 3px 2px 0" onclick="startBooking(\''+p.id+'\',null,\''+d.date+'\',\''+t+'\')">'+t+'</button>').join('')
+                  + (d.times.length>4? '<span class="tiny muted">+'+(d.times.length-4)+' more</span>':'')
+                : '<span class="tiny muted">Not available</span>')+'</div></div>').join('')
+        + '</div><div class="card-f"><button class="btn btn-p btn-blk" onclick="startBooking(\''+p.id+'\')">Request a booking</button></div></div>'
+
+      + (past.length? '<div class="card"><div class="card-h"><h3>Your history</h3><span class="pill">'+past.length+'</span></div>'
+          + '<div class="card-b">'+past.sort((a,b)=>a.date<b.date?1:-1).map(b=>
+              '<div class="lrow" style="padding:9px 0"><div style="flex:1"><b class="small">'+esc(svcById(p,b.svc).name)+'</b>'
+              + '<div class="tiny muted">'+fmtD(b.date)+' · '+esc(b.mode)+'</div></div>'+statusPill(b.status)+'</div>').join('')
+          + '</div></div>' : '')
+
+      + '<div class="card pad"><div class="micro" style="margin-bottom:8px">How BridgeCare protects you</div>'
+        + '<div class="small" style="color:var(--ink-2);line-height:1.6">'
+        + '• Payment is held until the session is complete.<br>'
+        + '• Free cancellation up to 24 hours before.<br>'
+        + '• '+(p.dbs?'Police clearance on file, renewed annually.':'No home-visit clearance required for this listing.')+'<br>'
+        + '• Disputes are handled by the BridgeCare brokerage desk within 5 working days.</div></div>'
+    + '</div>'
+  + '</div></div></main>';
+}
+function notFound(){
+  return '<main class="main"><div class="wrap"><div class="card"><div class="empty"><div class="ic">🧭</div>'
+   + '<h3>That page does not exist</h3><p class="small">The link may be out of date.</p>'
+   + '<button class="btn btn-p" onclick="go(\'#/discover\')">Back to Discover</button></div></div></div></main>';
+}
+function messagePro(id){
+  let t = THREADS.find(x=>x.pro===id);
+  if(!t){ t = {id:'t'+(THREADS.length+1), pro:id, unread:0, msgs:[]}; THREADS.push(t); }
+  state.threadId = t.id; t.unread=0;
+  go('#/messages');
+}
+
+/* ------------------------------ BOOKING WIZARD -------------------------- */
+function startBooking(proId, svcId, date, time){
+  const p = proById(proId);
+  state.booking = { pro:proId, svc: svcId || p.services[0].id, date: date||'', time: time||'',
+    mode: p.modes[0], forWhom:'me', who:'', addr: ME.address, notes:'', step: (date&&time)?3:1 };
+  go('#/book/'+proId);
+}
+function bkSet(k,v){ state.booking[k]=v; render(); }
+function bkStep(n){
+  const b = state.booking;
+  if(n===2 && !b.svc) return toast('Choose a service first','warn');
+  if(n===3 && (!b.date||!b.time)) return toast('Pick a date and a time','warn');
+  b.step=n; render(); window.scrollTo(0,0);
+}
+function viewBook(proId){
+  const p = proById(proId); if(!p) return notFound();
+  if(!state.booking || state.booking.pro!==proId){
+    state.booking = { pro:proId, svc:p.services[0].id, date:'', time:'', mode:p.modes[0],
+      forWhom:'me', who:'', addr:ME.address, notes:'', step:1 };
+  }
+  const b = state.booking;
+  const s = svcById(p,b.svc);
+  const fee = Math.round(s.price*COMMISSION);
+  const steps = ['Service','Date &amp; time','Details','Confirm'];
+
+  const dayList = AVAIL[p.id];
+  const day = dayList.find(d=>d.date===b.date);
+
+  let body='';
+  if(b.step===1){
+    body = '<div class="card"><div class="card-h"><h3>Which service?</h3></div><div class="card-b">'
+      + p.services.map(sv=>'<div class="svc '+(b.svc===sv.id?'sel':'')+'" onclick="bkSet(\'svc\',\''+sv.id+'\')" style="cursor:pointer">'
+        + '<input type="radio" '+(b.svc===sv.id?'checked':'')+' style="accent-color:var(--navy)">'
+        + '<div style="flex:1"><b style="font-size:14px">'+esc(sv.name)+'</b><div class="small muted">'+esc(sv.desc)+'</div>'
+        + '<div class="tiny muted" style="margin-top:3px">'+(sv.dur? (sv.dur>=60?(sv.dur/60)+' hr'+(sv.dur>60?'s':''):sv.dur+' min'):'Package')+'</div></div>'
+        + '<div class="rate">'+(sv.price?money(sv.price):'Free')+'</div></div>').join('')
+      + '<div class="micro" style="margin:18px 0 8px">Format</div><div class="row wrap-r">'
+      + p.modes.map(m=>'<button class="slot '+(b.mode===m?'on':'')+'" style="min-width:118px" onclick="bkSet(\'mode\',\''+m+'\')">'+m+'</button>').join('')
+      + '</div></div><div class="card-f" style="display:flex;justify-content:flex-end">'
+      + '<button class="btn btn-p" onclick="bkStep(2)">Continue →</button></div></div>';
+  } else if(b.step===2){
+    body = '<div class="card"><div class="card-h"><h3>Pick a date</h3><span class="tiny muted">Next 21 days</span></div><div class="card-b">'
+      + '<div class="days">'+dayList.map(d=>{
+          const dd = parseD(d.date);
+          return '<button class="day '+(b.date===d.date?'on':'')+'" '+(d.times.length?'':'disabled')+' onclick="bkSet(\'date\',\''+d.date+'\')">'
+            + '<span>'+DOW[dd.getDay()]+'</span><b>'+dd.getDate()+'</b><span>'+MON[dd.getMonth()]+'</span></button>';
+        }).join('')+'</div>'
+      + '<div class="micro" style="margin:20px 0 9px">'+(b.date? 'Times on '+fmtDS(b.date) : 'Select a date to see times')+'</div>'
+      + (day? '<div class="slots">'+SLOT_TIMES.map(t=>{
+            const open = day.times.indexOf(t)>=0;
+            return '<button class="slot '+(b.time===t?'on':'')+'" '+(open?'':'disabled')+' onclick="bkSet(\'time\',\''+t+'\')">'+t+'</button>';
+          }).join('')+'</div>' : '<div class="empty small">No date selected yet.</div>')
+      + '</div><div class="card-f" style="display:flex;justify-content:space-between">'
+      + '<button class="btn btn-o" onclick="bkStep(1)">← Back</button>'
+      + '<button class="btn btn-p" onclick="bkStep(3)">Continue →</button></div></div>';
+  } else if(b.step===3){
+    body = '<div class="card"><div class="card-h"><h3>Who is this for?</h3></div><div class="card-b">'
+      + '<div class="row wrap-r" style="margin-bottom:16px">'
+      + '<button class="slot '+(b.forWhom==='me'?'on':'')+'" style="min-width:150px" onclick="bkSet(\'forWhom\',\'me\')">Myself</button>'
+      + '<button class="slot '+(b.forWhom==='other'?'on':'')+'" style="min-width:150px" onclick="bkSet(\'forWhom\',\'other\')">Someone I care for</button></div>'
+      + (b.forWhom==='other'? '<div class="field"><label>Their name</label><input value="'+esc(b.who)+'" placeholder="e.g. Nana Ampia-Addison (my father)" oninput="state.booking.who=this.value"></div>':'')
+      + (b.mode==='Home visit'? '<div class="field"><label>Visit address</label><textarea oninput="state.booking.addr=this.value" style="min-height:64px">'+esc(b.addr)+'</textarea></div>'
+         : b.mode==='Online' ? '<div class="note" style="margin-bottom:13px">A private video link is sent to you and to '+esc(p.name.split(' ')[0])+' one hour before the session.</div>'
+         : '<div class="note" style="margin-bottom:13px">Session takes place at '+esc(p.name.split(' ')[0])+'’s practice in '+esc(p.city)+'. The exact address is released once the booking is accepted.</div>')
+      + '<div class="field"><label>Anything they should know</label>'
+      + '<textarea placeholder="Conditions, mobility, what you want out of the session…" oninput="state.booking.notes=this.value">'+esc(b.notes)+'</textarea></div>'
+      + '<label class="opt"><input type="checkbox" checked> Share my BridgeCare care summary with this professional</label>'
+      + '<div class="tiny muted" style="margin-left:24px">They will see: conditions, allergies and current medications. They will not see clinical notes or reports.</div>'
+      + '</div><div class="card-f" style="display:flex;justify-content:space-between">'
+      + '<button class="btn btn-o" onclick="bkStep(2)">← Back</button>'
+      + '<button class="btn btn-p" onclick="bkStep(4)">Review →</button></div></div>';
+  } else {
+    body = '<div class="card"><div class="card-h"><h3>Review and confirm</h3></div><div class="card-b">'
+      + '<div class="kv"><div class="k">Professional</div><div class="v">'+esc(p.name)+' · '+esc(p.sub)+'</div></div>'
+      + '<div class="kv"><div class="k">Service</div><div class="v">'+esc(s.name)+'</div></div>'
+      + '<div class="kv"><div class="k">When</div><div class="v">'+fmtDS(b.date)+' at '+b.time+'</div></div>'
+      + '<div class="kv"><div class="k">Format</div><div class="v">'+esc(b.mode)+'</div></div>'
+      + '<div class="kv"><div class="k">For</div><div class="v">'+(b.forWhom==='me'? esc(ME.name) : esc(b.who||'A person in my care'))+'</div></div>'
+      + (b.mode==='Home visit'? '<div class="kv"><div class="k">Address</div><div class="v">'+esc(b.addr)+'</div></div>':'')
+      + (b.notes? '<div class="kv"><div class="k">Note</div><div class="v">'+esc(b.notes)+'</div></div>':'')
+      + '<div class="micro" style="margin:20px 0 6px">Payment</div>'
+      + '<div class="sumrow"><span>'+esc(s.name)+'</span><span>'+money2(s.price)+'</span></div>'
+      + '<div class="sumrow"><span>Brokerage fee ('+Math.round(COMMISSION*100)+'%) <span class="tiny muted">— already included</span></span><span class="muted">'+money2(fee)+'</span></div>'
+      + '<div class="sumrow"><span>Due now</span><span class="strong">'+money2(0)+'</span></div>'
+      + '<div class="sumrow total"><span>Total on completion</span><span>'+money2(s.price)+'</span></div>'
+      + '<div class="note" style="margin-top:16px">Nothing is charged until '+esc(p.name.split(' ')[0])+' accepts and the session takes place. '
+      + 'Cancel free up to 24 hours before.</div>'
+      + '</div><div class="card-f" style="display:flex;justify-content:space-between">'
+      + '<button class="btn btn-o" onclick="bkStep(3)">← Back</button>'
+      + '<button class="btn btn-g btn-lg" onclick="confirmBooking()">Send booking request</button></div></div>';
+  }
+
+  return '<main class="main"><div class="wrap" style="max-width:900px">'
+  + '<div class="spread sec"><div><h1>Book '+esc(p.name)+'</h1>'
+    + '<p class="muted small" style="margin:4px 0 0">'+esc(p.title)+'</p></div>'
+    + '<button class="btn btn-t" onclick="go(\'#/pro/'+p.id+'\')">← Back to profile</button></div>'
+  + '<div class="steps">'+steps.map((t,i)=>{
+      const n=i+1;
+      return '<div class="step '+(b.step===n?'on':(b.step>n?'done':''))+'">'
+        + '<div class="n">'+(b.step>n?'✓':n)+'</div><div class="t">'+t+'</div></div>'
+        + (n<steps.length? '<div class="bar"></div>':'');
+    }).join('')+'</div>'
+  + '<div class="grid split">'
+    + '<div>'+body+'</div>'
+    + '<div class="card pad" style="position:sticky;top:calc(var(--topbar) + 18px)">'
+      + '<div class="row" style="gap:12px">'+avatarHTML(p.ini,p.c,'m',p.verified)
+      + '<div><b>'+esc(p.name)+'</b><div class="tiny muted">'+esc(p.sub)+' · '+esc(p.city)+'</div>'
+      + starsHTML(p.rating)+'</div></div>'
+      + '<hr style="border:0;border-top:1px solid var(--line-2);margin:15px 0">'
+      + '<div class="sumrow"><span class="muted">Service</span><span class="strong" style="text-align:right">'+esc(s.name)+'</span></div>'
+      + '<div class="sumrow"><span class="muted">When</span><span class="strong">'+(b.date? fmtDS(b.date)+' '+b.time : '—')+'</span></div>'
+      + '<div class="sumrow"><span class="muted">Format</span><span class="strong">'+esc(b.mode)+'</span></div>'
+      + '<div class="sumrow total"><span>Total</span><span>'+(s.price? money(s.price):'Free')+'</span></div>'
+      + '<div class="tiny muted" style="margin-top:12px">Held, not charged. Released to '+esc(p.name.split(' ')[0])+' after the session, minus the '+Math.round(COMMISSION*100)+'% brokerage fee.</div>'
+    + '</div>'
+  + '</div></div></main>';
+}
+function confirmBooking(){
+  const b = state.booking, p = proById(b.pro), s = svcById(p,b.svc);
+  const id = 'b'+(BOOKINGS.length+1)+'x';
+  BOOKINGS.unshift({id, pro:b.pro, svc:b.svc, date:b.date, time:b.time, mode:b.mode,
+    status:'pending', price:s.price, note:b.notes, forWhom:b.forWhom==='other'? (b.who||'A person in my care') : null});
+  NOTIFICATIONS.unshift({id:'n'+(NOTIFICATIONS.length+1), icon:'🕒', t:'Request sent',
+    x:'Waiting for '+p.name+' to confirm '+fmtD(b.date)+' at '+b.time+'.', when:iso(TODAY), read:false});
+  /* if the request is for our own pro persona, it lands in her inbox too */
+  if(b.pro==='p1'){
+    PRO_REQUESTS.unshift({id:'q'+(PRO_REQUESTS.length+1)+'x', client:ME.name, ini:ME.ini, svc:b.svc,
+      date:b.date, time:b.time, mode:b.mode, note:b.notes||'—', made:iso(TODAY), status:'pending'});
+  }
+  state.booking=null;
+  closeAllModals();
+  modal('<div class="modal-b" style="text-align:center;padding:34px 30px">'
+   + '<div style="font-size:46px">📩</div><h2 style="margin:10px 0 6px">Request sent to '+esc(p.name)+'</h2>'
+   + '<p class="muted small" style="max-width:400px;margin:0 auto">'+esc(p.name.split(' ')[0])+' typically replies within '+p.responseMins+' minutes. '
+   + 'Nothing is charged until the session is confirmed and completed.</p>'
+   + '<div class="card pad" style="margin-top:20px;text-align:left;background:var(--cream)">'
+   + '<div class="sumrow"><span class="muted">Service</span><span class="strong">'+esc(s.name)+'</span></div>'
+   + '<div class="sumrow"><span class="muted">When</span><span class="strong">'+fmtDS(b.date)+' at '+b.time+'</span></div>'
+   + '<div class="sumrow"><span class="muted">Format</span><span class="strong">'+esc(b.mode)+'</span></div>'
+   + '<div class="sumrow total"><span>Total on completion</span><span>'+money(s.price)+'</span></div></div>'
+   + '</div><div class="modal-f"><button class="btn btn-o" onclick="closeModal();go(\'#/discover\')">Back to Discover</button>'
+   + '<button class="btn btn-p" onclick="closeModal();go(\'#/bookings\')">View my bookings</button></div>', {size:'narrow'});
+  toast('Booking request sent to '+p.name);
+  render();
+}
+
+/* -------------------------------- BOOKINGS ------------------------------ */
+function viewBookings(){
+  const tabs = [['upcoming','Upcoming'],['pending','Awaiting confirmation'],['completed','Past'],['cancelled','Cancelled']];
+  const now = iso(TODAY);
+  const sets = {
+    upcoming: BOOKINGS.filter(b=>b.status==='confirmed'&&b.date>=now),
+    pending:  BOOKINGS.filter(b=>b.status==='pending'),
+    completed:BOOKINGS.filter(b=>b.status==='completed'||(b.status==='confirmed'&&b.date<now)),
+    cancelled:BOOKINGS.filter(b=>b.status==='cancelled')
+  };
+  const list = sets[state.bookingsTab].slice().sort((a,b)=> state.bookingsTab==='completed'? (a.date<b.date?1:-1) : (a.date<b.date?-1:1));
+  const spend = sum(sets.completed.map(b=>b.price));
+
+  return '<main class="main"><div class="wrap">'
+  + '<div class="spread sec"><div><h1>My bookings</h1>'
+    + '<p class="muted small" style="margin:4px 0 0">'+BOOKINGS.length+' bookings with '+uniq(BOOKINGS.map(b=>b.pro)).length+' professionals</p></div>'
+    + '<button class="btn btn-p" onclick="go(\'#/browse\')">Book someone new</button></div>'
+
+  + '<div class="grid g4 sec">'
+    + '<div class="stat"><div class="k">'+sets.upcoming.length+'</div><div class="l">Upcoming</div><div class="d">'
+      + (sets.upcoming.length? 'Next '+relD(sets.upcoming.sort((a,b)=>a.date<b.date?-1:1)[0].date).toLowerCase() : 'Nothing booked') +'</div></div>'
+    + '<div class="stat"><div class="k">'+sets.pending.length+'</div><div class="l">Awaiting reply</div><div class="d">Professionals typically reply same day</div></div>'
+    + '<div class="stat"><div class="k">'+sets.completed.length+'</div><div class="l">Completed</div><div class="d">'
+      + sets.completed.filter(b=>!b.reviewed).length+' still to review</div></div>'
+    + '<div class="stat"><div class="k">'+money(spend)+'</div><div class="l">Spent to date</div><div class="d">Across all professionals</div></div>'
+  + '</div>'
+
+  + '<div class="tabs">'+tabs.map(t=>'<button class="'+(state.bookingsTab===t[0]?'on':'')+'" onclick="state.bookingsTab=\''+t[0]+'\';render()">'
+      + t[1]+' <span class="pill" style="margin-left:4px">'+sets[t[0]].length+'</span></button>').join('')+'</div>'
+
+  + (list.length? '<div class="stack">'+list.map(bookingRow).join('')+'</div>'
+     : '<div class="card"><div class="empty"><div class="ic">📅</div><h3>Nothing here</h3>'
+       + '<p class="small">Bookings in this state will appear here.</p>'
+       + '<button class="btn btn-p" onclick="go(\'#/browse\')">Browse professionals</button></div></div>')
+  + '</div></main>';
+}
+function bookingRow(b){
+  const p = proById(b.pro), s = svcById(p,b.svc);
+  const upcoming = (b.status==='confirmed'||b.status==='pending') && b.date>=iso(TODAY);
+  return '<div class="card pad"><div class="spread">'
+   + '<div class="row" style="gap:14px;min-width:0;flex:1">'+avatarHTML(p.ini,p.c,'m',p.verified)
+   + '<div style="min-width:0"><h3 style="font-size:15.5px">'+esc(s.name)+'</h3>'
+   + '<div class="small" style="color:var(--ink-2)">'+esc(p.name)+' · '+esc(p.sub)+'</div>'
+   + '<div class="row wrap-r" style="gap:9px;margin-top:7px">'
+     + '<span class="tiny muted">📅 '+fmtDS(b.date)+' at '+b.time+'</span>'
+     + modePill(b.mode)+statusPill(b.status)
+     + (upcoming? '<span class="pill gold">'+relD(b.date)+'</span>':'')
+     + (b.forWhom? '<span class="pill">For '+esc(b.forWhom)+'</span>':'')+'</div>'
+   + (b.note? '<div class="tiny muted" style="margin-top:6px">“'+esc(b.note)+'”</div>':'')
+   + '</div></div>'
+   + '<div style="text-align:right"><div class="rate">'+money(b.price)+'</div>'
+   + '<div class="row" style="margin-top:8px;justify-content:flex-end;flex-wrap:wrap;gap:6px">'
+   + (upcoming? '<button class="btn btn-o btn-sm" onclick="rescheduleModal(\''+b.id+'\')">Reschedule</button>'
+              + '<button class="btn btn-d btn-sm" onclick="cancelModal(\''+b.id+'\')">Cancel</button>' : '')
+   + (b.status==='completed'&&!b.reviewed? '<button class="btn btn-g btn-sm" onclick="reviewModal(\''+b.id+'\')">Leave a review</button>':'')
+   + (b.status==='completed'&&b.reviewed? '<span class="pill ok">★ Reviewed</span>':'')
+   + (b.status==='completed'? '<button class="btn btn-o btn-sm" onclick="receiptModal(\''+b.id+'\')">Receipt</button>':'')
+   + '<button class="btn btn-t btn-sm" onclick="messagePro(\''+p.id+'\')">Message</button>'
+   + '</div></div></div></div>';
+}
+function rescheduleModal(id){
+  const b = BOOKINGS.find(x=>x.id===id), p = proById(b.pro);
+  const av = AVAIL[p.id].filter(d=>d.times.length).slice(0,8);
+  modal('<div class="modal-h"><h3>Reschedule</h3><button class="x" onclick="closeModal()">×</button></div>'
+   + '<div class="modal-b"><p class="small muted">Currently '+fmtDS(b.date)+' at '+b.time+' with '+esc(p.name)+'. '
+   + 'Pick a new slot — '+esc(p.name.split(' ')[0])+' will be asked to confirm it.</p>'
+   + '<div id="rsSlots">'+av.map(d=>'<div class="lrow" style="padding:9px 0"><div style="width:106px"><b class="small">'+fmtDS(d.date)+'</b></div>'
+      + '<div style="flex:1">'+d.times.map(t=>'<button class="pill" style="cursor:pointer;margin:2px 3px 2px 0" '
+      + 'onclick="doReschedule(\''+b.id+'\',\''+d.date+'\',\''+t+'\')">'+t+'</button>').join('')+'</div></div>').join('')
+   + '</div></div><div class="modal-f"><button class="btn btn-o" onclick="closeModal()">Keep current time</button></div>');
+}
+function doReschedule(id,date,time){
+  const b = BOOKINGS.find(x=>x.id===id);
+  b.date=date; b.time=time; b.status='pending';
+  closeModal(); render();
+  toast('Moved to '+fmtDS(date)+' at '+time+' — awaiting confirmation','warn');
+}
+function cancelModal(id){
+  const b = BOOKINGS.find(x=>x.id===id), p = proById(b.pro);
+  const hrs = daysBetween(iso(TODAY), b.date)*24;
+  modal('<div class="modal-h"><h3>Cancel this booking?</h3><button class="x" onclick="closeModal()">×</button></div>'
+   + '<div class="modal-b"><p>'+esc(svcById(p,b.svc).name)+' with <b>'+esc(p.name)+'</b> on '+fmtDS(b.date)+' at '+b.time+'.</p>'
+   + (hrs>=24? '<div class="note">More than 24 hours away — this cancellation is free and nothing will be charged.</div>'
+             : '<div class="note" style="background:var(--red-bg);border-color:#F3D4D0;color:var(--red-ink)">Less than 24 hours away — a 50% late-cancellation fee ('
+               + money(Math.round(b.price/2))+') applies and is paid to the professional.</div>')
+   + '<div class="field" style="margin-top:14px"><label>Reason (optional, shared with the professional)</label>'
+   + '<textarea id="cxReason" placeholder="Something has come up…"></textarea></div></div>'
+   + '<div class="modal-f"><button class="btn btn-o" onclick="closeModal()">Keep booking</button>'
+   + '<button class="btn btn-d" onclick="doCancel(\''+id+'\')">Cancel booking</button></div>', {size:'narrow'});
+}
+function doCancel(id){
+  const b = BOOKINGS.find(x=>x.id===id);
+  const r = $('#cxReason') ? $('#cxReason').value.trim() : '';
+  b.status='cancelled'; if(r) b.note = r;
+  closeModal(); state.bookingsTab='cancelled'; render();
+  toast('Booking cancelled','bad');
+}
+function reviewModal(id){
+  const b = BOOKINGS.find(x=>x.id===id), p = proById(b.pro);
+  modal('<div class="modal-h"><h3>Review '+esc(p.name)+'</h3><button class="x" onclick="closeModal()">×</button></div>'
+   + '<div class="modal-b"><div class="row" style="gap:13px;margin-bottom:16px">'+avatarHTML(p.ini,p.c,'m',p.verified)
+   + '<div><b>'+esc(svcById(p,b.svc).name)+'</b><div class="tiny muted">'+fmtD(b.date)+' · '+esc(b.mode)+'</div></div></div>'
+   + '<div class="micro" style="margin-bottom:7px">Your rating</div>'
+   + '<div id="rvStars" style="font-size:31px;color:var(--gold);letter-spacing:3px;cursor:pointer">'
+   + [1,2,3,4,5].map(i=>'<span onclick="setRvStars('+i+')" data-i="'+i+'">☆</span>').join('')+'</div>'
+   + '<div class="field" style="margin-top:16px"><label>Your review</label>'
+   + '<textarea id="rvText" placeholder="What was helpful? What should the next person know?"></textarea></div>'
+   + '<label class="opt"><input type="checkbox" checked> Publish under my name</label></div>'
+   + '<div class="modal-f"><button class="btn btn-o" onclick="closeModal()">Not now</button>'
+   + '<button class="btn btn-g" onclick="submitReview(\''+id+'\')">Publish review</button></div>', {size:'narrow'});
+  window._rv = 5; setRvStars(5);
+}
+function setRvStars(n){
+  window._rv = n;
+  $$('#rvStars span').forEach(s=>{ s.textContent = (+s.dataset.i<=n)?'★':'☆'; });
+}
+function submitReview(id){
+  const b = BOOKINGS.find(x=>x.id===id), p = proById(b.pro);
+  const txt = ($('#rvText')&&$('#rvText').value.trim()) || 'Booked through BridgeCare. A good session.';
+  REVIEWS.unshift({id:'r'+(REVIEWS.length+1)+'x', pro:p.id, author:ME.name, ini:ME.ini,
+    stars: window._rv||5, date: iso(TODAY), text: txt, reply:''});
+  const rs = REVIEWS.filter(r=>r.pro===p.id);
+  p.reviewCount = rs.length; p.rating = Math.round(avg(rs.map(r=>r.stars))*10)/10;
+  b.reviewed = true;
+  closeModal(); render();
+  toast('Review published — '+p.name+' is now rated '+p.rating.toFixed(1));
+}
+function receiptModal(id){
+  const b = BOOKINGS.find(x=>x.id===id), p = proById(b.pro), s = svcById(p,b.svc);
+  const fee = Math.round(b.price*COMMISSION);
+  modal('<div class="modal-h"><h3>Receipt</h3><button class="x" onclick="closeModal()">×</button></div>'
+   + '<div class="modal-b"><div class="spread" style="margin-bottom:14px"><div><div class="micro">Abofonsa BridgeCare</div>'
+   + '<div class="mono">RCPT-'+b.id.toUpperCase()+'-2026</div></div><div class="pill ok">Paid</div></div>'
+   + '<div class="kv"><div class="k">Professional</div><div class="v">'+esc(p.name)+'</div></div>'
+   + '<div class="kv"><div class="k">Service</div><div class="v">'+esc(s.name)+'</div></div>'
+   + '<div class="kv"><div class="k">Date</div><div class="v">'+fmtD(b.date)+' at '+b.time+'</div></div>'
+   + '<div class="kv"><div class="k">Format</div><div class="v">'+esc(b.mode)+'</div></div>'
+   + '<div style="margin-top:16px">'
+   + '<div class="sumrow"><span>Session fee</span><span>'+money2(b.price-fee)+'</span></div>'
+   + '<div class="sumrow"><span>BridgeCare brokerage ('+Math.round(COMMISSION*100)+'%)</span><span>'+money2(fee)+'</span></div>'
+   + '<div class="sumrow total"><span>Total paid</span><span>'+money2(b.price)+'</span></div></div></div>'
+   + '<div class="modal-f"><button class="btn btn-o" onclick="window.print()">Print</button>'
+   + '<button class="btn btn-p" onclick="closeModal()">Close</button></div>', {size:'narrow'});
+}
+
+/* -------------------------------- MESSAGES ------------------------------ */
+function viewMessages(){
+  const t = THREADS.find(x=>x.id===state.threadId) || THREADS[0];
+  if(t) t.unread = 0;
+  const p = t? proById(t.pro):null;
+  return '<main class="main"><div class="wrap">'
+  + '<div class="spread sec"><div><h1>Messages</h1>'
+    + '<p class="muted small" style="margin:4px 0 0">Conversations are kept with the booking they belong to.</p></div></div>'
+  + '<div class="card"><div class="msgs">'
+    + '<div class="threads">'+THREADS.map(th=>{
+        const pp = proById(th.pro), last = th.msgs[th.msgs.length-1];
+        return '<div class="thread '+(th.id===state.threadId?'on':'')+'" onclick="state.threadId=\''+th.id+'\';render()">'
+          + avatarHTML(pp.ini,pp.c,'s',pp.verified)
+          + '<div class="tx"><div class="row" style="justify-content:space-between"><b>'+esc(pp.name)+'</b>'
+          + (th.unread? '<span class="pill warn">'+th.unread+'</span>':'')+'</div>'
+          + '<p>'+esc(last? (last.from==='me'?'You: ':'')+last.x : 'No messages yet')+'</p>'
+          + '<div class="tiny muted">'+(last? last.t.slice(0,10).split('-').reverse().slice(0,2).join('/') : '')+'</div></div></div>';
+      }).join('')+'</div>'
+    + (t? '<div class="convo">'
+      + '<div class="ch">'+avatarHTML(p.ini,p.c,'s',p.verified)
+      + '<div style="flex:1"><b>'+esc(p.name)+'</b><div class="tiny muted">'+esc(p.sub)+' · replies in ~'+p.responseMins+' min</div></div>'
+      + '<button class="btn btn-o btn-sm" onclick="go(\'#/pro/'+p.id+'\')">View profile</button>'
+      + '<button class="btn btn-p btn-sm" onclick="startBooking(\''+p.id+'\')">Book</button></div>'
+      + '<div class="cb" id="convoBody">'+(t.msgs.length? t.msgs.map(m=>
+          '<div class="msg '+(m.from==='me'?'me':'them')+'">'+esc(m.x)+'<span class="t">'+m.t.slice(11)+' · '+fmtD(m.t.slice(0,10))+'</span></div>').join('')
+        : '<div class="empty small">No messages yet. Say hello.</div>')+'</div>'
+      + '<div class="cf"><input id="msgIn" placeholder="Write a message…" '
+      + 'style="flex:1;padding:10px 14px;border:1px solid var(--line);border-radius:var(--r-pill);font-family:inherit;font-size:14px;outline:0" '
+      + 'onkeydown="if(event.key===\'Enter\')sendMsg()">'
+      + '<button class="btn btn-p" onclick="sendMsg()">Send</button></div></div>'
+      : '<div class="empty">No conversations yet.</div>')
+  + '</div></div></div></main>';
+}
+function sendMsg(){
+  const inp = $('#msgIn'); if(!inp) return;
+  const v = inp.value.trim(); if(!v) return;
+  const t = THREADS.find(x=>x.id===state.threadId);
+  const now = iso(TODAY)+' '+d2(TODAY.getHours()||9)+':'+d2((new Date()).getMinutes());
+  t.msgs.push({from:'me', t:now, x:v});
+  inp.value='';
+  render();
+  const cb = $('#convoBody'); if(cb) cb.scrollTop = cb.scrollHeight;
+  const p = proById(t.pro);
+  setTimeout(()=>{
+    t.msgs.push({from:'them', t:now, x:'Thank you — noted. I will come back to you properly within the hour.'});
+    if(state.route==='#/messages' && state.threadId===t.id){ render(); const c=$('#convoBody'); if(c) c.scrollTop=c.scrollHeight; }
+    else { t.unread++; renderNav(); }
+    toast(p.name+' replied');
+  }, 1600);
+}
+
+/* --------------------------------- SAVED -------------------------------- */
+function viewSaved(){
+  const list = FAVOURITES.map(proById).filter(Boolean);
+  return '<main class="main"><div class="wrap">'
+  + '<div class="spread sec"><div><h1>Saved professionals</h1>'
+    + '<p class="muted small" style="margin:4px 0 0">'+list.length+' saved. Nothing here is booked yet.</p></div>'
+    + (list.length? '<button class="btn btn-o" onclick="FAVOURITES=[];render();toast(\'Saved list cleared\')">Clear list</button>':'')+'</div>'
+  + (list.length? '<div class="grid g4">'+list.map(proCardHTML).join('')+'</div>'
+     : '<div class="card"><div class="empty"><div class="ic">♡</div><h3>Nothing saved yet</h3>'
+       + '<p class="small">Tap the heart on any profile to keep it here.</p>'
+       + '<button class="btn btn-p" onclick="go(\'#/browse\')">Browse professionals</button></div></div>')
+  + '</div></main>';
+}
+
+/* -------------------------------- ACCOUNT ------------------------------- */
+function viewAccount(){
+  const completed = BOOKINGS.filter(b=>b.status==='completed');
+  return '<main class="main"><div class="wrap" style="max-width:900px">'
+  + '<div class="spread sec"><div><h1>My account</h1>'
+    + '<p class="muted small" style="margin:4px 0 0">Customer profile · Abofonsa BridgeCare</p></div>'
+    + '<button class="btn btn-o" onclick="setRole(\'pro\')">Switch to professional workspace</button></div>'
+  + '<div class="card pad sec"><div class="row" style="gap:18px;flex-wrap:wrap">'
+    + avatarHTML(ME.ini,['#0D3058','#256ABF'],'l',true)
+    + '<div style="flex:1;min-width:220px"><h2>'+esc(ME.name)+'</h2>'
+    + '<div class="small muted">'+esc(ME.email)+' · '+esc(ME.phone)+'</div>'
+    + '<div class="tags" style="margin-top:10px"><span class="pill gold">'+esc(ME.member)+'</span>'
+    + '<span class="pill ok">Identity verified</span></div></div>'
+    + '<div class="row" style="gap:22px">'
+    + '<div><div class="k" style="font-size:22px;font-weight:800">'+completed.length+'</div><div class="micro">Sessions</div></div>'
+    + '<div><div class="k" style="font-size:22px;font-weight:800">'+uniq(BOOKINGS.map(b=>b.pro)).length+'</div><div class="micro">Professionals</div></div>'
+    + '<div><div class="k" style="font-size:22px;font-weight:800">'+money(sum(completed.map(b=>b.price)))+'</div><div class="micro">Spent</div></div>'
+    + '</div></div></div>'
+  + '<div class="grid g2">'
+    + '<div class="card"><div class="card-h"><h3>Personal details</h3><button class="btn btn-o btn-sm" onclick="toast(\'Editing is disabled in this demo\',\'warn\')">Edit</button></div>'
+      + '<div class="card-b">'
+      + '<div class="kv"><div class="k">Full name</div><div class="v">'+esc(ME.name)+'</div></div>'
+      + '<div class="kv"><div class="k">Date of birth</div><div class="v">'+fmtD(ME.dob)+'</div></div>'
+      + '<div class="kv"><div class="k">Email</div><div class="v">'+esc(ME.email)+'</div></div>'
+      + '<div class="kv"><div class="k">Phone</div><div class="v">'+esc(ME.phone)+'</div></div>'
+      + '<div class="kv"><div class="k">Address</div><div class="v">'+esc(ME.address)+'</div></div>'
+      + '</div></div>'
+    + '<div class="card"><div class="card-h"><h3>Care summary shared with professionals</h3><span class="pill info">Read-only</span></div>'
+      + '<div class="card-b"><p class="small" style="color:var(--ink-2)">'+esc(ME.notes)+'</p>'
+      + '<div class="note" style="margin-top:12px">This summary comes from your BridgeCare patient record. Professionals see conditions, '
+      + 'allergies and current medications only — never clinical notes or reports. You can withhold it per booking.</div></div></div>'
+  + '</div></div></main>';
+}
+</script>
+<script>
+/* ==========================================================================
+   PROFESSIONAL WORKSPACE (you are Akosua Mensah, p1)
+   Every figure below is computed from PRO_HISTORY / PRO_SCHEDULE / REVIEWS.
+   ========================================================================== */
+const proSvc = id => svcById(ME_PRO,id);
+function monthKey(d){ return d.slice(0,7); }
+function monthsBack(n){
+  const out=[]; for(let i=n-1;i>=0;i--){ const d=new Date(TODAY.getFullYear(),TODAY.getMonth()-i,1);
+    out.push({key:d.getFullYear()+'-'+d2(d.getMonth()+1), label:MON[d.getMonth()]}); }
+  return out;
+}
+function proStats(){
+  const h = PRO_HISTORY;
+  const months = monthsBack(7);
+  const byMonth = months.map(m=>{
+    const rows = h.filter(x=>monthKey(x.date)===m.key);
+    return {...m, n:rows.length, gross:sum(rows.map(r=>r.price))};
+  });
+  const thisM = byMonth[byMonth.length-1], prevM = byMonth[byMonth.length-2];
+  const bySvc = ME_PRO.services.map((s,i)=>({
+    n:s.name.replace(/ \(.*\)/,''), v:h.filter(x=>x.svc===s.id).length,
+    c:[ 'var(--c1)','var(--c2)','var(--c3)','var(--c4)' ][i%4].replace('var(--c1)','#256ABF').replace('var(--c2)','#EDA100').replace('var(--c3)','#1BAF7A').replace('var(--c4)','#7A5AA8'),
+    gross: sum(h.filter(x=>x.svc===s.id).map(x=>x.price))
+  }));
+  const byMode = MODES.map((m,i)=>({n:m, v:h.filter(x=>x.mode===m).length, c:['#256ABF','#EDA100','#1BAF7A'][i]}));
+  const clients = uniq(h.map(x=>x.client));
+  const repeatClients = clients.filter(c=> h.filter(x=>x.client===c).length>1);
+  const rs = REVIEWS.filter(r=>r.pro===ME_PRO.id);
+  const grossAll = sum(h.map(x=>x.price));
+  /* like-for-like: the same slice of days in the previous month */
+  const dayCut = TODAY.getDate()-1;   /* history runs to yesterday */
+  const inSlice = (key)=> h.filter(x=> monthKey(x.date)===key && +x.date.slice(8) <= dayCut);
+  const mtd = inSlice(thisM.key), prevSlice = inSlice(prevM.key);
+  return { h, months:byMonth, thisM, prevM, bySvc, byMode, clients, repeatClients, rs,
+           mtdGross: sum(mtd.map(r=>r.price)), mtdN: mtd.length,
+           prevSliceGross: sum(prevSlice.map(r=>r.price)), dayCut,
+           grossAll, netAll: Math.round(grossAll*(1-COMMISSION)) };
+}
+function pctDelta(a,b){ if(!b) return '—'; const d=Math.round((a-b)/b*100); return (d>=0?'+':'')+d+'%'; }
+
+function proShell(inner){
+  return '<div class="dash"><aside class="side">'
+   + '<div class="prochip">'+avatarHTML(ME_PRO.ini,ME_PRO.c,'s',true)
+     + '<div><b>'+esc(ME_PRO.name)+'</b><span>'+esc(ME_PRO.sub)+' · '+esc(ME_PRO.city)+'</span></div></div>'
+   + '<div class="sh">Workspace</div>'
+   + PRO_NAV.map(n=>{
+       const b = n.badge? n.badge():0;
+       return '<a href="javascript:void(0)" class="'+(routeMatches(n)?'on':'')+'" onclick="go(\''+n.r+'\')">'
+        + '<span>'+n.ic+'</span> '+esc(n.l)+(b? '<span class="b">'+b+'</span>':'')+'</a>';
+     }).join('')
+   + '<div class="sh">Listing</div>'
+   + '<a href="javascript:void(0)" onclick="setRole(\'customer\');go(\'#/pro/p1\')"><span>👁️</span> View my public profile</a>'
+   + '<a href="javascript:void(0)" onclick="setRole(\'customer\')"><span>🔄</span> Customer marketplace</a>'
+   + '<div class="sh">Status</div>'
+   + '<div style="padding:0 13px"><div class="tiny" style="color:rgba(255,255,255,.6);margin-bottom:6px">Profile completeness</div>'
+     + '<div class="bar" style="background:rgba(255,255,255,.16)"><i style="width:92%"></i></div>'
+     + '<div class="tiny" style="color:rgba(255,255,255,.6);margin-top:6px">92% — add two photos to finish</div></div>'
+   + '</aside><div class="dashmain">'+inner+'</div></div>';
+}
+
+/* -------------------------------- OVERVIEW ------------------------------ */
+function viewProOverview(){
+  const st = proStats();
+  const pend = PRO_REQUESTS.filter(r=>r.status==='pending');
+  const today = PRO_SCHEDULE.filter(a=>a.date===iso(TODAY));
+  const week = PRO_SCHEDULE.filter(a=>a.date>=iso(TODAY) && daysBetween(iso(TODAY),a.date)<7);
+  const rating = st.rs.length? Math.round(avg(st.rs.map(r=>r.stars))*10)/10 : 0;
+
+  const earnLegend = '<div class="legend"><span><i style="background:#256ABF"></i>Net earnings after the '+Math.round(COMMISSION*100)+'% brokerage fee</span></div>';
+
+  const html = '<div class="spread sec"><div><h1>Good morning, '+esc(ME_PRO.name.split(' ')[0])+'</h1>'
+   + '<p class="muted small" style="margin:4px 0 0">'+DOW[TODAY.getDay()]+' '+fmtD(iso(TODAY))+' · '
+   + (today.length? today.length+' session'+(today.length>1?'s':'')+' today' : 'nothing booked today')
+   + (pend.length? ' · '+pend.length+' request'+(pend.length>1?'s':'')+' waiting':'')+'</p></div>'
+   + '<div class="row"><button class="btn btn-o" onclick="go(\'#/pro/schedule\')">Schedule</button>'
+   + '<button class="btn btn-p" onclick="go(\'#/pro/requests\')">Review requests'+(pend.length?' ('+pend.length+')':'')+'</button></div></div>'
+
+   + '<div class="grid g4 sec">'
+     + '<div class="stat clk" onclick="go(\'#/pro/earnings\')"><div class="k">'+money(Math.round(st.mtdGross*(1-COMMISSION)))+'</div>'
+       + '<div class="l">Net — '+st.thisM.label+' to date</div><div class="d">'+pctDelta(st.mtdGross,st.prevSliceGross)+' vs '+st.prevM.label+' 1–'+st.dayCut+' · '+st.mtdN+' sessions</div></div>'
+     + '<div class="stat clk" onclick="go(\'#/pro/requests\')"><div class="k">'+pend.length+'</div>'
+       + '<div class="l">Open requests</div><div class="d">Oldest waiting '+relD(pend.length? pend[pend.length-1].made : iso(TODAY)).toLowerCase()+'</div></div>'
+     + '<div class="stat clk" onclick="go(\'#/pro/schedule\')"><div class="k">'+week.length+'</div>'
+       + '<div class="l">Booked this week</div><div class="d">'+today.length+' today · next '+(week[0]? week[0].time:'—')+'</div></div>'
+     + '<div class="stat clk" onclick="go(\'#/pro/reviews\')"><div class="k">'+rating.toFixed(1)+'</div>'
+       + '<div class="l">Rating</div><div class="d">'+st.rs.length+' reviews · '+st.repeatClients.length+' repeat clients</div></div>'
+   + '</div>'
+
+   + '<div class="grid g2 sec">'
+   + chartCard('chEarn','Net earnings by month','Computed from '+st.h.length+' completed sessions, after the brokerage fee',
+       null,
+       ()=> '<div class="tblwrap"><table class="tbl"><thead><tr><th>Month</th><th>Sessions</th><th>Gross</th><th>Fee</th><th>Net</th></tr></thead><tbody>'
+         + st.months.map(m=>'<tr><td>'+m.label+'</td><td>'+m.n+'</td><td>'+money(m.gross)+'</td><td class="muted">−'+money(Math.round(m.gross*COMMISSION))+'</td><td class="strong">'+money(Math.round(m.gross*(1-COMMISSION)))+'</td></tr>').join('')
+         + '</tbody></table></div>', earnLegend)
+   + chartCard('chSvc','Sessions by service','Which of your four services people actually book', null,
+       ()=> '<div class="tblwrap"><table class="tbl"><thead><tr><th>Service</th><th>Sessions</th><th>Share</th><th>Gross</th></tr></thead><tbody>'
+         + st.bySvc.map(s=>'<tr><td>'+esc(s.n)+'</td><td>'+s.v+'</td><td>'+Math.round(s.v/st.h.length*100)+'%</td><td>'+money(s.gross)+'</td></tr>').join('')
+         + '</tbody></table></div>',
+       '<div class="legend">'+st.bySvc.map(s=>'<span><i style="background:'+s.c+'"></i>'+esc(s.n)+'</span>').join('')+'</div>')
+   + '</div>'
+
+   + '<div class="grid split">'
+     + '<div class="card"><div class="card-h"><h3>Next up</h3><button class="btn btn-o btn-sm" onclick="go(\'#/pro/schedule\')">Full schedule</button></div>'
+       + '<div class="card-b">'+(week.length? week.slice(0,6).map(a=>
+          '<div class="lrow">'+avatarHTML(a.ini,['#0D3058','#256ABF'],'s',false)
+          + '<div style="flex:1;min-width:0"><b class="small">'+esc(a.client)+'</b>'
+          + '<div class="tiny muted">'+esc(proSvc(a.svc).name)+'</div>'
+          + (a.note? '<div class="tiny muted">“'+esc(a.note)+'”</div>':'')+'</div>'
+          + '<div style="text-align:right"><b class="small">'+a.time+'</b><div class="tiny muted">'+fmtDS(a.date)+'</div></div>'
+          + '<button class="btn btn-t btn-sm" onclick="apptModal(\''+a.id+'\')">Open</button></div>').join('')
+        : '<div class="empty small">Nothing booked this week.</div>')+'</div></div>'
+
+     + '<div class="stack">'
+       + '<div class="card"><div class="card-h"><h3>Requests waiting</h3><span class="pill warn">'+pend.length+'</span></div>'
+         + '<div class="card-b">'+(pend.length? pend.slice(0,4).map(r=>
+            '<div class="lrow">'+avatarHTML(r.ini,['#8A5A03','#C59437'],'s',false)
+            + '<div style="flex:1;min-width:0"><b class="small">'+esc(r.client)+'</b>'
+            + '<div class="tiny muted">'+esc(proSvc(r.svc).name)+' · '+fmtDS(r.date)+' '+r.time+'</div></div>'
+            + '<button class="btn btn-g btn-sm" onclick="acceptRequest(\''+r.id+'\')">Accept</button></div>').join('')
+          : '<div class="empty small">Nothing waiting. Nice.</div>')+'</div>'
+         + (pend.length>4? '<div class="card-f"><button class="btn btn-o btn-blk" onclick="go(\'#/pro/requests\')">See all '+pend.length+'</button></div>':'')+'</div>'
+       + '<div class="card pad"><div class="micro" style="margin-bottom:10px">Practice at a glance</div>'
+         + '<div class="kv"><div class="k">Lifetime gross</div><div class="v">'+money(st.grossAll)+'</div></div>'
+         + '<div class="kv"><div class="k">Lifetime net</div><div class="v">'+money(st.netAll)+'</div></div>'
+         + '<div class="kv"><div class="k">Distinct clients</div><div class="v">'+st.clients.length+'</div></div>'
+         + '<div class="kv"><div class="k">Repeat rate</div><div class="v">'+Math.round(st.repeatClients.length/st.clients.length*100)+'%</div></div>'
+         + '<div class="kv"><div class="k">Avg session value</div><div class="v">'+money(Math.round(st.grossAll/st.h.length))+'</div></div>'
+         + '<div class="kv"><div class="k">Response time</div><div class="v">~'+ME_PRO.responseMins+' min</div></div></div>'
+     + '</div>'
+   + '</div>';
+
+  queueChart('chEarn', cv=> barChart(cv, st.months.map(m=>m.label), st.months.map(m=>Math.round(m.gross*(1-COMMISSION))), '#256ABF',
+      (v,axis)=> axis? CUR+Math.round(v/1000)+'k' : CUR+(Math.round(v/100)/10)+'k'));
+  queueChart('chSvc', cv=> donutChart(cv, st.bySvc.map(s=>({n:s.n.length>22? s.n.slice(0,21)+'…':s.n, v:s.v, c:s.c}))));
+  return proShell(html);
+}
+
+/* -------------------------------- REQUESTS ------------------------------ */
+function viewProRequests(){
+  const pend = PRO_REQUESTS.filter(r=>r.status==='pending');
+  const done = PRO_REQUESTS.filter(r=>r.status!=='pending');
+  const row = r => '<div class="card pad" style="margin-bottom:12px"><div class="spread">'
+    + '<div class="row" style="gap:13px;min-width:0;flex:1">'+avatarHTML(r.ini,['#0D3058','#256ABF'],'m',false)
+    + '<div style="min-width:0"><h3 style="font-size:15.5px">'+esc(r.client)+'</h3>'
+    + '<div class="small" style="color:var(--ink-2)">'+esc(proSvc(r.svc).name)+' · '+money(proSvc(r.svc).price)+'</div>'
+    + '<div class="row wrap-r" style="gap:8px;margin-top:7px"><span class="tiny muted">📅 '+fmtDS(r.date)+' at '+r.time+'</span>'
+    + modePill(r.mode)+'<span class="pill">Requested '+relD(r.made).toLowerCase()+'</span>'
+    + (r.status!=='pending'? statusPill(r.status):'')+'</div>'
+    + '<div class="small" style="margin-top:8px;color:var(--ink-2)">“'+esc(r.note)+'”</div></div></div>'
+    + (r.status==='pending'
+      ? '<div class="row" style="gap:7px;flex-wrap:wrap;justify-content:flex-end">'
+        + '<button class="btn btn-t btn-sm" onclick="declineRequest(\''+r.id+'\')">Decline</button>'
+        + '<button class="btn btn-o btn-sm" onclick="proposeModal(\''+r.id+'\')">Propose another time</button>'
+        + '<button class="btn btn-g btn-sm" onclick="acceptRequest(\''+r.id+'\')">Accept</button></div>'
+      : '<div>'+statusPill(r.status)+'</div>')
+    + '</div></div>';
+
+  const html = '<div class="spread sec"><div><h1>Booking requests</h1>'
+   + '<p class="muted small" style="margin:4px 0 0">Accepting moves the session straight into your schedule and notifies the client.</p></div>'
+   + '<div class="row"><span class="pill warn">'+pend.length+' waiting</span>'
+   + (pend.length? '<button class="btn btn-p" onclick="acceptAll()">Accept all</button>':'')+'</div></div>'
+   + (pend.length? pend.map(row).join('')
+      : '<div class="card"><div class="empty"><div class="ic">📥</div><h3>Inbox empty</h3>'
+        + '<p class="small">New requests will appear here. You reply in about '+ME_PRO.responseMins+' minutes on average.</p></div></div>')
+   + (done.length? '<div class="sec-head" style="margin-top:26px"><div><h2>Handled</h2>'
+      + '<p>Recently accepted, declined or rescheduled.</p></div></div>'+done.map(row).join('') : '');
+  return proShell(html);
+}
+function acceptRequest(id){
+  const r = PRO_REQUESTS.find(x=>x.id===id); if(!r||r.status!=='pending') return;
+  r.status='accepted';
+  PRO_SCHEDULE.push({id:'a'+(PRO_SCHEDULE.length+1)+'x', client:r.client, ini:r.ini, svc:r.svc,
+    date:r.date, time:r.time, mode:r.mode, status:'confirmed', note:r.note});
+  PRO_SCHEDULE.sort((a,b)=> a.date===b.date ? (a.time<b.time?-1:1) : (a.date<b.date?-1:1));
+  const mine = BOOKINGS.find(b=>b.pro==='p1'&&b.date===r.date&&b.time===r.time&&b.status==='pending');
+  if(mine) mine.status='confirmed';
+  render(); toast('Accepted — '+r.client+' has been notified');
+}
+function declineRequest(id){
+  const r = PRO_REQUESTS.find(x=>x.id===id); if(!r) return;
+  modal('<div class="modal-h"><h3>Decline this request?</h3><button class="x" onclick="closeModal()">×</button></div>'
+   + '<div class="modal-b"><p>'+esc(r.client)+' asked for '+esc(proSvc(r.svc).name)+' on '+fmtDS(r.date)+' at '+r.time+'.</p>'
+   + '<div class="field"><label>Reason sent to the client</label><select id="dcReason">'
+   + '<option>I am fully booked at that time</option><option>This is outside my scope of practice</option>'
+   + '<option>Too far for a home visit</option><option>I am not taking new clients this month</option></select></div>'
+   + '<div class="field"><label>Add a note (optional)</label><textarea id="dcNote" placeholder="Suggest an alternative if you can…"></textarea></div>'
+   + '<div class="note">Declining is free. Your response rate is currently 100% — declining does not affect it, but ignoring requests does.</div></div>'
+   + '<div class="modal-f"><button class="btn btn-o" onclick="closeModal()">Keep it</button>'
+   + '<button class="btn btn-d" onclick="doDecline(\''+id+'\')">Decline request</button></div>', {size:'narrow'});
+}
+function doDecline(id){
+  const r = PRO_REQUESTS.find(x=>x.id===id);
+  r.status='declined';
+  const mine = BOOKINGS.find(b=>b.pro==='p1'&&b.date===r.date&&b.time===r.time&&b.status==='pending');
+  if(mine) mine.status='cancelled';
+  closeModal(); render(); toast('Request declined — '+r.client+' has been told','bad');
+}
+function proposeModal(id){
+  const r = PRO_REQUESTS.find(x=>x.id===id);
+  const av = AVAIL['p1'].filter(d=>d.times.length).slice(0,7);
+  modal('<div class="modal-h"><h3>Propose another time</h3><button class="x" onclick="closeModal()">×</button></div>'
+   + '<div class="modal-b"><p class="small muted">'+esc(r.client)+' asked for '+fmtDS(r.date)+' at '+r.time+'. Offer an alternative from your open slots.</p>'
+   + av.map(d=>'<div class="lrow" style="padding:9px 0"><div style="width:106px"><b class="small">'+fmtDS(d.date)+'</b></div>'
+      + '<div style="flex:1">'+d.times.map(t=>'<button class="pill" style="cursor:pointer;margin:2px 3px 2px 0" '
+      + 'onclick="doPropose(\''+r.id+'\',\''+d.date+'\',\''+t+'\')">'+t+'</button>').join('')+'</div></div>').join('')
+   + '</div><div class="modal-f"><button class="btn btn-o" onclick="closeModal()">Cancel</button></div>');
+}
+function doPropose(id,date,time){
+  const r = PRO_REQUESTS.find(x=>x.id===id);
+  r.date=date; r.time=time;
+  closeModal(); render();
+  toast('Proposed '+fmtDS(date)+' at '+time+' — waiting for '+r.client.split(' ')[0]+' to agree','warn');
+}
+function acceptAll(){
+  const pend = PRO_REQUESTS.filter(r=>r.status==='pending');
+  pend.forEach(r=>acceptRequest(r.id));
+  toast(pend.length+' requests accepted');
+}
+
+/* -------------------------------- SCHEDULE ------------------------------ */
+let schedQ='', schedFilter='all';
+function viewProSchedule(){
+  let rows = PRO_SCHEDULE.slice().sort((a,b)=> a.date===b.date? (a.time<b.time?-1:1) : (a.date<b.date?-1:1));
+  if(schedFilter!=='all') rows = rows.filter(r=>r.mode===schedFilter);
+  if(schedQ){ const q=schedQ.toLowerCase();
+    rows = rows.filter(r=> (r.client+' '+proSvc(r.svc).name+' '+r.note).toLowerCase().indexOf(q)>=0); }
+  const groups = {};
+  rows.forEach(r=>{ (groups[r.date]=groups[r.date]||[]).push(r); });
+  const dates = Object.keys(groups).sort();
+  const recent = PRO_HISTORY.slice(0,8);
+
+  const html = '<div class="spread sec"><div><h1>Schedule</h1>'
+   + '<p class="muted small" style="margin:4px 0 0">'+PRO_SCHEDULE.length+' confirmed sessions ahead · '+PRO_HISTORY.length+' completed to date</p></div>'
+   + '<div class="row"><div class="srch" style="min-width:230px"><span>🔎</span>'
+   + '<input id="schQ" value="'+esc(schedQ)+'" placeholder="Client, service or note…" oninput="schedQ=this.value;renderKeepFocus(\'schQ\')"></div>'
+   + '<select onchange="schedFilter=this.value;render()" style="padding:8px 13px;border:1px solid var(--line);border-radius:var(--r-pill);font-family:inherit;font-size:13px;background:#fff">'
+   + '<option value="all">All formats</option>'+MODES.map(m=>'<option'+(schedFilter===m?' selected':'')+'>'+m+'</option>').join('')+'</select></div></div>'
+
+   + (schedQ||schedFilter!=='all'? '<div class="row wrap-r sec" style="gap:7px">'
+      + (schedQ? '<span class="chip">“'+esc(schedQ)+'”<button onclick="schedQ=\'\';render()">×</button></span>':'')
+      + (schedFilter!=='all'? '<span class="chip">'+esc(schedFilter)+'<button onclick="schedFilter=\'all\';render()">×</button></span>':'')
+      + '<button class="btn btn-t btn-sm" onclick="schedQ=\'\';schedFilter=\'all\';render()">Clear</button></div>':'')
+
+   + (dates.length? dates.map(d=>
+      '<div class="card sec" style="margin-bottom:14px"><div class="card-h"><h3>'+fmtDS(d)+'</h3>'
+      + '<div class="row"><span class="pill '+(d===iso(TODAY)?'gold':'')+'">'+relD(d)+'</span>'
+      + '<span class="pill">'+groups[d].length+' session'+(groups[d].length>1?'s':'')+'</span>'
+      + '<span class="pill ok">'+money(sum(groups[d].map(r=>proSvc(r.svc).price)))+'</span></div></div>'
+      + '<div class="card-b">'+groups[d].map(a=>
+        '<div class="lrow"><div style="width:56px"><b>'+a.time+'</b></div>'
+        + avatarHTML(a.ini,['#0D3058','#256ABF'],'s',false)
+        + '<div style="flex:1;min-width:0"><b class="small">'+esc(a.client)+'</b>'
+        + '<div class="tiny muted">'+esc(proSvc(a.svc).name)+' · '+(proSvc(a.svc).dur? proSvc(a.svc).dur+' min':'package')+'</div>'
+        + (a.note? '<div class="tiny muted">“'+esc(a.note)+'”</div>':'')+'</div>'
+        + modePill(a.mode)+'<span class="rate" style="font-size:14px">'+money(proSvc(a.svc).price)+'</span>'
+        + '<button class="btn btn-o btn-sm" onclick="apptModal(\''+a.id+'\')">Open</button></div>').join('')
+      + '</div></div>').join('')
+     : '<div class="card"><div class="empty"><div class="ic">📅</div><h3>Nothing matches</h3>'
+       + '<p class="small">Try clearing the search or the format filter.</p></div></div>')
+
+   + '<div class="card"><div class="card-h"><h3>Recently completed</h3><span class="tiny muted">Last 8 of '+PRO_HISTORY.length+'</span></div>'
+   + '<div class="card-b"><div class="tblwrap"><table class="tbl"><thead><tr><th>Date</th><th>Time</th><th>Client</th><th>Service</th><th>Format</th><th>Value</th></tr></thead><tbody>'
+   + recent.map(r=>'<tr><td>'+fmtD(r.date)+'</td><td>'+r.time+'</td><td class="strong">'+esc(r.client)+'</td>'
+     + '<td>'+esc(proSvc(r.svc).name)+'</td><td>'+esc(r.mode)+'</td><td>'+money(r.price)+'</td></tr>').join('')
+   + '</tbody></table></div></div></div>';
+  return proShell(html);
+}
+function apptModal(id){
+  const a = PRO_SCHEDULE.find(x=>x.id===id); if(!a) return;
+  const s = proSvc(a.svc);
+  const hist = PRO_HISTORY.filter(h=>h.client===a.client);
+  modal('<div class="modal-h"><h3>'+esc(a.client)+'</h3><button class="x" onclick="closeModal()">×</button></div>'
+   + '<div class="modal-b">'
+   + '<div class="row" style="gap:13px;margin-bottom:16px">'+avatarHTML(a.ini,['#0D3058','#256ABF'],'m',false)
+   + '<div><b>'+esc(s.name)+'</b><div class="small muted">'+fmtDS(a.date)+' at '+a.time+' · '+esc(a.mode)+'</div></div>'
+   + '<div style="margin-left:auto">'+statusPill(a.status)+'</div></div>'
+   + '<div class="kv"><div class="k">Fee</div><div class="v">'+money(s.price)+' <span class="tiny muted">(net '+money(Math.round(s.price*(1-COMMISSION)))+')</span></div></div>'
+   + '<div class="kv"><div class="k">Duration</div><div class="v">'+(s.dur? s.dur+' minutes':'Package')+'</div></div>'
+   + '<div class="kv"><div class="k">Client note</div><div class="v">'+esc(a.note||'—')+'</div></div>'
+   + '<div class="kv"><div class="k">History</div><div class="v">'+hist.length+' previous session'+(hist.length===1?'':'s')
+     + (hist.length? ' · last '+relD(hist[0].date).toLowerCase():'')+'</div></div>'
+   + '<div class="micro" style="margin:18px 0 8px">Shared care summary</div>'
+   + '<div class="note">Type-2 diabetes, diet-controlled. No known allergies. Currently on metformin. '
+   + 'Shared by the client through BridgeCare — clinical notes are not visible to you.</div>'
+   + '</div><div class="modal-f"><button class="btn btn-o" onclick="closeModal();toast(\'Session notes saved to the client record\')">Add session note</button>'
+   + '<button class="btn btn-d" onclick="closeModal();toast(\'Client notified of the cancellation\',\'bad\')">Cancel session</button>'
+   + '<button class="btn btn-p" onclick="closeModal()">Close</button></div>');
+}
+
+/* -------------------------------- SERVICES ------------------------------ */
+function viewProServices(){
+  const st = proStats();
+  const html = '<div class="spread sec"><div><h1>Services &amp; pricing</h1>'
+   + '<p class="muted small" style="margin:4px 0 0">What clients see on your listing. The '+Math.round(COMMISSION*100)+'% brokerage fee comes out of the price shown.</p></div>'
+   + '<button class="btn btn-p" onclick="serviceModal()">Add a service</button></div>'
+   + '<div class="stack sec">'+ME_PRO.services.map(s=>{
+      const n = st.h.filter(h=>h.svc===s.id).length;
+      const active = PRO_SERVICES_ACTIVE[s.id];
+      return '<div class="card pad"><div class="spread">'
+       + '<div style="flex:1;min-width:0"><div class="row" style="gap:8px"><h3 style="font-size:16px">'+esc(s.name)+'</h3>'
+       + (active? '<span class="pill ok">Live</span>':'<span class="pill">Hidden</span>')+'</div>'
+       + '<p class="small muted" style="margin:5px 0 0">'+esc(s.desc)+'</p>'
+       + '<div class="row wrap-r" style="gap:8px;margin-top:9px">'
+       + '<span class="pill">'+(s.dur? s.dur+' min':'Package')+'</span>'
+       + '<span class="pill info">'+n+' booked</span>'
+       + '<span class="pill gold">'+money(sum(st.h.filter(h=>h.svc===s.id).map(h=>h.price)))+' lifetime</span></div></div>'
+       + '<div style="text-align:right"><div class="rate" style="font-size:22px">'+(s.price? money(s.price):'Free')+'</div>'
+       + '<div class="tiny muted">you keep '+money(Math.round(s.price*(1-COMMISSION)))+'</div>'
+       + '<div class="row" style="gap:6px;margin-top:9px;justify-content:flex-end">'
+       + '<button class="btn btn-o btn-sm" onclick="serviceModal(\''+s.id+'\')">Edit</button>'
+       + '<button class="btn btn-t btn-sm" onclick="toggleService(\''+s.id+'\')">'+(active?'Hide':'Publish')+'</button></div></div>'
+       + '</div></div>';
+     }).join('')+'</div>'
+   + '<div class="grid g2">'
+     + '<div class="card"><div class="card-h"><h3>Where your income comes from</h3></div><div class="card-b">'
+       + st.bySvc.map(s=>'<div style="margin-bottom:13px"><div class="row" style="justify-content:space-between">'
+         + '<b class="small">'+esc(s.n)+'</b><span class="small strong">'+money(s.gross)+'</span></div>'
+         + '<div class="bar" style="margin-top:5px"><i style="width:'+Math.round(s.gross/st.grossAll*100)+'%;background:'+s.c+'"></i></div>'
+         + '<div class="tiny muted">'+s.v+' sessions · '+Math.round(s.gross/st.grossAll*100)+'% of gross</div></div>').join('')
+       + '</div></div>'
+     + '<div class="card"><div class="card-h"><h3>Pricing guidance</h3><span class="pill info">Category benchmark</span></div><div class="card-b">'
+       + '<p class="small" style="color:var(--ink-2)">Across '+PROS.filter(p=>p.cat==='nutrition').length+' nutrition and lifestyle listings on BridgeCare:</p>'
+       + '<div class="kv"><div class="k">Median “from” price</div><div class="v">'+money(Math.round(avg(PROS.filter(p=>p.cat==='nutrition').map(p=>p.rate))))+'</div></div>'
+       + '<div class="kv"><div class="k">Your “from” price</div><div class="v">'+money(ME_PRO.rate)+'</div></div>'
+       + '<div class="kv"><div class="k">Category median rating</div><div class="v">'+ (Math.round(avg(PROS.filter(p=>p.cat==='nutrition').map(p=>p.rating))*10)/10).toFixed(1)+'★</div></div>'
+       + '<div class="kv"><div class="k">Your rating</div><div class="v">'+ME_PRO.rating.toFixed(1)+'★</div></div>'
+       + '<div class="note" style="margin-top:14px">You sit above the category on rating and just above it on price. Listings that raise prices more than 15% in one step '
+       + 'see a temporary drop in requests — stagger it if you decide to move.</div></div></div>'
+   + '</div>';
+  return proShell(html);
+}
+function toggleService(id){
+  PRO_SERVICES_ACTIVE[id] = !PRO_SERVICES_ACTIVE[id];
+  render();
+  toast(proSvc(id).name + (PRO_SERVICES_ACTIVE[id]? ' is live on your listing':' hidden from your listing'), PRO_SERVICES_ACTIVE[id]?'':'warn');
+}
+function serviceModal(id){
+  const s = id? proSvc(id) : {name:'',dur:60,price:200,desc:''};
+  modal('<div class="modal-h"><h3>'+(id?'Edit service':'Add a service')+'</h3><button class="x" onclick="closeModal()">×</button></div>'
+   + '<div class="modal-b">'
+   + '<div class="field"><label>Service name</label><input id="svName" value="'+esc(s.name)+'" placeholder="e.g. Nutrition assessment"></div>'
+   + '<div class="grid g2" style="gap:12px"><div class="field"><label>Duration (minutes)</label><input id="svDur" type="number" value="'+s.dur+'"></div>'
+   + '<div class="field"><label>Price ('+CUR+')</label><input id="svPrice" type="number" value="'+s.price+'"></div></div>'
+   + '<div class="field"><label>Description shown to clients</label><textarea id="svDesc">'+esc(s.desc)+'</textarea></div>'
+   + '<div class="note">You will receive <b id="svNet">'+money(Math.round(s.price*(1-COMMISSION)))+'</b> per session after the '
+   + Math.round(COMMISSION*100)+'% brokerage fee.</div></div>'
+   + '<div class="modal-f"><button class="btn btn-o" onclick="closeModal()">Cancel</button>'
+   + '<button class="btn btn-p" onclick="saveService('+(id?"'"+id+"'":'null')+')">'+(id?'Save changes':'Add service')+'</button></div>', {size:'narrow'});
+  const pi = $('#svPrice');
+  if(pi) pi.addEventListener('input', ()=>{ const n=$('#svNet'); if(n) n.textContent = money(Math.round((+pi.value||0)*(1-COMMISSION))); });
+}
+function saveService(id){
+  const name = $('#svName').value.trim() || 'Untitled service';
+  const dur = +$('#svDur').value || 60, price = +$('#svPrice').value || 0;
+  const desc = $('#svDesc').value.trim() || 'No description yet.';
+  if(id){ const s=proSvc(id); s.name=name; s.dur=dur; s.price=price; s.desc=desc; }
+  else {
+    const nid = 's1'+String.fromCharCode(97+ME_PRO.services.length);
+    ME_PRO.services.push({id:nid,name,dur,price,desc});
+    PRO_SERVICES_ACTIVE[nid]=true;
+  }
+  ME_PRO.rate = Math.min.apply(null, ME_PRO.services.filter(s=>s.price>0).map(s=>s.price));
+  closeModal(); render();
+  toast(id? 'Service updated on your listing' : 'Service added and published');
+}
+
+/* -------------------------------- EARNINGS ------------------------------ */
+function viewProEarnings(){
+  const st = proStats();
+  const payouts = st.months.slice().reverse().map(m=>{
+    const gross=m.gross, fee=Math.round(gross*COMMISSION), net=gross-fee;
+    const last = new Date(TODAY.getFullYear(), +m.key.slice(5)-0, 0);
+    const paid = m.key !== monthKey(iso(TODAY));
+    return {m, gross, fee, net, ref:'PAY-'+m.key.replace('-','')+'-AM', date: iso(addDays(last,PAYOUT_LAG)), paid};
+  });
+  const upcoming = sum(PRO_SCHEDULE.map(a=>proSvc(a.svc).price));
+  const html = '<div class="spread sec"><div><h1>Earnings</h1>'
+   + '<p class="muted small" style="margin:4px 0 0">Paid out monthly, '+PAYOUT_LAG+' working days after month end, to your registered account.</p></div>'
+   + '<button class="btn btn-o" onclick="window.print()">Export statement</button></div>'
+
+   + '<div class="grid g4 sec">'
+     + '<div class="stat"><div class="k">'+money(Math.round(st.mtdGross*(1-COMMISSION)))+'</div><div class="l">Net — '+st.thisM.label+' to date</div>'
+       + '<div class="d">'+st.mtdN+' sessions · '+pctDelta(st.mtdGross,st.prevSliceGross)+' vs the same days in '+st.prevM.label+'</div></div>'
+     + '<div class="stat"><div class="k">'+money(Math.round(upcoming*(1-COMMISSION)))+'</div><div class="l">Booked, not yet earned</div>'
+       + '<div class="d">'+PRO_SCHEDULE.length+' confirmed sessions ahead</div></div>'
+     + '<div class="stat"><div class="k">'+money(st.netAll)+'</div><div class="l">Lifetime net</div>'
+       + '<div class="d">'+money(st.grossAll)+' gross · '+money(st.grossAll-st.netAll)+' in fees</div></div>'
+     + '<div class="stat"><div class="k">'+money(Math.round(st.grossAll/st.h.length*(1-COMMISSION)))+'</div><div class="l">Avg net per session</div>'
+       + '<div class="d">Across '+st.h.length+' completed sessions</div></div>'
+   + '</div>'
+
+   + '<div class="grid g2 sec">'
+   + chartCard('chGrossNet','Gross vs net by month','What clients paid, and what reached you', null,
+       ()=> '<div class="tblwrap"><table class="tbl"><thead><tr><th>Month</th><th>Gross</th><th>Fee</th><th>Net</th></tr></thead><tbody>'
+         + st.months.map(m=>'<tr><td>'+m.label+'</td><td>'+money(m.gross)+'</td><td class="muted">−'+money(Math.round(m.gross*COMMISSION))+'</td>'
+           + '<td class="strong">'+money(Math.round(m.gross*(1-COMMISSION)))+'</td></tr>').join('')+'</tbody></table></div>',
+       '<div class="legend"><span><i style="background:#256ABF"></i>Gross</span><span><i style="background:#1BAF7A"></i>Net to you</span></div>')
+   + chartCard('chMode','Sessions by format','Online, in person, or at the client’s home', null,
+       ()=> '<div class="tblwrap"><table class="tbl"><thead><tr><th>Format</th><th>Sessions</th><th>Share</th></tr></thead><tbody>'
+         + st.byMode.map(m=>'<tr><td>'+m.n+'</td><td>'+m.v+'</td><td>'+Math.round(m.v/st.h.length*100)+'%</td></tr>').join('')+'</tbody></table></div>',
+       '<div class="legend">'+st.byMode.map(m=>'<span><i style="background:'+m.c+'"></i>'+m.n+'</span>').join('')+'</div>')
+   + '</div>'
+
+   + '<div class="card"><div class="card-h"><h3>Payouts</h3><span class="tiny muted">Brokerage fee '+Math.round(COMMISSION*100)+'% · settled to GCB ••4471</span></div>'
+   + '<div class="card-b"><div class="tblwrap"><table class="tbl"><thead><tr><th>Reference</th><th>Period</th><th>Sessions</th><th>Gross</th><th>Fee</th><th>Net paid</th><th>Settled</th><th></th></tr></thead><tbody>'
+   + payouts.map(p=>'<tr><td class="mono">'+p.ref+'</td><td>'+p.m.label+' 2026</td><td>'+p.m.n+'</td><td>'+money(p.gross)+'</td>'
+     + '<td class="muted">−'+money(p.fee)+'</td><td class="strong">'+money(p.net)+'</td>'
+     + '<td>'+(p.paid? fmtD(p.date) : '<span class="pill warn">In progress</span>')+'</td>'
+     + '<td>'+(p.paid? '<span class="pill ok">Paid</span>':'<span class="pill">Open</span>')+'</td></tr>').join('')
+   + '</tbody></table></div></div>'
+   + '<div class="card-f"><span class="small muted">Totals — gross '+money(st.grossAll)+' · fees '+money(st.grossAll-st.netAll)+' · net '+money(st.netAll)+'</span></div></div>';
+
+  queueChart('chGrossNet', cv=> lineChart(cv, st.months.map(m=>m.label),
+      [{n:'Gross', c:'#256ABF', v:st.months.map(m=>m.gross)},
+       {n:'Net',   c:'#1BAF7A', v:st.months.map(m=>Math.round(m.gross*(1-COMMISSION)))}],
+      (v,axis)=> CUR+Math.round(v/1000)+'k'));
+  queueChart('chMode', cv=> donutChart(cv, st.byMode));
+  return proShell(html);
+}
+
+/* --------------------------------- REVIEWS ------------------------------ */
+function viewProReviews(){
+  const rs = REVIEWS.filter(r=>r.pro===ME_PRO.id).sort((a,b)=>a.date<b.date?1:-1);
+  const dist = [5,4,3,2,1].map(s=>({s,n:rs.filter(r=>r.stars===s).length}));
+  const unanswered = rs.filter(r=>!r.reply);
+  const html = '<div class="spread sec"><div><h1>Reviews</h1>'
+   + '<p class="muted small" style="margin:4px 0 0">Only clients who completed a paid booking can review. You cannot delete reviews — you can reply to them.</p></div>'
+   + (unanswered.length? '<span class="pill warn">'+unanswered.length+' without a reply</span>':'<span class="pill ok">All replied</span>')+'</div>'
+   + '<div class="grid g4 sec">'
+     + '<div class="stat"><div class="k">'+ME_PRO.rating.toFixed(1)+'</div><div class="l">Average rating</div><div class="d">'+starsHTML(ME_PRO.rating,false)+'</div></div>'
+     + '<div class="stat"><div class="k">'+rs.length+'</div><div class="l">Total reviews</div><div class="d">'+Math.round(rs.length/PRO_HISTORY.length*100)+'% of sessions reviewed</div></div>'
+     + '<div class="stat"><div class="k">'+Math.round(dist[0].n/rs.length*100)+'%</div><div class="l">Five stars</div><div class="d">'+dist[0].n+' of '+rs.length+'</div></div>'
+     + '<div class="stat"><div class="k">'+rs.filter(r=>r.reply).length+'</div><div class="l">Replied to</div><div class="d">Replying lifts rebooking</div></div>'
+   + '</div>'
+   + '<div class="grid split-n">'
+   + '<div class="card"><div class="card-h"><h3>All reviews</h3><span class="tiny muted">Newest first</span></div><div class="card-b">'
+   + rs.map(r=>'<div class="rvw"><div class="row" style="align-items:flex-start;gap:11px">'
+      + avatarHTML(r.ini,['#6B7A89','#8C99A6'],'s',false)
+      + '<div style="flex:1"><div class="row" style="justify-content:space-between"><b class="small">'+esc(r.author)+'</b>'
+      + '<span class="tiny muted">'+fmtD(r.date)+'</span></div>'+starsHTML(r.stars,false)
+      + '<p class="small" style="margin:5px 0 0;color:var(--ink-2)">'+esc(r.text)+'</p></div></div>'
+      + (r.reply? '<div class="reply"><b class="tiny">You replied</b><div>'+esc(r.reply)+'</div></div>'
+                : '<div style="margin:10px 0 0 46px"><button class="btn btn-o btn-sm" onclick="replyModal(\''+r.id+'\')">Reply publicly</button></div>')
+      + '</div>').join('')
+   + '</div></div>'
+   + '<div class="stack">'
+     + '<div class="card pad"><div class="micro" style="margin-bottom:10px">Distribution</div>'
+     + dist.map(d=>'<div class="row" style="gap:9px;margin-bottom:6px"><span class="tiny" style="width:22px">'+d.s+'★</span>'
+       + '<div class="bar" style="flex:1"><i style="width:'+(d.n/rs.length*100)+'%"></i></div>'
+       + '<span class="tiny muted" style="width:16px;text-align:right">'+d.n+'</span></div>').join('')+'</div>'
+     + '<div class="card pad"><div class="micro" style="margin-bottom:8px">What clients mention</div>'
+     + ['practical plans','explains lab results','calm about slip-ups','coordinates with clinicians','family sessions','punctual']
+        .map(t=>'<span class="pill" style="margin:0 5px 5px 0">'+t+'</span>').join('')
+     + '<div class="tiny muted" style="margin-top:9px">Pulled from the wording of your last '+rs.length+' reviews.</div></div>'
+   + '</div></div>';
+  return proShell(html);
+}
+function replyModal(id){
+  const r = REVIEWS.find(x=>x.id===id);
+  modal('<div class="modal-h"><h3>Reply to '+esc(r.author)+'</h3><button class="x" onclick="closeModal()">×</button></div>'
+   + '<div class="modal-b"><div class="rvw" style="border:0;padding-top:0">'+starsHTML(r.stars,false)
+   + '<p class="small" style="margin:6px 0 0;color:var(--ink-2)">'+esc(r.text)+'</p></div>'
+   + '<div class="field"><label>Your public reply</label><textarea id="rpText" placeholder="Thank them, add context, keep it short."></textarea></div>'
+   + '<div class="note">Replies are public and permanent. Never mention anything clinical about a client in a reply.</div></div>'
+   + '<div class="modal-f"><button class="btn btn-o" onclick="closeModal()">Cancel</button>'
+   + '<button class="btn btn-p" onclick="saveReply(\''+id+'\')">Publish reply</button></div>', {size:'narrow'});
+}
+function saveReply(id){
+  const r = REVIEWS.find(x=>x.id===id);
+  r.reply = ($('#rpText')&&$('#rpText').value.trim()) || 'Thank you — it was a pleasure working with you.';
+  closeModal(); render(); toast('Reply published on your listing');
+}
+
+/* --------------------------------- PROFILE ------------------------------ */
+function viewProProfile(){
+  const st = proStats();
+  const html = '<div class="spread sec"><div><h1>My listing</h1>'
+   + '<p class="muted small" style="margin:4px 0 0">This is what customers see when they find you.</p></div>'
+   + '<div class="row"><button class="btn btn-o" onclick="setRole(\'customer\');go(\'#/pro/p1\')">Preview as a customer</button>'
+   + '<button class="btn btn-p" onclick="toast(\'Listing saved and republished\')">Save changes</button></div></div>'
+
+   + '<div class="card pad sec"><div class="row" style="gap:18px;flex-wrap:wrap">'
+   + avatarHTML(ME_PRO.ini,ME_PRO.c,'l',true)
+   + '<div style="flex:1;min-width:230px"><h2>'+esc(ME_PRO.name)+'</h2>'
+   + '<div class="small muted">'+esc(ME_PRO.title)+'</div>'
+   + '<div class="tags" style="margin-top:10px"><span class="pill ok">✓ Identity verified</span>'
+   + '<span class="pill ok">✓ Credentials verified</span><span class="pill info">Insured to '+money(500000)+'</span>'
+   + '<span class="pill gold">Police clearance — Mar 2026</span></div></div>'
+   + '<div class="row" style="gap:22px">'
+   + '<div><div style="font-size:22px;font-weight:800">'+ME_PRO.rating.toFixed(1)+'</div><div class="micro">Rating</div></div>'
+   + '<div><div style="font-size:22px;font-weight:800">'+st.h.length+'</div><div class="micro">Sessions</div></div>'
+   + '<div><div style="font-size:22px;font-weight:800">'+Math.round(st.repeatClients.length/st.clients.length*100)+'%</div><div class="micro">Rebook</div></div>'
+   + '</div></div></div>'
+
+   + '<div class="grid g2">'
+     + '<div class="card"><div class="card-h"><h3>Listing details</h3></div><div class="card-b">'
+       + '<div class="field"><label>Headline</label><input value="'+esc(ME_PRO.title)+'" oninput="ME_PRO.title=this.value"></div>'
+       + '<div class="field"><label>About</label><textarea style="min-height:120px" oninput="ME_PRO.bio=this.value">'+esc(ME_PRO.bio)+'</textarea></div>'
+       + '<div class="grid g2" style="gap:12px"><div class="field"><label>City</label><select onchange="ME_PRO.city=this.value;render()">'
+       + CITIES.map(c=>'<option'+(ME_PRO.city===c?' selected':'')+'>'+c+'</option>').join('')+'</select></div>'
+       + '<div class="field"><label>Years practising</label><input type="number" value="'+ME_PRO.years+'" oninput="ME_PRO.years=+this.value"></div></div>'
+       + '<div class="micro" style="margin:6px 0 8px">Formats offered</div>'
+       + '<div class="row wrap-r">'+MODES.map(m=>'<button class="slot '+(ME_PRO.modes.indexOf(m)>=0?'on':'')+'" style="min-width:118px" '
+         + 'onclick="toggleProMode(\''+m+'\')">'+m+'</button>').join('')+'</div>'
+       + '</div><div class="card-f"><button class="btn btn-p btn-blk" onclick="toast(\'Listing saved and republished\')">Save and republish</button></div></div>'
+
+     + '<div class="stack">'
+       + '<div class="card"><div class="card-h"><h3>Verification</h3><span class="pill ok">Complete</span></div><div class="card-b">'
+       + [['Government ID','Verified 4 Feb 2026','ok'],['BSc Nutrition & Dietetics','Verified 6 Feb 2026','ok'],
+          ['GNA registration GNA-4471','Verified 6 Feb 2026','ok'],['Professional indemnity insurance','Expires 31 Jan 2027','ok'],
+          ['Police clearance','Renewed 12 Mar 2026','ok'],['Profile photos','2 of 4 uploaded','warn']]
+         .map(v=>'<div class="lrow" style="padding:10px 0"><div style="flex:1"><b class="small">'+esc(v[0])+'</b>'
+           + '<div class="tiny muted">'+esc(v[1])+'</div></div><span class="pill '+v[2]+'">'+(v[2]==='ok'?'✓':'Action')+'</span></div>').join('')
+       + '</div></div>'
+       + '<div class="card"><div class="card-h"><h3>Working hours</h3><button class="btn btn-t btn-sm" onclick="toast(\'Availability editor is read-only in this demo\',\'warn\')">Edit</button></div>'
+       + '<div class="card-b">'+AVAIL['p1'].slice(0,7).map(d=>
+          '<div class="lrow" style="padding:8px 0"><div style="width:96px"><b class="small">'+fmtDS(d.date)+'</b></div>'
+          + '<div style="flex:1" class="tiny muted">'+(d.times.length? d.times.join(' · ') : 'Closed')+'</div>'
+          + '<span class="pill '+(d.times.length?'ok':'')+'">'+(d.times.length? d.times.length+' slots':'Closed')+'</span></div>').join('')
+       + '</div></div>'
+       + '<div class="card pad"><div class="micro" style="margin-bottom:8px">Scope of practice</div>'
+       + '<div class="note">You are listed as a <b>non-medical</b> wellbeing professional. You may not diagnose, prescribe, or present '
+       + 'yourself as providing clinical care. Requests that read as clinical are routed by BridgeCare to a care team instead of to you.</div></div>'
+     + '</div>'
+   + '</div>';
+  return proShell(html);
+}
+function toggleProMode(m){
+  const i = ME_PRO.modes.indexOf(m);
+  if(i>=0){ if(ME_PRO.modes.length===1) return toast('You must offer at least one format','warn'); ME_PRO.modes.splice(i,1); }
+  else ME_PRO.modes.push(m);
+  render();
+}
+
+/* ==========================================================================
+   RENDER + BOOT
+   ========================================================================== */
+function render(){
+  renderNav();
+  const r = state.route;
+  let html;
+  if(state.role==='pro' && r.indexOf('#/pro/')===0 && ['overview','requests','schedule','services','earnings','reviews','profile'].indexOf(r.split('/')[2])>=0){
+    const seg = r.split('/')[2];
+    html = { overview:viewProOverview, requests:viewProRequests, schedule:viewProSchedule,
+             services:viewProServices, earnings:viewProEarnings, reviews:viewProReviews, profile:viewProProfile }[seg]();
+  }
+  else if(r==='#/discover' || r==='#/' || r==='') html = viewDiscover();
+  else if(r==='#/browse')   html = viewBrowse();
+  else if(r==='#/bookings') html = viewBookings();
+  else if(r==='#/messages') html = viewMessages();
+  else if(r==='#/saved')    html = viewSaved();
+  else if(r==='#/account')  html = viewAccount();
+  else if(r.indexOf('#/pro/')===0)  html = viewPro(r.slice(6));
+  else if(r.indexOf('#/book/')===0) html = viewBook(r.slice(7)) || '';
+  else html = notFound();
+  $('#view').innerHTML = html;
+  flushCharts();
+  const cb = $('#convoBody'); if(cb) cb.scrollTop = cb.scrollHeight;
+}
+let rz;
+window.addEventListener('resize', ()=>{ clearTimeout(rz); rz = setTimeout(()=>{ if(!modalStack.length) render(); }, 220); });
+
+(function boot(){
+  const h = location.hash;
+  if(h && h.indexOf('#/')===0){
+    state.route = h;
+    if(h.indexOf('#/pro/')===0 && ['overview','requests','schedule','services','earnings','reviews','profile'].indexOf(h.split('/')[2])>=0) state.role='pro';
+  } else { location.hash = state.route; }
+  render();
+  setTimeout(()=> toast('Demo loaded — you are Kojo Ampia-Addison. Use “I provide care” in the header to see the professional side.'), 700);
+})();
+</script>
+</body>
+</html>

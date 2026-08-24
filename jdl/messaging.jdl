@@ -1,0 +1,85 @@
+/**
+ * HealthConnect Marketplace — messaging service.
+ *
+ * Threads, messages and the notification rows that every domain event lands in.
+ * Spec: docs/healthconnect-marketplace.md §5.3.
+ *
+ * Import with:
+ *   jhipster jdl jdl/messaging.jdl
+ *
+ * NAMING: the spec calls the aggregate `Thread`. It is `Conversation` here, because a JHipster
+ * entity named Thread generates net.jojoaddison.domain.Thread, which shadows java.lang.Thread for
+ * every unqualified use inside that package — a trap that costs an afternoon and produces error
+ * messages that point nowhere near the cause. The REST surface is unaffected: the endpoints are
+ * still /api/threads, as spec §6 requires.
+ */
+
+application {
+  config {
+    baseName healthconnectMessaging
+    applicationType microservice
+    packageName net.jojoaddison
+    serverPort 8083
+    databaseType sql
+    prodDatabaseType postgresql
+    devDatabaseType postgresql
+    authenticationType jwt
+    messageBroker kafka
+    serviceDiscoveryType consul
+    buildTool maven
+    skipUserManagement true
+    clientFramework no
+    enableTranslation false
+    testFrameworks [cucumber]
+  }
+  entities Conversation, Message, Notification
+}
+
+// ===========================================================================
+// Enumerations
+// ===========================================================================
+
+/** SYSTEM covers anything raised by a domain event rather than typed by a person. */
+enum Direction {
+  CUSTOMER_TO_PROFESSIONAL,
+  PROFESSIONAL_TO_CUSTOMER,
+  SYSTEM
+}
+
+// ===========================================================================
+// Entities
+// ===========================================================================
+
+entity Conversation {
+  reference String required unique
+  customerLogin String required
+  professionalRef String required
+  bookingReference String
+  lastMessageAt Instant
+}
+
+entity Message {
+  direction Direction required
+  body TextBlob required
+  sentAt Instant required
+  readAt Instant
+}
+
+entity Notification {
+  recipientLogin String required
+  kind String required
+  body String required maxlength(400)
+  raisedAt Instant required
+  readAt Instant
+  deepLink String
+}
+
+relationship OneToMany {
+  Conversation{messages} to Message{conversation required}
+}
+
+service Conversation, Message, Notification with serviceClass
+dto Conversation, Message, Notification with mapstruct
+paginate Message, Notification with pagination
+
+microservice * with healthconnectMessaging

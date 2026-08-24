@@ -1,0 +1,125 @@
+/**
+ * HealthConnect Marketplace — booking service.
+ *
+ * One aggregate covers what the prototype kept in four arrays: PRO_REQUESTS is status=REQUESTED,
+ * PRO_SCHEDULE is CONFIRMED, PRO_HISTORY is COMPLETED, and the customer's four tabs are queries
+ * over the same table.
+ *
+ * Spec: docs/healthconnect-marketplace.md §5.2. Decisions: docs/decisions.md D7.
+ *
+ * Import with:
+ *   jhipster jdl jdl/booking.jdl
+ */
+
+application {
+  config {
+    baseName healthconnectBooking
+    applicationType microservice
+    packageName net.jojoaddison
+    serverPort 8082
+    databaseType sql
+    prodDatabaseType postgresql
+    devDatabaseType postgresql
+    authenticationType jwt
+    messageBroker kafka
+    serviceDiscoveryType consul
+    buildTool maven
+    skipUserManagement true
+    clientFramework no
+    enableTranslation false
+    testFrameworks [cucumber]
+  }
+  entities Booking, BookingStatusChange
+}
+
+// ===========================================================================
+// Enumerations
+// ===========================================================================
+
+enum DeliveryMode {
+  IN_PERSON,
+  ONLINE,
+  HOME_VISIT
+}
+
+/**
+ * D7: the spec declared eight values but its transition diagram reached only six. ACCEPTED was
+ * unreachable — accepting a request moves it straight to CONFIRMED, which is what the prototype's
+ * PRO_SCHEDULE already assumed — so it is gone. NO_SHOW was equally unreachable but is worth
+ * keeping, and now has the transition it was missing.
+ *
+ *   REQUESTED ──accept───▶ CONFIRMED ──complete──▶ COMPLETED
+ *       │                      │
+ *       ├──decline──▶ DECLINED  ├──no-show──▶ NO_SHOW
+ *       ├──propose──▶ RESCHEDULE_PROPOSED ──accept──▶ CONFIRMED
+ *       └──cancel───▶ CANCELLED ◀──cancel── CONFIRMED
+ *
+ * The Kafka topic stays `healthconnect.booking.accepted`: it names the act, not the resulting
+ * state, and its payload carries status=CONFIRMED.
+ */
+enum BookingStatus {
+  REQUESTED,
+  DECLINED,
+  RESCHEDULE_PROPOSED,
+  CONFIRMED,
+  COMPLETED,
+  CANCELLED,
+  NO_SHOW
+}
+
+enum CancelledBy {
+  CUSTOMER,
+  PROFESSIONAL,
+  PLATFORM
+}
+
+// ===========================================================================
+// Entities
+// ===========================================================================
+
+entity Booking {
+  reference String required unique
+  customerLogin String required
+  customerName String required
+  professionalRef String required
+  serviceRef String required
+  serviceName String required               // denormalised: a receipt must not
+  priceMinor Long required min(0)           // change when a price is edited
+  currency String required maxlength(3)
+  scheduledDate LocalDate required
+  scheduledTime String required maxlength(5)
+  deliveryMode DeliveryMode required
+  status BookingStatus required
+  customerNote String maxlength(1000)
+  onBehalfOf String maxlength(120)          // "someone I care for"
+  visitAddress String maxlength(400)
+  careSummaryShared Boolean required
+  raisedAt Instant required
+  respondedAt Instant
+  completedAt Instant
+  cancelledAt Instant
+  cancelledBy CancelledBy
+  cancellationReason String maxlength(400)
+  lateCancellation Boolean                  // inside 24h — payout raises a 50% fee
+  reviewed Boolean required
+}
+
+/** The append-only audit the prototype had no room for. */
+entity BookingStatusChange {
+  fromStatus BookingStatus
+  toStatus BookingStatus required
+  actor String required
+  occurredAt Instant required
+  note String maxlength(400)
+}
+
+relationship OneToMany {
+  Booking{history} to BookingStatusChange{booking required}
+}
+
+service Booking, BookingStatusChange with serviceClass
+dto Booking, BookingStatusChange with mapstruct
+paginate Booking with pagination
+filter Booking
+
+microservice * with healthconnectBooking

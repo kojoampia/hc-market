@@ -1,0 +1,30 @@
+# HealthConnect Marketplace — repository-level ignores.
+#
+# Each app carries its own generated .gitignore covering /target/, node_modules/ and the usual
+# JHipster output; git applies those nested files, so this one only handles what spans the repo.
+
+# Build output, belt and braces — the five target/ directories are ~260 MB each.
+*/target/
+target/
+
+# Local environment. deploy-dev.sh and deploy-prod.sh both read secrets from the environment;
+# JWT_BASE64_SECRET in particular must never be committed — one key is shared across the estate.
+.env
+.env.*
+!.env.example
+deploy/.env
+deploy/.env.*
+!deploy/.env.example
+
+# Leftover output from running the estate
+*.log
+!deploy/**/*.log
+
+# Editors and OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+
+# Node, if any tooling lands here later
+node_modules/

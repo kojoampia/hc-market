@@ -1,0 +1,47 @@
+/**
+ * HealthConnect Marketplace — gateway.
+ *
+ * Owns user accounts, JWT issue and verify, routing and rate limiting. No domain entities: every
+ * one of those belongs to a service that owns its own schema.
+ *
+ * Spec: docs/healthconnect-marketplace.md §4. Decisions: docs/decisions.md D1.
+ *
+ * Import with:
+ *   jhipster jdl jdl/gateway.jdl
+ *
+ * WHY MONGODB, WHEN THE SPEC SAID POSTGRES
+ * ----------------------------------------
+ * A JHipster gateway is always reactive — it is Spring Cloud Gateway. JHipster 9.2.0 decides the
+ * Spring Boot generation with `springBoot4 = !(databaseTypeSql && reactive)`, so a SQL gateway is
+ * silently dropped to Boot 3.5.15 while the four SQL microservices get Boot 4.0.7. Verified by
+ * probe-generating all three shapes, not by reading documentation.
+ *
+ * The gateway stores accounts and nothing else, so it has no need of SQL; every place this design
+ * actually leans on SQL — the professional_rating view, the ledger aggregates, the
+ * same-slice-of-days month-to-date comparison — lives in a domain service, and those stay on
+ * PostgreSQL 17. This is also the proven idiom in hc-admin, hc-patient and hc-professional, each
+ * of which runs a reactive MongoDB gateway that owns users and issues JWTs.
+ *
+ * SHARED SIGNING KEY: this gateway issues tokens the four services validate. Keep
+ * JWT_BASE64_SECRET out of any per-service .env — a local value silently wins and the symptom is a
+ * successful login followed by 401s from the services, which reads as a broken route.
+ */
+
+application {
+  config {
+    baseName healthconnectGateway
+    applicationType gateway
+    packageName net.jojoaddison
+    serverPort 8080
+    databaseType mongodb
+    prodDatabaseType mongodb
+    devDatabaseType mongodb
+    authenticationType jwt
+    messageBroker kafka
+    serviceDiscoveryType consul
+    buildTool maven
+    clientFramework no
+    enableTranslation false
+    testFrameworks [cucumber]
+  }
+}

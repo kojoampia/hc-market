@@ -1,0 +1,330 @@
+#!/usr/bin/env bash
+# ==============================================================================
+#  HealthConnect Marketplace — production deployment
+#
+#  Builds immutable images, pushes them to a registry CHANNEL, then rolls the
+#  Docker Compose stack on the production host over SSH with a health gate and
+#  automatic rollback to the previously deployed tag.
+#
+#  Channels:
+#     (default)          docker.jojoaddison.net/healthconnect/<service>:<tag>
+#     --channel github   ghcr.io/<owner>/healthconnect-<service>:<tag>
+#
+#  Usage:
+#     ./deploy-prod.sh --tag 1.4.0
+#     ./deploy-prod.sh --channel github --tag 1.4.0
+#     ./deploy-prod.sh --tag 1.4.0 --services catalog,booking
+#     ./deploy-prod.sh --rollback                  # back to the previous tag
+#     ./deploy-prod.sh --tag 1.4.0 --dry-run       # print, change nothing
+#
+#  Options:
+#     --channel <name>   default | github            (default: default)
+#     --tag <version>    Image tag                   (default: from pom.xml)
+#     --host <target>    SSH target                  (default: $HC_PROD_HOST)
+#     --path <dir>       Remote stack directory      (default: /srv/healthconnect)
+#     --services <list>  Comma-separated subset      (default: all)
+#     --no-build         Reuse images already built locally
+#     --no-push          Build and deploy without pushing (host must reach them)
+#     --rollback         Redeploy the previous tag recorded on the host
+#     --dry-run          Print every command instead of running it
+#     --yes              Skip the confirmation prompt (for CI)
+#
+#  Required environment:
+#     HC_PROD_HOST       e.g. deploy@app-01.jojoaddison.net
+#     HC_REGISTRY_USER / HC_REGISTRY_TOKEN     for docker.jojoaddison.net
+#     GHCR_OWNER / GHCR_TOKEN                  for the github channel
+# ==============================================================================
+set -Eeuo pipefail
+
+DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$DEPLOY_DIR/.." && pwd)"       # holds gateway/ catalog/ booking/ messaging/ payout/
+cd "$DEPLOY_DIR"
+# Java 25 needs a JDK with a compiler. java-25-openjdk-amd64 is a JRE and fails silently on an
+# incremental build -- see the workspace guide.
+JAVA_HOME="${JAVA_HOME:-/usr/lib/jvm/jdk-25.0.2-oracle-x64}"
+
+# ------------------------------------------------------------------ defaults --
+CHANNEL="default"
+TAG=""
+HOST="${HC_PROD_HOST:-}"
+REMOTE_PATH="/srv/healthconnect"
+ALL_SERVICES=(gateway catalog booking messaging payout)
+SERVICES=("${ALL_SERVICES[@]}")
+DO_BUILD=1
+DO_PUSH=1
+DO_ROLLBACK=0
+DRY_RUN=0
+ASSUME_YES=0
+COMPOSE_TEMPLATE="$DEPLOY_DIR/docker/docker-compose.prod.yml"
+HEALTH_TIMEOUT=240
+
+c_reset=$'\033[0m'; c_b=$'\033[1m'; c_dim=$'\033[2m'
+c_ok=$'\033[32m'; c_warn=$'\033[33m'; c_err=$'\033[31m'; c_info=$'\033[36m'
+log()  { printf '%s▸%s %s\n' "$c_info" "$c_reset" "$*"; }
+ok()   { printf '%s✓%s %s\n' "$c_ok" "$c_reset" "$*"; }
+warn() { printf '%s!%s %s\n' "$c_warn" "$c_reset" "$*"; }
+die()  { printf '%s✗ %s%s\n' "$c_err" "$*" "$c_reset" >&2; exit 1; }
+step() { printf '\n%s%s%s\n' "$c_b" "$*" "$c_reset"; }
+run()  { if (( DRY_RUN )); then printf '%s  [dry-run] %s%s\n' "$c_dim" "$*" "$c_reset"; else "$@"; fi; }
+trap 'die "failed at line $LINENO: ${BASH_COMMAND}"' ERR
+
+# ---------------------------------------------------------------- arg parsing --
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --channel)   CHANNEL="$2"; shift 2 ;;
+    --tag)       TAG="$2"; shift 2 ;;
+    --host)      HOST="$2"; shift 2 ;;
+    --path)      REMOTE_PATH="$2"; shift 2 ;;
+    --services)  IFS=',' read -r -a SERVICES <<< "$2"; shift 2 ;;
+    --no-build)  DO_BUILD=0; shift ;;
+    --no-push)   DO_PUSH=0; shift ;;
+    --rollback)  DO_ROLLBACK=1; shift ;;
+    --dry-run)   DRY_RUN=1; shift ;;
+    --yes|-y)    ASSUME_YES=1; shift ;;
+    -h|--help)   sed -n '2,40p' "$0"; exit 0 ;;
+    *)           die "unknown option: $1 (try --help)" ;;
+  esac
+done
+
+# ---------------------------------------------------------- channel resolution --
+case "$CHANNEL" in
+  default)
+    REGISTRY_HOST="docker.jojoaddison.net"
+    IMAGE_PREFIX="docker.jojoaddison.net/healthconnect"
+    IMAGE_SEP="/"
+    REGISTRY_USER="${HC_REGISTRY_USER:-}"
+    REGISTRY_TOKEN="${HC_REGISTRY_TOKEN:-}"
+    CRED_HINT="HC_REGISTRY_USER / HC_REGISTRY_TOKEN"
+    ;;
+  github|ghcr)
+    CHANNEL="github"
+    REGISTRY_HOST="ghcr.io"
+    GHCR_OWNER="${GHCR_OWNER:-jojoaddison}"
+    IMAGE_PREFIX="ghcr.io/${GHCR_OWNER}/healthconnect"
+    IMAGE_SEP="-"
+    REGISTRY_USER="${GHCR_USER:-$GHCR_OWNER}"
+    REGISTRY_TOKEN="${GHCR_TOKEN:-}"
+    CRED_HINT="GHCR_OWNER / GHCR_TOKEN"
+    ;;
+  *) die "unknown channel '$CHANNEL' (default | github)" ;;
+esac
+image_for() { printf '%s%s%s:%s' "$IMAGE_PREFIX" "$IMAGE_SEP" "$1" "$2"; }
+
+for s in "${SERVICES[@]}"; do
+  [[ " ${ALL_SERVICES[*]} " == *" $s "* ]] || die "unknown service '$s' (known: ${ALL_SERVICES[*]})"
+done
+
+# ------------------------------------------------------------------ preflight --
+require() { command -v "$1" >/dev/null 2>&1 || die "$1 is required but not on PATH"; }
+java_major() {                       # robust: ignores "Picked up JAVA_TOOL_OPTIONS" noise
+  local out major
+  out="$("$JAVA_HOME/bin/java" -version 2>&1 || true)"
+  major="$(printf '%s\n' "$out" | grep -E 'version "' | head -1 | sed -E 's/.*version "([0-9]+).*/\1/')"
+  [[ "$major" =~ ^[0-9]+$ ]] || major=0
+  printf '%s' "$major"
+}
+# There is no aggregator pom (decisions.md D6), so the version comes from the gateway's own pom.
+# Every app is released together and shares a tag; if they ever diverge, pass --tag explicitly.
+resolve_tag() {
+  [[ -n "$TAG" ]] && return
+  [[ -x "$ROOT_DIR/gateway/mvnw" ]] || die "no $ROOT_DIR/gateway/mvnw — pass --tag explicitly"
+  TAG="$(cd "$ROOT_DIR/gateway" && ./mvnw -q -ntp -Dexec.executable=echo -Dexec.args='${project.version}' \
+        --non-recursive exec:exec 2>/dev/null | tail -1 | tr -d '[:space:]')"
+  [[ -n "$TAG" ]] || die "could not resolve the version — pass --tag explicitly"
+  TAG="${TAG%-SNAPSHOT}"
+}
+preflight() {
+  step "Preflight — channel '$CHANNEL' → $REGISTRY_HOST"
+  require docker; require ssh; require git; require curl
+  docker info >/dev/null 2>&1 || die "docker daemon is not reachable"
+  [[ -n "$HOST" ]] || die "no target host — pass --host or export HC_PROD_HOST"
+  [[ -f "$COMPOSE_TEMPLATE" ]] || die "missing $COMPOSE_TEMPLATE"
+
+  # This workspace level is NOT a git repository -- each app is its own repo, and hc-market may
+  # not be under version control at all. Probe the gateway repo rather than the cwd, and treat
+  # "no repo" as a warning, not a failure.
+  if git -C "$ROOT_DIR/gateway" rev-parse --git-dir >/dev/null 2>&1; then
+    if [[ -n "$(git -C "$ROOT_DIR/gateway" status --porcelain 2>/dev/null)" ]]; then
+      warn "gateway working tree is dirty -- the deployed image will not match any commit"
+      (( ASSUME_YES )) || { read -r -p "  continue anyway? [y/N] " a; [[ "$a" == [yY] ]] || exit 1; }
+    fi
+    GIT_SHA="$(git -C "$ROOT_DIR/gateway" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  else
+    warn "no git repository under $ROOT_DIR/gateway -- image provenance will read 'unknown'"
+    GIT_SHA="unknown"
+  fi
+
+  if (( DO_PUSH )); then
+    [[ -n "$REGISTRY_TOKEN" ]] || die "registry credentials missing — set $CRED_HINT"
+    log "docker login $REGISTRY_HOST as $REGISTRY_USER"
+    (( DRY_RUN )) || printf '%s' "$REGISTRY_TOKEN" \
+      | docker login "$REGISTRY_HOST" -u "$REGISTRY_USER" --password-stdin >/dev/null \
+      || die "registry login failed for $REGISTRY_HOST"
+    ok "authenticated to $REGISTRY_HOST"
+  fi
+
+  log "checking ssh to $HOST"
+  (( DRY_RUN )) || ssh -o BatchMode=yes -o ConnectTimeout=8 "$HOST" 'docker compose version >/dev/null' \
+    || die "cannot reach $HOST over ssh, or docker compose v2 is missing there"
+  ok "host reachable"
+}
+
+confirm() {
+  (( ASSUME_YES )) && return 0
+  (( DRY_RUN ))    && return 0
+  printf '\n%sDeploying%s  tag %s%s%s  ·  channel %s%s%s  ·  host %s%s%s\n' \
+    "$c_b" "$c_reset" "$c_b" "$TAG" "$c_reset" "$c_b" "$CHANNEL" "$c_reset" "$c_b" "$HOST" "$c_reset"
+  printf '  services: %s\n' "${SERVICES[*]}"
+  read -r -p "  proceed? [y/N] " a; [[ "$a" == [yY] ]] || { warn "aborted"; exit 1; }
+}
+
+# --------------------------------------------------------------------- build --
+# Each app is a standalone Maven project -- no reactor, no -pl. We cd into each in turn, exactly
+# as every sibling product in this workspace is built.
+build_and_push() {
+  step "Build"
+  export JAVA_HOME
+  [[ -x "$JAVA_HOME/bin/javac" ]] || die "no javac at $JAVA_HOME -- that is a JRE, not a JDK"
+  local jv; jv="$(java_major)"
+  (( jv >= 25 )) || die "Java 25+ required (found ${jv/0/unknown} at $JAVA_HOME)"
+  # credentials go to Jib through the environment, never on the command line,
+  # so they cannot leak into `ps`, CI logs or --dry-run output
+  export JIB_TO_USERNAME="$REGISTRY_USER" JIB_TO_PASSWORD="$REGISTRY_TOKEN"
+  for s in "${SERVICES[@]}"; do
+    local img; img="$(image_for "$s" "$TAG")"
+    log "verifying $s"
+    run bash -c "cd '$ROOT_DIR/$s' && ./mvnw -q -ntp clean verify -Pprod"
+    log "packaging $s -> $img"
+    run bash -c "cd '$ROOT_DIR/$s' && ./mvnw -q -ntp jib:build -Pprod \
+      -Djib.to.image='$img' \
+      -Djib.to.tags='$TAG,$GIT_SHA,latest' \
+      -Djib.container.labels='org.opencontainers.image.revision=$GIT_SHA,org.opencontainers.image.version=$TAG,net.jojoaddison.channel=$CHANNEL'"
+  done
+  unset JIB_TO_USERNAME JIB_TO_PASSWORD
+  ok "images published to $REGISTRY_HOST"
+}
+build_local_only() {
+  step "Build (local, no push)"
+  export JAVA_HOME
+  for s in "${SERVICES[@]}"; do
+    run bash -c "cd '$ROOT_DIR/$s' && ./mvnw -q -ntp clean verify -Pprod"
+    run bash -c "cd '$ROOT_DIR/$s' && ./mvnw -q -ntp jib:dockerBuild -Pprod -Djib.to.image='$(image_for "$s" "$TAG")'"
+  done
+  ok "images built locally"
+}
+
+# -------------------------------------------------------------------- deploy --
+render_env() {
+  cat <<EOF
+# generated by deploy-prod.sh — do not edit on the host
+HC_TAG=$TAG
+HC_GIT_SHA=$GIT_SHA
+HC_CHANNEL=$CHANNEL
+HC_IMAGE_PREFIX=$IMAGE_PREFIX
+HC_IMAGE_SEP=$IMAGE_SEP
+HC_REGISTRY_HOST=$REGISTRY_HOST
+SPRING_PROFILES_ACTIVE=prod
+HEALTHCONNECT_SEED_ENABLED=false
+EOF
+}
+
+remote_deploy() {
+  step "Deploy → $HOST:$REMOTE_PATH"
+  run ssh "$HOST" "mkdir -p '$REMOTE_PATH'"
+
+  log "uploading compose stack and env"
+  if (( DRY_RUN )); then
+    printf '%s  [dry-run] scp %s %s:%s/docker-compose.yml%s\n' "$c_dim" "$COMPOSE_TEMPLATE" "$HOST" "$REMOTE_PATH" "$c_reset"
+    render_env | sed 's/^/    /'
+  else
+    scp -q "$COMPOSE_TEMPLATE" "$HOST:$REMOTE_PATH/docker-compose.yml"
+    render_env | ssh "$HOST" "cat > '$REMOTE_PATH/.env.next'"
+    ssh "$HOST" "cd '$REMOTE_PATH' && { [ -f .env ] && cp .env .env.previous || true; } && mv .env.next .env"
+  fi
+
+  if (( DO_PUSH )); then
+    log "authenticating the host to $REGISTRY_HOST"
+    (( DRY_RUN )) || printf '%s' "$REGISTRY_TOKEN" \
+      | ssh "$HOST" "docker login '$REGISTRY_HOST' -u '$REGISTRY_USER' --password-stdin >/dev/null"
+    log "pulling $TAG"
+    run ssh "$HOST" "cd '$REMOTE_PATH' && docker compose pull ${SERVICES[*]}"
+  fi
+
+  log "rolling services"
+  run ssh "$HOST" "cd '$REMOTE_PATH' && docker compose up -d --remove-orphans ${SERVICES[*]}"
+}
+
+health_gate() {
+  step "Health gate (${HEALTH_TIMEOUT}s)"
+  if (( DRY_RUN )); then printf '%s  [dry-run] skipped%s\n' "$c_dim" "$c_reset"; return 0; fi
+  local waited=0 bad
+  while :; do
+    bad=""
+    for s in "${SERVICES[@]}"; do
+      # `docker compose exec ... curl` cannot work: the Jib images ship no curl and no wget.
+      # bash IS present, so readiness is probed over bash's /dev/tcp instead.
+      ssh "$HOST" "cd '$REMOTE_PATH' && docker compose exec -T $s bash -c \
+        'exec 3<>/dev/tcp/localhost/8080 && printf \"GET /management/health/readiness HTTP/1.0\\r\\n\\r\\n\" >&3 && grep -q UP <&3'" \
+        >/dev/null 2>&1 || bad+=" $s"
+    done
+    [[ -z "$bad" ]] && { ok "all services report READY"; return 0; }
+    (( waited += 10 )); sleep 10
+    (( waited >= HEALTH_TIMEOUT )) && { warn "still unhealthy:$bad"; return 1; }
+    printf '  waiting%s (%ss)\n' "$bad" "$waited"
+  done
+}
+
+smoke_test() {
+  step "Smoke test"
+  if (( DRY_RUN )); then printf '%s  [dry-run] skipped%s\n' "$c_dim" "$c_reset"; return 0; fi
+  local base="${HC_PUBLIC_URL:-https://health.jojoaddison.net}"
+  local n
+  n="$(curl -fsS --max-time 10 "$base/api/professionals/count" || echo "")"
+  [[ "$n" =~ ^[0-9]+$ && "$n" -gt 0 ]] || { warn "catalogue smoke test failed (got '${n:-nothing}')"; return 1; }
+  ok "catalogue answering — $n published professionals"
+  curl -fsS --max-time 10 "$base/management/info" | grep -q "$TAG" \
+    && ok "gateway reports version $TAG" || warn "gateway did not report $TAG in /management/info"
+}
+
+rollback() {
+  step "Rollback"
+  local prev
+  prev="$(ssh "$HOST" "cd '$REMOTE_PATH' && grep -m1 '^HC_TAG=' .env.previous 2>/dev/null | cut -d= -f2" || true)"
+  [[ -n "$prev" ]] || die "no previous deployment recorded on $HOST — nothing to roll back to"
+  warn "rolling back to $prev"
+  run ssh "$HOST" "cd '$REMOTE_PATH' && cp .env.previous .env && docker compose pull ${SERVICES[*]} && docker compose up -d ${SERVICES[*]}"
+  TAG="$prev"
+  health_gate && ok "rolled back to $prev" || die "rollback to $prev is also unhealthy — manual intervention required"
+}
+
+record_success() {
+  (( DRY_RUN )) && return 0
+  ssh "$HOST" "cd '$REMOTE_PATH' && printf '%s\t%s\t%s\t%s\n' \
+    \"\$(date -u +%FT%TZ)\" '$TAG' '$GIT_SHA' '$CHANNEL' >> deployments.log"
+}
+
+# --------------------------------------------------------------------- router --
+if (( DO_ROLLBACK )); then
+  HOST="${HOST:-${HC_PROD_HOST:-}}"; [[ -n "$HOST" ]] || die "no target host"
+  rollback; exit 0
+fi
+
+resolve_tag
+preflight
+confirm
+if   (( DO_BUILD && DO_PUSH )); then build_and_push
+elif (( DO_BUILD ));            then build_local_only
+else                                 warn "--no-build: deploying whatever $TAG already exists"
+fi
+remote_deploy
+
+if health_gate && smoke_test; then
+  record_success
+  step "Done"
+  ok "HealthConnect $TAG live on $HOST via the '$CHANNEL' channel ($IMAGE_PREFIX)"
+  printf '  rollback with: %s./deploy-prod.sh --rollback --host %s%s\n' "$c_dim" "$HOST" "$c_reset"
+else
+  warn "deployment did not pass its gates"
+  rollback
+  exit 1
+fi

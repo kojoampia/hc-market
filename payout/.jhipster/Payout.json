@@ -1,0 +1,80 @@
+{
+  "annotations": {
+    "changelogDate": "20231204032035"
+  },
+  "applications": ["healthconnectPayout"],
+  "clientRootFolder": "healthconnectPayout",
+  "databaseType": "sql",
+  "dto": "mapstruct",
+  "fields": [
+    {
+      "fieldName": "reference",
+      "fieldType": "String",
+      "fieldValidateRules": ["required", "unique"]
+    },
+    {
+      "fieldName": "professionalRef",
+      "fieldType": "String",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "periodStart",
+      "fieldType": "LocalDate",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "periodEnd",
+      "fieldType": "LocalDate",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "grossMinor",
+      "fieldType": "Long",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "commissionMinor",
+      "fieldType": "Long",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "netMinor",
+      "fieldType": "Long",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "currency",
+      "fieldType": "String",
+      "fieldValidateRules": ["required", "maxlength"],
+      "fieldValidateRulesMaxlength": "3"
+    },
+    {
+      "fieldName": "status",
+      "fieldType": "PayoutStatus",
+      "fieldValidateRules": ["required"],
+      "fieldValues": "OPEN,IN_PROGRESS,PAID,FAILED"
+    },
+    {
+      "fieldName": "settledOn",
+      "fieldType": "LocalDate"
+    },
+    {
+      "fieldName": "bankReference",
+      "fieldType": "String"
+    }
+  ],
+  "microserviceName": "healthconnectPayout",
+  "name": "Payout",
+  "pagination": "pagination",
+  "relationships": [
+    {
+      "otherEntityName": "ledger",
+      "otherEntityRelationshipName": "payout",
+      "relationshipName": "entries",
+      "relationshipSide": "right",
+      "relationshipType": "one-to-many"
+    }
+  ],
+  "searchEngine": "no",
+  "service": "serviceClass"
+}

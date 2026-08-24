@@ -1,0 +1,228 @@
+# ==============================================================================
+#  HealthConnect Marketplace — dev / test estate
+#
+#  Consul, Kafka (KRaft), MongoDB for the gateway, one PostgreSQL per domain service, and the five
+#  applications. Started by ../deploy-dev.sh, which is the only supported entry point — it does the
+#  preflight, topic creation, health gating and seed verification this file cannot express.
+#
+#  Discovery is Consul, not the JHipster Registry: decisions.md D5, matching hc-admin, hc-patient
+#  and hc-professional.
+# ==============================================================================
+name: healthconnect-dev
+
+x-service-base: &service-base
+  restart: unless-stopped
+  environment: &service-env
+    # Every service listens on 8080 INSIDE its container, overriding the per-service serverPort
+    # the JDL assigns (catalog 8081, booking 8082, ...). Those numbers exist so the apps can run
+    # side by side on a developer machine; in separate containers they only create opportunities to
+    # map the wrong one. Host ports still differ -- see the `ports:` entries.
+    SERVER_PORT: 8080
+    SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-test,dev}
+    SPRING_CLOUD_CONSUL_HOST: consul
+    SPRING_CLOUD_CONSUL_PORT: 8500
+    SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    # One signing key across the estate. A per-service override here silently wins and the symptom
+    # is a successful login followed by 401s from the services — see the workspace guide.
+    JHIPSTER_SECURITY_AUTHENTICATION_JWT_BASE64_SECRET: ${JWT_BASE64_SECRET:?set JWT_BASE64_SECRET in deploy/.env}
+  # The Jib images contain no curl and no wget -- a CMD-based HTTP check fails with "executable
+  # file not found" forever and the container sits in `health: starting` for its whole life. They
+  # DO contain bash, so this uses bash's /dev/tcp to speak HTTP with no external tools at all.
+  # deploy-dev.sh additionally gates from the host, which proves the port mapping too.
+  healthcheck:
+    test:
+      - CMD
+      - bash
+      - -c
+      - 'exec 3<>/dev/tcp/localhost/8080 && printf "GET /management/health HTTP/1.0\r\n\r\n" >&3 && grep -q UP <&3'
+    interval: 10s
+    timeout: 5s
+    retries: 30
+    start_period: 90s
+
+services:
+  # ------------------------------------------------------------- infrastructure --
+  # Every published port is overridable. A workstation running several of these products at once
+  # WILL collide otherwise -- this one already has abofonsa_api on 8080 and a dev_consul on 8500.
+  # Defaults are the spec's ports; deploy-dev.sh reads the same variables for its health gates.
+  consul:
+    image: hashicorp/consul:1.20
+    command: 'consul agent -dev -ui -client 0.0.0.0 -log-level=INFO'
+    ports:
+      - '${HC_CONSUL_PORT:-8500}:8500'
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:8500/v1/status/leader']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # apache/kafka, NOT apache/kafka-native. The native image is a GraalVM binary containing only
+  # `kafka.Kafka` -- it ships no /opt/kafka/bin scripts at all. With the native image the healthcheck
+  # below can never pass, so `depends_on: condition: service_healthy` blocks all five apps forever
+  # and deploy-dev.sh sits on "waiting for Kafka" until it times out. Topic creation needs the same
+  # scripts. Fast startup is not worth losing the tooling this estate depends on.
+  kafka:
+    image: apache/kafka:3.9.0
+    ports:
+      - '${HC_KAFKA_PORT:-9092}:9092'
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+    healthcheck:
+      test: ['CMD-SHELL', '/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1']
+      interval: 10s
+      timeout: 10s
+      retries: 20
+
+  # The gateway owns users on MongoDB — decisions.md D1. Every domain service is PostgreSQL.
+  gateway-db:
+    image: mongo:8.0
+    volumes:
+      - gateway-data:/data/db
+    healthcheck:
+      test: ['CMD', 'mongosh', '--quiet', '--eval', 'db.runCommand({ping:1}).ok']
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  catalog-db: &postgres
+    image: postgres:17
+    environment:
+      POSTGRES_USER: healthconnectCatalog
+      POSTGRES_DB: healthconnectCatalog
+      POSTGRES_HOST_AUTH_METHOD: trust
+    volumes:
+      - catalog-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER}']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  booking-db:
+    <<: *postgres
+    environment:
+      POSTGRES_USER: healthconnectBooking
+      POSTGRES_DB: healthconnectBooking
+      POSTGRES_HOST_AUTH_METHOD: trust
+    volumes:
+      - booking-data:/var/lib/postgresql/data
+
+  messaging-db:
+    <<: *postgres
+    environment:
+      POSTGRES_USER: healthconnectMessaging
+      POSTGRES_DB: healthconnectMessaging
+      POSTGRES_HOST_AUTH_METHOD: trust
+    volumes:
+      - messaging-data:/var/lib/postgresql/data
+
+  payout-db:
+    <<: *postgres
+    environment:
+      POSTGRES_USER: healthconnectPayout
+      POSTGRES_DB: healthconnectPayout
+      POSTGRES_HOST_AUTH_METHOD: trust
+    volumes:
+      - payout-data:/var/lib/postgresql/data
+
+  # ------------------------------------------------------------------ services --
+  gateway:
+    <<: *service-base
+    image: healthconnect/gateway:local
+    ports:
+      - '${HC_GATEWAY_PORT:-8080}:8080'
+    environment:
+      <<: *service-env
+      # SPRING_MONGODB_URI, not SPRING_DATA_MONGODB_URI. Spring Boot 4 moved MongoDB config from
+      # spring.data.mongodb.* to spring.mongodb.*, and JHipster 9.2.0 generates the new form. The old
+      # variable sets a property nobody reads, so application-dev.yml's localhost:27017 wins and the
+      # gateway dies in Mongock with "Connection refused ... localhost:27017" -- a message that points
+      # at the database, not at the variable name. The sibling stacks use SPRING_MONGODB_URI too.
+      SPRING_MONGODB_URI: mongodb://gateway-db:27017/healthconnectGateway
+    depends_on:
+      consul: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+      gateway-db: { condition: service_healthy }
+
+  catalog:
+    <<: *service-base
+    image: healthconnect/catalog:local
+    ports:
+      - '${HC_CATALOG_PORT:-8081}:8080'
+    environment:
+      <<: *service-env
+      SPRING_DATASOURCE_URL: jdbc:postgresql://catalog-db:5432/healthconnectCatalog
+      SPRING_DATASOURCE_USERNAME: healthconnectCatalog
+      # 'faker' is deliberately absent — it loads 30 nonsense rows per entity and makes the seed
+      # loader's idempotency check skip the real seed. See catalog/config/application-dev.yml.
+      SPRING_LIQUIBASE_CONTEXTS: dev
+      HEALTHCONNECT_SEED_ENABLED: 'true'
+      HEALTHCONNECT_SEED_FILE: /app/seed/seed-data.json
+      HEALTHCONNECT_SEED_ANCHOR_DATES: ${HEALTHCONNECT_SEED_ANCHOR_DATES:-false}
+    volumes:
+      - ${SEED_HOST_PATH:-../demo}:/app/seed:ro
+    depends_on:
+      consul: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+      catalog-db: { condition: service_healthy }
+
+  booking:
+    <<: *service-base
+    image: healthconnect/booking:local
+    ports:
+      - '${HC_BOOKING_PORT:-8082}:8080'
+    environment:
+      <<: *service-env
+      SPRING_DATASOURCE_URL: jdbc:postgresql://booking-db:5432/healthconnectBooking
+      SPRING_DATASOURCE_USERNAME: healthconnectBooking
+      SPRING_LIQUIBASE_CONTEXTS: dev
+    depends_on:
+      consul: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+      booking-db: { condition: service_healthy }
+
+  messaging:
+    <<: *service-base
+    image: healthconnect/messaging:local
+    ports:
+      - '${HC_MESSAGING_PORT:-8083}:8080'
+    environment:
+      <<: *service-env
+      SPRING_DATASOURCE_URL: jdbc:postgresql://messaging-db:5432/healthconnectMessaging
+      SPRING_DATASOURCE_USERNAME: healthconnectMessaging
+      SPRING_LIQUIBASE_CONTEXTS: dev
+    depends_on:
+      consul: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+      messaging-db: { condition: service_healthy }
+
+  payout:
+    <<: *service-base
+    image: healthconnect/payout:local
+    ports:
+      - '${HC_PAYOUT_PORT:-8084}:8080'
+    environment:
+      <<: *service-env
+      SPRING_DATASOURCE_URL: jdbc:postgresql://payout-db:5432/healthconnectPayout
+      SPRING_DATASOURCE_USERNAME: healthconnectPayout
+      SPRING_LIQUIBASE_CONTEXTS: dev
+    depends_on:
+      consul: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+      payout-db: { condition: service_healthy }
+
+volumes:
+  gateway-data:
+  catalog-data:
+  booking-data:
+  messaging-data:
+  payout-data:

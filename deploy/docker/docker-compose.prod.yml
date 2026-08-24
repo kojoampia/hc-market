@@ -1,0 +1,102 @@
+# ==============================================================================
+#  HealthConnect Marketplace — production stack
+#
+#  Uploaded to the production host by ../deploy-prod.sh, which also generates the .env this file
+#  reads. Do not edit on the host: deploy-prod.sh overwrites it, and the outgoing .env is kept as
+#  .env.previous, which is what makes rollback possible.
+#
+#  Image coordinates come from the channel the deploy used:
+#     default channel  docker.jojoaddison.net/healthconnect/<service>:<tag>
+#     github channel   ghcr.io/<owner>/healthconnect-<service>:<tag>
+#  HC_IMAGE_SEP is "/" or "-" accordingly — GHCR has no nested-path namespaces.
+# ==============================================================================
+name: healthconnect
+
+x-service-base: &service-base
+  restart: unless-stopped
+  environment: &service-env
+    # Uniform internal port, overriding the per-service serverPort the JDL assigns. See the dev
+    # compose file for why.
+    SERVER_PORT: 8080
+    SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-prod}
+    SPRING_CLOUD_CONSUL_HOST: ${HC_CONSUL_HOST:-consul}
+    SPRING_CLOUD_CONSUL_PORT: ${HC_CONSUL_PORT:-8500}
+    SPRING_KAFKA_BOOTSTRAP_SERVERS: ${HC_KAFKA_BOOTSTRAP:-kafka:9092}
+    # One signing key across the estate. Never set a per-service override: a local value silently
+    # wins and the symptom is a successful login followed by 401s from the services.
+    JHIPSTER_SECURITY_AUTHENTICATION_JWT_BASE64_SECRET: ${JWT_BASE64_SECRET:?platform JWT secret is required}
+    # The seed loader is unreachable under prod regardless; this is the second, explicit lock.
+    HEALTHCONNECT_SEED_ENABLED: ${HEALTHCONNECT_SEED_ENABLED:-false}
+    JAVA_OPTS: ${HC_JAVA_OPTS:--Xmx512m -Xms256m}
+  # Jib images have no curl and no wget, but they do have bash -- so this speaks HTTP over
+  # bash's /dev/tcp rather than shelling out to a tool that is not there.
+  healthcheck:
+    test:
+      - CMD
+      - bash
+      - -c
+      - 'exec 3<>/dev/tcp/localhost/8080 && printf "GET /management/health/readiness HTTP/1.0\r\n\r\n" >&3 && grep -q UP <&3'
+    interval: 15s
+    timeout: 5s
+    retries: 20
+    start_period: 120s
+  logging:
+    driver: json-file
+    options: { max-size: '10m', max-file: '3' }
+
+services:
+  gateway:
+    <<: *service-base
+    image: ${HC_IMAGE_PREFIX}${HC_IMAGE_SEP}gateway:${HC_TAG}
+    ports:
+      - '${HC_GATEWAY_PORT:-8080}:8080'
+    environment:
+      <<: *service-env
+      # SPRING_MONGODB_URI: Spring Boot 4 renamed spring.data.mongodb.* to spring.mongodb.*
+      SPRING_MONGODB_URI: ${HC_GATEWAY_MONGODB_URI:?gateway mongodb uri is required}
+
+  catalog:
+    <<: *service-base
+    image: ${HC_IMAGE_PREFIX}${HC_IMAGE_SEP}catalog:${HC_TAG}
+    environment:
+      <<: *service-env
+      SPRING_DATASOURCE_URL: ${HC_CATALOG_DB_URL:?catalog datasource url is required}
+      SPRING_DATASOURCE_USERNAME: ${HC_CATALOG_DB_USER:-healthconnectCatalog}
+      SPRING_DATASOURCE_PASSWORD: ${HC_CATALOG_DB_PASSWORD:?catalog datasource password is required}
+
+  booking:
+    <<: *service-base
+    image: ${HC_IMAGE_PREFIX}${HC_IMAGE_SEP}booking:${HC_TAG}
+    environment:
+      <<: *service-env
+      SPRING_DATASOURCE_URL: ${HC_BOOKING_DB_URL:?booking datasource url is required}
+      SPRING_DATASOURCE_USERNAME: ${HC_BOOKING_DB_USER:-healthconnectBooking}
+      SPRING_DATASOURCE_PASSWORD: ${HC_BOOKING_DB_PASSWORD:?booking datasource password is required}
+
+  messaging:
+    <<: *service-base
+    image: ${HC_IMAGE_PREFIX}${HC_IMAGE_SEP}messaging:${HC_TAG}
+    environment:
+      <<: *service-env
+      SPRING_DATASOURCE_URL: ${HC_MESSAGING_DB_URL:?messaging datasource url is required}
+      SPRING_DATASOURCE_USERNAME: ${HC_MESSAGING_DB_USER:-healthconnectMessaging}
+      SPRING_DATASOURCE_PASSWORD: ${HC_MESSAGING_DB_PASSWORD:?messaging datasource password is required}
+
+  payout:
+    <<: *service-base
+    image: ${HC_IMAGE_PREFIX}${HC_IMAGE_SEP}payout:${HC_TAG}
+    environment:
+      <<: *service-env
+      SPRING_DATASOURCE_URL: ${HC_PAYOUT_DB_URL:?payout datasource url is required}
+      SPRING_DATASOURCE_USERNAME: ${HC_PAYOUT_DB_USER:-healthconnectPayout}
+      SPRING_DATASOURCE_PASSWORD: ${HC_PAYOUT_DB_PASSWORD:?payout datasource password is required}
+
+# Kafka, Consul and the databases are HOST-WIDE infrastructure borrowed over an external network,
+# not bundled here — the same convention every other product in this workspace follows. A missing
+# broker is silent: the app starts, serves, and reports healthy while everything produced goes
+# nowhere, which is why deploy-prod.sh checks reachability explicitly rather than relying on
+# depends_on (which cannot express a host-wide container).
+networks:
+  default:
+    name: ${HC_NETWORK:-infranet}
+    external: true
