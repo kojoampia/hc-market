@@ -256,3 +256,7 @@ healthconnect:
     # false shifts every seed date by (today - $meta.demoToday) so a demo months from now still
     # shows "tomorrow". Tests set this true so the prototype's fixed figures stay comparable.
     anchor-dates: false
+  # Where the booking service lives. Defaults to the Consul service name, which is what resolves
+  # inside the estate; a standalone run points it at a host port.
+  booking:
+    base-url: http://healthconnectbooking

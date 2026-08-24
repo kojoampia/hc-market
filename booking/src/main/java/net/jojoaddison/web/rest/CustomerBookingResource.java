@@ -128,6 +128,27 @@ public class CustomerBookingResource {
         return mapper.toView(transition(booking, new BookingTransition.Cancel(CancelledBy.CUSTOMER, reason)));
     }
 
+    /**
+     * Marks this booking as reviewed. Called by the catalog service after it has accepted a review,
+     * carrying the customer's own token — so booking enforces ownership itself rather than trusting
+     * a caller's word about who is asking.
+     *
+     * <p>Idempotent by design: a second call returns 409 rather than silently succeeding, which is
+     * what lets catalog treat "already reviewed" as a real answer instead of a lost update.
+     */
+    @PostMapping("/{ref}/reviewed")
+    public BookingView markReviewed(@PathVariable String ref) {
+        Booking booking = mineOr404(ref);
+        if (Boolean.TRUE.equals(booking.getReviewed())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "booking " + ref + " has already been reviewed");
+        }
+        if (booking.getStatus() != BookingStatus.COMPLETED) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "only a COMPLETED booking can be reviewed; " + ref + " is " + booking.getStatus());
+        }
+        booking.setReviewed(true);
+        return mapper.toView(repository.save(booking));
+    }
+
     // ------------------------------------------------------------------- helpers --
 
     private Booking transition(Booking booking, BookingTransition move) {
