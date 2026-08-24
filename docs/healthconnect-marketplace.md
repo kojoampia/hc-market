@@ -692,8 +692,11 @@ Carried over from the prototype's verification discipline, adapted to a backend.
       exactly one ledger row.** Automated as `deploy/verify-cycle.sh`; crosses catalog, booking,
       Kafka and payout. Last run: rating 4.7 (7) → 4.3 (8) on a one-star review, ledger 257 → 258,
       gross +28000, commission 3360, second review refused with 409, booking flagged reviewed.
-- [ ] Killing Kafka mid-accept leaves the booking accepted and the notification pending in the
-      outbox, delivered on recovery. *(Needs the outbox, which is unbuilt.)*
+- [x] **Killing Kafka mid-accept leaves the booking accepted and the notification pending in the
+      outbox, delivered on recovery.** Automated as `deploy/verify-outbox-recovery.sh`, which stops
+      the broker, accepts a booking, asserts the accept succeeded and the event is UNSENT with no
+      notification raised, then restarts the broker and asserts the row drains and the notification
+      arrives **exactly once**.
 - [ ] A deliberately failing deploy rolls back and the previous tag serves traffic. *(Needs a host.)*
 
 ---

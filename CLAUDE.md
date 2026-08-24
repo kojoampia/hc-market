@@ -291,5 +291,12 @@ keeps the estate uniformly Boot 4 — and matches all three sibling products. Se
 - Review integrity is one-directional: there is **no** endpoint to delete a review. The only
   response is a public reply. `bookingReference` is unique, making "one review per booking" a schema
   guarantee.
+- Two verification scripts run against a live estate and are the fastest way to know it still
+  works end to end. Both need `/tmp/tok-pro.txt` and `/tmp/tok-cust.txt` — HS512 tokens minted with
+  the estate's `JWT_BASE64_SECRET`, subject = login, authorities in the `auth` claim:
+  ```bash
+  ./deploy/verify-cycle.sh             # book -> accept -> complete -> review, across 3 services
+  ./deploy/verify-outbox-recovery.sh   # stops and restarts Kafka; do not run against anything shared
+  ```
 - The prototype is a **closed demo** — no `fetch`, no `API_BASE` hook, `TODAY` hardcoded. Pointing it
   at the live API is unbuilt work, not configuration.
