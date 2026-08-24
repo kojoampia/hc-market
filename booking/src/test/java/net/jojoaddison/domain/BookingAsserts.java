@@ -51,6 +51,7 @@ public class BookingAsserts {
             .satisfies(a -> assertThat(a.getCustomerLogin()).as("check customerLogin").isEqualTo(expected.getCustomerLogin()))
             .satisfies(a -> assertThat(a.getCustomerName()).as("check customerName").isEqualTo(expected.getCustomerName()))
             .satisfies(a -> assertThat(a.getProfessionalRef()).as("check professionalRef").isEqualTo(expected.getProfessionalRef()))
+            .satisfies(a -> assertThat(a.getProfessionalLogin()).as("check professionalLogin").isEqualTo(expected.getProfessionalLogin()))
             .satisfies(a -> assertThat(a.getServiceRef()).as("check serviceRef").isEqualTo(expected.getServiceRef()))
             .satisfies(a -> assertThat(a.getServiceName()).as("check serviceName").isEqualTo(expected.getServiceName()))
             .satisfies(a -> assertThat(a.getPriceMinor()).as("check priceMinor").isEqualTo(expected.getPriceMinor()))

@@ -88,6 +88,8 @@ public class BookingCriteria implements Serializable, Criteria {
 
     private StringFilter professionalRef;
 
+    private StringFilter professionalLogin;
+
     private StringFilter serviceRef;
 
     private StringFilter serviceName;
@@ -140,6 +142,7 @@ public class BookingCriteria implements Serializable, Criteria {
         this.customerLogin = other.optionalCustomerLogin().map(StringFilter::copy).orElse(null);
         this.customerName = other.optionalCustomerName().map(StringFilter::copy).orElse(null);
         this.professionalRef = other.optionalProfessionalRef().map(StringFilter::copy).orElse(null);
+        this.professionalLogin = other.optionalProfessionalLogin().map(StringFilter::copy).orElse(null);
         this.serviceRef = other.optionalServiceRef().map(StringFilter::copy).orElse(null);
         this.serviceName = other.optionalServiceName().map(StringFilter::copy).orElse(null);
         this.priceMinor = other.optionalPriceMinor().map(LongFilter::copy).orElse(null);
@@ -262,6 +265,25 @@ public class BookingCriteria implements Serializable, Criteria {
 
     public void setProfessionalRef(StringFilter professionalRef) {
         this.professionalRef = professionalRef;
+    }
+
+    public StringFilter getProfessionalLogin() {
+        return professionalLogin;
+    }
+
+    public Optional<StringFilter> optionalProfessionalLogin() {
+        return Optional.ofNullable(professionalLogin);
+    }
+
+    public StringFilter professionalLogin() {
+        if (professionalLogin == null) {
+            setProfessionalLogin(new StringFilter());
+        }
+        return professionalLogin;
+    }
+
+    public void setProfessionalLogin(StringFilter professionalLogin) {
+        this.professionalLogin = professionalLogin;
     }
 
     public StringFilter getServiceRef() {
@@ -697,6 +719,7 @@ public class BookingCriteria implements Serializable, Criteria {
             Objects.equals(customerLogin, that.customerLogin) &&
             Objects.equals(customerName, that.customerName) &&
             Objects.equals(professionalRef, that.professionalRef) &&
+            Objects.equals(professionalLogin, that.professionalLogin) &&
             Objects.equals(serviceRef, that.serviceRef) &&
             Objects.equals(serviceName, that.serviceName) &&
             Objects.equals(priceMinor, that.priceMinor) &&
@@ -730,6 +753,7 @@ public class BookingCriteria implements Serializable, Criteria {
             customerLogin,
             customerName,
             professionalRef,
+            professionalLogin,
             serviceRef,
             serviceName,
             priceMinor,
@@ -764,6 +788,7 @@ public class BookingCriteria implements Serializable, Criteria {
             optionalCustomerLogin().map(f -> "customerLogin=" + f + ", ").orElse("") +
             optionalCustomerName().map(f -> "customerName=" + f + ", ").orElse("") +
             optionalProfessionalRef().map(f -> "professionalRef=" + f + ", ").orElse("") +
+            optionalProfessionalLogin().map(f -> "professionalLogin=" + f + ", ").orElse("") +
             optionalServiceRef().map(f -> "serviceRef=" + f + ", ").orElse("") +
             optionalServiceName().map(f -> "serviceName=" + f + ", ").orElse("") +
             optionalPriceMinor().map(f -> "priceMinor=" + f + ", ").orElse("") +

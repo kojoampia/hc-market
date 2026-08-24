@@ -79,6 +79,7 @@ public class BookingQueryService extends QueryService<Booking> {
                     buildStringSpecification(criteria.getCustomerLogin(), Booking_.customerLogin),
                     buildStringSpecification(criteria.getCustomerName(), Booking_.customerName),
                     buildStringSpecification(criteria.getProfessionalRef(), Booking_.professionalRef),
+                    buildStringSpecification(criteria.getProfessionalLogin(), Booking_.professionalLogin),
                     buildStringSpecification(criteria.getServiceRef(), Booking_.serviceRef),
                     buildStringSpecification(criteria.getServiceName(), Booking_.serviceName),
                     buildRangeSpecification(criteria.getPriceMinor(), Booking_.priceMinor),

@@ -50,6 +50,10 @@ public class Booking implements Serializable {
     private String professionalRef;
 
     @NotNull
+    @Column(name = "professional_login", nullable = false)
+    private String professionalLogin;
+
+    @NotNull
     @Column(name = "service_ref", nullable = false)
     private String serviceRef;
 
@@ -200,6 +204,19 @@ public class Booking implements Serializable {
 
     public void setProfessionalRef(String professionalRef) {
         this.professionalRef = professionalRef;
+    }
+
+    public String getProfessionalLogin() {
+        return this.professionalLogin;
+    }
+
+    public Booking professionalLogin(String professionalLogin) {
+        this.setProfessionalLogin(professionalLogin);
+        return this;
+    }
+
+    public void setProfessionalLogin(String professionalLogin) {
+        this.professionalLogin = professionalLogin;
     }
 
     public String getServiceRef() {
@@ -521,6 +538,7 @@ public class Booking implements Serializable {
             ", customerLogin='" + getCustomerLogin() + "'" +
             ", customerName='" + getCustomerName() + "'" +
             ", professionalRef='" + getProfessionalRef() + "'" +
+            ", professionalLogin='" + getProfessionalLogin() + "'" +
             ", serviceRef='" + getServiceRef() + "'" +
             ", serviceName='" + getServiceName() + "'" +
             ", priceMinor=" + getPriceMinor() +

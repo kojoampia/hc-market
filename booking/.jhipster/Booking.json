@@ -28,6 +28,11 @@
       "fieldValidateRules": ["required"]
     },
     {
+      "fieldName": "professionalLogin",
+      "fieldType": "String",
+      "fieldValidateRules": ["required"]
+    },
+    {
       "fieldName": "serviceRef",
       "fieldType": "String",
       "fieldValidateRules": ["required"]

@@ -51,6 +51,9 @@ class BookingResourceIT {
     private static final String DEFAULT_PROFESSIONAL_REF = "AAAAAAAAAA";
     private static final String UPDATED_PROFESSIONAL_REF = "BBBBBBBBBB";
 
+    private static final String DEFAULT_PROFESSIONAL_LOGIN = "AAAAAAAAAA";
+    private static final String UPDATED_PROFESSIONAL_LOGIN = "BBBBBBBBBB";
+
     private static final String DEFAULT_SERVICE_REF = "AAAAAAAAAA";
     private static final String UPDATED_SERVICE_REF = "BBBBBBBBBB";
 
@@ -150,6 +153,7 @@ class BookingResourceIT {
             .customerLogin(DEFAULT_CUSTOMER_LOGIN)
             .customerName(DEFAULT_CUSTOMER_NAME)
             .professionalRef(DEFAULT_PROFESSIONAL_REF)
+            .professionalLogin(DEFAULT_PROFESSIONAL_LOGIN)
             .serviceRef(DEFAULT_SERVICE_REF)
             .serviceName(DEFAULT_SERVICE_NAME)
             .priceMinor(DEFAULT_PRICE_MINOR)
@@ -184,6 +188,7 @@ class BookingResourceIT {
             .customerLogin(UPDATED_CUSTOMER_LOGIN)
             .customerName(UPDATED_CUSTOMER_NAME)
             .professionalRef(UPDATED_PROFESSIONAL_REF)
+            .professionalLogin(UPDATED_PROFESSIONAL_LOGIN)
             .serviceRef(UPDATED_SERVICE_REF)
             .serviceName(UPDATED_SERVICE_NAME)
             .priceMinor(UPDATED_PRICE_MINOR)
@@ -318,6 +323,23 @@ class BookingResourceIT {
         long databaseSizeBeforeTest = getRepositoryCount();
         // set the field null
         booking.setProfessionalRef(null);
+
+        // Create the Booking, which fails.
+        BookingDTO bookingDTO = bookingMapper.toDto(booking);
+
+        restBookingMockMvc
+            .perform(post(ENTITY_API_URL).contentType(MediaType.APPLICATION_JSON).content(om.writeValueAsBytes(bookingDTO)))
+            .andExpect(status().isBadRequest());
+
+        assertSameRepositoryCount(databaseSizeBeforeTest);
+    }
+
+    @Test
+    @Transactional
+    void checkProfessionalLoginIsRequired() throws Exception {
+        long databaseSizeBeforeTest = getRepositoryCount();
+        // set the field null
+        booking.setProfessionalLogin(null);
 
         // Create the Booking, which fails.
         BookingDTO bookingDTO = bookingMapper.toDto(booking);
@@ -532,6 +554,7 @@ class BookingResourceIT {
             .andExpect(jsonPath("$.[*].customerLogin").value(hasItem(DEFAULT_CUSTOMER_LOGIN)))
             .andExpect(jsonPath("$.[*].customerName").value(hasItem(DEFAULT_CUSTOMER_NAME)))
             .andExpect(jsonPath("$.[*].professionalRef").value(hasItem(DEFAULT_PROFESSIONAL_REF)))
+            .andExpect(jsonPath("$.[*].professionalLogin").value(hasItem(DEFAULT_PROFESSIONAL_LOGIN)))
             .andExpect(jsonPath("$.[*].serviceRef").value(hasItem(DEFAULT_SERVICE_REF)))
             .andExpect(jsonPath("$.[*].serviceName").value(hasItem(DEFAULT_SERVICE_NAME)))
             .andExpect(jsonPath("$.[*].priceMinor").value(hasItem(DEFAULT_PRICE_MINOR.intValue())))
@@ -570,6 +593,7 @@ class BookingResourceIT {
             .andExpect(jsonPath("$.customerLogin").value(DEFAULT_CUSTOMER_LOGIN))
             .andExpect(jsonPath("$.customerName").value(DEFAULT_CUSTOMER_NAME))
             .andExpect(jsonPath("$.professionalRef").value(DEFAULT_PROFESSIONAL_REF))
+            .andExpect(jsonPath("$.professionalLogin").value(DEFAULT_PROFESSIONAL_LOGIN))
             .andExpect(jsonPath("$.serviceRef").value(DEFAULT_SERVICE_REF))
             .andExpect(jsonPath("$.serviceName").value(DEFAULT_SERVICE_NAME))
             .andExpect(jsonPath("$.priceMinor").value(DEFAULT_PRICE_MINOR.intValue()))
@@ -825,6 +849,68 @@ class BookingResourceIT {
         defaultBookingFiltering(
             "professionalRef.doesNotContain=" + UPDATED_PROFESSIONAL_REF,
             "professionalRef.doesNotContain=" + DEFAULT_PROFESSIONAL_REF
+        );
+    }
+
+    @Test
+    @Transactional
+    void getAllBookingsByProfessionalLoginIsEqualToSomething() throws Exception {
+        // Initialize the database
+        insertedBooking = bookingRepository.saveAndFlush(booking);
+
+        // Get all the bookingList where professionalLogin equals to
+        defaultBookingFiltering(
+            "professionalLogin.equals=" + DEFAULT_PROFESSIONAL_LOGIN,
+            "professionalLogin.equals=" + UPDATED_PROFESSIONAL_LOGIN
+        );
+    }
+
+    @Test
+    @Transactional
+    void getAllBookingsByProfessionalLoginIsInShouldWork() throws Exception {
+        // Initialize the database
+        insertedBooking = bookingRepository.saveAndFlush(booking);
+
+        // Get all the bookingList where professionalLogin in
+        defaultBookingFiltering(
+            "professionalLogin.in=" + DEFAULT_PROFESSIONAL_LOGIN + "," + UPDATED_PROFESSIONAL_LOGIN,
+            "professionalLogin.in=" + UPDATED_PROFESSIONAL_LOGIN
+        );
+    }
+
+    @Test
+    @Transactional
+    void getAllBookingsByProfessionalLoginIsNullOrNotNull() throws Exception {
+        // Initialize the database
+        insertedBooking = bookingRepository.saveAndFlush(booking);
+
+        // Get all the bookingList where professionalLogin is not null
+        defaultBookingFiltering("professionalLogin.specified=true", "professionalLogin.specified=false");
+    }
+
+    @Test
+    @Transactional
+    void getAllBookingsByProfessionalLoginContainsSomething() throws Exception {
+        // Initialize the database
+        insertedBooking = bookingRepository.saveAndFlush(booking);
+
+        // Get all the bookingList where professionalLogin contains
+        defaultBookingFiltering(
+            "professionalLogin.contains=" + DEFAULT_PROFESSIONAL_LOGIN,
+            "professionalLogin.contains=" + UPDATED_PROFESSIONAL_LOGIN
+        );
+    }
+
+    @Test
+    @Transactional
+    void getAllBookingsByProfessionalLoginNotContainsSomething() throws Exception {
+        // Initialize the database
+        insertedBooking = bookingRepository.saveAndFlush(booking);
+
+        // Get all the bookingList where professionalLogin does not contain
+        defaultBookingFiltering(
+            "professionalLogin.doesNotContain=" + UPDATED_PROFESSIONAL_LOGIN,
+            "professionalLogin.doesNotContain=" + DEFAULT_PROFESSIONAL_LOGIN
         );
     }
 
@@ -1764,6 +1850,7 @@ class BookingResourceIT {
             .andExpect(jsonPath("$.[*].customerLogin").value(hasItem(DEFAULT_CUSTOMER_LOGIN)))
             .andExpect(jsonPath("$.[*].customerName").value(hasItem(DEFAULT_CUSTOMER_NAME)))
             .andExpect(jsonPath("$.[*].professionalRef").value(hasItem(DEFAULT_PROFESSIONAL_REF)))
+            .andExpect(jsonPath("$.[*].professionalLogin").value(hasItem(DEFAULT_PROFESSIONAL_LOGIN)))
             .andExpect(jsonPath("$.[*].serviceRef").value(hasItem(DEFAULT_SERVICE_REF)))
             .andExpect(jsonPath("$.[*].serviceName").value(hasItem(DEFAULT_SERVICE_NAME)))
             .andExpect(jsonPath("$.[*].priceMinor").value(hasItem(DEFAULT_PRICE_MINOR.intValue())))
@@ -1836,6 +1923,7 @@ class BookingResourceIT {
             .customerLogin(UPDATED_CUSTOMER_LOGIN)
             .customerName(UPDATED_CUSTOMER_NAME)
             .professionalRef(UPDATED_PROFESSIONAL_REF)
+            .professionalLogin(UPDATED_PROFESSIONAL_LOGIN)
             .serviceRef(UPDATED_SERVICE_REF)
             .serviceName(UPDATED_SERVICE_NAME)
             .priceMinor(UPDATED_PRICE_MINOR)
@@ -1945,18 +2033,18 @@ class BookingResourceIT {
             .reference(UPDATED_REFERENCE)
             .customerLogin(UPDATED_CUSTOMER_LOGIN)
             .professionalRef(UPDATED_PROFESSIONAL_REF)
+            .serviceName(UPDATED_SERVICE_NAME)
             .priceMinor(UPDATED_PRICE_MINOR)
             .currency(UPDATED_CURRENCY)
             .scheduledDate(UPDATED_SCHEDULED_DATE)
-            .scheduledTime(UPDATED_SCHEDULED_TIME)
-            .status(UPDATED_STATUS)
-            .onBehalfOf(UPDATED_ON_BEHALF_OF)
+            .deliveryMode(UPDATED_DELIVERY_MODE)
+            .customerNote(UPDATED_CUSTOMER_NOTE)
+            .visitAddress(UPDATED_VISIT_ADDRESS)
             .careSummaryShared(UPDATED_CARE_SUMMARY_SHARED)
             .raisedAt(UPDATED_RAISED_AT)
             .respondedAt(UPDATED_RESPONDED_AT)
-            .completedAt(UPDATED_COMPLETED_AT)
-            .cancelledBy(UPDATED_CANCELLED_BY)
-            .reviewed(UPDATED_REVIEWED);
+            .cancelledAt(UPDATED_CANCELLED_AT)
+            .lateCancellation(UPDATED_LATE_CANCELLATION);
 
         restBookingMockMvc
             .perform(
@@ -1989,6 +2077,7 @@ class BookingResourceIT {
             .customerLogin(UPDATED_CUSTOMER_LOGIN)
             .customerName(UPDATED_CUSTOMER_NAME)
             .professionalRef(UPDATED_PROFESSIONAL_REF)
+            .professionalLogin(UPDATED_PROFESSIONAL_LOGIN)
             .serviceRef(UPDATED_SERVICE_REF)
             .serviceName(UPDATED_SERVICE_NAME)
             .priceMinor(UPDATED_PRICE_MINOR)

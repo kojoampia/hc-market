@@ -76,6 +76,7 @@ class BookingCriteriaTest {
         bookingCriteria.customerLogin();
         bookingCriteria.customerName();
         bookingCriteria.professionalRef();
+        bookingCriteria.professionalLogin();
         bookingCriteria.serviceRef();
         bookingCriteria.serviceName();
         bookingCriteria.priceMinor();
@@ -108,6 +109,7 @@ class BookingCriteriaTest {
                 condition.apply(criteria.getCustomerLogin()) &&
                 condition.apply(criteria.getCustomerName()) &&
                 condition.apply(criteria.getProfessionalRef()) &&
+                condition.apply(criteria.getProfessionalLogin()) &&
                 condition.apply(criteria.getServiceRef()) &&
                 condition.apply(criteria.getServiceName()) &&
                 condition.apply(criteria.getPriceMinor()) &&
@@ -142,6 +144,7 @@ class BookingCriteriaTest {
                 condition.apply(criteria.getCustomerLogin(), copy.getCustomerLogin()) &&
                 condition.apply(criteria.getCustomerName(), copy.getCustomerName()) &&
                 condition.apply(criteria.getProfessionalRef(), copy.getProfessionalRef()) &&
+                condition.apply(criteria.getProfessionalLogin(), copy.getProfessionalLogin()) &&
                 condition.apply(criteria.getServiceRef(), copy.getServiceRef()) &&
                 condition.apply(criteria.getServiceName(), copy.getServiceName()) &&
                 condition.apply(criteria.getPriceMinor(), copy.getPriceMinor()) &&

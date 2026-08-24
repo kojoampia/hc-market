@@ -13,7 +13,7 @@ It was a design package until 24 August 2026 and is now a partly-built JHipster 
 ```
 gateway/    healthconnectGateway   MongoDB, reactive    RUNS — routes public reads to catalog
 catalog/    healthconnectCatalog   PostgreSQL 17        BUILT — seeded, serving, verified
-booking/    healthconnectBooking   PostgreSQL 17        scaffolded, compiles, unwired
+booking/    healthconnectBooking   PostgreSQL 17        BUILT — aggregate seeded, state machine live
 messaging/  healthconnectMessaging PostgreSQL 17        scaffolded, compiles, unwired
 payout/     healthconnectPayout    PostgreSQL 17        BUILT — ledger seeded, earnings verified
 jdl/        the five JDL files — the model of record
@@ -128,6 +128,12 @@ one.** Confirmed the hard way. After any regeneration of `catalog`, re-apply:
 | `contexts: dev` (not `dev, faker`) | `config/application-dev.yml` | see faker collision below |
 | The `healthconnect.seed` block | `config/application.yml`, `application-prod.yml` | seed never loads |
 | Delete `ProfessionalResource`, `CategoryResource`, `ReviewResource` | catalog `web/rest/` | **app will not start** — ambiguous mapping against `MarketplaceResource` |
+| Delete `BookingResource` | booking `web/rest/` | **app will not start** — ambiguous mapping against `CustomerBookingResource` |
+
+**Never name a hand-written class after one the JDL generates.** `service Booking with
+serviceClass` makes JHipster generate `BookingService`, so hand-written logic there is silently
+replaced on the next regeneration and the failure is a wall of "cannot find symbol" on methods that
+existed minutes ago. The booking lifecycle lives in **`BookingWorkflow`** for exactly this reason.
 
 The gateway has one hand-written file too — `MarketplacePublicRouteConfiguration` — but it is a new
 file, so regeneration leaves it alone. Without it, the generated

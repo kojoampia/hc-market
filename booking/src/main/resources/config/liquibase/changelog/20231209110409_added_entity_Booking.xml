@@ -26,6 +26,9 @@
             <column name="professional_ref" type="varchar(255)">
                 <constraints nullable="false" />
             </column>
+            <column name="professional_login" type="varchar(255)">
+                <constraints nullable="false" />
+            </column>
             <column name="service_ref" type="varchar(255)">
                 <constraints nullable="false" />
             </column>
@@ -116,6 +119,7 @@
             <column name="customer_login" type="string"/>
             <column name="customer_name" type="string"/>
             <column name="professional_ref" type="string"/>
+            <column name="professional_login" type="string"/>
             <column name="service_ref" type="string"/>
             <column name="service_name" type="string"/>
             <column name="price_minor" type="numeric"/>

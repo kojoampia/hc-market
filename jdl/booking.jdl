@@ -82,6 +82,11 @@ entity Booking {
   customerLogin String required
   customerName String required
   professionalRef String required
+  professionalLogin String required         // AMENDED (decisions.md D12): the JWT carries a login,
+                                            // bookings are keyed by ref, and this service does not
+                                            // own Professional. Without this the requests inbox
+                                            // would have to ask catalog on every call, and would
+                                            // fail whenever catalog is down.
   serviceRef String required
   serviceName String required               // denormalised: a receipt must not
   priceMinor Long required min(0)           // change when a price is edited

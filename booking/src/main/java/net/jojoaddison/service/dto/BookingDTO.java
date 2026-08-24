@@ -30,6 +30,9 @@ public class BookingDTO implements Serializable {
     private String professionalRef;
 
     @NotNull
+    private String professionalLogin;
+
+    @NotNull
     private String serviceRef;
 
     @NotNull
@@ -125,6 +128,14 @@ public class BookingDTO implements Serializable {
 
     public void setProfessionalRef(String professionalRef) {
         this.professionalRef = professionalRef;
+    }
+
+    public String getProfessionalLogin() {
+        return professionalLogin;
+    }
+
+    public void setProfessionalLogin(String professionalLogin) {
+        this.professionalLogin = professionalLogin;
     }
 
     public String getServiceRef() {
@@ -317,6 +328,7 @@ public class BookingDTO implements Serializable {
             ", customerLogin='" + getCustomerLogin() + "'" +
             ", customerName='" + getCustomerName() + "'" +
             ", professionalRef='" + getProfessionalRef() + "'" +
+            ", professionalLogin='" + getProfessionalLogin() + "'" +
             ", serviceRef='" + getServiceRef() + "'" +
             ", serviceName='" + getServiceName() + "'" +
             ", priceMinor=" + getPriceMinor() +
