@@ -249,6 +249,28 @@ test: ['CMD', 'bash', '-c',
 
 `deploy-prod.sh`'s readiness gate uses the same technique through `docker compose exec`.
 
+### A green publish does not mean the image is in the registry
+
+The first `release.yml` run logged, for all five services:
+
+```
+[INFO] Built and pushed image as ghcr.io/kojoampia/hc-market-catalog, …:<sha>, …
+```
+
+and exited 0. `ghcr.io` then held the SHA tag for **three** of them; `catalog` and `booking` had
+`latest` only, and `GET /v2/kojoampia/hc-market-catalog/manifests/<sha>` returned 404 twenty minutes
+later. Nothing in the run was red.
+
+So **do not treat a successful matrix as proof an image exists.** The `verify` job now performs the
+token-then-manifest handshake a `docker pull` performs, for each of the five, retrying for ~5
+minutes before failing. Registry state is the only thing a deploy can actually use; Jib's exit code
+is its own account of what it believes it did. When `verify` fails, re-running the workflow is the
+fix — the build is deterministic and re-pushing is cheap.
+
+This is also why `quality/startup.sh` requires `TAG` rather than defaulting to `latest`: `latest`
+was present for all five throughout, so a stack that fell back to it would have come up looking
+entirely healthy while running two services from a commit nobody chose.
+
 ### Spring Boot 4 renamed the MongoDB properties
 
 JHipster 9.2.0 generates **`spring.mongodb.uri`**, not `spring.data.mongodb.uri`. Setting
@@ -302,6 +324,11 @@ keeps the estate uniformly Boot 4 — and matches all three sibling products. Se
 
 `.github/workflows/build.yml` runs on push and PR to `main`:
 
+`.github/workflows/release.yml` publishes all five to `ghcr.io/kojoampia/hc-market-<service>` on
+push to `main`, tagged by commit SHA, using Actions' built-in `GITHUB_TOKEN`. `quality/startup.sh`
+defaults to `--images=published` and pulls those — which is what makes the quality box able to prove
+the deployed image is the built one.
+
 - **`test`** — a five-service matrix, each `./mvnw verify` on Java 25. `verify`, never `test`:
   surefire excludes `**/*IT*`, so `test` runs no integration test at all and proves very little
   here. `fail-fast: false`, because a change that breaks three services should show all three in one
@@ -318,9 +345,15 @@ time.**
 
 ## Working here
 
-- **Never run `git` at this level.** This directory is not a repository. Each app would be its own
-  repo; a change touching two is two commits. Nothing here is currently under version control, so
-  there is no undo — the deploy script warns and stamps provenance `unknown` accordingly.
+- **This IS a git repository** — one repo for all five apps, unlike `hc-admin`/`hc-patient`/
+  `hc-professional` which are one repo per component. It is `github.com/kojoampia/hc-market`, and it
+  is **public**, matching the siblings. See `decisions.md` D6 for the monorepo choice and D13 for the
+  visibility decision and what was checked before pushing.
+- **Never add a default `base64-secret` to a profile that actually runs.** The repository is public.
+  The committed defaults live only in `*-secret-samples.yml`, `src/test/resources` and a
+  `central-server-config` nothing loads; `application-dev.yml` and `application-prod.yml` carry none,
+  and all three compose files require `JWT_BASE64_SECRET`. That is what keeps a published key from
+  being a usable one.
 - **The scripts and the spec appendices are the same bytes in two places.** Appendix A is
   `deploy/deploy-dev.sh`, Appendix B is `deploy/deploy-prod.sh`. This is enforced mechanically —
   after editing either script, re-embed; before trusting the spec, check:

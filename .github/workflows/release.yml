@@ -87,16 +87,63 @@ jobs:
   # A five-way matrix can half-succeed, and an estate where three services are at this commit and
   # two are at the previous one is a state no commit ever described. This job fails loudly when that
   # happens, so the run is red rather than "mostly green".
+  #
+  # It asks the REGISTRY, not the matrix. The first version of this job only checked
+  # needs.publish.result, and it passed a run in which two of the five SHA tags were missing —
+  # Jib had logged "Built and pushed image as ...:<sha>" for all five and exited 0, but ghcr.io
+  # held the tag for only three. A green matrix is Jib's account of what it did; the only thing
+  # that matters is what a deploy can actually pull.
   verify:
     name: All five published
     runs-on: ubuntu-latest
     needs: publish
     if: always()
+    permissions:
+      contents: read
+      packages: read
     steps:
-      - name: Fail if any image did not publish
+      - name: Fail if any publish job did not succeed
         if: needs.publish.result != 'success'
         run: |
-          echo "::error::Not all five images published for ${{ github.sha }}."
+          echo "::error::Not all five publish jobs succeeded for ${{ github.sha }}."
           echo "Deploying this commit would put the estate in a mixed state. Re-run the workflow."
           exit 1
-      - run: echo "All five images published at ${{ github.sha }}."
+
+      # Pull-scope tokens, the same handshake a docker pull performs, so this checks the thing a
+      # deploy will actually do rather than a GitHub API view of it.
+      #
+      # Retried, because a registry is allowed to be a moment behind its own writes. Ten attempts
+      # over ~5 minutes distinguishes "eventually consistent" from "not there" — and if it is still
+      # missing after that, re-running the workflow is the fix, so failing is the correct outcome.
+      - name: Every image must be pullable at this commit
+        env:
+          SHA: ${{ github.sha }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -uo pipefail
+          accepts='application/vnd.oci.image.index.v1+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json'
+          missing=()
+          for service in gateway catalog booking messaging payout; do
+            image="${OWNER}/hc-market-${service}"
+            found=""
+            for attempt in $(seq 1 10); do
+              token=$(curl -fsSL "https://ghcr.io/token?service=ghcr.io&scope=repository:${image}:pull" | jq -r .token)
+              code=$(curl -sSL -o /dev/null -w '%{http_code}' -X GET \
+                -H "Authorization: Bearer ${token}" -H "Accept: ${accepts}" \
+                "https://ghcr.io/v2/${image}/manifests/${SHA}")
+              if [ "$code" = 200 ]; then found=yes; break; fi
+              echo "  ${service}: HTTP ${code} (attempt ${attempt}/10)"
+              sleep 30
+            done
+            if [ -n "$found" ]; then
+              echo "ok       ghcr.io/${image}:${SHA}"
+            else
+              echo "::error::ghcr.io/${image}:${SHA} is not pullable."
+              missing+=("$service")
+            fi
+          done
+          if [ ${#missing[@]} -ne 0 ]; then
+            echo "::error::Missing at ${SHA}: ${missing[*]}. Re-run this workflow."
+            exit 1
+          fi
+          echo "All five images pullable at ${SHA}."
