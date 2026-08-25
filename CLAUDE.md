@@ -298,6 +298,24 @@ keeps the estate uniformly Boot 4 — and matches all three sibling products. Se
   `JIB_TO_USERNAME`/`JIB_TO_PASSWORD` in the environment, never `-D` flags — verified not to leak
   into `--dry-run` output. Keep it that way.
 
+## CI
+
+`.github/workflows/build.yml` runs on push and PR to `main`:
+
+- **`test`** — a five-service matrix, each `./mvnw verify` on Java 25. `verify`, never `test`:
+  surefire excludes `**/*IT*`, so `test` runs no integration test at all and proves very little
+  here. `fail-fast: false`, because a change that breaks three services should show all three in one
+  run — that is exactly the shape the D9 breakage had.
+- **`consistency`** — the checks with no sibling equivalent, each guarding a drift that has already
+  happened here: the seed still regenerates identically from the prototype, the spec appendices
+  still match the deploy scripts, all three compose files still interpolate, every shell script
+  still parses, and the quality vhost still agrees with its compose about the upstream port.
+
+There was no CI before this. That is how the whole suite came to be skipped for a week: D9 switched
+local builds to `-DskipTests`, nothing else ran them, and when they were finally run booking had 137
+failures and two services were violating an architecture rule. **Everything compiled the entire
+time.**
+
 ## Working here
 
 - **Never run `git` at this level.** This directory is not a repository. Each app would be its own

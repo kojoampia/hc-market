@@ -1,0 +1,160 @@
+# Build, test and check hc-market.
+#
+# There was no CI in this repository before this file. That is how the whole suite came to be
+# skipped for a week of work: D9 switched local builds to -DskipTests because Cucumber plus
+# Testcontainers cost minutes per app, and nothing else was running them. When they were finally run
+# again, booking had 137 failures and two services were violating an architecture rule. Everything
+# compiled the entire time.
+#
+# So the point of this file is narrow and specific: run the things that only fail when somebody
+# remembers to look.
+#
+# Shaped after hc-patient/api/.github/workflows/build.yml. The differences are all consequences of
+# hc-market being ONE repository holding FIVE standalone Maven projects with no aggregator pom — so
+# the build is a matrix rather than a single ./mvnw, and there are repo-level checks the siblings
+# have no equivalent of.
+name: Build and check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------------------------
+  # The five services. A matrix rather than a reactor because each app is a standalone project with
+  # its own ./mvnw — decisions.md D6, matching every sibling product.
+  #
+  # fail-fast is OFF: when a change breaks more than one service, seeing all of them in one run is
+  # worth more than saving a few minutes. The booking/payout/messaging breakage was exactly that
+  # shape, and finding it one service at a time would have taken three rounds.
+  # ---------------------------------------------------------------------------------------------
+  test:
+    name: ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [gateway, catalog, booking, messaging, payout]
+    steps:
+      - uses: actions/checkout@v4
+
+      # Java 25, because that is what the poms target (decisions.md D2) and what the images run.
+      # NOT 21, which is what JHipster 9.2.0 generates by default and what a careless regeneration
+      # would put back.
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '25'
+          distribution: temurin
+          cache: maven
+
+      # `verify`, never `test`. Surefire EXCLUDES **/*IT* and failsafe includes it, so `test` runs no
+      # integration test at all — and the ITs are where Testcontainers, the ArchUnit layer rule and
+      # the Liquibase changelogs actually get exercised. A green `test` proves very little here.
+      #
+      # The ITs bring up PostgreSQL and Kafka through Testcontainers, so the runner's Docker daemon
+      # is the only service dependency.
+      - name: Build and test
+        working-directory: ${{ matrix.service }}
+        run: ./mvnw --batch-mode --no-transfer-progress verify
+
+      # verify also runs spotless, checkstyle and modernizer, and those fire AFTER the tests pass —
+      # so a run can read "Tests run: 64, Failures: 0" and still fail. Uploading the reports makes
+      # the difference visible without re-running anything.
+      - name: Publish test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.service }}
+          path: |
+            ${{ matrix.service }}/target/surefire-reports/
+            ${{ matrix.service }}/target/failsafe-reports/
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------------------------
+  # Checks with no sibling equivalent, because no sibling has these artefacts. Each one guards a
+  # class of drift that has already happened in this repository at least once.
+  # ---------------------------------------------------------------------------------------------
+  consistency:
+    name: Seed, appendices and compose
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      # The seed is REGENERATED from the prototype, never edited (decisions.md D4). The extractor
+      # asserts the prototype's own figures — 18 professionals, 52 services, 63 reviews, 256
+      # sessions, ₵81,620 — and refuses to write if any of them drift.
+      #
+      # Running it here catches two different things: a prototype change that moves a figure, and a
+      # seed-data.json that was hand-edited despite the rule. The second is why the file is compared
+      # afterwards rather than just regenerated.
+      - name: Regenerate the seed from the prototype
+        run: node deploy/demo/extract-seed.mjs
+
+      - name: The committed seed must match what the extractor produces
+        run: |
+          if ! git diff --quiet -- deploy/demo/seed-data.json; then
+            echo "::error::deploy/demo/seed-data.json differs from what extract-seed.mjs produces."
+            echo "The seed is regenerated, never hand-edited — run: node deploy/demo/extract-seed.mjs"
+            git --no-pager diff --stat -- deploy/demo/seed-data.json
+            exit 1
+          fi
+
+      # Spec Appendices A and B ARE deploy-dev.sh and deploy-prod.sh — the same bytes in two places.
+      # Two copies drift unless something enforces it, and a spec describing a script that no longer
+      # exists is worse than no appendix.
+      - name: The spec appendices must match the scripts
+        run: ./deploy/sync-appendices.sh --check
+
+      # Both compose files parse, with the variables they demand actually supplied. A missing
+      # required variable presents at deploy time as a stack that will not start, and finding that
+      # on the quality box rather than here is the whole thing the quality box exists to avoid.
+      - name: Compose files must be valid
+        run: |
+          JWT_BASE64_SECRET=ci-placeholder \
+            docker compose -f deploy/docker/docker-compose.dev.yml config >/dev/null
+          # TAG is normally supplied by quality/startup.sh, which is the only supported entry
+          # point. It is required rather than defaulted on purpose — an image tag that silently
+          # falls back to `latest` is how a quality box ends up running something nobody chose.
+          JWT_BASE64_SECRET=ci-placeholder TAG=ci \
+            docker compose -f quality/compose.yml config >/dev/null
+          env HC_IMAGE_PREFIX=example HC_IMAGE_SEP=/ HC_TAG=ci JWT_BASE64_SECRET=ci-placeholder \
+              HC_GATEWAY_MONGODB_URI=mongodb://x/y \
+              HC_CATALOG_DB_URL=jdbc:x HC_CATALOG_DB_PASSWORD=x \
+              HC_BOOKING_DB_URL=jdbc:x HC_BOOKING_DB_PASSWORD=x \
+              HC_MESSAGING_DB_URL=jdbc:x HC_MESSAGING_DB_PASSWORD=x \
+              HC_PAYOUT_DB_URL=jdbc:x HC_PAYOUT_DB_PASSWORD=x \
+            docker compose -f deploy/docker/docker-compose.prod.yml config >/dev/null
+
+      # The scripts are the deployment. A syntax error in one is only discovered when somebody tries
+      # to deploy, which is the worst possible moment to discover it.
+      - name: Shell scripts must parse
+        run: |
+          for s in deploy/deploy-dev.sh deploy/deploy-prod.sh deploy/sync-appendices.sh \
+                   deploy/verify-cycle.sh deploy/verify-outbox-recovery.sh quality/startup.sh; do
+            bash -n "$s" && echo "ok   $s"
+          done
+
+      # The quality vhost's upstream port is written in host-site.conf AND in compose.yml, because
+      # nginx cannot read the environment. When they disagree the site returns 502 and nothing else
+      # complains.
+      - name: The quality vhost and its compose must agree on a port
+        run: |
+          conf=$(grep -oE 'proxy_pass http://127\.0\.0\.1:[0-9]+' quality/host-site.conf | grep -oE '[0-9]+$' | sort -u)
+          compose=$(grep -oE 'GATEWAY_PORT:-[0-9]+' quality/compose.yml | grep -oE '[0-9]+$' | sort -u)
+          echo "vhost=$conf compose=$compose"
+          test "$conf" = "$compose"
