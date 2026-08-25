@@ -1,4 +1,4 @@
-package net.jojoaddison.broker;
+package net.jojoaddison.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -18,6 +18,19 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * Turns booking domain events into notification rows, and opens a thread when a booking is first
  * requested — spec §7's consumer column.
+ *
+ * <h2>Why this is in {@code service} and not {@code broker}</h2>
+ *
+ * <p>{@code TechnicalStructureTest} enforces a layered architecture in which {@code domain} may only
+ * be reached from {@code repository}, {@code service}, {@code security}, {@code web} or
+ * {@code config}, and {@code service} may only be reached from {@code web} or {@code config}. A
+ * listener in {@code broker} can therefore touch neither the entities nor a service that does — it
+ * would have to be a transport shim that forwards to nothing, which is what the generated
+ * {@code broker.KafkaConsumer} is.
+ *
+ * <p>Reacting to a domain event IS application logic, so it belongs in the service layer. Nothing
+ * calls this class — Spring invokes it reflectively — so it introduces no inbound dependency of its
+ * own. Putting it in {@code broker} cost 51 architecture violations and taught this the hard way.
  *
  * <h2>Idempotency, and why it matters more here than in payout</h2>
  *

@@ -45,6 +45,8 @@ in `hc-admin`, `hc-patient` and `hc-professional`. Always `cd` into the app firs
 ```bash
 export JAVA_HOME=/usr/lib/jvm/jdk-25.0.2-oracle-x64   # see the JDK trap below
 cd catalog && ./mvnw clean verify                      # NEVER an incremental build
+cd catalog && ./mvnw -Dtest=SecurityUtilsUnitTest test  # one unit test  (surefire)
+cd catalog && ./mvnw -Dit.test=ReviewResourceIT verify   # one integration test (failsafe)
 cd catalog && ./mvnw -q package -DskipTests             # jar only
 
 # Regenerate an app from its JDL — see "the regeneration hazard" before doing this
@@ -91,6 +93,11 @@ java -jar catalog/target/healthconnect-catalog-0.0.1-SNAPSHOT.jar \
   --healthconnect.seed.anchor-dates=true --server.port=8081
 ```
 
+**Surefire excludes `**/*IT*`; failsafe includes it.** So `./mvnw test` runs no integration test at
+all, and `verify` runs both. Unlike the sibling products, naming the wrong one **errors loudly** here
+(`No tests matching pattern ... were executed!`) rather than reporting success having run nothing —
+so the workspace guide's warning about that trap does not apply to hc-market.
+
 It logs Kafka `MessageDeliveryException` errors on a timer with no broker present. Noisy, harmless,
 and **not** the cause of any startup failure you are debugging. Startup takes ~2 minutes.
 
@@ -130,6 +137,7 @@ one.** Confirmed the hard way. After any regeneration of `catalog`, re-apply:
 | Delete `ProfessionalResource`, `CategoryResource`, `ReviewResource` | catalog `web/rest/` | **app will not start** — ambiguous mapping against `MarketplaceResource` |
 | Delete `BookingResource` | booking `web/rest/` | **app will not start** — ambiguous mapping against `CustomerBookingResource` |
 | Delete `NotificationResource` | messaging `web/rest/` | **app will not start** — ambiguous mapping against `MessagingResource` |
+| Restore the `BookingResourceIT` **fixture** | booking `web/rest/` | 137 test failures — regeneration puts 141 generated CRUD tests back over it |
 
 **Never name a hand-written class after one the JDL generates.** `service Booking with
 serviceClass` makes JHipster generate `BookingService`, so hand-written logic there is silently
@@ -179,6 +187,20 @@ Declaring a Spring Data query method as `Object[]` when the query yields a singl
 then fails with `class [Ljava.lang.Object; cannot be cast to class java.lang.Number` — a 500 that
 says nothing about the real cause. Declare `List<Object[]>` and take `.get(0)`. See
 `EarningsRepository.lifetime`.
+
+### `TechnicalStructureTest` forbids `broker` from touching anything
+
+The generated ArchUnit rule lets only `repository`, `service`, `security`, `web` and `config` reach
+`domain`, and only `web` and `config` reach `service`. A `@KafkaListener` in `broker` can therefore
+touch neither the entities nor a service that does — it would have to forward to nothing, which is
+what the generated `broker.KafkaConsumer` is. Reacting to a domain event **is** application logic, so
+both event consumers live in `service`. Putting one in `broker` cost 51 violations.
+
+### Test fixtures must match the generated call signature
+
+`BookingStatusChangeResourceIT` calls `BookingResourceIT.createEntity()` in one place and
+`createEntity(em)` in another, and which form JHipster emits has changed between versions. The
+fixtures expose **both** overloads so a regeneration cannot break the build by picking the other.
 
 ### The faker collision
 
