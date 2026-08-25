@@ -946,12 +946,13 @@ infra_up() {
   ok "Kafka ready"
   log "ensuring topics"
   for t in booking.requested booking.accepted booking.declined booking.cancelled \
-           booking.completed review.published payout.settled notification.raised; do
+           booking.completed review.published payout.settled notification.raised \
+           dispute.resolved; do
     docker compose -p "$PROJECT" -f "$COMPOSE_FILE" exec -T kafka \
       /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 \
       --create --if-not-exists --topic "healthconnect.$t" --partitions 3 --replication-factor 1 >/dev/null
   done
-  ok "8 topics present"
+  ok "9 topics present"
 }
 
 apps_up() {

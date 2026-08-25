@@ -28,13 +28,20 @@ public interface EarningsRepository extends JpaRepository<Ledger, Long> {
      * draws either the chart or the table view from this same payload, which is how the prototype's
      * chart/table toggle stays honest.
      *
+     * <p><strong>Sessions are counted with {@code sum(case when l.reversalOf is null ...)}, never
+     * {@code count(l)}.</strong> A dispute reversal is a Ledger row like any other (decisions.md
+     * D23) — that is what keeps the ledger append-only and every total a plain aggregate. But it is
+     * not a session. A bare {@code count(l)} would report a professional as having done one MORE
+     * session on the day one of their sessions was reversed, while the money went down: sessions and
+     * gross moving in opposite directions, from a figure nobody would think to distrust.
+     *
      * <p>Grouped on a formatted {@code YYYY-MM} rather than on year and month separately, so the
      * ordering is lexicographic and correct across a year boundary without a compound sort.
      */
     @Query(
         """
         select function('to_char', l.earnedOn, 'YYYY-MM') as month,
-               count(l)             as sessions,
+               sum(case when l.reversalOf is null then 1 else 0 end) as sessions,
                sum(l.grossMinor)    as grossMinor,
                sum(l.commissionMinor) as commissionMinor,
                sum(l.netMinor)      as netMinor
@@ -57,7 +64,7 @@ public interface EarningsRepository extends JpaRepository<Ledger, Long> {
      */
     @Query(
         """
-        select count(l), coalesce(sum(l.grossMinor),0), coalesce(sum(l.commissionMinor),0), coalesce(sum(l.netMinor),0)
+        select sum(case when l.reversalOf is null then 1 else 0 end), coalesce(sum(l.grossMinor),0), coalesce(sum(l.commissionMinor),0), coalesce(sum(l.netMinor),0)
         from Ledger l where l.professionalLogin = :login
         """
     )
@@ -66,7 +73,7 @@ public interface EarningsRepository extends JpaRepository<Ledger, Long> {
     /** Sessions and gross by delivery format — the earnings screen's donut. */
     @Query(
         """
-        select l.deliveryMode, count(l), sum(l.grossMinor)
+        select l.deliveryMode, sum(case when l.reversalOf is null then 1 else 0 end), sum(l.grossMinor)
         from Ledger l where l.professionalLogin = :login
         group by l.deliveryMode order by l.deliveryMode
         """
@@ -76,7 +83,7 @@ public interface EarningsRepository extends JpaRepository<Ledger, Long> {
     /** Sessions and gross by service. */
     @Query(
         """
-        select l.serviceRef, l.serviceName, count(l), sum(l.grossMinor)
+        select l.serviceRef, l.serviceName, sum(case when l.reversalOf is null then 1 else 0 end), sum(l.grossMinor)
         from Ledger l where l.professionalLogin = :login
         group by l.serviceRef, l.serviceName order by sum(l.grossMinor) desc
         """
@@ -90,7 +97,7 @@ public interface EarningsRepository extends JpaRepository<Ledger, Long> {
      */
     @Query(
         """
-        select coalesce(sum(l.grossMinor),0), count(l)
+        select coalesce(sum(l.grossMinor),0), sum(case when l.reversalOf is null then 1 else 0 end)
         from Ledger l
         where l.professionalLogin = :login and l.earnedOn >= :from and l.earnedOn <= :to
         """

@@ -7,6 +7,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 import net.jojoaddison.domain.Booking;
+import net.jojoaddison.domain.Dispute;
 import net.jojoaddison.domain.OutboxEvent;
 import net.jojoaddison.repository.OutboxEventRepository;
 import org.springframework.stereotype.Service;
@@ -59,6 +60,50 @@ public class OutboxRecorder {
     }
 
     /**
+     * Records a dispute event.
+     *
+     * <p>Keyed by the BOOKING reference, not the dispute's, so a dispute event lands on the same
+     * partition as the booking events it concerns and cannot overtake them. A consumer that sees
+     * "reverse the earning for b-123" before it has seen "b-123 completed" has nothing to reverse.
+     *
+     * <p>The payload is deliberately thin. Payout reconstructs the reversal from the ledger row it
+     * is reversing — same professional, same currency, same delivery mode — because a reversal that
+     * mirrors its original cannot disagree with it. Sending those fields again would create a second
+     * source for them and therefore a way for them to differ.
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public OutboxEvent record(String shortType, Dispute dispute, String actor) {
+        String type = TOPIC_PREFIX + shortType;
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("disputeRef", dispute.getReference());
+        payload.put("bookingRef", dispute.getBookingReference());
+        payload.put("professionalRef", dispute.getProfessionalRef());
+        payload.put("status", dispute.getStatus() == null ? null : dispute.getStatus().name());
+        payload.put("refundMinor", dispute.getRefundMinor());
+        payload.put("currency", dispute.getCurrency());
+        payload.put("resolution", dispute.getResolution());
+        payload.put("resolvedBy", dispute.getResolvedBy());
+        return outbox.save(
+            new OutboxEvent()
+                .eventId(UUID.randomUUID().toString())
+                .type(type)
+                .topic(type)
+                .aggregateRef(dispute.getBookingReference())
+                .actor(actor)
+                .occurredAt(Instant.now())
+                .payload(serialise(payload, dispute.getReference()))
+        );
+    }
+
+    private String serialise(Map<String, Object> payload, String ref) {
+        try {
+            return mapper.writeValueAsString(payload);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("could not serialise the outbox payload for " + ref, e);
+        }
+    }
+
+    /**
      * The event payload.
      *
      * <p>Carries what a consumer needs to act without calling back — the notification messaging
@@ -75,7 +120,10 @@ public class OutboxRecorder {
         payload.put("serviceRef", b.getServiceRef());
         payload.put("serviceName", b.getServiceName());
         payload.put("scheduledDate", String.valueOf(b.getScheduledDate()));
-        payload.put("scheduledTime", b.getScheduledTime());
+        // SlotTime.format, not the raw LocalTime. Jackson would emit "07:00:00" once a seconds
+        // value existed, and consumers render this straight onto a screen — messaging writes it
+        // into a notification body. The wire format stays the five characters it has always been.
+        payload.put("scheduledTime", SlotTime.format(b.getScheduledTime()));
         payload.put("deliveryMode", b.getDeliveryMode() == null ? null : b.getDeliveryMode().name());
         payload.put("status", b.getStatus() == null ? null : b.getStatus().name());
         payload.put("priceMinor", b.getPriceMinor());

@@ -667,6 +667,41 @@ one-directional discipline (there is no endpoint to delete a review; the only re
 and there is no scheduler in this estate. Until there is, the figure is marketing rather than a
 guarantee.
 
+**As built (D26 step 5).** `DisputeWorkflow` (never `DisputeService` — the JDL generates that name),
+`DisputeResources.Customer` and `DisputeResources.Desk`, and a `DisputeEventConsumer` in payout's
+`service` package. `dueBy` is recorded and sorts the desk queue; nothing enforces it, and the code
+says so.
+
+Two things fell out of building it that the recommendation had not anticipated:
+
+**The session count would have gone up when money went down.** Every earnings figure is a plain
+aggregate over `Ledger`, which is exactly what makes a compensating entry work — the sums simply
+include a negative row. But `count(l)` counted the reversal as a *session*. A professional would have
+been reported as having done one more session on the day one of theirs was reversed, with gross
+falling at the same time: two figures moving in opposite directions, neither of which anyone would
+think to distrust. All five aggregate queries now count with
+`sum(case when l.reversalOf is null then 1 else 0 end)`.
+
+**A reversal must be priced at the original's commission rate, not today's.** `BrokerageConfig` is
+effective-dated so a historical row keeps the terms it was written under; recomputing the commission
+from the config in force at resolution time would refund a commission that was never charged. The
+reversal takes its proportion from the row it reverses, and mirrors that row's professional,
+currency, delivery mode and service — a reversal that mirrors its original cannot disagree with it,
+and sending those fields in the event would have created a second source for them.
+
+Smaller calls, each with a reason: a refund larger than the earning is **capped**, not rejected,
+because reversing more than was credited would leave a professional owing money on a session they
+were legitimately paid for. A dispute upheld on a booking that never earned anything is a **no-op**,
+not a failure — throwing would retry forever against a row that will never exist. `RESOLVED` and
+`REJECTED` are **terminal**, because reopening means either double-reversing or un-reversing. And
+the reversal is dated **today**, not backdated to the original, so it cannot silently rewrite a month
+that has already been reported.
+
+Also fixed here, a drift introduced by the `LocalTime` change: the outbox payload was serialising
+`scheduledTime` as a raw `LocalTime`, which Jackson renders `"07:00:00"` as soon as a seconds value
+exists. Messaging writes that straight into a notification body, so the wire format is pinned with
+`SlotTime.format` like everywhere else.
+
 ### D24 — Data protection: pseudonymise on erasure, never delete the ledger *(needs legal sign-off)*
 
 **The care summary is the wrong thing to worry about here, because it does not exist.** What
