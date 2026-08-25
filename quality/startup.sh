@@ -237,11 +237,16 @@ if [[ "$IMAGES" == "local" ]]; then
   done
   ok "all five images present locally"
 else
-  log "pulling $REGISTRY/*:$TAG from ghcr.io"
-  # A pull failure here almost always means CI has not published THIS commit yet, so the message
-  # says that rather than leaving someone to infer it from a registry 404.
+  # $IMAGE_SEP, not a literal "/". Published images are ghcr.io/kojoampia/hc-market-catalog; a
+  # message naming hc-market/catalog describes a path GHCR cannot have, and sends whoever reads it
+  # looking for a registry fault instead of a missing tag. That exact confusion is on record.
+  log "pulling $REGISTRY$IMAGE_SEP*:$TAG from ghcr.io"
+  # A pull failure here is usually CI not having published THIS commit yet — but not always: a run
+  # can go green having pushed only some of the five (decisions.md D14), so a tag existing for one
+  # service says nothing about the others. Either way the fix is the same, and failing here leaves
+  # the stack exactly as it was rather than half-rolled.
   compose pull \
-    || die "could not pull $REGISTRY/*:$TAG — has .github/workflows/release.yml finished for this commit? Use --images=local for unreleased work."
+    || die "could not pull $REGISTRY$IMAGE_SEP*:$TAG — has .github/workflows/release.yml finished for this commit, and did its 'All five published' job pass? Use --images=local for unreleased work."
 fi
 
 step "Start"

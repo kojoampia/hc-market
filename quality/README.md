@@ -47,12 +47,35 @@ routing mechanism production does not use. The four routes are spelled out in `c
 them the gateway starts, answers `/management` perfectly, and 404s every `/services/**` path, which
 is a healthy edge in front of nothing.
 
-## Images are local, and that is a weakness
+## Images are published, and that is the point
 
-The siblings pull published images, which is the better discipline: it proves the thing you are
-about to deploy is the thing you built. hc-market publishes nothing yet — no CI, no registry push —
-so `--images=local` is the default and the script warns on every run. Switch the default the day
-images are published; the flag already exists.
+`--images=published` is the default. Images come from `ghcr.io/kojoampia/hc-market-<service>`,
+tagged by commit SHA, pushed by `.github/workflows/release.yml` on every push to `main`
+(`decisions.md` D13). `TAG` defaults to the current commit, so a bare `./startup.sh --local` deploys
+the code you are looking at — and fails honestly if CI has not published it rather than quietly
+running something older.
+
+Verified at `beba627`, all five services: the registry's manifest digest, the pulled image's digest
+and the running container's image are the same in each case. That chain is the entire justification
+for this box existing; before images were published it could not be demonstrated at all.
+
+`--images=local` remains for work in progress and warns on every run, because an image built on a
+workstation cannot be traced to any commit.
+
+### Rolling back
+
+`TAG=<sha> ./startup.sh --local` — the same form as the siblings' `TAG=<sha> ./deploy.sh
+--skip-build`. Measured on this box: **~45 seconds** either direction, database volumes untouched,
+all seven checks green afterwards.
+
+Rolling to a commit that was not fully published **fails closed.** `compose pull` errors, the script
+dies before `up`, and the running stack is left exactly as it was — still healthy, still serving.
+That is not hypothetical: `1327d5d` is a real commit whose `catalog` and `booking` images never
+reached the registry despite a green workflow, and it is the fixture this was tested against.
+
+The failure mode that makes it matter is the quiet one. `latest` existed for all five throughout, so
+a stack that fell back to it would have come up entirely healthy while running two services from a
+commit nobody chose. That is why `TAG` is required here rather than defaulted.
 
 ## Two things need root, and the script runs neither
 
