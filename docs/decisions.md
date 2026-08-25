@@ -576,6 +576,47 @@ ledger consumer.
 **Explicitly not recommended:** FX rates, per-currency price lists, conversion at read time. Real work,
 real rounding hazards, no requirement.
 
+**As built (D26 step 3), and it found something worse than a currency mismatch.** Enforcing the
+currency meant finding where a booking's currency comes from, and the answer was: the request body.
+So did `priceMinor` and `serviceName`.
+
+```java
+.priceMinor(request.priceMinor())
+.currency(request.currency() == null ? "GHS" : request.currency())
+```
+
+The client is the customer's browser. `Ledger` derives gross, commission and net from the completed
+booking. So **the price of a booking was whatever the caller said it was**, and a crafted request
+could have credited a professional ₵0 for a ₵280 session, or ₵280,000 — with nothing anywhere
+disagreeing, because every downstream figure is faithfully derived from the number that was stored.
+The values are denormalised deliberately (a receipt must not change when a price is later edited),
+but *denormalised* was being used as if it meant *unverified*.
+
+Booking now asks catalog through a fail-closed `CatalogClient`, and a request whose figures disagree
+is rejected with **409** rather than quietly booked at the catalogue's price — the realistic cause is
+a price change mid-wizard, and charging the customer a number they were never shown is not a fix.
+Catalog unreachable is **503**, not 500: nothing is broken, the price simply cannot be established.
+
+This deliberately inverts D12's reasoning rather than contradicting it. D12 keeps `professionalLogin`
+on the booking so the professional's *inbox* never has to ask catalog — a read path, hit constantly,
+that must survive catalog being down. Creating a booking is a single write that must be correct.
+**Availability beats correctness on the read; correctness beats availability on the write.**
+
+On the payout side, `Ledger.currency` was `p.path("currency").asText("GHS")` — an event with no
+currency minted a GHS row regardless, and nothing compared the row against the `BrokerageConfig`
+whose `commissionRate` had just been applied to it. Both refuse now, and the consumer's existing
+rethrow means the event is never marked processed, so it retries instead of acknowledging a row that
+was never written.
+
+**Two things this pass did not fix**, recorded rather than quietly left:
+
+- `professionalLogin` is still taken from the request and **cannot** be checked against the public
+  profile endpoint, which correctly does not expose logins. A caller who lies about it puts the
+  booking in someone else's inbox. Fixing it needs an internal catalog endpoint — a different
+  mechanism from this one, so a separate piece of work.
+- `deliveryMode` still defaults to `ONLINE` when absent from an event, which mislabels a row on the
+  earnings-by-format breakdown. Same class of silent default as the currency one was.
+
 ### D23 — Disputes: a separate aggregate, a `ROLE_BROKERAGE` desk, and reversing entries
 
 **Recommended: do not add states to `BookingStatus`.** It is a clean seven-state machine with a

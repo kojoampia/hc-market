@@ -126,13 +126,47 @@ public class BookingEventConsumer {
                 .grossMinor(gross)
                 .commissionMinor(commission)
                 .netMinor(gross - commission)
-                .currency(p.path("currency").asText("GHS"))
+                .currency(currencyOf(p, config))
                 .deliveryMode(DeliveryMode.valueOf(p.path("deliveryMode").asText("ONLINE")))
                 .serviceRef(p.path("serviceRef").asText(null))
                 .serviceName(p.path("serviceName").asText(null))
                 .earnedOn(LocalDate.now())
         );
         LOG.info("ledger entry for {} — gross {} commission {}", bookingRef, gross, commission);
+    }
+
+    /**
+     * The currency of a ledger row, which must be the booking's and must be one the brokerage
+     * config actually prices (decisions.md D22).
+     *
+     * <p>This replaced {@code p.path("currency").asText("GHS")}, which had two failure modes and
+     * neither said anything at the time. An event carrying no currency minted a GHS row regardless
+     * of what the booking was denominated in; and nothing checked the row against the
+     * {@link BrokerageConfig} whose {@code commissionRate} had just been applied to it, so a
+     * booking in another currency would have been charged a commission computed from a rate that
+     * was never set for it. Both produce a ledger that looks entirely normal.
+     *
+     * <p>Throws rather than defaulting. The caller rethrows, so the container retries and the event
+     * is never marked processed — a ledger row that is late and correct beats one that is prompt
+     * and wrong, and for money that trade is not close.
+     */
+    private String currencyOf(JsonNode p, BrokerageConfig config) {
+        String currency = p.path("currency").asText(null);
+        if (currency == null || currency.isBlank()) {
+            throw new IllegalArgumentException(
+                "booking event for %s carries no currency; refusing to guess one".formatted(p.path("bookingRef").asText())
+            );
+        }
+        if (!currency.equals(config.getCurrency())) {
+            throw new IllegalArgumentException(
+                "booking %s is in %s but the brokerage config in force prices %s — its commission rate does not apply".formatted(
+                        p.path("bookingRef").asText(),
+                        currency,
+                        config.getCurrency()
+                    )
+            );
+        }
+        return currency;
     }
 
     /**
@@ -158,7 +192,7 @@ public class BookingEventConsumer {
                 .grossMinor(fee)
                 .commissionMinor(commission)
                 .netMinor(fee - commission)
-                .currency(p.path("currency").asText("GHS"))
+                .currency(currencyOf(p, config))
                 .deliveryMode(DeliveryMode.valueOf(p.path("deliveryMode").asText("ONLINE")))
                 .serviceRef(p.path("serviceRef").asText(null))
                 .serviceName("Late cancellation fee")

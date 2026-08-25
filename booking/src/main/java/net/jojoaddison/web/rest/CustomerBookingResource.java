@@ -8,6 +8,7 @@ import java.time.LocalTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
+import net.jojoaddison.service.CatalogClient;
 import net.jojoaddison.service.SlotTime;
 import net.jojoaddison.domain.Booking;
 import net.jojoaddison.domain.enumeration.BookingStatus;
@@ -54,6 +55,7 @@ public class CustomerBookingResource {
     private final BookingMapper mapper;
     private final BookingCreator creator;
     private final BrokerageClient brokerage;
+    private final CatalogClient catalog;
 
     public CustomerBookingResource(
         BookingWorkflow bookings,
@@ -61,7 +63,8 @@ public class CustomerBookingResource {
         BookingHistoryRepository history,
         BookingMapper mapper,
         BookingCreator creator,
-        BrokerageClient brokerage
+        BrokerageClient brokerage,
+        CatalogClient catalog
     ) {
         this.bookings = bookings;
         this.repository = repository;
@@ -69,12 +72,28 @@ public class CustomerBookingResource {
         this.mapper = mapper;
         this.creator = creator;
         this.brokerage = brokerage;
+        this.catalog = catalog;
     }
 
-    /** Wizard step 4 — creates a booking in {@code REQUESTED}. */
+    /**
+     * Wizard step 4 — creates a booking in {@code REQUESTED}.
+     *
+     * <p><strong>Price and currency come from the catalogue, never from the request.</strong> They
+     * used to be stored as sent, which made the price of a booking whatever the caller said it was
+     * — and since {@code Ledger} derives gross, commission and net from the completed booking, that
+     * was a direct route to crediting a professional an arbitrary amount. See
+     * {@link net.jojoaddison.service.CatalogClient}.
+     *
+     * <p>A request whose figures disagree with the catalogue is rejected with <strong>409</strong>
+     * rather than quietly booked at the catalogue's number. The realistic cause is that the price
+     * changed while the customer was in the wizard, and completing the booking at a price they were
+     * never shown is not a fix — it charges them something they did not agree to. The client
+     * re-reads the profile and asks again.
+     */
     @PostMapping
     public ResponseEntity<BookingView> create(@Valid @RequestBody CreateBooking request) {
         String login = currentLogin();
+        CatalogClient.ServiceView offering = priceFromCatalogue(request);
         Booking booking = new Booking()
             // Short, unique, and not guessable in sequence — a booking reference ends up in URLs
             // and emails, and b1/b2/b3 would let anyone walk the estate's bookings by hand.
@@ -86,9 +105,10 @@ public class CustomerBookingResource {
             // this ref belongs to. Supplied by the client from the profile it just read.
             .professionalLogin(request.professionalLogin())
             .serviceRef(request.serviceRef())
-            .serviceName(request.serviceName())
-            .priceMinor(request.priceMinor())
-            .currency(request.currency() == null ? "GHS" : request.currency())
+            // All three from the catalogue's answer, not the request body.
+            .serviceName(offering.name())
+            .priceMinor(offering.priceMinor())
+            .currency(offering.currency())
             .scheduledDate(request.scheduledDate())
             .scheduledTime(SlotTime.parse(request.scheduledTime()))
             .deliveryMode(DeliveryMode.valueOf(request.deliveryMode()))
@@ -235,6 +255,44 @@ public class CustomerBookingResource {
             // does not allow — 409, not 500. The message names both states.
             throw new ResponseStatusException(HttpStatus.CONFLICT, e.getMessage());
         }
+    }
+
+    /**
+     * Establishes what this offering costs, and refuses to proceed on any disagreement.
+     *
+     * <p>The currency check is the one D22 asks for: {@code currency} is carried on every money
+     * field in the estate and only GHS is ever used, so a mismatch cannot arise from ordinary
+     * traffic. That is exactly why it is worth asserting — a column that can silently disagree
+     * across a join is worse than no column, and the failure would otherwise first appear as a
+     * ledger row denominated in something the brokerage config does not price.
+     */
+    private CatalogClient.ServiceView priceFromCatalogue(CreateBooking request) {
+        CatalogClient.ServiceView offering;
+        try {
+            offering = catalog.priceOf(request.professionalRef(), request.serviceRef());
+        } catch (CatalogClient.UnknownOffering unknown) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, unknown.getMessage());
+        } catch (CatalogClient.CatalogUnavailable down) {
+            // 503, not 500: nothing is broken, the price simply cannot be established right now,
+            // and retrying is the correct response.
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, down.getMessage());
+        }
+        if (request.priceMinor() != null && request.priceMinor() != offering.priceMinor()) {
+            throw new ResponseStatusException(
+                HttpStatus.CONFLICT,
+                "this service now costs %d, not %d — reload the profile and try again".formatted(
+                        offering.priceMinor(),
+                        request.priceMinor()
+                    )
+            );
+        }
+        if (request.currency() != null && !request.currency().equals(offering.currency())) {
+            throw new ResponseStatusException(
+                HttpStatus.CONFLICT,
+                "this service is priced in %s, not %s".formatted(offering.currency(), request.currency())
+            );
+        }
+        return offering;
     }
 
     /** 404, never 403 — see the class comment. */
