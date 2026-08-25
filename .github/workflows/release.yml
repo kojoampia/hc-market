@@ -1,0 +1,102 @@
+# Publish the five service images to ghcr.io/kojoampia.
+#
+# decisions.md D13: images are built by CI, never on a workstation. That is the whole point — an
+# image built locally cannot prove it matches any commit, and proving exactly that is what the
+# quality box exists for. Until this file existed, quality/startup.sh defaulted to --images=local
+# and warned on every run that it could not make that guarantee.
+#
+# Tagged by COMMIT SHA and nothing else. There is no semantic version to bump or forget, and
+# provenance is exact. The cost, stated plainly: "which version is on quality?" has no answer a
+# person can hold in their head — only a SHA to look up. Revisit when there is something worth
+# calling a release.
+#
+# Shaped after hc-admin/gateway/.github/workflows/release.yml. The differences follow from hc-market
+# being one repository holding five apps: a matrix, and image names of the form hc-market-<service>
+# rather than one repo per image.
+name: Publish images
+
+on:
+  push:
+    branches: [main]
+  # Re-publishing an already-merged commit should not require an empty push.
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+
+concurrency:
+  # Not cancel-in-progress: a half-cancelled publish can leave some of the five images at a commit
+  # and the rest at an older one, which is the estate in a state no commit ever described.
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The built-in GITHUB_TOKEN carries this automatically — no PAT to create, store or rotate.
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [gateway, catalog, booking, messaging, payout]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '25'
+          distribution: temurin
+          cache: maven
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Jib, not docker/build-push-action: there is no Dockerfile in this repository. The image is
+      # assembled by the Maven plugin, which is also what deploy-prod.sh uses, so CI and a local
+      # build produce the same layers rather than two different ideas of the image.
+      #
+      # -DskipTests here is deliberate and is NOT a gap: build.yml runs the full verify matrix on
+      # the same commit, and running the Testcontainers suite twice per push would double the cost
+      # of every merge to prove the same thing. A commit that reaches main has already been tested.
+      - name: Build and push ${{ matrix.service }}
+        working-directory: ${{ matrix.service }}
+        run: |
+          ./mvnw --batch-mode --no-transfer-progress package -DskipTests -Pprod \
+            jib:build \
+            -Djib.to.image=${{ env.REGISTRY }}/${{ github.repository_owner }}/hc-market-${{ matrix.service }} \
+            -Djib.to.tags=${{ github.sha }},latest \
+            -Djib.to.auth.username=${{ github.actor }} \
+            -Djib.to.auth.password=${{ secrets.GITHUB_TOKEN }} \
+            -Djib.container.labels=org.opencontainers.image.revision=${{ github.sha }},org.opencontainers.image.source=https://github.com/${{ github.repository }},net.jojoaddison.channel=github
+
+      - name: Summarise
+        run: |
+          echo "### hc-market-${{ matrix.service }}" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "${{ env.REGISTRY }}/${{ github.repository_owner }}/hc-market-${{ matrix.service }}:${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+  # A five-way matrix can half-succeed, and an estate where three services are at this commit and
+  # two are at the previous one is a state no commit ever described. This job fails loudly when that
+  # happens, so the run is red rather than "mostly green".
+  verify:
+    name: All five published
+    runs-on: ubuntu-latest
+    needs: publish
+    if: always()
+    steps:
+      - name: Fail if any image did not publish
+        if: needs.publish.result != 'success'
+        run: |
+          echo "::error::Not all five images published for ${{ github.sha }}."
+          echo "Deploying this commit would put the estate in a mixed state. Re-run the workflow."
+          exit 1
+      - run: echo "All five images published at ${{ github.sha }}."

@@ -316,6 +316,48 @@ integer so the two agree today, but they diverge the moment a price appears that
 cleanly — and at that point a total-first calculation disagrees with the sum of the receipts the
 customers were shown. The receipts are the truth.
 
+## D13 — Publishing: `ghcr.io/kojoampia`, built by CI, tagged by commit
+
+Four answers, taken 25 August 2026.
+
+**Channel: `ghcr.io/kojoampia`,** and the repository is **public**, matching `hc-admin-gateway`,
+`hc-patient-service` and `hc-professional-service`.
+
+Public was chosen with the exposure stated rather than assumed. The workspace guide records that
+these stacks "seed accounts whose passwords derive from their logins by a rule published in a public
+repository, several holding privileged roles" — so this extends a known risk rather than creating a
+new one. What was checked before pushing:
+
+| | |
+|---|---|
+| `quality/.jwt-secret` (a real key generated this session) | gitignored, **never committed** |
+| PATs, private keys, AWS keys | none in any tracked file or in history |
+| Committed `base64-secret` values | present, but only in `application-secret-samples.yml`, `src/test/resources` and `central-server-config` |
+| `application-dev.yml` / `application-prod.yml` | carry **no** key at all |
+| All three compose files | `JWT_BASE64_SECRET:?` — **required**, the stack refuses to start without injection |
+
+So no deployment can fall back to a published key. That is a better position than the siblings',
+where the guide's warning originates, and it should stay that way: **never add a default
+`base64-secret` to a profile that actually runs.**
+
+**Image names: `hc-market-<service>`,** not the `healthconnect-<service>` that spec §12 and
+`deploy-prod.sh` originally specified. `healthconnect-` is the platform's name and four products
+share it; the sibling packages are all `hc-<product>-<service>`, and hc-market's should sort beside
+them.
+
+**Built by GitHub Actions on push to `main`,** using the built-in `GITHUB_TOKEN`, which carries
+`packages: write` — no PAT to create, store or rotate. (The workstation's `gh` token has scopes
+`repo, read:org, gist, admin:*` and could not have pushed packages anyway.) `deploy-prod.sh` then
+runs with `--no-build` and deploys what CI built.
+
+This is the decision that makes `--images=published` honest: an image built on a workstation cannot
+prove it matches any commit, and proving exactly that is what a quality box is for.
+
+**Tagged by commit SHA, with no semantic version.** Provenance is exact and there is no version to
+bump or forget. The cost is real and worth naming: *"which version is on quality?"* now has no answer
+a person can hold in their head — only a SHA to look up. Revisit when there is something worth
+calling a release.
+
 ---
 
 ## Still open — deferred, not blocking the slice

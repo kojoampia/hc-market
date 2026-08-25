@@ -1134,8 +1134,14 @@ case "$CHANNEL" in
   github|ghcr)
     CHANNEL="github"
     REGISTRY_HOST="ghcr.io"
-    GHCR_OWNER="${GHCR_OWNER:-jojoaddison}"
-    IMAGE_PREFIX="ghcr.io/${GHCR_OWNER}/healthconnect"
+    # kojoampia, not jojoaddison: that is the account the sibling packages live under
+    # (ghcr.io/kojoampia/hc-admin-gateway and friends). See decisions.md D13.
+    GHCR_OWNER="${GHCR_OWNER:-kojoampia}"
+    # hc-market-<service>, not healthconnect-<service>. `healthconnect` is the PLATFORM's name and
+    # four products share it; the sibling packages are all hc-<product>-<service>, and hc-market's
+    # should sort beside them rather than under a prefix that says nothing about which product they
+    # belong to.
+    IMAGE_PREFIX="ghcr.io/${GHCR_OWNER}/hc-market"
     IMAGE_SEP="-"
     REGISTRY_USER="${GHCR_USER:-$GHCR_OWNER}"
     REGISTRY_TOKEN="${GHCR_TOKEN:-}"

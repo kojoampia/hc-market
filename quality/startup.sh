@@ -37,10 +37,18 @@
 #
 # --- Images ------------------------------------------------------------------------------------
 #
-# The siblings pull published images, which is the better discipline: it proves the thing you are
-# about to deploy is the thing you built. hc-market has nothing published yet — no CI, no registry
-# push — so `--images=local` is the DEFAULT here and the script says so on every run rather than
-# pretending otherwise. Switch the default the day images are published.
+# PUBLISHED by default, which is the whole point of a quality box: it proves the thing you are about
+# to deploy is the thing CI built, from a commit that exists. Images come from
+# ghcr.io/kojoampia/hc-market-<service>, tagged by commit SHA (decisions.md D13), published by
+# .github/workflows/release.yml on every push to main.
+#
+# `--images=local` remains as a fallback for unreleased work in progress, and warns loudly, because
+# an image built on this workstation cannot prove it matches any commit — which is exactly the
+# guarantee this stack exists to provide.
+#
+# TAG defaults to the current commit. That is deliberate: it means `./startup.sh --local` deploys
+# the code you are looking at, and fails honestly if CI has not published it yet rather than
+# silently running something older.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -57,7 +65,7 @@ MESSAGING_PORT="${MESSAGING_PORT:-18102}"
 PAYOUT_PORT="${PAYOUT_PORT:-18103}"
 SITE="market.healthconnect.local"
 
-MODE="remote"; ACTION="up"; IMAGES="local"
+MODE="remote"; ACTION="up"; IMAGES="published"
 
 c_reset=$'\033[0m'; c_b=$'\033[1m'; c_dim=$'\033[2m'
 c_ok=$'\033[32m'; c_warn=$'\033[33m'; c_err=$'\033[31m'; c_info=$'\033[36m'
@@ -125,7 +133,16 @@ resolve_secret() {
 compose() { docker compose -p "$PROJECT" -f "$HERE/compose.yml" "$@"; }
 
 env_for_compose() {
-  export TAG="${TAG:-local}" REGISTRY="${REGISTRY:-healthconnect}"
+  # Published images are tagged by commit SHA; local ones by the literal "local".
+  if [[ "$IMAGES" == "local" ]]; then
+    export TAG="${TAG:-local}" REGISTRY="${REGISTRY:-healthconnect}" IMAGE_SEP="/"
+  else
+    export TAG="${TAG:-$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo latest)}"
+    # "-" not "/": GHCR has no nested-path namespaces, so the published name is
+    # ghcr.io/kojoampia/hc-market-gateway. Getting this wrong yields a 404 that reads as
+    # "CI has not published yet" when the name simply cannot exist.
+    export REGISTRY="${REGISTRY:-ghcr.io/kojoampia/hc-market}" IMAGE_SEP="-"
+  fi
   export GATEWAY_PORT CATALOG_PORT BOOKING_PORT MESSAGING_PORT PAYOUT_PORT
   export SEED_DIR="$ROOT/deploy/demo"
 }
@@ -211,17 +228,20 @@ env_for_compose
 ok "seed present — $(python3 -c 'import json;d=json.load(open("'"$ROOT"'/deploy/demo/seed-data.json"));print(len(d["professionals"]),"professionals,",len(d["reviews"]),"reviews")')"
 
 if [[ "$IMAGES" == "local" ]]; then
-  warn "using LOCAL images ($REGISTRY/*:$TAG) — nothing is published for hc-market yet, so this"
-  warn "cannot prove the deployed image is the built one. That is the point of --images=published,"
-  warn "and it is unavailable until these are pushed."
+  warn "using LOCAL images ($REGISTRY/*:$TAG) — an image built on this workstation cannot prove it"
+  warn "matches any commit, which is the guarantee this stack exists to provide. Use this only for"
+  warn "work in progress that CI has not published yet."
   for s in gateway catalog booking messaging payout; do
     docker image inspect "$REGISTRY/$s:$TAG" >/dev/null 2>&1 \
       || die "missing image $REGISTRY/$s:$TAG — build it: (cd $ROOT/$s && ./mvnw -Pdev package jib:dockerBuild -Djib.to.image=$REGISTRY/$s:$TAG)"
   done
   ok "all five images present locally"
 else
-  log "pulling $REGISTRY/*:$TAG"
-  compose pull
+  log "pulling $REGISTRY/*:$TAG from ghcr.io"
+  # A pull failure here almost always means CI has not published THIS commit yet, so the message
+  # says that rather than leaving someone to infer it from a registry 404.
+  compose pull \
+    || die "could not pull $REGISTRY/*:$TAG — has .github/workflows/release.yml finished for this commit? Use --images=local for unreleased work."
 fi
 
 step "Start"

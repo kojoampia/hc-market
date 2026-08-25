@@ -140,9 +140,14 @@ services:
   # The gateway is the edge. jacserver's nginx proxies to GATEWAY_PORT and nothing else needs to be
   # reachable — but the four domain services publish on 127.0.0.1 anyway, because diagnosing "the
   # gateway returns 502" without being able to ask the service directly is guesswork.
+  #
+  # IMAGE_SEP is "/" for local images (healthconnect/gateway) and "-" for ghcr
+  # (ghcr.io/kojoampia/hc-market-gateway). GHCR has no nested-path namespaces, so
+  # ghcr.io/kojoampia/hc-market/gateway is not a name that can exist — the separator is not
+  # cosmetic. deploy-prod.sh switches the same way for the same reason.
   gateway:
     <<: *service
-    image: ${REGISTRY:-healthconnect}/gateway:${TAG:?set by startup.sh}
+    image: ${REGISTRY:-healthconnect}${IMAGE_SEP:-/}gateway:${TAG:?set by startup.sh}
     container_name: hc-market-quality-gateway
     ports: ["127.0.0.1:${GATEWAY_PORT:-15509}:8080"]
     environment:
@@ -176,7 +181,7 @@ services:
 
   catalog:
     <<: *service
-    image: ${REGISTRY:-healthconnect}/catalog:${TAG:?set by startup.sh}
+    image: ${REGISTRY:-healthconnect}${IMAGE_SEP:-/}catalog:${TAG:?set by startup.sh}
     container_name: hc-market-quality-catalog
     ports: ["127.0.0.1:${CATALOG_PORT:-18100}:8080"]
     environment:
@@ -201,7 +206,7 @@ services:
 
   booking:
     <<: *service
-    image: ${REGISTRY:-healthconnect}/booking:${TAG:?set by startup.sh}
+    image: ${REGISTRY:-healthconnect}${IMAGE_SEP:-/}booking:${TAG:?set by startup.sh}
     container_name: hc-market-quality-booking
     ports: ["127.0.0.1:${BOOKING_PORT:-18101}:8080"]
     environment:
@@ -221,7 +226,7 @@ services:
 
   messaging:
     <<: *service
-    image: ${REGISTRY:-healthconnect}/messaging:${TAG:?set by startup.sh}
+    image: ${REGISTRY:-healthconnect}${IMAGE_SEP:-/}messaging:${TAG:?set by startup.sh}
     container_name: hc-market-quality-messaging
     ports: ["127.0.0.1:${MESSAGING_PORT:-18102}:8080"]
     environment:
@@ -239,7 +244,7 @@ services:
 
   payout:
     <<: *service
-    image: ${REGISTRY:-healthconnect}/payout:${TAG:?set by startup.sh}
+    image: ${REGISTRY:-healthconnect}${IMAGE_SEP:-/}payout:${TAG:?set by startup.sh}
     container_name: hc-market-quality-payout
     ports: ["127.0.0.1:${PAYOUT_PORT:-18103}:8080"]
     environment:
