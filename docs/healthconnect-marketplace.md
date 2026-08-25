@@ -656,21 +656,43 @@ Full script: **Appendix B**.
 
 ## 13. Open questions
 
-The four architectural gaps are settled in §2. These are still open, roughly in the order they will block work:
+The four architectural gaps are settled in §2. **All twelve questions below now have a proposed
+answer in `decisions.md` D15–D25 — recommendations, not yet ratified, none of them implemented.**
+Each entry there carries the reasoning, what it would cost to build, and whether it is an
+engineering call at all.
+
+Three of the questions below are **framed on premises the code contradicts**, and `decisions.md`
+opens by correcting them: there is no care summary stored anywhere (Q10), there is no PostgreSQL
+full-text search (Q6), and hc-market wires no observability at all (Q12).
 
 1. ~~**Generator version.**~~ **ANSWERED** — JHipster 9.2.0, Spring Boot 4.0.7, Java 25, gateway on
    MongoDB so the estate is uniformly Boot 4. See §3 and `decisions.md` D1–D2.
 2. **Payments.** The prototype holds money and releases it after the session. Which provider actually does that — Paystack, Flutterwave, Hubtel, a bank file? Escrow versus authorise-and-capture changes the `payout` model materially.
+   → **D15:** provider-managed split, not escrow and not authorise-and-capture — mobile money has no two-phase hold. *Needs a commercial and legal decision.*
 3. **Professional onboarding and KYC.** Who verifies credentials and police clearance, and against what register? Manual admin queue in v1, or an integration?
+   → **D16:** manual review in `hc-admin`. There is no register for non-medical practitioners, which is inherent to the scope note.
 4. **Online sessions.** "Online" is a delivery mode with a promised video link one hour before. Which provider, and does the platform host the room or just relay a link?
+   → **D17:** relay a link, never host the room; no recording in v1.
 5. **Notification transport.** In-app rows exist. Email, SMS and push all have a channel table in Ghana — which ones ship in v1, and through whom?
+   → **D18:** in-app and email in v1, SMS for confirmations, no push (there is no app). WhatsApp is the integration worth costing.
 6. **Search.** PostgreSQL full-text is enough for 18 professionals and probably for 500. At what number does Elasticsearch earn its operational cost?
+   → **D19:** the premise is wrong — filtering is `contains()` in Java over every card. Move to SQL at ~200; Elasticsearch realistically never.
 7. **Availability model.** The seed carries explicit slots. Real professionals think in recurring rules plus exceptions. Recurrence in v1, or slots generated from a rule engine?
+   → **D20:** both — rules authored, slots materialised, because `taken` needs a row to lock against a double booking.
 8. **Time zones.** Everything is currently Africa/Accra with no offset. Does the platform ever serve a client or professional outside GMT, and if so, whose local time is authoritative on a booking?
+   → **D21:** the professional's. Keep the wall clock, add an explicit `zoneId`; do **not** convert appointments to UTC instants.
 9. **Multi-currency.** `currency` is on every money field but only `GHS` is used. Real requirement, or should it be dropped to keep the model honest?
+   → **D22:** keep the column, build no conversion — but start enforcing it, because nothing checks it agrees across a join today.
 10. **Data protection.** Ghana's Data Protection Act applies to the care summary. Where does data live, how long is it retained, and what does a deletion request do to a booking history that a payout ledger depends on?
+    → **D24:** no care summary is stored; `visitAddress` and message bodies are the sensitive fields. Erasure by pseudonymisation, never deleting the ledger. *Needs legal sign-off.*
 11. **Disputes.** The prototype promises a brokerage desk resolving disputes in five working days. That is a workflow, a role and a set of states nobody has specified yet.
+    → **D23:** a separate `Dispute` aggregate — not new `BookingStatus` values — with `ROLE_BROKERAGE`, and reversal by compensating ledger entries.
 12. **Observability.** JHipster ships Micrometer. Which backend — Prometheus/Grafana, or something already running on `docker.jojoaddison.net`?
+    → **D25:** the host's existing OTLP-push stack. No new backend, and not Prometheus scraping.
+
+One further gap, not numbered above: the header advertises **"Kafka, SSE"** and no SSE endpoint is
+defined or built. → **D25's closing note:** drop the claim and poll; if real-time is wanted, SSE
+belongs at the reactive gateway fed by Kafka, not in imperative `messaging`.
 
 ---
 

@@ -400,24 +400,269 @@ strict.
 
 ---
 
-## Still open — deferred, not blocking the slice
+## D15–D25 — Spec §13 answered
 
-Spec §13 items 2–12, unchanged and none of them blocking v1:
+Answered 25 August 2026. **These are recommendations, not yet ratified decisions.** D1–D14 record
+answers taken by the architect; this section records a proposed answer to each of §13's eleven
+remaining questions, with the reasoning and the cost, so that ratifying one is a yes/no rather than
+a fresh investigation. Three of them — D15, D24 and anything with a contract attached — cannot be
+settled by engineering judgement alone and say so.
 
-| # | Question | Working assumption for now |
+Nothing here is implemented. Each entry ends with what it would cost to build.
+
+### Three of §13's premises do not match the code
+
+Checked before answering, because a question built on a wrong premise gets a wrong answer:
+
+| §13 says | The code says |
+|---|---|
+| "Ghana's Data Protection Act applies to **the care summary**" | hc-market stores **no care summary**. `Booking.careSummaryShared` is a lone `Boolean`; no entity, column or endpoint anywhere in the five apps holds conditions, allergies or medications. Spec §9's description of that endpoint is **unbuilt**. |
+| "**PostgreSQL full-text** is enough for 18 professionals" | There is no full-text search and no SQL filtering. `MarketplaceService.BrowseFilter.matches` is `haystack.toLowerCase().contains(needle)` in **Java**, over the whole card list, with facets tallied the same way. |
+| Observability — "JHipster ships Micrometer, which backend?" | hc-market wires **nothing**: no OpenTelemetry agent, no OTLP endpoint, no `monitoring` network in any of the three compose files. The siblings all do. |
+
+---
+
+### D15 — Payments: provider-managed split, not escrow *(needs a commercial and legal decision)*
+
+**Recommended: a single charge at booking, split by the provider**, with the professional's share
+settling to their own subaccount and the platform only ever receiving its 12%. Paystack Subaccounts
+or Flutterwave Split Payments; Hubtel is the Ghana-native alternative and strongest on direct bank
+settlement. Confirm current capabilities against the provider's own docs — this area moves.
+
+**Why not escrow, and why not authorise-and-capture.** Escrow is the intuitive reading of "holds
+money and releases it after the session", and it is the expensive one: holding customer funds as a
+non-bank engages Bank of Ghana licensing under the Payment Systems and Services Act, 2019 (Act 987).
+That is a licence application, not a sprint.
+
+Authorise-and-capture is the standard way to dodge that — except that it does not exist on mobile
+money, which is how most of this market pays. MoMo collections are a direct debit with customer
+approval; there is no two-phase hold to capture later. Card authorisations also expire in about a
+week, which a booking three weeks out will outlive. So the two-phase model fails on the dominant
+rail and degrades on the other.
+
+A provider-managed split gets the commercial effect — customer committed, professional assured — with
+the platform never holding the professional's money, so the licensing question largely goes away.
+
+**It maps onto what already exists.** `Ledger` already stores `grossMinor`, `commissionMinor` and
+`netMinor` per row, and `BrokerageConfig` is already effective-dated, so the historical commission
+rate is already preserved. `Payout` stops being something the platform pays and becomes a
+**reconciliation** record against the provider's settlement report; `Payout.bankReference` becomes
+the settlement ID.
+
+**Cost.** A `Charge` entity is genuinely missing — today **nothing in the estate collects money from
+a customer at all**. It needs provider reference, state, and idempotency on `bookingReference`.
+Refunds need modelling too; `lateCancellation` already implies a 50% retention. Webhook handling
+must be idempotent, which the existing outbox/`eventId` discipline already has a pattern for.
+
+**What is not an engineering call:** which provider (pricing, settlement times, contract), and
+whether the split model clears Act 987 for this business. Both need the company's counsel.
+
+### D16 — KYC: a manual admin queue, in `hc-admin`, and no register to automate against
+
+**Recommended: evidence review by a human in v1.** The one automatable piece is identity — the
+National Identification Authority's Ghana Card verification, already used by banks. Police clearance
+comes from the Ghana Police CID as a certificate, and certificates of competence come from training
+bodies.
+
+**There is no register to check most of these people against, and that is inherent to the product.**
+The scope note restricts the marketplace to *non-medical* professionals; trainers, nutritionists and
+home carers are not licensed by a statutory body the way a doctor is by the Medical and Dental
+Council. So "verify against a register" has no target for most listings. Verification here means
+*documents seen by a person*, and the badge should not imply more than that.
+
+**Cost, and a gap worth naming.** `Professional.verification` is a bare enum column with **no record
+of who set it, when, or on what evidence** — for a trust signal shown publicly beside someone's name,
+that is thin. It needs a reviewer, a timestamp, an evidence reference and an append-only history.
+`Credential` rows exist but hold only a label; document storage is unbuilt. The queue itself belongs
+in the back-office console, not here.
+
+### D17 — Online sessions: relay a link, never host the room
+
+**Recommended v1: the professional supplies their own meeting link** (Meet, Zoom, whatever they
+already use); the platform stores it and reveals it an hour before, which is the promise the
+prototype makes. Daily.co is the upgrade if a no-account, in-browser room with a waiting room is
+wanted later; self-hosted Jitsi trades a licence cost for an operational one.
+
+**Why not host.** Hosting a room where health matters are discussed drags in recording, retention and
+consent — three problems the platform does not otherwise have. **Recommend no recording in v1**, which
+keeps it that way.
+
+**Cost.** `Booking` has nowhere to put a link. And "released one hour before" is a *scheduled reveal*
+— there is no scheduler anywhere in this estate, so the honest cheap version is to compute
+visibility at read time from `scheduledDate`/`scheduledTime` rather than to push anything.
+
+### D18 — Notifications: in-app and email in v1; WhatsApp is the one worth the integration
+
+**Recommended: in-app plus email now; SMS for confirmations and reminders only; no push.** Push is
+moot — hc-market has no mobile app and no web front end at all (`api/` and `web/` are empty by
+design).
+
+**WhatsApp is the honest answer for this market** and deserves to be weighed on engagement rather
+than on transport cost, via a Business API provider. It is a real integration, so it is a v1.5 call,
+not a default.
+
+**Cost.** `Notification` today is `recipientLogin, kind, body, raisedAt, readAt, deepLink` — a row in
+a table. Sending anything *outside* the app needs a channel, a delivery state, a provider reference
+and a dedupe key, plus an outbox so a provider outage does not lose the notification. Booking's
+transactional outbox is the pattern to copy rather than reinvent.
+
+### D19 — Search: move it into SQL at around 200 professionals; Elasticsearch, realistically never
+
+Correcting the premise above: today every browse request builds **every** professional's card —
+including the rating-view join — and filters them in Java with `contains()`. The matching is not the
+problem; the **loading** is.
+
+**Recommended: push filtering, sorting and faceting into SQL, with a `tsvector` GIN index for `q`
+and `pg_trgm` for typo tolerance.** Trigger it on a p95 latency measurement or ~200 professionals,
+whichever comes first — not on feel.
+
+**Elasticsearch earns its operational cost in the tens of thousands of documents**, or when relevance
+tuning and synonyms become a product feature in their own right. For a Ghanaian marketplace of
+non-medical professionals, that is not a realistic horizon. Postgres covers it.
+
+**One constraint to respect:** rating comes from the `professional_rating` view and is `null` for the
+unrated. Sorting and `minRating` in SQL must join that view and keep excluding unrated professionals
+rather than coalescing them to zero — the whole point of D-the-rating-rule. A `LEFT JOIN` plus a
+careless `COALESCE(rating, 0)` would silently reintroduce exactly the collapse the design forbids.
+
+### D20 — Availability: recurrence rules **and** generated slots, not one or the other
+
+**Recommended: professionals author rules; the system materialises slots forward.** Add
+`AvailabilityRule` (weekday, start, end, interval, validFrom, validUntil) and
+`AvailabilityException` (a date that is closed, or replaced). Keep `AvailabilitySlot` as the
+bookable unit and generate it forward a fixed horizon.
+
+**Why not compute availability on the fly.** `AvailabilitySlot.taken` needs a *row* to lock. Two
+customers booking the same 07:00 must collide on a unique constraint over
+`(professional, date, time)`; with slots computed at read time there is nothing to contend on and the
+double-booking is silent. The generated row is what makes the race safe — the same reasoning as the
+unique `(customer_login, professional_ref)` on `Favourite`.
+
+**Cost, and a defect found while answering.** `slotTime` is `String maxlength(5)`. It sorts correctly
+only by the accident of zero-padded 24-hour text, and it accepts `"7:00"` and `"25:99"` today.
+`scheduledTime` on `Booking` has the same shape. Both should be `LocalTime`. That is a JDL change, so
+it rewrites a Liquibase changelog and needs a real migration rather than a regeneration.
+
+### D21 — Time zones: keep Africa/Accra, but store it instead of assuming it
+
+**Recommended: the booking's wall clock stays as written, and gains an explicit `zoneId` defaulting
+to `Africa/Accra`. The professional's local time is authoritative.**
+
+Ghana is UTC+0 all year with no daylight saving, so the current implicit approach is genuinely safe
+*today* — this is the rare case where the naive model is correct. What it is not is *legible*: nothing
+in the schema says which zone the wall clock belongs to.
+
+**Do not convert appointments to UTC instants.** That is the classic mistake in this exact domain. An
+`Instant` is right for "when did this happen" — `raisedAt`, `completedAt`, and the ledger already use
+it correctly. It is wrong for "when is the appointment", because if a zone's rules ever change, the
+7 a.m. session must stay at 7 a.m. rather than silently becoming 6 a.m.
+
+**The professional's zone wins** because that is where the service is physically delivered — in-person
+and home visits are unambiguously there. The realistic driver for any of this is a diaspora customer
+booking a home visit for a relative in Accra: a display-side problem, which an explicit `zoneId`
+solves without touching the booking model.
+
+### D22 — Multi-currency: keep the column, build nothing, but **enforce** it
+
+**Recommended: keep `currency`, add no conversion, and start validating it.**
+
+Keeping it costs one `varchar(3)` per money row and makes every stored amount self-describing;
+dropping it would only be honest if GHS were certain forever, and diaspora payment is the obvious
+second currency. But a currency column that can silently disagree across a join is worse than none,
+and **nothing today checks that a `Booking`'s currency matches its `ServiceOffering`, or that a
+`Ledger` row matches its `Booking`.** That check is cheap and belongs in `BookingWorkflow` and the
+ledger consumer.
+
+**Explicitly not recommended:** FX rates, per-currency price lists, conversion at read time. Real work,
+real rounding hazards, no requirement.
+
+### D23 — Disputes: a separate aggregate, a `ROLE_BROKERAGE` desk, and reversing entries
+
+**Recommended: do not add states to `BookingStatus`.** It is a clean seven-state machine with a
+sealed-interface transition set, and a dispute is not a booking state — a booking can be disputed and
+still be completed.
+
+Add a `Dispute` aggregate keyed by a unique `bookingReference`: `raisedBy`, `reason`, `status`
+(`OPEN → UNDER_REVIEW → RESOLVED | REJECTED`), `resolution`, `resolvedBy`, `dueBy`, and the same
+append-only history `BookingStatusChange` already models. The desk is a role — `ROLE_BROKERAGE` — and
+its screens belong in `hc-admin`, not in a customer-facing app.
+
+**The hard part is the payout interaction.** A dispute upheld after `COMPLETED` must undo a `Ledger`
+row that has already credited a professional. **Recommend compensating entries, never deletion or
+mutation** — a reversal row with negative amounts. That keeps the ledger append-only, keeps every
+earnings aggregate correct without recomputation, and matches the review policy's existing
+one-directional discipline (there is no endpoint to delete a review; the only response is a reply).
+
+**Note the promise has a clock.** "Resolved in five working days" needs escalation and a scheduler,
+and there is no scheduler in this estate. Until there is, the figure is marketing rather than a
+guarantee.
+
+### D24 — Data protection: pseudonymise on erasure, never delete the ledger *(needs legal sign-off)*
+
+**The care summary is the wrong thing to worry about here, because it does not exist.** What
+hc-market actually holds that is personal: customer logins and names, booking history, **`visitAddress`
+— a home address**, `customerNote`, `Message.body` free text, reviews and the ledger. Of those,
+**`visitAddress` and `Message.body` are the sensitive ones**: people will type health details into a
+message thread whatever the schema intends.
+
+Ghana's Data Protection Act, 2012 (Act 843) and the Data Protection Commission set the frame —
+controller registration, purpose limitation, and a data subject's right to erasure.
+
+**Recommended erasure model: pseudonymisation, not deletion.** Redact `customerName`, `visitAddress`,
+`customerNote` and message bodies; keep `Ledger` rows, amounts and `professionalRef` intact; keep the
+`Booking` with a tombstoned customer identity. Financial records have their own retention obligation
+that erasure does not override, and the unique `bookingReference` chain stays whole, so payouts,
+reviews and earnings do not break.
+
+**This is where "derived, never stored" pays off unexpectedly.** Because there is no
+`professional.total_earnings` and no stored rating, redacting a customer requires **no recomputation
+anywhere** — every aggregate is a view or a query over rows that are still there. Had those totals
+been denormalised, every erasure would have been a consistency problem.
+
+**Residency needs checking, not assuming:** production is a VPS at 199.247.5.252, and Act 843
+constrains transfers abroad in some circumstances.
+
+**I am describing engineering consequences, not giving legal advice.** Retention periods, the lawful
+basis for each field, controller registration and the residency position all need the company's
+counsel before anything here is relied on.
+
+### D25 — Observability: attach the OTel agent and push to the host collector. No new backend.
+
+**Recommended: do exactly what the siblings do.** The production host already runs one observability
+stack — Grafana/Mimir/Loki/Tempo behind an `otel-collector` on the external `monitoring` network. Every
+other product borrows it rather than shipping its own, and hc-market should too.
+
+**Not Prometheus scraping.** The workspace's model is push (OTLP); the host's Alloy config carries no
+application scrape targets and that is deliberate. Adding a scrape path here would be a second
+pattern for no gain.
+
+**Cost.** Bake the OpenTelemetry Java agent into the Jib image config, set
+`OTEL_EXPORTER_OTLP_ENDPOINT` in the production compose, join the `monitoring` network, and mount
+alert rules **per application** — never appended to a shared fleet file, so a YAML mistake costs one
+app's alerting rather than everyone's.
+
+**One sibling pattern does not carry over:** hc-market is API-only, so there is no browser posting to
+a same-origin `/v1/traces` and no nginx proxy hop for it.
+
+### And the SSE claim, which is not in §13
+
+The spec header advertises **"Kafka, SSE"**. No SSE endpoint is defined in §6 or §7, none is built,
+and the prototype's "live" messaging is a simulated local reply.
+
+**Recommended: drop the claim, and poll in v1.** If real-time is genuinely wanted, the shape that fits
+this architecture is **SSE at the gateway, fed by Kafka** — the gateway is reactive and holding
+thousands of open streams is what it is good at. Streaming from `messaging` directly would pin a
+servlet thread per subscriber, because that service is imperative Spring MVC.
+
+---
+
+## Still open after this section
+
+Only what engineering cannot settle alone:
+
+| # | Needs | From whom |
 |---|---|---|
-| 2 | Payments provider, escrow vs authorise-and-capture | none wired; `payout` is a derived ledger only |
-| 3 | Professional onboarding / KYC | manual admin queue implied; nothing built |
-| 4 | Online sessions — video provider | delivery mode only, no room or link |
-| 5 | Notification transport | in-app rows only; no email/SMS/push |
-| 6 | Search backend | PostgreSQL full-text; ample for 18 |
-| 7 | Availability — slots vs recurrence rules | explicit slots, exactly as seeded |
-| 8 | Time zones | Africa/Accra throughout, no offset |
-| 9 | Multi-currency | `GHS` only; the `currency` column stays |
-| 10 | Ghana DPA — residency, retention, deletion | not addressed |
-| 11 | Disputes workflow | not specified, not built |
-| 12 | Observability backend | workspace already runs OTLP-push Grafana/Mimir/Loki/Tempo |
-
-One further gap, not in §13: the spec header now reads **"Kafka, SSE"**, but neither §6 nor §7
-defines an SSE endpoint, and the prototype's live messaging is a simulated local reply. Real-time
-transport is undefined and unbuilt.
+| D15 | Provider choice and contract; whether a split model clears Act 987 | Architect + counsel |
+| D16 | Whether the verification badge's meaning is acceptable given no register exists | Product |
+| D24 | Retention periods, lawful basis, controller registration, data residency | Counsel |
+| D17, D18 | Budget for a video provider and a WhatsApp BSP, if either is wanted | Architect |
