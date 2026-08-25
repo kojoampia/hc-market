@@ -360,6 +360,46 @@ calling a release.
 
 ---
 
+## D14 — A publish is proved against the registry, not against the builder
+
+Taken 25 August 2026, forced by the first `release.yml` run.
+
+That run was **green on all five services.** Jib logged, for every one of them:
+
+```
+[INFO] Built and pushed image as ghcr.io/kojoampia/hc-market-catalog, …:1327d5d…, …
+```
+
+and exited 0. `ghcr.io` held the SHA tag for **three**. `catalog` and `booking` had `latest` only;
+`GET /v2/kojoampia/hc-market-catalog/manifests/1327d5d…` returned 404 immediately, again twenty
+minutes later, and still 404s now — so it was a lost write, not propagation lag. Both packages were
+public and anonymously listable throughout, so visibility was never the cause. Nothing in the run
+was red, and GitHub has no error to show for it. **The root cause is not established.**
+
+The `verify` job as first written could not have seen this: it checked `needs.publish.result`, which
+is the matrix's own account of itself. **A gate that asks the thing being gated whether it worked is
+not a gate.** It now performs the token-then-manifest handshake a `docker pull` performs, per
+service, retrying ten times over ~5 minutes so eventual consistency is distinguished from absence.
+
+**Why this outranks the inconvenience of a re-run.** `latest` was present for all five the entire
+time. A quality stack that fell back to it would have pulled, started, gone healthy and served
+correct-looking data — while running `catalog` and `booking` from a commit nobody chose. Every check
+short of comparing digests would have passed. That is the exact failure a quality box exists to make
+impossible, which is the retroactive justification for `quality/startup.sh` requiring `TAG` rather
+than defaulting to `latest`: the guard that looked pedantic is the one that would have caught this.
+
+**The remedy is to re-run the workflow, not to re-tag by hand.** The build is deterministic and
+re-pushing is cheap; a hand-pushed tag reintroduces exactly the "an image nobody can trace to a
+commit" problem D13 exists to remove. Re-running at `beba627` published all five, verified
+independently from this workstation.
+
+If it recurs on a *different* pair of services, that points at a registry-side race between
+concurrent pushes sharing base layers, and serialising the matrix (`max-parallel: 1`) is the answer.
+One occurrence is not enough to conclude that, so the matrix stays parallel and the gate stays
+strict.
+
+---
+
 ## Still open — deferred, not blocking the slice
 
 Spec §13 items 2–12, unchanged and none of them blocking v1:
