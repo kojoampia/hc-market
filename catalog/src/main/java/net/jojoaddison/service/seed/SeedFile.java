@@ -18,7 +18,19 @@ import java.util.List;
  * inconsistency. See {@code deploy/demo/extract-seed.mjs}.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
-public record SeedFile(@JsonProperty("$meta") Meta meta, List<SeedCategory> categories, List<SeedProfessional> professionals, List<SeedReview> reviews) {
+public record SeedFile(
+    @JsonProperty("$meta") Meta meta,
+    List<SeedCategory> categories,
+    List<SeedProfessional> professionals,
+    List<SeedReview> reviews,
+    /** Professional refs saved by the one customer the prototype describes in full. */
+    List<String> favourites,
+    List<SeedCustomer> customers
+) {
+    /** Only the login is needed here — the rest of the customer belongs to other services. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record SeedCustomer(String ref, String userLogin) {}
+
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record Meta(String name, String version, LocalDate demoToday, String note) {}
 

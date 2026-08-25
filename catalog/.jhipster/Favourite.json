@@ -1,0 +1,30 @@
+{
+  "annotations": {
+    "changelogDate": "20260825145453"
+  },
+  "applications": ["healthconnectCatalog"],
+  "clientRootFolder": "healthconnectCatalog",
+  "databaseType": "sql",
+  "documentation": "The customer's Saved list.\\n\\nDeliberately NOT a relationship to Professional. A favourite is keyed by the professional's\\nbusiness reference and the customer's login, both of which are stable and meaningful outside this\\nservice; a foreign key would mean a customer's saved list could not survive a professional being\\nremoved from the catalogue, and \"the person I saved is gone\" is a thing the screen should be able\\nto say rather than a row that vanishes.\\n\\n`customerLogin` + `professionalRef` is unique: saving twice is the same as saving once, and the\\nschema is what makes that true rather than a check in the resource.",
+  "fields": [
+    {
+      "fieldName": "customerLogin",
+      "fieldType": "String",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "professionalRef",
+      "fieldType": "String",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "addedAt",
+      "fieldType": "Instant",
+      "fieldValidateRules": ["required"]
+    }
+  ],
+  "microserviceName": "healthconnectCatalog",
+  "name": "Favourite",
+  "relationships": [],
+  "searchEngine": "no"
+}

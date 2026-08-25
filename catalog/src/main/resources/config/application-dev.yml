@@ -61,13 +61,9 @@ spring:
       poolName: Hikari
       auto-commit: false
   liquibase:
-    # 'faker' is REMOVED deliberately. JHipster's faker context loads 30 rows per entity from
-    # config/liquibase/fake-data/*.csv. That collides with the demo seed twice over: it puts
-    # nonsense professionals in the catalogue, and because SeedDataLoader is idempotent on
-    # "are there any professionals yet?", the fake rows make it skip the real seed entirely and
-    # log "seed already present". The symptom is 30 professionals instead of 18 and a rating that
-    # matches nothing in the prototype.
-    # NOTE: this file is generated. Regenerating the catalog from JDL restores 'dev, faker'.
+    # Remove 'faker' if you do not want the sample data to be loaded automatically
+    # 'faker' removed: 30 nonsense rows per entity make the seed loader's idempotency check skip
+    # the real seed and log "seed already present". Regeneration restores 'dev, faker'.
     contexts: dev
   messages:
     cache-duration: PT1S # 1 second, see the ISO 8601 standard

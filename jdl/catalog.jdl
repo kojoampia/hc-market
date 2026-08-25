@@ -37,7 +37,7 @@ application {
     enableTranslation false
     testFrameworks [cucumber]
   }
-  entities Category, Professional, ServiceOffering, AvailabilitySlot, Review, Credential, Highlight
+  entities Category, Professional, ServiceOffering, AvailabilitySlot, Review, Credential, Highlight, Favourite
 }
 
 // ===========================================================================
@@ -147,6 +147,24 @@ entity Credential {
 entity Highlight {
   label String required maxlength(160)
   sortOrder Integer required
+}
+
+/**
+ * The customer's Saved list.
+ *
+ * Deliberately NOT a relationship to Professional. A favourite is keyed by the professional's
+ * business reference and the customer's login, both of which are stable and meaningful outside this
+ * service; a foreign key would mean a customer's saved list could not survive a professional being
+ * removed from the catalogue, and "the person I saved is gone" is a thing the screen should be able
+ * to say rather than a row that vanishes.
+ *
+ * `customerLogin` + `professionalRef` is unique: saving twice is the same as saving once, and the
+ * schema is what makes that true rather than a check in the resource.
+ */
+entity Favourite {
+  customerLogin String required
+  professionalRef String required
+  addedAt Instant required
 }
 
 /**

@@ -19,6 +19,7 @@
     <include file="config/liquibase/changelog/20231205141336_added_entity_Review.xml" relativeToChangelogFile="false"/>
     <include file="config/liquibase/changelog/20231205141436_added_entity_Credential.xml" relativeToChangelogFile="false"/>
     <include file="config/liquibase/changelog/20231205141536_added_entity_Highlight.xml" relativeToChangelogFile="false"/>
+    <include file="config/liquibase/changelog/20260825145453_added_entity_Favourite.xml" relativeToChangelogFile="false"/>
     <!-- jhipster-needle-liquibase-add-changelog - JHipster will add liquibase changelogs here -->
     <include file="config/liquibase/changelog/20231205141036_added_entity_constraints_Professional.xml" relativeToChangelogFile="false"/>
     <include file="config/liquibase/changelog/20231205141136_added_entity_constraints_ServiceOffering.xml" relativeToChangelogFile="false"/>
@@ -34,4 +35,6 @@
          and every rating silently reads as null.
          NOTE: XML comments may not contain a double hyphen, so CLI flags are spelled out here. -->
     <include file="config/liquibase/changelog/20260824120000_added_view_professional_rating.xml" relativeToChangelogFile="false"/>
+    <!-- HAND-WRITTEN: one favourite per customer per professional. Regeneration drops this. -->
+    <include file="config/liquibase/changelog/20260825120000_unique_favourite.xml" relativeToChangelogFile="false"/>
 </databaseChangeLog>

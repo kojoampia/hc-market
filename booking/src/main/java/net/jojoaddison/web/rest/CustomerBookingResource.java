@@ -3,6 +3,7 @@ package net.jojoaddison.web.rest;
 import jakarta.validation.Valid;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -17,6 +18,10 @@ import net.jojoaddison.security.SecurityUtils;
 import net.jojoaddison.service.BookingMapper;
 import net.jojoaddison.service.BookingWorkflow;
 import net.jojoaddison.service.BookingCreator;
+import net.jojoaddison.service.BrokerageClient;
+import net.jojoaddison.service.dto.BookingDtos.Receipt;
+import org.springframework.http.HttpHeaders;
+import org.springframework.web.bind.annotation.RequestHeader;
 import net.jojoaddison.service.BookingTransition;
 import net.jojoaddison.service.dto.BookingDtos.BookingDetail;
 import net.jojoaddison.service.dto.BookingDtos.BookingView;
@@ -47,19 +52,22 @@ public class CustomerBookingResource {
     private final BookingHistoryRepository history;
     private final BookingMapper mapper;
     private final BookingCreator creator;
+    private final BrokerageClient brokerage;
 
     public CustomerBookingResource(
         BookingWorkflow bookings,
         BookingQueryRepository repository,
         BookingHistoryRepository history,
         BookingMapper mapper,
-        BookingCreator creator
+        BookingCreator creator,
+        BrokerageClient brokerage
     ) {
         this.bookings = bookings;
         this.repository = repository;
         this.history = history;
         this.mapper = mapper;
         this.creator = creator;
+        this.brokerage = brokerage;
     }
 
     /** Wizard step 4 — creates a booking in {@code REQUESTED}. */
@@ -153,6 +161,67 @@ public class CustomerBookingResource {
         }
         booking.setReviewed(true);
         return mapper.toView(repository.save(booking));
+    }
+
+    /**
+     * The receipt — spec §6's "gross, commission, total".
+     *
+     * <p>The split is struck at the date the session happened, not today: a receipt reprinted after
+     * the brokerage changes its terms must still say what the customer was told at the time.
+     */
+    @GetMapping("/{ref}/receipt")
+    public Receipt receipt(@PathVariable String ref, @RequestHeader(HttpHeaders.AUTHORIZATION) String authorization) {
+        Booking b = mineOr404(ref);
+        LocalDate struckAt = b.getCompletedAt() != null
+            ? LocalDate.ofInstant(b.getCompletedAt(), java.time.ZoneOffset.UTC)
+            : b.getScheduledDate();
+        long price = b.getPriceMinor() == null ? 0L : b.getPriceMinor();
+
+        BrokerageClient.Split split;
+        try {
+            split = brokerage.splitFor(price, struckAt, authorization);
+        } catch (BrokerageClient.PayoutUnavailable e) {
+            // Deliberately no fallback. Guessing 12% here would produce a receipt that looks
+            // authoritative and might not match the ledger.
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, e.getMessage());
+        }
+
+        return new Receipt(
+            b.getReference(),
+            b.getServiceName(),
+            b.getProfessionalRef(),
+            b.getScheduledDate(),
+            b.getScheduledTime(),
+            b.getStatus() == null ? null : b.getStatus().name(),
+            split.grossMinor(),
+            split.commissionMinor(),
+            split.netMinor(),
+            // The fee is inside the price, so the customer's total IS the gross.
+            split.grossMinor(),
+            split.commissionRate(),
+            split.currency() == null ? b.getCurrency() : split.currency()
+        );
+    }
+
+    /**
+     * The customer's half of a reschedule.
+     *
+     * <p>The professional proposes a new time and the booking waits in RESCHEDULE_PROPOSED. Until
+     * now only the professional could move it on, which meant a customer could be offered a time and
+     * have no way to answer — the state existed with no exit the customer controlled.
+     */
+    @PostMapping("/{ref}/reschedule/accept")
+    public BookingView acceptReschedule(@PathVariable String ref) {
+        return mapper.toView(transition(mineOr404(ref), new BookingTransition.Accept()));
+    }
+
+    @PostMapping("/{ref}/reschedule/decline")
+    public BookingView declineReschedule(@PathVariable String ref, @RequestBody(required = false) CancelRequest body) {
+        // Declining a proposed time cancels the booking: the original slot is gone (the professional
+        // proposed a change because they could not keep it) and there is nothing to fall back to.
+        return mapper.toView(
+            transition(mineOr404(ref), new BookingTransition.Cancel(CancelledBy.CUSTOMER, body == null ? "reschedule declined" : body.reason()))
+        );
     }
 
     // ------------------------------------------------------------------- helpers --

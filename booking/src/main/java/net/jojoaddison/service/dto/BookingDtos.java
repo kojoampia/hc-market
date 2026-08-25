@@ -89,6 +89,28 @@ public final class BookingDtos {
         String currency
     ) {}
 
+    /**
+     * The receipt modal — spec §6's "gross, commission, total".
+     *
+     * <p>{@code grossMinor} is the price the customer agreed to; the brokerage fee is INSIDE it, not
+     * added to it, so {@code total} equals {@code gross}. That is the prototype's convention and
+     * saying it in the payload is cheaper than a reader inferring it wrongly.
+     */
+    public record Receipt(
+        String bookingReference,
+        String serviceName,
+        String professionalRef,
+        LocalDate scheduledDate,
+        String scheduledTime,
+        String status,
+        long grossMinor,
+        long commissionMinor,
+        long netMinor,
+        long totalMinor,
+        String commissionRate,
+        String currency
+    ) {}
+
     /** The professional's schedule, grouped by day as the screen renders it. */
     public record ScheduleDay(LocalDate date, List<BookingView> bookings) {}
 }

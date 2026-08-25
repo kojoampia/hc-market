@@ -208,6 +208,8 @@ services:
       <<: *service-env
       SPRING_DATASOURCE_URL: jdbc:postgresql://booking-db:5432/healthconnectBooking
       SPRING_DATASOURCE_USERNAME: healthconnectBooking
+      # The receipt modal asks payout for the brokerage split. Fails closed by design.
+      HEALTHCONNECT_PAYOUT_BASE_URL: http://payout:8080
       SPRING_LIQUIBASE_CONTEXTS: dev
       HEALTHCONNECT_SEED_ENABLED: "true"
       HEALTHCONNECT_SEED_FILE: /app/seed/seed-data.json

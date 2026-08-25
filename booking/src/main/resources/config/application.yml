@@ -253,6 +253,11 @@ healthconnect:
     anchor-dates: false
   booking:
     free-cancellation-hours: 24
+  # The receipt modal asks payout for the brokerage split. Fails closed: a receipt is a financial
+  # statement, and no receipt beats a plausible wrong one.
+  payout:
+    base-url: http://healthconnectpayout
+    timeout-ms: 3000
 
 # ===================================================================
 # Liquibase must finish BEFORE the seed loader runs.

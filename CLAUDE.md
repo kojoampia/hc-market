@@ -188,6 +188,16 @@ then fails with `class [Ljava.lang.Object; cannot be cast to class java.lang.Num
 says nothing about the real cause. Declare `List<Object[]>` and take `.get(0)`. See
 `EarningsRepository.lifetime`.
 
+### A caught constraint violation still fails the transaction
+
+Catching `DataIntegrityViolationException` and returning a success status does **not** work inside a
+`@Transactional` method: the violation marks the transaction rollback-only, so the response fails at
+commit as an `UnexpectedRollbackException` — a 500 with no obvious cause, thrown after the handler
+returned. `saveAndFlush` changes *when* it throws, not that the transaction is poisoned.
+
+`FavouritesResource.add` is `Propagation.NOT_SUPPORTED` and checks before inserting, so the ordinary
+duplicate never reaches the database and a genuine race throws in isolation.
+
 ### `modernizer` fails the build on old idioms
 
 `org.gaul:modernizer-maven-plugin` runs during `verify` and rejects things like `String.format(...)`

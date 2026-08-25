@@ -378,7 +378,18 @@ Every endpoint below exists because a prototype screen needs it. Public reads ne
 | `GET` | `/api/threads` · `/api/threads/{ref}` | Messages |
 | `POST` | `/api/threads/{ref}/messages` | Send |
 | `GET` | `/api/notifications` · `POST /api/notifications/read` | Bell menu |
-| `GET`/`POST`/`DELETE` | `/api/favourites` | Saved list |
+| `GET`/`POST`/`DELETE` | `/api/favourites` | Saved list — **built** |
+
+**Built.** Every customer endpoint in this table now answers. Three notes worth carrying:
+
+- `/api/favourites` is scoped to the caller, replacing the generated CRUD that would have exposed
+  every customer's saved list. Saving twice returns 204 rather than an error, guarded by a unique
+  constraint on `(customer_login, professional_ref)`.
+- `/api/bookings/{ref}/receipt` gets its split from **payout**, at the date the session happened —
+  a receipt reprinted after the brokerage changes terms must still say what the customer was told.
+  It **fails closed** (503) rather than guessing 12%.
+- The customer can now answer a proposed reschedule. `RESCHEDULE_PROPOSED` previously had no exit
+  the customer controlled, so a proposed time could be offered with no way to reply.
 
 ### Professional workspace (`ROLE_PROFESSIONAL`, scoped to the caller)
 

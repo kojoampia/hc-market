@@ -1,5 +1,6 @@
 package net.jojoaddison.service.seed;
 
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.HashMap;
@@ -15,7 +16,9 @@ import net.jojoaddison.domain.ServiceOffering;
 import net.jojoaddison.domain.enumeration.VerificationState;
 import net.jojoaddison.repository.AvailabilitySlotRepository;
 import net.jojoaddison.repository.CategoryRepository;
+import net.jojoaddison.domain.Favourite;
 import net.jojoaddison.repository.CredentialRepository;
+import net.jojoaddison.repository.FavouriteQueryRepository;
 import net.jojoaddison.repository.HighlightRepository;
 import net.jojoaddison.repository.ProfessionalRepository;
 import net.jojoaddison.repository.ReviewRepository;
@@ -44,6 +47,7 @@ public class CatalogSeeder {
     private final ReviewRepository reviewRepository;
     private final CredentialRepository credentialRepository;
     private final HighlightRepository highlightRepository;
+    private final FavouriteQueryRepository favouriteRepository;
 
     public CatalogSeeder(
         CategoryRepository categoryRepository,
@@ -52,7 +56,8 @@ public class CatalogSeeder {
         AvailabilitySlotRepository availabilitySlotRepository,
         ReviewRepository reviewRepository,
         CredentialRepository credentialRepository,
-        HighlightRepository highlightRepository
+        HighlightRepository highlightRepository,
+        FavouriteQueryRepository favouriteRepository
     ) {
         this.categoryRepository = categoryRepository;
         this.professionalRepository = professionalRepository;
@@ -61,6 +66,7 @@ public class CatalogSeeder {
         this.reviewRepository = reviewRepository;
         this.credentialRepository = credentialRepository;
         this.highlightRepository = highlightRepository;
+        this.favouriteRepository = favouriteRepository;
     }
 
     /** Idempotent: the loader is safe to run on every restart. */
@@ -74,6 +80,7 @@ public class CatalogSeeder {
      */
     @Transactional
     public void clear() {
+        favouriteRepository.deleteAllInBatch();
         reviewRepository.deleteAllInBatch();
         availabilitySlotRepository.deleteAllInBatch();
         serviceOfferingRepository.deleteAllInBatch();
@@ -175,6 +182,17 @@ public class CatalogSeeder {
                     .bookingReference(r.bookingReference())
                     .professional(professional)
             );
+        }
+
+        // The prototype's FAVOURITES array belongs to its single fully-described customer, so the
+        // seeded Saved list is attached to whoever that is rather than to a hard-coded login.
+        String savedBy = seed.customers() == null || seed.customers().isEmpty() ? null : seed.customers().get(0).userLogin();
+        if (savedBy != null) {
+            for (String ref : orEmpty(seed.favourites())) {
+                if (professionalsByRef.containsKey(ref)) {
+                    favouriteRepository.save(new Favourite().customerLogin(savedBy).professionalRef(ref).addedAt(Instant.now()));
+                }
+            }
         }
 
         LOG.info(

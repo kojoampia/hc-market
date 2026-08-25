@@ -244,32 +244,17 @@ jhipster:
 
 # ===================================================================
 # HealthConnect Marketplace
-# NOTE: `jhipster jdl --force` rewrites this file and drops this block. Re-add it after any
-# regeneration. SeedProperties itself is @Component-annotated so it needs no App-class edit.
+# NOTE: `jhipster jdl --force` rewrites this file and drops this block.
 # ===================================================================
 healthconnect:
   seed:
-    # Two independent locks guard the demo seed: this property AND the `test & dev` profile pair
-    # on SeedDataLoader. Default off everywhere; the dev compose file turns it on.
     enabled: false
     file: demo/seed-data.json
-    # false shifts every seed date by (today - $meta.demoToday) so a demo months from now still
-    # shows "tomorrow". Tests set this true so the prototype's fixed figures stay comparable.
     anchor-dates: false
-  # Where the booking service lives. Defaults to the Consul service name, which is what resolves
-  # inside the estate; a standalone run points it at a host port.
   booking:
     base-url: http://healthconnectbooking
 
-# ===================================================================
-# Liquibase must finish BEFORE the seed loader runs.
-#
-# JHipster defaults application.liquibase.async-start to true, which starts Liquibase on a
-# background executor and lets the application finish booting without it. An ApplicationRunner then
-# races the schema: SeedDataLoader queries a table Liquibase has not created yet and the seed is
-# skipped with "relation does not exist" -- the app comes up healthy and empty, which reads as a
-# broken seed file rather than a race.
-# ===================================================================
+# Liquibase must finish BEFORE the seed loader runs; the async default races the schema.
 application:
   liquibase:
     async-start: false

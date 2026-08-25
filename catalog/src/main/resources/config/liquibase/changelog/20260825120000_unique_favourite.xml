@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+        One row per customer per professional.
+
+        JDL can express `unique` on a single column but not across two, so this constraint is
+        hand-written. It is what makes "saving twice is the same as saving once" a property of the
+        schema rather than a check in the resource that a second code path could skip - and the
+        resource relies on it, treating a duplicate as success rather than racing to look first.
+
+        HAND-WRITTEN: regenerating the catalog from JDL rewrites master.xml and drops this include.
+    -->
+    <changeSet id="20260825120000-1" author="healthconnect">
+        <addUniqueConstraint
+            tableName="favourite"
+            columnNames="customer_login, professional_ref"
+            constraintName="ux_favourite_customer_professional"/>
+    </changeSet>
+</databaseChangeLog>

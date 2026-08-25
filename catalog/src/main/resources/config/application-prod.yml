@@ -120,11 +120,6 @@ jhipster:
 
 # application:
 
-# ===================================================================
-# HealthConnect Marketplace
-# Belt and braces: the `test & dev` profile pair on SeedDataLoader already makes the loader
-# unreachable here. This makes the intent unmissable to anyone reading the prod config.
-# ===================================================================
 healthconnect:
   seed:
     enabled: false

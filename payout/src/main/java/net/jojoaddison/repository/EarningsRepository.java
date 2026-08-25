@@ -118,4 +118,5 @@ public interface EarningsRepository extends JpaRepository<Ledger, Long> {
      */
     @Query("select distinct l.professionalRef from Ledger l where l.professionalLogin = :login")
     List<String> professionalRefsFor(@Param("login") String login);
+
 }

@@ -8,28 +8,21 @@ import net.jojoaddison.domain.enumeration.VerificationState;
 /**
  * Test fixtures for {@link Professional}.
  *
- * <p><strong>This class holds no tests.</strong> It survives only because the generated
+ * <p><strong>This class holds no tests.</strong> It exists because the generated
  * {@code AvailabilitySlotResourceIT}, {@code CredentialResourceIT}, {@code HighlightResourceIT} and
- * {@code ServiceOfferingResourceIT} call {@code ProfessionalResourceIT.createEntity(em)} to build
- * their required parent. The generated CRUD tests that used to live here went with the generated
- * {@code ProfessionalResource}, which {@link MarketplaceResource} replaced — see its class comment
- * for why the two cannot coexist.
+ * {@code ServiceOfferingResourceIT} call it to build their required parent. The generated CRUD suite
+ * that JHipster puts here went with the generated {@code ProfessionalResource}, which
+ * {@link MarketplaceResource} replaced — the two cannot coexist on {@code /api/professionals/{id}}
+ * vs {@code /{ref}}.
  *
- * <p>The public marketplace API is covered by {@code MarketplaceResourceIT} instead, which tests
- * the contract spec §6 actually specifies rather than generated CRUD.
- *
- * <p>Keeping the {@code ...IT} name is deliberate: the four callers above are generated files and
- * will be rewritten with this exact reference on any regeneration. Renaming this class would break
- * them again every time.
+ * <p><strong>Regeneration restores those tests over this file.</strong> Deleting
+ * {@code ProfessionalResource.java} afterwards is not enough; this has to be rewritten too, or the
+ * suite fails against endpoints that no longer exist.
  */
 public final class ProfessionalResourceIT {
 
     private ProfessionalResourceIT() {}
 
-    /**
-     * A valid Professional with every required field set. Persists the required Category too,
-     * because {@code Professional.category} is non-null.
-     */
     public static Professional createEntity(EntityManager em) {
         Professional professional = new Professional()
             .reference("p-test-" + System.nanoTime())
@@ -53,9 +46,7 @@ public final class ProfessionalResourceIT {
     }
 
     public static Professional createUpdatedEntity(EntityManager em) {
-        Professional professional = createEntity(em);
-        professional.displayName("Updated Professional").city("Kumasi").verification(VerificationState.PENDING).insured(false);
-        return professional;
+        return createEntity(em).displayName("Updated Professional").city("Kumasi").verification(VerificationState.PENDING).insured(false);
     }
 
     private static Category persistedCategory(EntityManager em) {
