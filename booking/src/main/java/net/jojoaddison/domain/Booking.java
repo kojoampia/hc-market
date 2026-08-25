@@ -7,6 +7,7 @@ import java.io.Serial;
 import java.io.Serializable;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.HashSet;
 import java.util.Set;
 import net.jojoaddison.domain.enumeration.BookingStatus;
@@ -76,9 +77,8 @@ public class Booking implements Serializable {
     private LocalDate scheduledDate;
 
     @NotNull
-    @Size(max = 5)
-    @Column(name = "scheduled_time", length = 5, nullable = false)
-    private String scheduledTime;
+    @Column(name = "scheduled_time", nullable = false)
+    private LocalTime scheduledTime;
 
     @NotNull
     @Enumerated(EnumType.STRING)
@@ -284,16 +284,16 @@ public class Booking implements Serializable {
         this.scheduledDate = scheduledDate;
     }
 
-    public String getScheduledTime() {
+    public LocalTime getScheduledTime() {
         return this.scheduledTime;
     }
 
-    public Booking scheduledTime(String scheduledTime) {
+    public Booking scheduledTime(LocalTime scheduledTime) {
         this.setScheduledTime(scheduledTime);
         return this;
     }
 
-    public void setScheduledTime(String scheduledTime) {
+    public void setScheduledTime(LocalTime scheduledTime) {
         this.scheduledTime = scheduledTime;
     }
 

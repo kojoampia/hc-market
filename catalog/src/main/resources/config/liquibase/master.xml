@@ -20,6 +20,8 @@
     <include file="config/liquibase/changelog/20231205141436_added_entity_Credential.xml" relativeToChangelogFile="false"/>
     <include file="config/liquibase/changelog/20231205141536_added_entity_Highlight.xml" relativeToChangelogFile="false"/>
     <include file="config/liquibase/changelog/20260825145453_added_entity_Favourite.xml" relativeToChangelogFile="false"/>
+    <include file="config/liquibase/changelog/20260825203515_added_entity_AvailabilityRule.xml" relativeToChangelogFile="false"/>
+    <include file="config/liquibase/changelog/20260825203516_added_entity_AvailabilityOverride.xml" relativeToChangelogFile="false"/>
     <!-- jhipster-needle-liquibase-add-changelog - JHipster will add liquibase changelogs here -->
     <include file="config/liquibase/changelog/20231205141036_added_entity_constraints_Professional.xml" relativeToChangelogFile="false"/>
     <include file="config/liquibase/changelog/20231205141136_added_entity_constraints_ServiceOffering.xml" relativeToChangelogFile="false"/>
@@ -27,6 +29,8 @@
     <include file="config/liquibase/changelog/20231205141336_added_entity_constraints_Review.xml" relativeToChangelogFile="false"/>
     <include file="config/liquibase/changelog/20231205141436_added_entity_constraints_Credential.xml" relativeToChangelogFile="false"/>
     <include file="config/liquibase/changelog/20231205141536_added_entity_constraints_Highlight.xml" relativeToChangelogFile="false"/>
+    <include file="config/liquibase/changelog/20260825203515_added_entity_constraints_AvailabilityRule.xml" relativeToChangelogFile="false"/>
+    <include file="config/liquibase/changelog/20260825203516_added_entity_constraints_AvailabilityOverride.xml" relativeToChangelogFile="false"/>
     <!-- jhipster-needle-liquibase-add-constraints-changelog - JHipster will add liquibase constraints changelogs here -->
     <!-- jhipster-needle-liquibase-add-incremental-changelog - JHipster will add incremental liquibase changelogs here -->
     <!-- HAND-WRITTEN, NOT GENERATED: the derived-rating read model.
@@ -37,4 +41,7 @@
     <include file="config/liquibase/changelog/20260824120000_added_view_professional_rating.xml" relativeToChangelogFile="false"/>
     <!-- HAND-WRITTEN: one favourite per customer per professional. Regeneration drops this. -->
     <include file="config/liquibase/changelog/20260825120000_unique_favourite.xml" relativeToChangelogFile="false"/>
+    <!-- HAND-WRITTEN: one slot per professional per date and time, which is what makes a
+         concurrent double booking collide instead of silently succeeding. Regeneration drops this. -->
+    <include file="config/liquibase/changelog/20260825210000_unique_availability_slot.xml" relativeToChangelogFile="false"/>
 </databaseChangeLog>

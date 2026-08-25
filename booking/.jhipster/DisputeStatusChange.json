@@ -1,0 +1,55 @@
+{
+  "annotations": {
+    "changelogDate": "20260825203838"
+  },
+  "applications": ["healthconnectBooking"],
+  "clientRootFolder": "healthconnectBooking",
+  "databaseType": "sql",
+  "documentation": "The same append-only audit BookingStatusChange gives the booking.",
+  "dto": "mapstruct",
+  "fields": [
+    {
+      "fieldName": "fromStatus",
+      "fieldType": "DisputeStatus",
+      "fieldTypeDocumentation": "D23. Deliberately a SEPARATE lifecycle from BookingStatus rather than more values on it: a\\nbooking can be disputed and still be completed, so folding disputes into that enum would force\\none of the two facts to be discarded. BookingStatus stays the clean seven-state machine its\\nsealed BookingTransition set is built around.\\n\\nOPEN ──review──▶ UNDER_REVIEW ──uphold───▶ RESOLVED   (reverses the ledger row)\\n└───────reject────▶ REJECTED   (the ledger is untouched)",
+      "fieldValues": "OPEN,UNDER_REVIEW,RESOLVED,REJECTED"
+    },
+    {
+      "fieldName": "toStatus",
+      "fieldType": "DisputeStatus",
+      "fieldTypeDocumentation": "D23. Deliberately a SEPARATE lifecycle from BookingStatus rather than more values on it: a\\nbooking can be disputed and still be completed, so folding disputes into that enum would force\\none of the two facts to be discarded. BookingStatus stays the clean seven-state machine its\\nsealed BookingTransition set is built around.\\n\\nOPEN ──review──▶ UNDER_REVIEW ──uphold───▶ RESOLVED   (reverses the ledger row)\\n└───────reject────▶ REJECTED   (the ledger is untouched)",
+      "fieldValidateRules": ["required"],
+      "fieldValues": "OPEN,UNDER_REVIEW,RESOLVED,REJECTED"
+    },
+    {
+      "fieldName": "actor",
+      "fieldType": "String",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "occurredAt",
+      "fieldType": "Instant",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "note",
+      "fieldType": "String",
+      "fieldValidateRules": ["maxlength"],
+      "fieldValidateRulesMaxlength": "400"
+    }
+  ],
+  "microserviceName": "healthconnectBooking",
+  "name": "DisputeStatusChange",
+  "relationships": [
+    {
+      "otherEntityName": "dispute",
+      "otherEntityRelationshipName": "history",
+      "relationshipName": "dispute",
+      "relationshipSide": "right",
+      "relationshipType": "many-to-one",
+      "relationshipValidateRules": "required"
+    }
+  ],
+  "searchEngine": "no",
+  "service": "serviceClass"
+}

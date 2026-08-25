@@ -47,6 +47,9 @@
             <column name="earned_on" type="date">
                 <constraints nullable="false" />
             </column>
+            <column name="reversal_of" type="varchar(255)">
+                <constraints nullable="true" />
+            </column>
             <column name="payout_id" type="bigint">
                 <constraints nullable="true" />
             </column>
@@ -83,6 +86,7 @@
             <column name="service_ref" type="string"/>
             <column name="service_name" type="string"/>
             <column name="earned_on" type="date"/>
+            <column name="reversal_of" type="string"/>
             <!-- jhipster-needle-liquibase-add-loadcolumn - JHipster (and/or extensions) can add load columns here -->
         </loadData>
     </changeSet>

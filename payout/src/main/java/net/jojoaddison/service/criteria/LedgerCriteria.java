@@ -66,6 +66,8 @@ public class LedgerCriteria implements Serializable, Criteria {
 
     private LocalDateFilter earnedOn;
 
+    private StringFilter reversalOf;
+
     private LongFilter payoutId;
 
     private Boolean distinct;
@@ -85,6 +87,7 @@ public class LedgerCriteria implements Serializable, Criteria {
         this.serviceRef = other.optionalServiceRef().map(StringFilter::copy).orElse(null);
         this.serviceName = other.optionalServiceName().map(StringFilter::copy).orElse(null);
         this.earnedOn = other.optionalEarnedOn().map(LocalDateFilter::copy).orElse(null);
+        this.reversalOf = other.optionalReversalOf().map(StringFilter::copy).orElse(null);
         this.payoutId = other.optionalPayoutId().map(LongFilter::copy).orElse(null);
         this.distinct = other.distinct;
     }
@@ -322,6 +325,25 @@ public class LedgerCriteria implements Serializable, Criteria {
         this.earnedOn = earnedOn;
     }
 
+    public StringFilter getReversalOf() {
+        return reversalOf;
+    }
+
+    public Optional<StringFilter> optionalReversalOf() {
+        return Optional.ofNullable(reversalOf);
+    }
+
+    public StringFilter reversalOf() {
+        if (reversalOf == null) {
+            setReversalOf(new StringFilter());
+        }
+        return reversalOf;
+    }
+
+    public void setReversalOf(StringFilter reversalOf) {
+        this.reversalOf = reversalOf;
+    }
+
     public LongFilter getPayoutId() {
         return payoutId;
     }
@@ -382,6 +404,7 @@ public class LedgerCriteria implements Serializable, Criteria {
             Objects.equals(serviceRef, that.serviceRef) &&
             Objects.equals(serviceName, that.serviceName) &&
             Objects.equals(earnedOn, that.earnedOn) &&
+            Objects.equals(reversalOf, that.reversalOf) &&
             Objects.equals(payoutId, that.payoutId) &&
             Objects.equals(distinct, that.distinct)
         );
@@ -402,6 +425,7 @@ public class LedgerCriteria implements Serializable, Criteria {
             serviceRef,
             serviceName,
             earnedOn,
+            reversalOf,
             payoutId,
             distinct
         );
@@ -423,6 +447,7 @@ public class LedgerCriteria implements Serializable, Criteria {
             optionalServiceRef().map(f -> "serviceRef=" + f + ", ").orElse("") +
             optionalServiceName().map(f -> "serviceName=" + f + ", ").orElse("") +
             optionalEarnedOn().map(f -> "earnedOn=" + f + ", ").orElse("") +
+            optionalReversalOf().map(f -> "reversalOf=" + f + ", ").orElse("") +
             optionalPayoutId().map(f -> "payoutId=" + f + ", ").orElse("") +
             optionalDistinct().map(f -> "distinct=" + f + ", ").orElse("") +
         "}";

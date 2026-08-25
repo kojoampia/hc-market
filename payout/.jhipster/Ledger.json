@@ -63,6 +63,10 @@
       "fieldName": "earnedOn",
       "fieldType": "LocalDate",
       "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "reversalOf",
+      "fieldType": "String"
     }
   ],
   "jpaMetamodelFiltering": true,

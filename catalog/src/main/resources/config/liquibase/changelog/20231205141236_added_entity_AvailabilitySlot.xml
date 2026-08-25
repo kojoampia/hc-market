@@ -10,14 +10,14 @@
         Added the entity AvailabilitySlot.
     -->
     <changeSet id="20231205141236-1" author="jhipster">
-        <createTable tableName="availability_slot">
+        <createTable tableName="availability_slot" remarks="The bookable unit, and it stays a materialised ROW rather than something computed at read time\n(decisions.md D20). `taken` needs a row to lock: two customers booking the same 07:00 must collide\non a unique constraint over (professional, date, time), and with availability computed on demand\nthere is nothing to contend on and the double booking is silent. The same reasoning as the unique\n(customer_login, professional_ref) on Favourite.\n\n`slotTime` was `String maxlength(5)`. It sorted correctly only by the accident of zero-padded\n24-hour text and accepted &quot;7:00&quot; and &quot;25:99&quot; — see decisions.md D20 and D26.">
             <column name="id" type="bigint">
                 <constraints primaryKey="true" nullable="false"/>
             </column>
             <column name="slot_date" type="date">
                 <constraints nullable="false" />
             </column>
-            <column name="slot_time" type="varchar(5)">
+            <column name="slot_time" type="${timeType}">
                 <constraints nullable="false" />
             </column>
             <column name="taken" type="boolean">
@@ -49,7 +49,7 @@
                   usePreparedStatements="true">
             <column name="id" type="numeric"/>
             <column name="slot_date" type="date"/>
-            <column name="slot_time" type="string"/>
+            <column name="slot_time" type="time"/>
             <column name="taken" type="boolean"/>
             <column name="professional_id" type="numeric"/>
             <!-- jhipster-needle-liquibase-add-loadcolumn - JHipster (and/or extensions) can add load columns here -->

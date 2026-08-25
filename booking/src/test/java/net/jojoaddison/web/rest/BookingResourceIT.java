@@ -3,6 +3,7 @@ package net.jojoaddison.web.rest;
 import jakarta.persistence.EntityManager;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import net.jojoaddison.domain.Booking;
 import net.jojoaddison.domain.enumeration.BookingStatus;
 import net.jojoaddison.domain.enumeration.DeliveryMode;
@@ -61,7 +62,7 @@ public final class BookingResourceIT {
             .priceMinor(15000L)
             .currency("GHS")
             .scheduledDate(LocalDate.now().plusDays(7))
-            .scheduledTime("10:00")
+            .scheduledTime(LocalTime.of(10, 0))
             .deliveryMode(DeliveryMode.ONLINE)
             .status(BookingStatus.REQUESTED)
             .careSummaryShared(false)
@@ -70,6 +71,6 @@ public final class BookingResourceIT {
     }
 
     public static Booking createUpdatedEntity(EntityManager em) {
-        return createEntity(em).status(BookingStatus.CONFIRMED).scheduledTime("14:30");
+        return createEntity(em).status(BookingStatus.CONFIRMED).scheduledTime(LocalTime.of(14, 30));
     }
 }

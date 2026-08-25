@@ -83,6 +83,7 @@ class LedgerCriteriaTest {
         ledgerCriteria.serviceRef();
         ledgerCriteria.serviceName();
         ledgerCriteria.earnedOn();
+        ledgerCriteria.reversalOf();
         ledgerCriteria.payoutId();
         ledgerCriteria.distinct();
     }
@@ -102,6 +103,7 @@ class LedgerCriteriaTest {
                 condition.apply(criteria.getServiceRef()) &&
                 condition.apply(criteria.getServiceName()) &&
                 condition.apply(criteria.getEarnedOn()) &&
+                condition.apply(criteria.getReversalOf()) &&
                 condition.apply(criteria.getPayoutId()) &&
                 condition.apply(criteria.getDistinct()),
             "every filter matches"
@@ -123,6 +125,7 @@ class LedgerCriteriaTest {
                 condition.apply(criteria.getServiceRef(), copy.getServiceRef()) &&
                 condition.apply(criteria.getServiceName(), copy.getServiceName()) &&
                 condition.apply(criteria.getEarnedOn(), copy.getEarnedOn()) &&
+                condition.apply(criteria.getReversalOf(), copy.getReversalOf()) &&
                 condition.apply(criteria.getPayoutId(), copy.getPayoutId()) &&
                 condition.apply(criteria.getDistinct(), copy.getDistinct()),
             "every filter matches"

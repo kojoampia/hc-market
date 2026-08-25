@@ -20,7 +20,8 @@ public class LedgerTestSamples {
             .netMinor(1L)
             .currency("currency1")
             .serviceRef("serviceRef1")
-            .serviceName("serviceName1");
+            .serviceName("serviceName1")
+            .reversalOf("reversalOf1");
     }
 
     public static Ledger getLedgerSample2() {
@@ -34,7 +35,8 @@ public class LedgerTestSamples {
             .netMinor(2L)
             .currency("currency2")
             .serviceRef("serviceRef2")
-            .serviceName("serviceName2");
+            .serviceName("serviceName2")
+            .reversalOf("reversalOf2");
     }
 
     public static Ledger getLedgerRandomSampleGenerator() {
@@ -48,6 +50,7 @@ public class LedgerTestSamples {
             .netMinor(longCount.incrementAndGet())
             .currency(UUID.randomUUID().toString())
             .serviceRef(UUID.randomUUID().toString())
-            .serviceName(UUID.randomUUID().toString());
+            .serviceName(UUID.randomUUID().toString())
+            .reversalOf(UUID.randomUUID().toString());
     }
 }

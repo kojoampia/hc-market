@@ -1,0 +1,31 @@
+id;from_status;to_status;actor;occurred_at;note;dispute_id
+1;UNDER_REVIEW;OPEN;so wherever;2026-08-25T07:46:48;given;1
+2;REJECTED;UNDER_REVIEW;indeed;2026-08-25T00:04:33;after;2
+3;OPEN;REJECTED;zowie punctually;2026-08-24T20:45:06;formamide pish;3
+4;RESOLVED;RESOLVED;whistle who pace;2026-08-25T17:59:50;huzzah;4
+5;RESOLVED;REJECTED;incidentally forager despite;2026-08-24T21:47:23;why aggressive;5
+6;RESOLVED;REJECTED;thorny;2026-08-25T09:06:27;shirk awareness;6
+7;OPEN;RESOLVED;despite urban nimble;2026-08-25T15:42:18;condense obnoxiously;7
+8;UNDER_REVIEW;OPEN;incidentally shovel obscure;2026-08-25T04:20:16;shrilly;8
+9;RESOLVED;RESOLVED;atop across;2026-08-25T17:37:50;construe;9
+10;OPEN;RESOLVED;after yum noon;2026-08-25T11:35:22;under graduate converse;10
+11;REJECTED;OPEN;hm;2026-08-25T13:26:35;horst charter;11
+12;UNDER_REVIEW;REJECTED;boo whether queasily;2026-08-25T08:03:02;before;12
+13;OPEN;UNDER_REVIEW;closely override;2026-08-24T22:31:00;coolly nor beside;13
+14;OPEN;UNDER_REVIEW;oof;2026-08-25T17:22:38;mobility far-off until;14
+15;REJECTED;UNDER_REVIEW;bravely hm loosely;2026-08-25T13:40:26;far;15
+16;RESOLVED;UNDER_REVIEW;after newsletter;2026-08-25T19:30:33;athwart disbar what;16
+17;RESOLVED;OPEN;only commonly reconsideration;2026-08-25T03:14:19;drat;17
+18;UNDER_REVIEW;RESOLVED;commandeer sup;2026-08-25T20:02:53;wolf;18
+19;RESOLVED;RESOLVED;loftily phooey;2026-08-25T05:45:34;than sense coolly;19
+20;UNDER_REVIEW;UNDER_REVIEW;skyline woot sediment;2026-08-25T10:18:54;a the;20
+21;REJECTED;REJECTED;salty including;2026-08-25T03:27:23;alienated;21
+22;UNDER_REVIEW;OPEN;questionably plus corrupt;2026-08-25T01:05:49;bony closely ectoderm;22
+23;RESOLVED;UNDER_REVIEW;amazing;2026-08-25T10:14:15;of;23
+24;REJECTED;REJECTED;behind ick;2026-08-25T03:26:12;eventually;24
+25;RESOLVED;OPEN;splash;2026-08-25T03:37:25;manner militate waft;25
+26;RESOLVED;UNDER_REVIEW;superficial teeming;2026-08-25T08:56:33;eek blindly;26
+27;OPEN;REJECTED;uh-huh zowie yawningly;2026-08-25T18:50:45;now whoa;27
+28;UNDER_REVIEW;OPEN;dismal mealy blossom;2026-08-25T09:37:10;snappy;28
+29;UNDER_REVIEW;UNDER_REVIEW;reward debit blah;2026-08-25T10:29:54;holster;29
+30;UNDER_REVIEW;OPEN;diversity;2026-08-25T18:36:18;since animated;30

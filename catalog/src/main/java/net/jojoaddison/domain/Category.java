@@ -50,7 +50,10 @@ public class Category implements Serializable {
 
     @OneToMany(fetch = FetchType.LAZY, mappedBy = "category")
     @Cache(usage = CacheConcurrencyStrategy.READ_WRITE)
-    @JsonIgnoreProperties(value = { "services", "availabilities", "reviews", "credentials", "highlights", "category" }, allowSetters = true)
+    @JsonIgnoreProperties(
+        value = { "services", "availabilities", "rules", "overrides", "reviews", "credentials", "highlights", "category" },
+        allowSetters = true
+    )
     private Set<Professional> professionals = new HashSet<>();
 
     // jhipster-needle-entity-add-field - JHipster will add fields here

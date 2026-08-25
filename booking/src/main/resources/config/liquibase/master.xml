@@ -14,8 +14,11 @@
     <include file="config/liquibase/changelog/00000000000000_initial_schema.xml" relativeToChangelogFile="false"/>
     <include file="config/liquibase/changelog/20231209110409_added_entity_Booking.xml" relativeToChangelogFile="false"/>
     <include file="config/liquibase/changelog/20231209110509_added_entity_BookingStatusChange.xml" relativeToChangelogFile="false"/>
+    <include file="config/liquibase/changelog/20260825203837_added_entity_Dispute.xml" relativeToChangelogFile="false"/>
+    <include file="config/liquibase/changelog/20260825203838_added_entity_DisputeStatusChange.xml" relativeToChangelogFile="false"/>
     <!-- jhipster-needle-liquibase-add-changelog - JHipster will add liquibase changelogs here -->
     <include file="config/liquibase/changelog/20231209110509_added_entity_constraints_BookingStatusChange.xml" relativeToChangelogFile="false"/>
+    <include file="config/liquibase/changelog/20260825203838_added_entity_constraints_DisputeStatusChange.xml" relativeToChangelogFile="false"/>
     <!-- jhipster-needle-liquibase-add-constraints-changelog - JHipster will add liquibase constraints changelogs here -->
     <!-- jhipster-needle-liquibase-add-incremental-changelog - JHipster will add incremental liquibase changelogs here -->
     <!-- HAND-WRITTEN, NOT GENERATED: the transactional outbox.

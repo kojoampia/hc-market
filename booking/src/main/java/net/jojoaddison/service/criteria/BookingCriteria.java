@@ -2,6 +2,7 @@ package net.jojoaddison.service.criteria;
 
 import java.io.Serial;
 import java.io.Serializable;
+import java.time.LocalTime;
 import java.util.Objects;
 import java.util.Optional;
 import net.jojoaddison.domain.enumeration.BookingStatus;
@@ -23,6 +24,23 @@ import tech.jhipster.service.filter.*;
 @ParameterObject
 @SuppressWarnings("common-java:DuplicatedBlocks")
 public class BookingCriteria implements Serializable, Criteria {
+
+    /**
+     * Class for filtering LocalTime
+     */
+    public static class LocalTimeFilter extends RangeFilter<LocalTime> {
+
+        public LocalTimeFilter() {}
+
+        public LocalTimeFilter(LocalTimeFilter filter) {
+            super(filter);
+        }
+
+        @Override
+        public LocalTimeFilter copy() {
+            return new LocalTimeFilter(this);
+        }
+    }
 
     /**
      * Class for filtering DeliveryMode
@@ -100,7 +118,7 @@ public class BookingCriteria implements Serializable, Criteria {
 
     private LocalDateFilter scheduledDate;
 
-    private StringFilter scheduledTime;
+    private LocalTimeFilter scheduledTime;
 
     private DeliveryModeFilter deliveryMode;
 
@@ -148,7 +166,7 @@ public class BookingCriteria implements Serializable, Criteria {
         this.priceMinor = other.optionalPriceMinor().map(LongFilter::copy).orElse(null);
         this.currency = other.optionalCurrency().map(StringFilter::copy).orElse(null);
         this.scheduledDate = other.optionalScheduledDate().map(LocalDateFilter::copy).orElse(null);
-        this.scheduledTime = other.optionalScheduledTime().map(StringFilter::copy).orElse(null);
+        this.scheduledTime = other.optionalScheduledTime().map(LocalTimeFilter::copy).orElse(null);
         this.deliveryMode = other.optionalDeliveryMode().map(DeliveryModeFilter::copy).orElse(null);
         this.status = other.optionalStatus().map(BookingStatusFilter::copy).orElse(null);
         this.customerNote = other.optionalCustomerNote().map(StringFilter::copy).orElse(null);
@@ -381,22 +399,22 @@ public class BookingCriteria implements Serializable, Criteria {
         this.scheduledDate = scheduledDate;
     }
 
-    public StringFilter getScheduledTime() {
+    public LocalTimeFilter getScheduledTime() {
         return scheduledTime;
     }
 
-    public Optional<StringFilter> optionalScheduledTime() {
+    public Optional<LocalTimeFilter> optionalScheduledTime() {
         return Optional.ofNullable(scheduledTime);
     }
 
-    public StringFilter scheduledTime() {
+    public LocalTimeFilter scheduledTime() {
         if (scheduledTime == null) {
-            setScheduledTime(new StringFilter());
+            setScheduledTime(new LocalTimeFilter());
         }
         return scheduledTime;
     }
 
-    public void setScheduledTime(StringFilter scheduledTime) {
+    public void setScheduledTime(LocalTimeFilter scheduledTime) {
         this.scheduledTime = scheduledTime;
     }
 

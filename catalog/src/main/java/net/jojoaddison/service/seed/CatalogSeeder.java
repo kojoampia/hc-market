@@ -6,6 +6,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import net.jojoaddison.service.SlotTime;
 import net.jojoaddison.domain.AvailabilitySlot;
 import net.jojoaddison.domain.Category;
 import net.jojoaddison.domain.Credential;
@@ -158,7 +159,7 @@ public class CatalogSeeder {
             for (SeedFile.SeedAvailability day : orEmpty(p.availability())) {
                 for (String time : orEmpty(day.slots())) {
                     availabilitySlotRepository.save(
-                        new AvailabilitySlot().slotDate(day.date().plusDays(shiftDays)).slotTime(time).taken(false).professional(professional)
+                        new AvailabilitySlot().slotDate(day.date().plusDays(shiftDays)).slotTime(SlotTime.parse(time)).taken(false).professional(professional)
                     );
                 }
             }

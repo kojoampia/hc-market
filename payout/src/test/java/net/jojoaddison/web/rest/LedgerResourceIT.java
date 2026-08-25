@@ -74,6 +74,9 @@ class LedgerResourceIT {
     private static final LocalDate UPDATED_EARNED_ON = LocalDate.parse("2023-12-04");
     private static final LocalDate SMALLER_EARNED_ON = LocalDate.ofEpochDay(-1L);
 
+    private static final String DEFAULT_REVERSAL_OF = "AAAAAAAAAA";
+    private static final String UPDATED_REVERSAL_OF = "BBBBBBBBBB";
+
     private static final String ENTITY_API_URL = "/api/ledgers";
     private static final String ENTITY_API_URL_ID = ENTITY_API_URL + "/{id}";
 
@@ -117,7 +120,8 @@ class LedgerResourceIT {
             .deliveryMode(DEFAULT_DELIVERY_MODE)
             .serviceRef(DEFAULT_SERVICE_REF)
             .serviceName(DEFAULT_SERVICE_NAME)
-            .earnedOn(DEFAULT_EARNED_ON);
+            .earnedOn(DEFAULT_EARNED_ON)
+            .reversalOf(DEFAULT_REVERSAL_OF);
     }
 
     /**
@@ -138,7 +142,8 @@ class LedgerResourceIT {
             .deliveryMode(UPDATED_DELIVERY_MODE)
             .serviceRef(UPDATED_SERVICE_REF)
             .serviceName(UPDATED_SERVICE_NAME)
-            .earnedOn(UPDATED_EARNED_ON);
+            .earnedOn(UPDATED_EARNED_ON)
+            .reversalOf(UPDATED_REVERSAL_OF);
     }
 
     @BeforeEach
@@ -371,7 +376,8 @@ class LedgerResourceIT {
             .andExpect(jsonPath("$.[*].deliveryMode").value(hasItem(DEFAULT_DELIVERY_MODE.toString())))
             .andExpect(jsonPath("$.[*].serviceRef").value(hasItem(DEFAULT_SERVICE_REF)))
             .andExpect(jsonPath("$.[*].serviceName").value(hasItem(DEFAULT_SERVICE_NAME)))
-            .andExpect(jsonPath("$.[*].earnedOn").value(hasItem(DEFAULT_EARNED_ON.toString())));
+            .andExpect(jsonPath("$.[*].earnedOn").value(hasItem(DEFAULT_EARNED_ON.toString())))
+            .andExpect(jsonPath("$.[*].reversalOf").value(hasItem(DEFAULT_REVERSAL_OF)));
     }
 
     @Test
@@ -396,7 +402,8 @@ class LedgerResourceIT {
             .andExpect(jsonPath("$.deliveryMode").value(DEFAULT_DELIVERY_MODE.toString()))
             .andExpect(jsonPath("$.serviceRef").value(DEFAULT_SERVICE_REF))
             .andExpect(jsonPath("$.serviceName").value(DEFAULT_SERVICE_NAME))
-            .andExpect(jsonPath("$.earnedOn").value(DEFAULT_EARNED_ON.toString()));
+            .andExpect(jsonPath("$.earnedOn").value(DEFAULT_EARNED_ON.toString()))
+            .andExpect(jsonPath("$.reversalOf").value(DEFAULT_REVERSAL_OF));
     }
 
     @Test
@@ -1083,6 +1090,56 @@ class LedgerResourceIT {
 
     @Test
     @Transactional
+    void getAllLedgersByReversalOfIsEqualToSomething() throws Exception {
+        // Initialize the database
+        insertedLedger = ledgerRepository.saveAndFlush(ledger);
+
+        // Get all the ledgerList where reversalOf equals to
+        defaultLedgerFiltering("reversalOf.equals=" + DEFAULT_REVERSAL_OF, "reversalOf.equals=" + UPDATED_REVERSAL_OF);
+    }
+
+    @Test
+    @Transactional
+    void getAllLedgersByReversalOfIsInShouldWork() throws Exception {
+        // Initialize the database
+        insertedLedger = ledgerRepository.saveAndFlush(ledger);
+
+        // Get all the ledgerList where reversalOf in
+        defaultLedgerFiltering("reversalOf.in=" + DEFAULT_REVERSAL_OF + "," + UPDATED_REVERSAL_OF, "reversalOf.in=" + UPDATED_REVERSAL_OF);
+    }
+
+    @Test
+    @Transactional
+    void getAllLedgersByReversalOfIsNullOrNotNull() throws Exception {
+        // Initialize the database
+        insertedLedger = ledgerRepository.saveAndFlush(ledger);
+
+        // Get all the ledgerList where reversalOf is not null
+        defaultLedgerFiltering("reversalOf.specified=true", "reversalOf.specified=false");
+    }
+
+    @Test
+    @Transactional
+    void getAllLedgersByReversalOfContainsSomething() throws Exception {
+        // Initialize the database
+        insertedLedger = ledgerRepository.saveAndFlush(ledger);
+
+        // Get all the ledgerList where reversalOf contains
+        defaultLedgerFiltering("reversalOf.contains=" + DEFAULT_REVERSAL_OF, "reversalOf.contains=" + UPDATED_REVERSAL_OF);
+    }
+
+    @Test
+    @Transactional
+    void getAllLedgersByReversalOfNotContainsSomething() throws Exception {
+        // Initialize the database
+        insertedLedger = ledgerRepository.saveAndFlush(ledger);
+
+        // Get all the ledgerList where reversalOf does not contain
+        defaultLedgerFiltering("reversalOf.doesNotContain=" + UPDATED_REVERSAL_OF, "reversalOf.doesNotContain=" + DEFAULT_REVERSAL_OF);
+    }
+
+    @Test
+    @Transactional
     void getAllLedgersByPayoutIsEqualToSomething() throws Exception {
         Payout payout;
         if (TestUtil.findAll(em, Payout.class).isEmpty()) {
@@ -1127,7 +1184,8 @@ class LedgerResourceIT {
             .andExpect(jsonPath("$.[*].deliveryMode").value(hasItem(DEFAULT_DELIVERY_MODE.toString())))
             .andExpect(jsonPath("$.[*].serviceRef").value(hasItem(DEFAULT_SERVICE_REF)))
             .andExpect(jsonPath("$.[*].serviceName").value(hasItem(DEFAULT_SERVICE_NAME)))
-            .andExpect(jsonPath("$.[*].earnedOn").value(hasItem(DEFAULT_EARNED_ON.toString())));
+            .andExpect(jsonPath("$.[*].earnedOn").value(hasItem(DEFAULT_EARNED_ON.toString())))
+            .andExpect(jsonPath("$.[*].reversalOf").value(hasItem(DEFAULT_REVERSAL_OF)));
 
         // Check, that the count call also returns 1
         restLedgerMockMvc
@@ -1186,7 +1244,8 @@ class LedgerResourceIT {
             .deliveryMode(UPDATED_DELIVERY_MODE)
             .serviceRef(UPDATED_SERVICE_REF)
             .serviceName(UPDATED_SERVICE_NAME)
-            .earnedOn(UPDATED_EARNED_ON);
+            .earnedOn(UPDATED_EARNED_ON)
+            .reversalOf(UPDATED_REVERSAL_OF);
         LedgerDTO ledgerDTO = ledgerMapper.toDto(updatedLedger);
 
         restLedgerMockMvc
@@ -1318,7 +1377,8 @@ class LedgerResourceIT {
             .deliveryMode(UPDATED_DELIVERY_MODE)
             .serviceRef(UPDATED_SERVICE_REF)
             .serviceName(UPDATED_SERVICE_NAME)
-            .earnedOn(UPDATED_EARNED_ON);
+            .earnedOn(UPDATED_EARNED_ON)
+            .reversalOf(UPDATED_REVERSAL_OF);
 
         restLedgerMockMvc
             .perform(

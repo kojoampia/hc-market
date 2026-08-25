@@ -86,6 +86,10 @@ public class ProfessionalCriteria implements Serializable, Criteria {
 
     private LongFilter availabilityId;
 
+    private LongFilter ruleId;
+
+    private LongFilter overrideId;
+
     private LongFilter reviewId;
 
     private LongFilter credentialId;
@@ -121,6 +125,8 @@ public class ProfessionalCriteria implements Serializable, Criteria {
         this.publishedAt = other.optionalPublishedAt().map(InstantFilter::copy).orElse(null);
         this.serviceId = other.optionalServiceId().map(LongFilter::copy).orElse(null);
         this.availabilityId = other.optionalAvailabilityId().map(LongFilter::copy).orElse(null);
+        this.ruleId = other.optionalRuleId().map(LongFilter::copy).orElse(null);
+        this.overrideId = other.optionalOverrideId().map(LongFilter::copy).orElse(null);
         this.reviewId = other.optionalReviewId().map(LongFilter::copy).orElse(null);
         this.credentialId = other.optionalCredentialId().map(LongFilter::copy).orElse(null);
         this.highlightId = other.optionalHighlightId().map(LongFilter::copy).orElse(null);
@@ -551,6 +557,44 @@ public class ProfessionalCriteria implements Serializable, Criteria {
         this.availabilityId = availabilityId;
     }
 
+    public LongFilter getRuleId() {
+        return ruleId;
+    }
+
+    public Optional<LongFilter> optionalRuleId() {
+        return Optional.ofNullable(ruleId);
+    }
+
+    public LongFilter ruleId() {
+        if (ruleId == null) {
+            setRuleId(new LongFilter());
+        }
+        return ruleId;
+    }
+
+    public void setRuleId(LongFilter ruleId) {
+        this.ruleId = ruleId;
+    }
+
+    public LongFilter getOverrideId() {
+        return overrideId;
+    }
+
+    public Optional<LongFilter> optionalOverrideId() {
+        return Optional.ofNullable(overrideId);
+    }
+
+    public LongFilter overrideId() {
+        if (overrideId == null) {
+            setOverrideId(new LongFilter());
+        }
+        return overrideId;
+    }
+
+    public void setOverrideId(LongFilter overrideId) {
+        this.overrideId = overrideId;
+    }
+
     public LongFilter getReviewId() {
         return reviewId;
     }
@@ -678,6 +722,8 @@ public class ProfessionalCriteria implements Serializable, Criteria {
             Objects.equals(publishedAt, that.publishedAt) &&
             Objects.equals(serviceId, that.serviceId) &&
             Objects.equals(availabilityId, that.availabilityId) &&
+            Objects.equals(ruleId, that.ruleId) &&
+            Objects.equals(overrideId, that.overrideId) &&
             Objects.equals(reviewId, that.reviewId) &&
             Objects.equals(credentialId, that.credentialId) &&
             Objects.equals(highlightId, that.highlightId) &&
@@ -711,6 +757,8 @@ public class ProfessionalCriteria implements Serializable, Criteria {
             publishedAt,
             serviceId,
             availabilityId,
+            ruleId,
+            overrideId,
             reviewId,
             credentialId,
             highlightId,
@@ -745,6 +793,8 @@ public class ProfessionalCriteria implements Serializable, Criteria {
             optionalPublishedAt().map(f -> "publishedAt=" + f + ", ").orElse("") +
             optionalServiceId().map(f -> "serviceId=" + f + ", ").orElse("") +
             optionalAvailabilityId().map(f -> "availabilityId=" + f + ", ").orElse("") +
+            optionalRuleId().map(f -> "ruleId=" + f + ", ").orElse("") +
+            optionalOverrideId().map(f -> "overrideId=" + f + ", ").orElse("") +
             optionalReviewId().map(f -> "reviewId=" + f + ", ").orElse("") +
             optionalCredentialId().map(f -> "credentialId=" + f + ", ").orElse("") +
             optionalHighlightId().map(f -> "highlightId=" + f + ", ").orElse("") +

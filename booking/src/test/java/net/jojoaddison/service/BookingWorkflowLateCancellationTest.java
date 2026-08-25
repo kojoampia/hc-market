@@ -1,6 +1,7 @@
 package net.jojoaddison.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Instant;
 import java.time.LocalDate;
@@ -9,6 +10,7 @@ import java.time.ZoneOffset;
 import net.jojoaddison.domain.Booking;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.web.server.ResponseStatusException;
 
 /**
  * The free-cancellation window.
@@ -37,7 +39,7 @@ class BookingWorkflowLateCancellationTest {
     private static Booking at(Instant when) {
         LocalDate date = LocalDate.ofInstant(when, ZoneOffset.UTC);
         LocalTime time = LocalTime.ofInstant(when, ZoneOffset.UTC).withSecond(0).withNano(0);
-        return new Booking().reference("b-test").scheduledDate(date).scheduledTime("%02d:%02d".formatted(time.getHour(), time.getMinute()));
+        return new Booking().reference("b-test").scheduledDate(date).scheduledTime(time);
     }
 
     @Test
@@ -90,14 +92,26 @@ class BookingWorkflowLateCancellationTest {
     }
 
     @Test
-    @DisplayName("a malformed time falls back to midday rather than throwing")
-    void malformedTimeDoesNotThrow() {
-        Instant now = Instant.parse("2026-08-25T09:00:00Z");
-        Booking b = new Booking().reference("b-bad").scheduledDate(LocalDate.of(2026, 8, 26)).scheduledTime("not-a-time");
-        // 2026-08-26T12:00Z is 27 hours out, so it is outside the window — the point is that a bad
-        // value degrades to a defensible answer instead of failing a cancellation the customer is
-        // entitled to make.
-        assertThat(workflow.isLate(b, now)).isFalse();
+    @DisplayName("a malformed time is refused at the edge, not silently turned into midday")
+    void malformedTimeIsRejectedAtTheEdge() {
+        // This test used to assert the opposite: that "not-a-time" degraded to LocalTime.NOON so a
+        // cancellation would not fail. That fallback lived in BookingWorkflow.safeTime and it was
+        // never harmless — isLate() decides whether a 50% late-cancellation fee applies, so a
+        // booking whose real time was 08:00 silently became a 12:00 booking and could fall on the
+        // wrong side of the 24-hour window. The customer would be charged, or not, on a made-up
+        // number.
+        //
+        // scheduledTime is a LocalTime since decisions.md D26, so the malformed value can no longer
+        // reach a Booking at all. What is worth asserting now is that the edge refuses it loudly.
+        assertThatThrownBy(() -> SlotTime.parse("not-a-time")).isInstanceOf(ResponseStatusException.class);
+        assertThatThrownBy(() -> SlotTime.parse("7:00")).as("unpadded hour was accepted by the old column").isInstanceOf(
+            ResponseStatusException.class
+        );
+        assertThatThrownBy(() -> SlotTime.parse("25:99")).as("impossible time was accepted by the old column").isInstanceOf(
+            ResponseStatusException.class
+        );
+        assertThat(SlotTime.parse("07:00")).isEqualTo(LocalTime.of(7, 0));
+        assertThat(SlotTime.format(LocalTime.of(7, 0))).isEqualTo("07:00");
     }
 
     @Test

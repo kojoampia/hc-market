@@ -29,7 +29,7 @@ application {
     enableTranslation false
     testFrameworks [cucumber]
   }
-  entities Booking, BookingStatusChange
+  entities Booking, BookingStatusChange, Dispute, DisputeStatusChange
 }
 
 // ===========================================================================
@@ -73,6 +73,22 @@ enum CancelledBy {
   PLATFORM
 }
 
+/**
+ * D23. Deliberately a SEPARATE lifecycle from BookingStatus rather than more values on it: a
+ * booking can be disputed and still be completed, so folding disputes into that enum would force
+ * one of the two facts to be discarded. BookingStatus stays the clean seven-state machine its
+ * sealed BookingTransition set is built around.
+ *
+ *   OPEN ──review──▶ UNDER_REVIEW ──uphold───▶ RESOLVED   (reverses the ledger row)
+ *                          └───────reject────▶ REJECTED   (the ledger is untouched)
+ */
+enum DisputeStatus {
+  OPEN,
+  UNDER_REVIEW,
+  RESOLVED,
+  REJECTED
+}
+
 // ===========================================================================
 // Entities
 // ===========================================================================
@@ -92,7 +108,8 @@ entity Booking {
   priceMinor Long required min(0)           // change when a price is edited
   currency String required maxlength(3)
   scheduledDate LocalDate required
-  scheduledTime String required maxlength(5)
+  scheduledTime LocalTime required          // was String(5): sorted only by the accident of
+                                            // zero-padded text and accepted "7:00" and "25:99"
   deliveryMode DeliveryMode required
   status BookingStatus required
   customerNote String maxlength(1000)
@@ -118,13 +135,53 @@ entity BookingStatusChange {
   note String maxlength(400)
 }
 
-relationship OneToMany {
-  Booking{history} to BookingStatusChange{booking required}
+/**
+ * Keyed by a unique `bookingReference`, so "one dispute per booking" is a schema guarantee in the
+ * same way "one review per booking" is. A second grievance about the same booking belongs on the
+ * existing dispute, not beside it.
+ *
+ * `dueBy` records the prototype's promise of five working days. It is NOT enforced: there is no
+ * scheduler anywhere in this estate, so nothing can escalate on expiry. Recorded rather than
+ * dropped, because the desk can sort by it and because the gap should be visible.
+ *
+ * `refundMinor` is what an upheld dispute reverses. It is nullable and never negative here — the
+ * sign is applied by payout when it writes the compensating entry, so this column reads the same
+ * way as every other money column in the estate.
+ */
+entity Dispute {
+  reference String required unique
+  bookingReference String required unique
+  raisedBy CancelledBy required
+  raisedByLogin String required
+  professionalRef String required
+  reason String required maxlength(1000)
+  status DisputeStatus required
+  raisedAt Instant required
+  dueBy Instant required
+  resolution String maxlength(1000)
+  resolvedBy String
+  resolvedAt Instant
+  refundMinor Long min(0)
+  currency String maxlength(3)
 }
 
-service Booking, BookingStatusChange with serviceClass
-dto Booking, BookingStatusChange with mapstruct
-paginate Booking with pagination
-filter Booking
+/** The same append-only audit BookingStatusChange gives the booking. */
+entity DisputeStatusChange {
+  fromStatus DisputeStatus
+  toStatus DisputeStatus required
+  actor String required
+  occurredAt Instant required
+  note String maxlength(400)
+}
+
+relationship OneToMany {
+  Booking{history} to BookingStatusChange{booking required}
+  Dispute{history} to DisputeStatusChange{dispute required}
+}
+
+service Booking, BookingStatusChange, Dispute, DisputeStatusChange with serviceClass
+dto Booking, BookingStatusChange, Dispute, DisputeStatusChange with mapstruct
+paginate Booking, Dispute with pagination
+filter Booking, Dispute
 
 microservice * with healthconnectBooking

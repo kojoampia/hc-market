@@ -123,6 +123,16 @@ public class Professional implements Serializable {
     @OneToMany(fetch = FetchType.LAZY, mappedBy = "professional")
     @Cache(usage = CacheConcurrencyStrategy.READ_WRITE)
     @JsonIgnoreProperties(value = { "professional" }, allowSetters = true)
+    private Set<AvailabilityRule> rules = new HashSet<>();
+
+    @OneToMany(fetch = FetchType.LAZY, mappedBy = "professional")
+    @Cache(usage = CacheConcurrencyStrategy.READ_WRITE)
+    @JsonIgnoreProperties(value = { "professional" }, allowSetters = true)
+    private Set<AvailabilityOverride> overrides = new HashSet<>();
+
+    @OneToMany(fetch = FetchType.LAZY, mappedBy = "professional")
+    @Cache(usage = CacheConcurrencyStrategy.READ_WRITE)
+    @JsonIgnoreProperties(value = { "professional" }, allowSetters = true)
     private Set<Review> reviews = new HashSet<>();
 
     @OneToMany(fetch = FetchType.LAZY, mappedBy = "professional")
@@ -474,6 +484,68 @@ public class Professional implements Serializable {
     public Professional removeAvailability(AvailabilitySlot availabilitySlot) {
         this.availabilities.remove(availabilitySlot);
         availabilitySlot.setProfessional(null);
+        return this;
+    }
+
+    public Set<AvailabilityRule> getRules() {
+        return this.rules;
+    }
+
+    public void setRules(Set<AvailabilityRule> availabilityRules) {
+        if (this.rules != null) {
+            this.rules.forEach(i -> i.setProfessional(null));
+        }
+        if (availabilityRules != null) {
+            availabilityRules.forEach(i -> i.setProfessional(this));
+        }
+        this.rules = availabilityRules;
+    }
+
+    public Professional rules(Set<AvailabilityRule> availabilityRules) {
+        this.setRules(availabilityRules);
+        return this;
+    }
+
+    public Professional addRule(AvailabilityRule availabilityRule) {
+        this.rules.add(availabilityRule);
+        availabilityRule.setProfessional(this);
+        return this;
+    }
+
+    public Professional removeRule(AvailabilityRule availabilityRule) {
+        this.rules.remove(availabilityRule);
+        availabilityRule.setProfessional(null);
+        return this;
+    }
+
+    public Set<AvailabilityOverride> getOverrides() {
+        return this.overrides;
+    }
+
+    public void setOverrides(Set<AvailabilityOverride> availabilityOverrides) {
+        if (this.overrides != null) {
+            this.overrides.forEach(i -> i.setProfessional(null));
+        }
+        if (availabilityOverrides != null) {
+            availabilityOverrides.forEach(i -> i.setProfessional(this));
+        }
+        this.overrides = availabilityOverrides;
+    }
+
+    public Professional overrides(Set<AvailabilityOverride> availabilityOverrides) {
+        this.setOverrides(availabilityOverrides);
+        return this;
+    }
+
+    public Professional addOverride(AvailabilityOverride availabilityOverride) {
+        this.overrides.add(availabilityOverride);
+        availabilityOverride.setProfessional(this);
+        return this;
+    }
+
+    public Professional removeOverride(AvailabilityOverride availabilityOverride) {
+        this.overrides.remove(availabilityOverride);
+        availabilityOverride.setProfessional(null);
         return this;
     }
 

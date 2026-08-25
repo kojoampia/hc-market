@@ -44,7 +44,7 @@
             <column name="scheduled_date" type="date">
                 <constraints nullable="false" />
             </column>
-            <column name="scheduled_time" type="varchar(5)">
+            <column name="scheduled_time" type="${timeType}">
                 <constraints nullable="false" />
             </column>
             <column name="delivery_mode" type="varchar(255)">
@@ -125,7 +125,7 @@
             <column name="price_minor" type="numeric"/>
             <column name="currency" type="string"/>
             <column name="scheduled_date" type="date"/>
-            <column name="scheduled_time" type="string"/>
+            <column name="scheduled_time" type="time"/>
             <column name="delivery_mode" type="string"/>
             <column name="status" type="string"/>
             <column name="customer_note" type="string"/>

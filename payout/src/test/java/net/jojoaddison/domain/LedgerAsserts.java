@@ -57,7 +57,8 @@ public class LedgerAsserts {
             .satisfies(a -> assertThat(a.getDeliveryMode()).as("check deliveryMode").isEqualTo(expected.getDeliveryMode()))
             .satisfies(a -> assertThat(a.getServiceRef()).as("check serviceRef").isEqualTo(expected.getServiceRef()))
             .satisfies(a -> assertThat(a.getServiceName()).as("check serviceName").isEqualTo(expected.getServiceName()))
-            .satisfies(a -> assertThat(a.getEarnedOn()).as("check earnedOn").isEqualTo(expected.getEarnedOn()));
+            .satisfies(a -> assertThat(a.getEarnedOn()).as("check earnedOn").isEqualTo(expected.getEarnedOn()))
+            .satisfies(a -> assertThat(a.getReversalOf()).as("check reversalOf").isEqualTo(expected.getReversalOf()));
     }
 
     /**

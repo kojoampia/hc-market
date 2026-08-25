@@ -50,6 +50,8 @@ public class LedgerDTO implements Serializable {
     @NotNull
     private LocalDate earnedOn;
 
+    private String reversalOf;
+
     private PayoutDTO payout;
 
     public Long getId() {
@@ -148,6 +150,14 @@ public class LedgerDTO implements Serializable {
         this.earnedOn = earnedOn;
     }
 
+    public String getReversalOf() {
+        return reversalOf;
+    }
+
+    public void setReversalOf(String reversalOf) {
+        this.reversalOf = reversalOf;
+    }
+
     public PayoutDTO getPayout() {
         return payout;
     }
@@ -193,6 +203,7 @@ public class LedgerDTO implements Serializable {
             ", serviceRef='" + getServiceRef() + "'" +
             ", serviceName='" + getServiceName() + "'" +
             ", earnedOn='" + getEarnedOn() + "'" +
+            ", reversalOf='" + getReversalOf() + "'" +
             ", payout=" + getPayout() +
             "}";
     }

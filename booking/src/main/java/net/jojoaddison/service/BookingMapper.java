@@ -30,7 +30,7 @@ public class BookingMapper {
             b.getPriceMinor() == null ? 0L : b.getPriceMinor(),
             b.getCurrency(),
             b.getScheduledDate(),
-            b.getScheduledTime(),
+            SlotTime.format(b.getScheduledTime()),
             b.getDeliveryMode() == null ? null : b.getDeliveryMode().name(),
             b.getStatus() == null ? null : b.getStatus().name(),
             b.getCustomerNote(),

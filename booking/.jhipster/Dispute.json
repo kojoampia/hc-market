@@ -1,0 +1,102 @@
+{
+  "annotations": {
+    "changelogDate": "20260825203837"
+  },
+  "applications": ["healthconnectBooking"],
+  "clientRootFolder": "healthconnectBooking",
+  "databaseType": "sql",
+  "documentation": "Keyed by a unique `bookingReference`, so \"one dispute per booking\" is a schema guarantee in the\\nsame way \"one review per booking\" is. A second grievance about the same booking belongs on the\\nexisting dispute, not beside it.\\n\\n`dueBy` records the prototype's promise of five working days. It is NOT enforced: there is no\\nscheduler anywhere in this estate, so nothing can escalate on expiry. Recorded rather than\\ndropped, because the desk can sort by it and because the gap should be visible.\\n\\n`refundMinor` is what an upheld dispute reverses. It is nullable and never negative here — the\\nsign is applied by payout when it writes the compensating entry, so this column reads the same\\nway as every other money column in the estate.",
+  "dto": "mapstruct",
+  "fields": [
+    {
+      "fieldName": "reference",
+      "fieldType": "String",
+      "fieldValidateRules": ["required", "unique"]
+    },
+    {
+      "fieldName": "bookingReference",
+      "fieldType": "String",
+      "fieldValidateRules": ["required", "unique"]
+    },
+    {
+      "fieldName": "raisedBy",
+      "fieldType": "CancelledBy",
+      "fieldValidateRules": ["required"],
+      "fieldValues": "CUSTOMER,PROFESSIONAL,PLATFORM"
+    },
+    {
+      "fieldName": "raisedByLogin",
+      "fieldType": "String",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "professionalRef",
+      "fieldType": "String",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "reason",
+      "fieldType": "String",
+      "fieldValidateRules": ["required", "maxlength"],
+      "fieldValidateRulesMaxlength": "1000"
+    },
+    {
+      "fieldName": "status",
+      "fieldType": "DisputeStatus",
+      "fieldTypeDocumentation": "D23. Deliberately a SEPARATE lifecycle from BookingStatus rather than more values on it: a\\nbooking can be disputed and still be completed, so folding disputes into that enum would force\\none of the two facts to be discarded. BookingStatus stays the clean seven-state machine its\\nsealed BookingTransition set is built around.\\n\\nOPEN ──review──▶ UNDER_REVIEW ──uphold───▶ RESOLVED   (reverses the ledger row)\\n└───────reject────▶ REJECTED   (the ledger is untouched)",
+      "fieldValidateRules": ["required"],
+      "fieldValues": "OPEN,UNDER_REVIEW,RESOLVED,REJECTED"
+    },
+    {
+      "fieldName": "raisedAt",
+      "fieldType": "Instant",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "dueBy",
+      "fieldType": "Instant",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "resolution",
+      "fieldType": "String",
+      "fieldValidateRules": ["maxlength"],
+      "fieldValidateRulesMaxlength": "1000"
+    },
+    {
+      "fieldName": "resolvedBy",
+      "fieldType": "String"
+    },
+    {
+      "fieldName": "resolvedAt",
+      "fieldType": "Instant"
+    },
+    {
+      "fieldName": "refundMinor",
+      "fieldType": "Long",
+      "fieldValidateRules": ["min"],
+      "fieldValidateRulesMin": "0"
+    },
+    {
+      "fieldName": "currency",
+      "fieldType": "String",
+      "fieldValidateRules": ["maxlength"],
+      "fieldValidateRulesMaxlength": "3"
+    }
+  ],
+  "jpaMetamodelFiltering": true,
+  "microserviceName": "healthconnectBooking",
+  "name": "Dispute",
+  "pagination": "pagination",
+  "relationships": [
+    {
+      "otherEntityName": "disputeStatusChange",
+      "otherEntityRelationshipName": "dispute",
+      "relationshipName": "history",
+      "relationshipSide": "left",
+      "relationshipType": "one-to-many"
+    }
+  ],
+  "searchEngine": "no",
+  "service": "serviceClass"
+}

@@ -4,6 +4,7 @@ import jakarta.validation.constraints.*;
 import java.io.Serializable;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.Objects;
 import net.jojoaddison.domain.enumeration.BookingStatus;
 import net.jojoaddison.domain.enumeration.CancelledBy;
@@ -50,8 +51,7 @@ public class BookingDTO implements Serializable {
     private LocalDate scheduledDate;
 
     @NotNull
-    @Size(max = 5)
-    private String scheduledTime;
+    private LocalTime scheduledTime;
 
     @NotNull
     private DeliveryMode deliveryMode;
@@ -178,11 +178,11 @@ public class BookingDTO implements Serializable {
         this.scheduledDate = scheduledDate;
     }
 
-    public String getScheduledTime() {
+    public LocalTime getScheduledTime() {
         return scheduledTime;
     }
 
-    public void setScheduledTime(String scheduledTime) {
+    public void setScheduledTime(LocalTime scheduledTime) {
         this.scheduledTime = scheduledTime;
     }
 

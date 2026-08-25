@@ -1,0 +1,50 @@
+{
+  "annotations": {
+    "changelogDate": "20260825203516"
+  },
+  "applications": ["healthconnectCatalog"],
+  "clientRootFolder": "healthconnectCatalog",
+  "databaseType": "sql",
+  "documentation": "A single day that departs from the rules — a holiday, or a day with different hours.\\n\\nNamed `AvailabilityOverride`, NOT `AvailabilityException`: a JPA entity whose name ends in\\n`Exception` reads as a `Throwable` everywhere it appears, and this repository has already paid\\nthat tax once by renaming `Thread` to `Conversation` in messaging. `closed = true` means no slots\\nthat day; `closed = false` with a window means those hours instead of the rules'.",
+  "dto": "mapstruct",
+  "fields": [
+    {
+      "fieldName": "overrideDate",
+      "fieldType": "LocalDate",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "closed",
+      "fieldType": "Boolean",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "startTime",
+      "fieldType": "LocalTime"
+    },
+    {
+      "fieldName": "endTime",
+      "fieldType": "LocalTime"
+    },
+    {
+      "fieldName": "note",
+      "fieldType": "String",
+      "fieldValidateRules": ["maxlength"],
+      "fieldValidateRulesMaxlength": "200"
+    }
+  ],
+  "microserviceName": "healthconnectCatalog",
+  "name": "AvailabilityOverride",
+  "relationships": [
+    {
+      "otherEntityName": "professional",
+      "otherEntityRelationshipName": "override",
+      "relationshipName": "professional",
+      "relationshipSide": "right",
+      "relationshipType": "many-to-one",
+      "relationshipValidateRules": "required"
+    }
+  ],
+  "searchEngine": "no",
+  "service": "serviceClass"
+}

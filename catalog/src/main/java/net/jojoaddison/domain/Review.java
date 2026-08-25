@@ -73,7 +73,10 @@ public class Review implements Serializable {
 
     @ManyToOne(optional = false)
     @NotNull
-    @JsonIgnoreProperties(value = { "services", "availabilities", "reviews", "credentials", "highlights", "category" }, allowSetters = true)
+    @JsonIgnoreProperties(
+        value = { "services", "availabilities", "rules", "overrides", "reviews", "credentials", "highlights", "category" },
+        allowSetters = true
+    )
     private Professional professional;
 
     // jhipster-needle-entity-add-field - JHipster will add fields here

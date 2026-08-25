@@ -37,7 +37,7 @@ application {
     enableTranslation false
     testFrameworks [cucumber]
   }
-  entities Category, Professional, ServiceOffering, AvailabilitySlot, Review, Credential, Highlight, Favourite
+  entities Category, Professional, ServiceOffering, AvailabilitySlot, AvailabilityRule, AvailabilityOverride, Review, Credential, Highlight, Favourite
 }
 
 // ===========================================================================
@@ -50,6 +50,17 @@ enum DeliveryMode {
   IN_PERSON,
   ONLINE,
   HOME_VISIT
+}
+
+/** ISO-8601 order, and the names match java.time.DayOfWeek so the mapping cannot drift. */
+enum Weekday {
+  MONDAY,
+  TUESDAY,
+  WEDNESDAY,
+  THURSDAY,
+  FRIDAY,
+  SATURDAY,
+  SUNDAY
 }
 
 /** Where a professional sits in the trust chain. The prototype had only a boolean `verified`;
@@ -107,10 +118,54 @@ entity ServiceOffering {
   sortOrder Integer
 }
 
+/**
+ * The bookable unit, and it stays a materialised ROW rather than something computed at read time
+ * (decisions.md D20). `taken` needs a row to lock: two customers booking the same 07:00 must collide
+ * on a unique constraint over (professional, date, time), and with availability computed on demand
+ * there is nothing to contend on and the double booking is silent. The same reasoning as the unique
+ * (customer_login, professional_ref) on Favourite.
+ *
+ * `slotTime` was `String maxlength(5)`. It sorted correctly only by the accident of zero-padded
+ * 24-hour text and accepted "7:00" and "25:99" — see decisions.md D20 and D26.
+ */
 entity AvailabilitySlot {
   slotDate LocalDate required
-  slotTime String required maxlength(5)     // "07:00"
+  slotTime LocalTime required
   taken Boolean required
+}
+
+/**
+ * How a professional actually thinks about availability: "Tuesdays and Thursdays, 07:00 to 11:00,
+ * hourly". Slots are generated from these forward a fixed horizon; the rule is what a professional
+ * edits, the slot is what a customer books.
+ *
+ * `weekday` names match `java.time.DayOfWeek` exactly so the mapping is `DayOfWeek.valueOf(name())`
+ * rather than a lookup table that can drift.
+ */
+entity AvailabilityRule {
+  weekday Weekday required
+  startTime LocalTime required
+  endTime LocalTime required
+  slotMinutes Integer required min(5) max(480)
+  validFrom LocalDate required
+  validUntil LocalDate                      // null = open-ended
+  active Boolean required
+}
+
+/**
+ * A single day that departs from the rules — a holiday, or a day with different hours.
+ *
+ * Named `AvailabilityOverride`, NOT `AvailabilityException`: a JPA entity whose name ends in
+ * `Exception` reads as a `Throwable` everywhere it appears, and this repository has already paid
+ * that tax once by renaming `Thread` to `Conversation` in messaging. `closed = true` means no slots
+ * that day; `closed = false` with a window means those hours instead of the rules'.
+ */
+entity AvailabilityOverride {
+  overrideDate LocalDate required
+  closed Boolean required
+  startTime LocalTime
+  endTime LocalTime
+  note String maxlength(200)
 }
 
 /**
@@ -176,13 +231,15 @@ relationship OneToMany {
   Category{professional} to Professional{category required}
   Professional{service} to ServiceOffering{professional required}
   Professional{availability} to AvailabilitySlot{professional required}
+  Professional{rule} to AvailabilityRule{professional required}
+  Professional{override} to AvailabilityOverride{professional required}
   Professional{review} to Review{professional required}
   Professional{credential} to Credential{professional required}
   Professional{highlight} to Highlight{professional required}
 }
 
-service Category, Professional, ServiceOffering, AvailabilitySlot, Review with serviceClass
-dto Category, Professional, ServiceOffering, AvailabilitySlot, Review with mapstruct
+service Category, Professional, ServiceOffering, AvailabilitySlot, AvailabilityRule, AvailabilityOverride, Review with serviceClass
+dto Category, Professional, ServiceOffering, AvailabilitySlot, AvailabilityRule, AvailabilityOverride, Review with mapstruct
 paginate Professional, Review with pagination
 filter Professional
 

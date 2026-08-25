@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:ext="http://www.liquibase.org/xml/ns/dbchangelog-ext"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd
+                        http://www.liquibase.org/xml/ns/dbchangelog-ext http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-ext.xsd">
+
+    <!--
+        Added the entity Dispute.
+    -->
+    <changeSet id="20260825203837-1" author="jhipster">
+        <createTable tableName="dispute" remarks="Keyed by a unique `bookingReference`, so &quot;one dispute per booking&quot; is a schema guarantee in the\nsame way &quot;one review per booking&quot; is. A second grievance about the same booking belongs on the\nexisting dispute, not beside it.\n\n`dueBy` records the prototype&apos;s promise of five working days. It is NOT enforced: there is no\nscheduler anywhere in this estate, so nothing can escalate on expiry. Recorded rather than\ndropped, because the desk can sort by it and because the gap should be visible.\n\n`refundMinor` is what an upheld dispute reverses. It is nullable and never negative here — the\nsign is applied by payout when it writes the compensating entry, so this column reads the same\nway as every other money column in the estate.">
+            <column name="id" type="bigint">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="reference" type="varchar(255)">
+                <constraints nullable="false" unique="true" uniqueConstraintName="ux_dispute__reference" />
+            </column>
+            <column name="booking_reference" type="varchar(255)">
+                <constraints nullable="false" unique="true" uniqueConstraintName="ux_dispute__booking_reference" />
+            </column>
+            <column name="raised_by" type="varchar(255)">
+                <constraints nullable="false" />
+            </column>
+            <column name="raised_by_login" type="varchar(255)">
+                <constraints nullable="false" />
+            </column>
+            <column name="professional_ref" type="varchar(255)">
+                <constraints nullable="false" />
+            </column>
+            <column name="reason" type="varchar(1000)">
+                <constraints nullable="false" />
+            </column>
+            <column name="status" type="varchar(255)">
+                <constraints nullable="false" />
+            </column>
+            <column name="raised_at" type="${datetimeType}">
+                <constraints nullable="false" />
+            </column>
+            <column name="due_by" type="${datetimeType}">
+                <constraints nullable="false" />
+            </column>
+            <column name="resolution" type="varchar(1000)">
+                <constraints nullable="true" />
+            </column>
+            <column name="resolved_by" type="varchar(255)">
+                <constraints nullable="true" />
+            </column>
+            <column name="resolved_at" type="${datetimeType}">
+                <constraints nullable="true" />
+            </column>
+            <column name="refund_minor" type="bigint">
+                <constraints nullable="true" />
+            </column>
+            <column name="currency" type="varchar(3)">
+                <constraints nullable="true" />
+            </column>
+            <!-- jhipster-needle-liquibase-add-column - JHipster will add columns here -->
+        </createTable>
+        <dropDefaultValue tableName="dispute" columnName="raised_at" columnDataType="${datetimeType}"/>
+        <dropDefaultValue tableName="dispute" columnName="due_by" columnDataType="${datetimeType}"/>
+        <dropDefaultValue tableName="dispute" columnName="resolved_at" columnDataType="${datetimeType}"/>
+    </changeSet>
+
+    <!-- jhipster-needle-liquibase-add-changeset - JHipster will add changesets here -->
+
+    <!--
+        Load sample data generated with Faker.js
+        - This data can be easily edited using a CSV editor (or even MS Excel) and
+          is located in the 'src/main/resources/config/liquibase/fake-data' directory
+        - By default this data is applied when running with the JHipster 'dev' profile.
+          This can be customized by adding or removing 'faker' in the 'spring.liquibase.contexts'
+          Spring Boot configuration key.
+    -->
+    <changeSet id="20260825203837-1-data" author="jhipster" context="faker">
+        <loadData
+                  file="../fake-data/dispute.csv"
+                  relativeToChangelogFile="true"
+                  separator=";"
+                  tableName="dispute"
+                  usePreparedStatements="true">
+            <column name="id" type="numeric"/>
+            <column name="reference" type="string"/>
+            <column name="booking_reference" type="string"/>
+            <column name="raised_by" type="string"/>
+            <column name="raised_by_login" type="string"/>
+            <column name="professional_ref" type="string"/>
+            <column name="reason" type="string"/>
+            <column name="status" type="string"/>
+            <column name="raised_at" type="date"/>
+            <column name="due_by" type="date"/>
+            <column name="resolution" type="string"/>
+            <column name="resolved_by" type="string"/>
+            <column name="resolved_at" type="date"/>
+            <column name="refund_minor" type="numeric"/>
+            <column name="currency" type="string"/>
+            <!-- jhipster-needle-liquibase-add-loadcolumn - JHipster (and/or extensions) can add load columns here -->
+        </loadData>
+    </changeSet>
+</databaseChangeLog>

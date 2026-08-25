@@ -1,5 +1,7 @@
 package net.jojoaddison.domain;
 
+import static net.jojoaddison.domain.AvailabilityOverrideTestSamples.*;
+import static net.jojoaddison.domain.AvailabilityRuleTestSamples.*;
 import static net.jojoaddison.domain.AvailabilitySlotTestSamples.*;
 import static net.jojoaddison.domain.CategoryTestSamples.*;
 import static net.jojoaddison.domain.CredentialTestSamples.*;
@@ -72,6 +74,50 @@ class ProfessionalTest {
         professional.setAvailabilities(new HashSet<>());
         assertThat(professional.getAvailabilities()).doesNotContain(availabilitySlotBack);
         assertThat(availabilitySlotBack.getProfessional()).isNull();
+    }
+
+    @Test
+    void ruleTest() {
+        Professional professional = getProfessionalRandomSampleGenerator();
+        AvailabilityRule availabilityRuleBack = getAvailabilityRuleRandomSampleGenerator();
+
+        professional.addRule(availabilityRuleBack);
+        assertThat(professional.getRules()).containsOnly(availabilityRuleBack);
+        assertThat(availabilityRuleBack.getProfessional()).isEqualTo(professional);
+
+        professional.removeRule(availabilityRuleBack);
+        assertThat(professional.getRules()).doesNotContain(availabilityRuleBack);
+        assertThat(availabilityRuleBack.getProfessional()).isNull();
+
+        professional.rules(new HashSet<>(Set.of(availabilityRuleBack)));
+        assertThat(professional.getRules()).containsOnly(availabilityRuleBack);
+        assertThat(availabilityRuleBack.getProfessional()).isEqualTo(professional);
+
+        professional.setRules(new HashSet<>());
+        assertThat(professional.getRules()).doesNotContain(availabilityRuleBack);
+        assertThat(availabilityRuleBack.getProfessional()).isNull();
+    }
+
+    @Test
+    void overrideTest() {
+        Professional professional = getProfessionalRandomSampleGenerator();
+        AvailabilityOverride availabilityOverrideBack = getAvailabilityOverrideRandomSampleGenerator();
+
+        professional.addOverride(availabilityOverrideBack);
+        assertThat(professional.getOverrides()).containsOnly(availabilityOverrideBack);
+        assertThat(availabilityOverrideBack.getProfessional()).isEqualTo(professional);
+
+        professional.removeOverride(availabilityOverrideBack);
+        assertThat(professional.getOverrides()).doesNotContain(availabilityOverrideBack);
+        assertThat(availabilityOverrideBack.getProfessional()).isNull();
+
+        professional.overrides(new HashSet<>(Set.of(availabilityOverrideBack)));
+        assertThat(professional.getOverrides()).containsOnly(availabilityOverrideBack);
+        assertThat(availabilityOverrideBack.getProfessional()).isEqualTo(professional);
+
+        professional.setOverrides(new HashSet<>());
+        assertThat(professional.getOverrides()).doesNotContain(availabilityOverrideBack);
+        assertThat(availabilityOverrideBack.getProfessional()).isNull();
     }
 
     @Test

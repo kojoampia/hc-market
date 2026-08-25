@@ -62,9 +62,8 @@ spring:
       auto-commit: false
   liquibase:
     # Remove 'faker' if you do not want the sample data to be loaded automatically
-    # 'faker' removed: it loads 30 nonsense rows per entity, and because the seed loader is
-    # idempotent on "is there anything here yet?", those rows make it skip the real seed and log
-    # "seed already present". Same trap as catalog. NOTE: regeneration restores 'dev, faker'.
+    # 'faker' removed: 30 nonsense rows per entity defeat the seed loader's idempotency check.
+    # Regeneration restores 'dev, faker'.
     contexts: dev
   messages:
     cache-duration: PT1S # 1 second, see the ISO 8601 standard

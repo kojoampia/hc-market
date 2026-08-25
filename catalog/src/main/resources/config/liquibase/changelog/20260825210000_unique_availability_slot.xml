@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+        One slot per professional per date and time.
+
+        This is the constraint the whole slots-are-rows decision rests on (decisions.md D20). Slot
+        generation is idempotent because of it, and two customers booking the same 07:00 collide
+        here rather than both succeeding. With availability computed at read time there would be no
+        row to contend on and the double booking would be silent.
+
+        JDL can express `unique` on a single column but not across three, so this is hand-written -
+        the same reason ux_favourite_customer_professional is.
+
+        HAND-WRITTEN: regenerating the catalog from JDL rewrites master.xml and drops this include.
+    -->
+    <changeSet id="20260825210000-1" author="healthconnect">
+        <addUniqueConstraint
+            tableName="availability_slot"
+            columnNames="professional_id, slot_date, slot_time"
+            constraintName="ux_availability_slot_professional_date_time"/>
+    </changeSet>
+</databaseChangeLog>

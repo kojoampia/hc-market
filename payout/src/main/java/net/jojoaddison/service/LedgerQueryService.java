@@ -92,6 +92,7 @@ public class LedgerQueryService extends QueryService<Ledger> {
                     buildStringSpecification(criteria.getServiceRef(), Ledger_.serviceRef),
                     buildStringSpecification(criteria.getServiceName(), Ledger_.serviceName),
                     buildRangeSpecification(criteria.getEarnedOn(), Ledger_.earnedOn),
+                    buildStringSpecification(criteria.getReversalOf(), Ledger_.reversalOf),
                     buildSpecification(criteria.getPayoutId(), root -> root.join(Ledger_.payout, JoinType.LEFT).get(Payout_.id))
                 )
             );

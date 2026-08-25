@@ -133,6 +133,20 @@
       "relationshipType": "one-to-many"
     },
     {
+      "otherEntityName": "availabilityRule",
+      "otherEntityRelationshipName": "professional",
+      "relationshipName": "rule",
+      "relationshipSide": "left",
+      "relationshipType": "one-to-many"
+    },
+    {
+      "otherEntityName": "availabilityOverride",
+      "otherEntityRelationshipName": "professional",
+      "relationshipName": "override",
+      "relationshipSide": "left",
+      "relationshipType": "one-to-many"
+    },
+    {
       "otherEntityName": "review",
       "otherEntityRelationshipName": "professional",
       "relationshipName": "review",

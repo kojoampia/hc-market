@@ -10,6 +10,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityManager;
 import java.time.LocalDate;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Random;
 import java.util.concurrent.atomic.AtomicLong;
 import net.jojoaddison.IntegrationTest;
@@ -36,11 +38,13 @@ import org.springframework.transaction.annotation.Transactional;
 @WithMockUser
 class AvailabilitySlotResourceIT {
 
+    private static final DateTimeFormatter LOCAL_DATE_TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm:ss");
+
     private static final LocalDate DEFAULT_SLOT_DATE = LocalDate.ofEpochDay(0L);
     private static final LocalDate UPDATED_SLOT_DATE = LocalDate.parse("2023-12-05");
 
-    private static final String DEFAULT_SLOT_TIME = "AAAAA";
-    private static final String UPDATED_SLOT_TIME = "BBBBB";
+    private static final LocalTime DEFAULT_SLOT_TIME = LocalTime.NOON;
+    private static final LocalTime UPDATED_SLOT_TIME = LocalTime.MAX.withNano(0);
 
     private static final Boolean DEFAULT_TAKEN = false;
     private static final Boolean UPDATED_TAKEN = true;
@@ -237,7 +241,7 @@ class AvailabilitySlotResourceIT {
             .andExpect(content().contentType(MediaType.APPLICATION_JSON_VALUE))
             .andExpect(jsonPath("$.[*].id").value(hasItem(availabilitySlot.getId().intValue())))
             .andExpect(jsonPath("$.[*].slotDate").value(hasItem(DEFAULT_SLOT_DATE.toString())))
-            .andExpect(jsonPath("$.[*].slotTime").value(hasItem(DEFAULT_SLOT_TIME)))
+            .andExpect(jsonPath("$.[*].slotTime").value(hasItem(DEFAULT_SLOT_TIME.format(LOCAL_DATE_TIME_FORMAT))))
             .andExpect(jsonPath("$.[*].taken").value(hasItem(DEFAULT_TAKEN)));
     }
 
@@ -254,7 +258,7 @@ class AvailabilitySlotResourceIT {
             .andExpect(content().contentType(MediaType.APPLICATION_JSON_VALUE))
             .andExpect(jsonPath("$.id").value(availabilitySlot.getId().intValue()))
             .andExpect(jsonPath("$.slotDate").value(DEFAULT_SLOT_DATE.toString()))
-            .andExpect(jsonPath("$.slotTime").value(DEFAULT_SLOT_TIME))
+            .andExpect(jsonPath("$.slotTime").value(DEFAULT_SLOT_TIME.format(LOCAL_DATE_TIME_FORMAT)))
             .andExpect(jsonPath("$.taken").value(DEFAULT_TAKEN));
     }
 

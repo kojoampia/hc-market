@@ -106,6 +106,12 @@ public class ProfessionalQueryService extends QueryService<Professional> {
                     buildSpecification(criteria.getAvailabilityId(), root ->
                         root.join(Professional_.availabilities, JoinType.LEFT).get(AvailabilitySlot_.id)
                     ),
+                    buildSpecification(criteria.getRuleId(), root ->
+                        root.join(Professional_.rules, JoinType.LEFT).get(AvailabilityRule_.id)
+                    ),
+                    buildSpecification(criteria.getOverrideId(), root ->
+                        root.join(Professional_.overrides, JoinType.LEFT).get(AvailabilityOverride_.id)
+                    ),
                     buildSpecification(criteria.getReviewId(), root -> root.join(Professional_.reviews, JoinType.LEFT).get(Review_.id)),
                     buildSpecification(criteria.getCredentialId(), root ->
                         root.join(Professional_.credentials, JoinType.LEFT).get(Credential_.id)

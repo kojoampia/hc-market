@@ -104,6 +104,16 @@ entity Ledger {
   serviceRef String
   serviceName String
   earnedOn LocalDate required
+  reversalOf String                   // D23: set on a compensating entry, naming the booking whose
+                                      // earning this reverses. Null on an ordinary earning.
+                                      //
+                                      // A reversal CANNOT reuse the original bookingReference —
+                                      // that column is unique, and its uniqueness is the whole
+                                      // guard against a replayed booking.completed double-crediting
+                                      // a professional. So a compensating entry carries the DISPUTE
+                                      // reference in bookingReference (also unique, so a replayed
+                                      // dispute.resolved cannot double-reverse) and records the
+                                      // original here.
 }
 
 entity Payout {

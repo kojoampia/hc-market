@@ -171,7 +171,7 @@ entity ServiceOffering {
 
 entity AvailabilitySlot {
   slotDate LocalDate required
-  slotTime String required maxlength(5)     // "07:00"
+  slotTime LocalTime required               // was String(5) — decisions.md D20, D26
   taken Boolean required
 }
 
@@ -226,7 +226,7 @@ entity Booking {
   priceMinor Long required min(0)           // change when a price is edited
   currency String required maxlength(3)
   scheduledDate LocalDate required
-  scheduledTime String required maxlength(5)
+  scheduledTime LocalTime required          // was String(5) — decisions.md D21, D26
   deliveryMode DeliveryMode required
   status BookingStatus required
   customerNote String maxlength(1000)

@@ -103,7 +103,7 @@ public class BookingWorkflow {
             case BookingTransition.ProposeReschedule propose -> {
                 booking.setRespondedAt(now);
                 booking.setScheduledDate(propose.date());
-                booking.setScheduledTime(propose.time());
+                booking.setScheduledTime(SlotTime.parse(propose.time()));
             }
             case BookingTransition.Cancel cancel -> {
                 booking.setCancelledAt(now);
@@ -192,14 +192,7 @@ public class BookingWorkflow {
     /** Africa/Accra is GMT with no offset and no DST — spec §13 open question #8 is still open. */
     private static Instant scheduledAt(Booking booking) {
         LocalDate date = booking.getScheduledDate();
-        return date.atTime(safeTime(booking.getScheduledTime())).toInstant(ZoneOffset.UTC);
+        return date.atTime(booking.getScheduledTime()).toInstant(ZoneOffset.UTC);
     }
 
-    static LocalTime safeTime(String hhmm) {
-        try {
-            return LocalTime.parse(hhmm);
-        } catch (RuntimeException e) {
-            return LocalTime.NOON;
-        }
-    }
 }

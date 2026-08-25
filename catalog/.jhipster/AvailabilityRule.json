@@ -1,0 +1,64 @@
+{
+  "annotations": {
+    "changelogDate": "20260825203515"
+  },
+  "applications": ["healthconnectCatalog"],
+  "clientRootFolder": "healthconnectCatalog",
+  "databaseType": "sql",
+  "documentation": "How a professional actually thinks about availability: \"Tuesdays and Thursdays, 07:00 to 11:00,\\nhourly\". Slots are generated from these forward a fixed horizon; the rule is what a professional\\nedits, the slot is what a customer books.\\n\\n`weekday` names match `java.time.DayOfWeek` exactly so the mapping is `DayOfWeek.valueOf(name())`\\nrather than a lookup table that can drift.",
+  "dto": "mapstruct",
+  "fields": [
+    {
+      "fieldName": "weekday",
+      "fieldType": "Weekday",
+      "fieldTypeDocumentation": "ISO-8601 order, and the names match java.time.DayOfWeek so the mapping cannot drift.",
+      "fieldValidateRules": ["required"],
+      "fieldValues": "MONDAY,TUESDAY,WEDNESDAY,THURSDAY,FRIDAY,SATURDAY,SUNDAY"
+    },
+    {
+      "fieldName": "startTime",
+      "fieldType": "LocalTime",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "endTime",
+      "fieldType": "LocalTime",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "slotMinutes",
+      "fieldType": "Integer",
+      "fieldValidateRules": ["required", "min", "max"],
+      "fieldValidateRulesMax": "480",
+      "fieldValidateRulesMin": "5"
+    },
+    {
+      "fieldName": "validFrom",
+      "fieldType": "LocalDate",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "validUntil",
+      "fieldType": "LocalDate"
+    },
+    {
+      "fieldName": "active",
+      "fieldType": "Boolean",
+      "fieldValidateRules": ["required"]
+    }
+  ],
+  "microserviceName": "healthconnectCatalog",
+  "name": "AvailabilityRule",
+  "relationships": [
+    {
+      "otherEntityName": "professional",
+      "otherEntityRelationshipName": "rule",
+      "relationshipName": "professional",
+      "relationshipSide": "right",
+      "relationshipType": "many-to-one",
+      "relationshipValidateRules": "required"
+    }
+  ],
+  "searchEngine": "no",
+  "service": "serviceClass"
+}

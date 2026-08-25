@@ -8,6 +8,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import net.jojoaddison.service.SlotTime;
 import net.jojoaddison.domain.AvailabilitySlot;
 import net.jojoaddison.domain.Credential;
 import net.jojoaddison.domain.Highlight;
@@ -214,7 +215,7 @@ public class ProWorkspaceResource {
         LocalDate start = from == null ? LocalDate.now() : from;
         Map<LocalDate, List<Slot>> byDay = new LinkedHashMap<>();
         for (AvailabilitySlot s : marketplace.findOwnedSlots(me(), start)) {
-            byDay.computeIfAbsent(s.getSlotDate(), d -> new ArrayList<>()).add(new Slot(s.getSlotTime(), Boolean.TRUE.equals(s.getTaken())));
+            byDay.computeIfAbsent(s.getSlotDate(), d -> new ArrayList<>()).add(new Slot(SlotTime.format(s.getSlotTime()), Boolean.TRUE.equals(s.getTaken())));
         }
         return byDay.entrySet().stream().map(e -> new WorkingDay(e.getKey(), e.getValue())).toList();
     }
@@ -237,14 +238,14 @@ public class ProWorkspaceResource {
             .filter(s -> s.getSlotDate().equals(body.date()))
             .toList();
 
-        List<String> keep = existing.stream().filter(s -> Boolean.TRUE.equals(s.getTaken())).map(AvailabilitySlot::getSlotTime).toList();
+        List<String> keep = existing.stream().filter(s -> Boolean.TRUE.equals(s.getTaken())).map(s -> SlotTime.format(s.getSlotTime())).toList();
         existing.stream().filter(s -> !Boolean.TRUE.equals(s.getTaken())).forEach(slots::delete);
 
         for (String time : body.slots()) {
             if (keep.contains(time)) {
                 continue; // already there, and taken — leave it exactly as it is
             }
-            slots.save(new AvailabilitySlot().slotDate(body.date()).slotTime(time).taken(false).professional(owner));
+            slots.save(new AvailabilitySlot().slotDate(body.date()).slotTime(SlotTime.parse(time)).taken(false).professional(owner));
         }
         return availability(body.date());
     }

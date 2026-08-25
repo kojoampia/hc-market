@@ -93,6 +93,8 @@ class ProfessionalCriteriaTest {
         professionalCriteria.publishedAt();
         professionalCriteria.serviceId();
         professionalCriteria.availabilityId();
+        professionalCriteria.ruleId();
+        professionalCriteria.overrideId();
         professionalCriteria.reviewId();
         professionalCriteria.credentialId();
         professionalCriteria.highlightId();
@@ -125,6 +127,8 @@ class ProfessionalCriteriaTest {
                 condition.apply(criteria.getPublishedAt()) &&
                 condition.apply(criteria.getServiceId()) &&
                 condition.apply(criteria.getAvailabilityId()) &&
+                condition.apply(criteria.getRuleId()) &&
+                condition.apply(criteria.getOverrideId()) &&
                 condition.apply(criteria.getReviewId()) &&
                 condition.apply(criteria.getCredentialId()) &&
                 condition.apply(criteria.getHighlightId()) &&
@@ -162,6 +166,8 @@ class ProfessionalCriteriaTest {
                 condition.apply(criteria.getPublishedAt(), copy.getPublishedAt()) &&
                 condition.apply(criteria.getServiceId(), copy.getServiceId()) &&
                 condition.apply(criteria.getAvailabilityId(), copy.getAvailabilityId()) &&
+                condition.apply(criteria.getRuleId(), copy.getRuleId()) &&
+                condition.apply(criteria.getOverrideId(), copy.getOverrideId()) &&
                 condition.apply(criteria.getReviewId(), copy.getReviewId()) &&
                 condition.apply(criteria.getCredentialId(), copy.getCredentialId()) &&
                 condition.apply(criteria.getHighlightId(), copy.getHighlightId()) &&

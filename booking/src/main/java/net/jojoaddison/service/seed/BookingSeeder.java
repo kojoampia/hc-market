@@ -6,6 +6,7 @@ import java.time.LocalTime;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import net.jojoaddison.service.SlotTime;
 import net.jojoaddison.domain.Booking;
 import net.jojoaddison.domain.BookingStatusChange;
 import net.jojoaddison.domain.enumeration.BookingStatus;
@@ -54,13 +55,13 @@ public class BookingSeeder {
 
         int n = 0;
         for (SeedFile.SeedRequest r : orEmpty(seed.requests())) {
-            n += save(base(r, shift).scheduledDate(r.requestedDate().plusDays(shift)).scheduledTime(r.requestedTime())
+            n += save(base(r, shift).scheduledDate(r.requestedDate().plusDays(shift)).scheduledTime(SlotTime.parse(r.requestedTime()))
                 .status(BookingStatus.valueOf(r.status())).customerNote(r.note())
                 .raisedAt(atStartOfDay(r.raisedOn(), shift)).reviewed(false));
         }
         for (SeedFile.SeedBooking b : orEmpty(seed.bookings())) {
             BookingStatus status = BookingStatus.valueOf(b.status());
-            Booking booking = base(b, shift).scheduledDate(b.scheduledDate().plusDays(shift)).scheduledTime(b.scheduledTime())
+            Booking booking = base(b, shift).scheduledDate(b.scheduledDate().plusDays(shift)).scheduledTime(SlotTime.parse(b.scheduledTime()))
                 .status(status).customerNote(b.customerNote()).onBehalfOf(b.onBehalfOf())
                 .raisedAt(atStartOfDay(b.scheduledDate().minusDays(3), shift))
                 .reviewed(Boolean.TRUE.equals(b.reviewed()));
@@ -73,12 +74,12 @@ public class BookingSeeder {
             n += save(booking);
         }
         for (SeedFile.SeedAppointment a : orEmpty(seed.appointments())) {
-            n += save(base(a, shift).scheduledDate(a.scheduledDate().plusDays(shift)).scheduledTime(a.scheduledTime())
+            n += save(base(a, shift).scheduledDate(a.scheduledDate().plusDays(shift)).scheduledTime(SlotTime.parse(a.scheduledTime()))
                 .status(BookingStatus.valueOf(a.status())).customerNote(a.note())
                 .raisedAt(atStartOfDay(a.scheduledDate().minusDays(2), shift)).reviewed(false));
         }
         for (SeedFile.SeedSession s : orEmpty(seed.sessions())) {
-            n += save(base(s, shift).scheduledDate(s.completedDate().plusDays(shift)).scheduledTime(s.startedTime())
+            n += save(base(s, shift).scheduledDate(s.completedDate().plusDays(shift)).scheduledTime(SlotTime.parse(s.startedTime()))
                 .status(BookingStatus.valueOf(s.status()))
                 .raisedAt(atStartOfDay(s.completedDate().minusDays(5), shift))
                 .completedAt(atStartOfDay(s.completedDate(), shift))

@@ -89,6 +89,9 @@ public class Ledger implements Serializable {
     @Column(name = "earned_on", nullable = false)
     private LocalDate earnedOn;
 
+    @Column(name = "reversal_of")
+    private String reversalOf;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JsonIgnoreProperties(value = { "entrieses" }, allowSetters = true)
     private Payout payout;
@@ -251,6 +254,19 @@ public class Ledger implements Serializable {
         this.earnedOn = earnedOn;
     }
 
+    public String getReversalOf() {
+        return this.reversalOf;
+    }
+
+    public Ledger reversalOf(String reversalOf) {
+        this.setReversalOf(reversalOf);
+        return this;
+    }
+
+    public void setReversalOf(String reversalOf) {
+        this.reversalOf = reversalOf;
+    }
+
     public Payout getPayout() {
         return this.payout;
     }
@@ -299,6 +315,7 @@ public class Ledger implements Serializable {
             ", serviceRef='" + getServiceRef() + "'" +
             ", serviceName='" + getServiceName() + "'" +
             ", earnedOn='" + getEarnedOn() + "'" +
+            ", reversalOf='" + getReversalOf() + "'" +
             "}";
     }
 }

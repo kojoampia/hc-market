@@ -61,9 +61,8 @@
     },
     {
       "fieldName": "scheduledTime",
-      "fieldType": "String",
-      "fieldValidateRules": ["required", "maxlength"],
-      "fieldValidateRulesMaxlength": "5"
+      "fieldType": "LocalTime",
+      "fieldValidateRules": ["required"]
     },
     {
       "fieldName": "deliveryMode",

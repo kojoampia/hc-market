@@ -165,7 +165,7 @@ public class MarketplaceService {
 
     public List<AvailabilityDay> availability(String reference, LocalDate from, LocalDate to) {
         Map<LocalDate, List<String>> byDate = new LinkedHashMap<>();
-        marketplace.findFreeSlots(reference, from, to).forEach(slot -> byDate.computeIfAbsent(slot.getSlotDate(), d -> new ArrayList<>()).add(slot.getSlotTime()));
+        marketplace.findFreeSlots(reference, from, to).forEach(slot -> byDate.computeIfAbsent(slot.getSlotDate(), d -> new ArrayList<>()).add(SlotTime.format(slot.getSlotTime())));
         return byDate.entrySet().stream().map(e -> new AvailabilityDay(e.getKey(), e.getValue())).toList();
     }
 

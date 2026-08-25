@@ -8,6 +8,7 @@ import java.time.LocalTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
+import net.jojoaddison.service.SlotTime;
 import net.jojoaddison.domain.Booking;
 import net.jojoaddison.domain.enumeration.BookingStatus;
 import net.jojoaddison.domain.enumeration.CancelledBy;
@@ -89,7 +90,7 @@ public class CustomerBookingResource {
             .priceMinor(request.priceMinor())
             .currency(request.currency() == null ? "GHS" : request.currency())
             .scheduledDate(request.scheduledDate())
-            .scheduledTime(request.scheduledTime())
+            .scheduledTime(SlotTime.parse(request.scheduledTime()))
             .deliveryMode(DeliveryMode.valueOf(request.deliveryMode()))
             .status(BookingStatus.REQUESTED)
             .customerNote(request.customerNote())
@@ -123,7 +124,7 @@ public class CustomerBookingResource {
     public CancellationPreview cancellationPreview(@PathVariable String ref) {
         Booking booking = mineOr404(ref);
         Instant now = Instant.now();
-        Instant scheduled = booking.getScheduledDate().atTime(safeTime(booking.getScheduledTime())).toInstant(ZoneOffset.UTC);
+        Instant scheduled = booking.getScheduledDate().atTime(booking.getScheduledTime()).toInstant(ZoneOffset.UTC);
         long hours = Duration.between(now, scheduled).toHours();
         return new CancellationPreview(
             booking.getReference(),
@@ -191,7 +192,7 @@ public class CustomerBookingResource {
             b.getServiceName(),
             b.getProfessionalRef(),
             b.getScheduledDate(),
-            b.getScheduledTime(),
+            SlotTime.format(b.getScheduledTime()),
             b.getStatus() == null ? null : b.getStatus().name(),
             split.grossMinor(),
             split.commissionMinor(),
@@ -248,13 +249,5 @@ public class CustomerBookingResource {
     private String currentLogin() {
         return SecurityUtils.getCurrentUserLogin()
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "no authenticated customer"));
-    }
-
-    private static LocalTime safeTime(String hhmm) {
-        try {
-            return LocalTime.parse(hhmm);
-        } catch (RuntimeException e) {
-            return LocalTime.NOON;
-        }
     }
 }
