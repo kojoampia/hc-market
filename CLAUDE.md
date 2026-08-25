@@ -188,6 +188,13 @@ then fails with `class [Ljava.lang.Object; cannot be cast to class java.lang.Num
 says nothing about the real cause. Declare `List<Object[]>` and take `.get(0)`. See
 `EarningsRepository.lifetime`.
 
+### `modernizer` fails the build on old idioms
+
+`org.gaul:modernizer-maven-plugin` runs during `verify` and rejects things like `String.format(...)`
+in favour of `"...".formatted(...)`. It fires **after** the tests pass, so the symptom is
+`Tests run: 64, Failures: 0` followed by `BUILD FAILURE` — which reads as a flaky build rather than
+a lint rule. Check `Found N violations` before assuming anything worse.
+
 ### `TechnicalStructureTest` forbids `broker` from touching anything
 
 The generated ArchUnit rule lets only `repository`, `service`, `security`, `web` and `config` reach
