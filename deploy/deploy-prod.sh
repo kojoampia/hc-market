@@ -173,6 +173,22 @@ preflight() {
   (( DRY_RUN )) || ssh -o BatchMode=yes -o ConnectTimeout=8 "$HOST" 'docker compose version >/dev/null' \
     || die "cannot reach $HOST over ssh, or docker compose v2 is missing there"
   ok "host reachable"
+
+  # Both networks are declared `external: true`, so compose will not create them and `up` fails
+  # outright if either is absent. They belong to the host, not to this stack: infranet carries
+  # Kafka, Consul and the databases (~/webroot/00-infrastructure), monitoring carries the shared
+  # otel-collector (~/webroot/02-monitoring).
+  #
+  # Checked here rather than discovered at `up`, because the tempting fix at that point is to
+  # delete the network line -- and for `monitoring` that "fix" is silent: the stack comes up
+  # healthy, serves correctly, and never reports another span.
+  log "checking host networks"
+  for net in "${HC_NETWORK:-infranet}" "${HC_MONITORING_NETWORK:-monitoring}"; do
+    (( DRY_RUN )) && { printf '%s  [dry-run] docker network inspect %s%s\n' "$c_dim" "$net" "$c_reset"; continue; }
+    ssh -o BatchMode=yes "$HOST" "docker network inspect $net >/dev/null 2>&1" \
+      || die "the '$net' network does not exist on $HOST. It is host-wide and this stack does not create it — start the owning stack first. Do NOT drop it from docker-compose.prod.yml."
+    ok "network $net present"
+  done
 }
 
 confirm() {

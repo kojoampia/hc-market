@@ -174,6 +174,13 @@ fails at run time against a 404. Delete `CategoryResourceIT`, `ReviewResourceIT`
 **Restore the two fixtures**, which regeneration replaces with real test classes:
 `BookingResourceIT` (0 tests → 139) and `ProfessionalResourceIT` (0 tests → 120).
 
+**And `pom.xml`, in all five.** The OpenTelemetry block — the `opentelemetry-javaagent.version`
+property, the `maven-dependency-plugin` execution that fetches the agent, and the `jib-maven-plugin`
+`extraDirectories` override — is hand-written in a generated file. Losing it is **completely
+silent**: the build succeeds, the image is produced, it simply has no agent and the service goes
+quiet on the dashboards. CI checks for it by name (`build.yml`, *"Every pom must still carry the
+OpenTelemetry wiring"*), which is the only reason this one is likely to be noticed.
+
 **Never name a hand-written class after one the JDL generates.** `service Booking with
 serviceClass` makes JHipster generate `BookingService`, so hand-written logic there is silently
 replaced on the next regeneration and the failure is a wall of "cannot find symbol" on methods that
@@ -269,6 +276,43 @@ at all. The dev compose file's healthcheck and `deploy-dev.sh`'s topic creation 
 `kafka-topics.sh`, so with the native image Kafka **never reports healthy**, every app blocks on
 `depends_on: condition: service_healthy`, and the script sits on `waiting for Kafka` until it times
 out — with no error explaining why. Use **`apache/kafka:3.9.0`**, the JVM image.
+
+### Jib's `extraDirectories` needs `combine.self="override"`, or the agent silently vanishes
+
+JHipster's `pluginManagement` declares the simple form:
+
+```xml
+<extraDirectories><paths>src/main/docker/jib</paths></extraDirectories>
+```
+
+Adding a second path at the plugin level using the `<path><from>…</from><into>…</into></path>` form
+does **not** replace it. Maven's default configuration merge keeps the managed element's text
+content, and the child elements are dropped. Nothing fails: `BUILD SUCCESS`, `Built image to Docker
+daemon`, `/entrypoint.sh` present and executable — and `/app/otel-javaagent.jar` simply not there.
+
+The only way to see it is to look inside the image:
+
+```bash
+./mvnw -o package -DskipTests jib:dockerBuild -Djib.to.image=check:local
+docker run --rm --entrypoint bash check:local -c 'ls -la /app/otel-javaagent.jar'
+```
+
+`<extraDirectories combine.self="override">` fixes it, and the permissions block has to be restated
+inside the override or the entrypoint loses its `755`.
+
+**The OTel agent must be verified as instrumenting, not merely loading.** `service:up:current` is
+derived from `jvm_thread_count`, which the agent reports from MBeans whether or not it rewrites a
+single application class — so a green tile is not evidence. The check that is:
+
+```bash
+OTEL_TRACES_EXPORTER=logging OTEL_METRICS_EXPORTER=none java -javaagent:… -jar …
+# then hit an endpoint and look for a SERVER span carrying http.route:
+#   'GET /api/professionals/count' : <trace> <span> SERVER [tracer: io.opentelemetry.tomcat-10.0:2.30.0-alpha]
+```
+
+Verified on 2.30.0 with Temurin/Oracle 25: Tomcat `SERVER` spans with `http.route`, plus JDBC spans
+with `db.operation`. hc-patient records that the 2.9.0 older fleet images pin loads, logs its
+banner, exports JVM metrics and rewrites **nothing**, in silence, on a modern JDK.
 
 ### Jib images have no `curl` and no `wget`
 

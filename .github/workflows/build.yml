@@ -158,3 +158,46 @@ jobs:
           compose=$(grep -oE 'GATEWAY_PORT:-[0-9]+' quality/compose.yml | grep -oE '[0-9]+$' | sort -u)
           echo "vhost=$conf compose=$compose"
           test "$conf" = "$compose"
+
+      # The OpenTelemetry wiring lives in pom.xml, and pom.xml is GENERATED — it carries no
+      # jhipster-needle markers, so `jhipster jdl` with the force flag rewrites it wholesale and
+      # drops every line of this. Losing it is completely silent: the build succeeds, the image is
+      # produced, it simply has no agent in it and the service goes quiet on the dashboards.
+      #
+      # combine.self is checked by name because its absence is the subtler half of the same
+      # failure. pluginManagement declares the simple <paths>src/main/docker/jib</paths> form, and
+      # without the override Maven keeps that text content instead of the child elements — build
+      # green, image built, agent absent. Found exactly that way, by looking inside the image.
+      - name: Every pom must still carry the OpenTelemetry wiring
+        run: |
+          fail=0
+          for service in gateway catalog booking messaging payout; do
+            for needle in 'opentelemetry-javaagent' 'otel-javaagent.jar' 'combine.self="override"'; do
+              if ! grep -qF "$needle" "$service/pom.xml"; then
+                echo "::error::$service/pom.xml is missing '$needle' — regeneration drops it. See the checklist in CLAUDE.md."
+                fail=1
+              fi
+            done
+            [ "$fail" = 0 ] && echo "ok   $service/pom.xml"
+          done
+          exit "$fail"
+
+      # An unparseable rules file is only discovered when Mimir silently declines to load it, and
+      # the symptom is an alert that never fires — indistinguishable from a system that is fine.
+      - name: The alert rules must parse and stay uniquely named
+        run: |
+          python3 - <<'PY'
+          import sys, yaml
+          doc = yaml.safe_load(open('deploy/observability/hc-market-rules.yaml'))
+          names = [g['name'] for g in doc['groups']]
+          print('groups:', names)
+          assert len(names) == len(set(names)), 'duplicate group names within the file'
+          # Group names share ONE namespace across every file in Mimir's tenant directory, so a
+          # bare name here could collide with the fleet's shared rules and quietly replace them.
+          bad = [n for n in names if not n.startswith('hc-market-')]
+          assert not bad, f'group names must be prefixed hc-market-: {bad}'
+          for g in doc['groups']:
+              for r in g['rules']:
+                  assert 'alert' in r and 'expr' in r, f'malformed rule in {g["name"]}'
+          print('alerts:', sum(len(g['rules']) for g in doc['groups']))
+          PY

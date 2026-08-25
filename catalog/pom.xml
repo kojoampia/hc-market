@@ -44,6 +44,24 @@
         <jib-maven-plugin.architecture>amd64</jib-maven-plugin.architecture>
         <jib-maven-plugin.image>eclipse-temurin:25-jre-noble</jib-maven-plugin.image>
         <jib-maven-plugin.version>3.5.1</jib-maven-plugin.version>
+        <!--
+            The OpenTelemetry Java agent, baked into the image at /app/otel-javaagent.jar.
+
+            HAND-WRITTEN. pom.xml is generated and carries no jhipster-needle markers, so
+            `jhipster jdl` with the force flag rewrites this file wholesale and drops every OTel line in it.
+            See the regeneration-hazard checklist in CLAUDE.md.
+
+            2.30.0 because that is what hc-patient verified actually instruments on a modern JDK.
+            Do NOT lower it casually: the 2.9.0 that older fleet images pin loads, logs its banner,
+            exports JVM metrics and rewrites not one application class on a recent runtime, in
+            silence. A green "service is up" tile is derived from jvm_thread_count, which the agent
+            reports from MBeans whether or not instrumentation works, so the tile is not evidence.
+            Check for spans.
+
+            Fetched from Maven Central rather than committed: this repository is public and the jar
+            is ~24MB.
+        -->
+        <opentelemetry-javaagent.version>2.30.0</opentelemetry-javaagent.version>
         <lifecycle-mapping.version>1.0.0</lifecycle-mapping.version>
         <liquibase-plugin.password/>
         <liquibase-plugin.url/>
@@ -440,9 +458,71 @@
                 <groupId>com.diffplug.spotless</groupId>
                 <artifactId>spotless-maven-plugin</artifactId>
             </plugin>
+            <!-- HAND-WRITTEN, and lost on regeneration: copies the OpenTelemetry agent where
+                 Jib can pick it up. Bound to prepare-package so it is present before any jib goal. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>fetch-otel-agent</id>
+                        <phase>prepare-package</phase>
+                        <goals>
+                            <goal>copy</goal>
+                        </goals>
+                        <configuration>
+                            <artifactItems>
+                                <artifactItem>
+                                    <groupId>io.opentelemetry.javaagent</groupId>
+                                    <artifactId>opentelemetry-javaagent</artifactId>
+                                    <version>${opentelemetry-javaagent.version}</version>
+                                    <type>jar</type>
+                                    <outputDirectory>${project.build.directory}/otel</outputDirectory>
+                                    <destFileName>otel-javaagent.jar</destFileName>
+                                </artifactItem>
+                            </artifactItems>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>com.google.cloud.tools</groupId>
                 <artifactId>jib-maven-plugin</artifactId>
+                <!-- HAND-WRITTEN, and lost on regeneration. This overrides the generated
+                     extraDirectories wholesale, so the entrypoint.sh permission below has to be
+                     restated here or the container starts with a non-executable entrypoint.
+
+                     The agent is only USED when JAVA_OPTS carries -javaagent, which the production
+                     compose sets and a local run does not. Carrying it unconditionally keeps the
+                     CI-built and locally-built images identical, which is the guarantee
+                     decisions.md D13 exists to protect. -->
+                <configuration>
+                    <!-- combine.self="override" is load-bearing. pluginManagement declares the
+                         simple form, <paths>src/main/docker/jib</paths>, and Maven's default
+                         configuration merge keeps that text content instead of these child
+                         elements. The build still succeeds and the image is still produced; it
+                         just silently lacks the agent, which is only discoverable by looking
+                         inside the image. Verified: without this, /app/otel-javaagent.jar does not
+                         exist and /entrypoint.sh does. -->
+                    <extraDirectories combine.self="override">
+                        <paths>
+                            <path>
+                                <from>src/main/docker/jib</from>
+                                <into>/</into>
+                            </path>
+                            <path>
+                                <from>${project.build.directory}/otel</from>
+                                <into>/app</into>
+                            </path>
+                        </paths>
+                        <permissions>
+                            <permission>
+                                <file>/entrypoint.sh</file>
+                                <mode>755</mode>
+                            </permission>
+                        </permissions>
+                    </extraDirectories>
+                </configuration>
             </plugin>
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>

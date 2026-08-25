@@ -644,6 +644,35 @@ app's alerting rather than everyone's.
 **One sibling pattern does not carry over:** hc-market is API-only, so there is no browser posting to
 a same-origin `/v1/traces` and no nginx proxy hop for it.
 
+**As built (D26 step 2).** Two things differ from the sibling shape, both forced by hc-market having
+no Dockerfiles:
+
+- The agent comes from **Maven Central** (`io.opentelemetry.javaagent:opentelemetry-javaagent`,
+  fetched by `maven-dependency-plugin` into `target/otel/`) rather than being `curl`ed in a
+  Dockerfile or committed. This repository is public and the jar is ~24MB.
+- The Jib `extraDirectories` override needs **`combine.self="override"`**, or Maven keeps
+  `pluginManagement`'s simple `<paths>` form and the agent is silently absent from an image that
+  otherwise builds and runs perfectly. Found by looking inside the image, which is now the only
+  honest way to check.
+
+`JAVA_OPTS` is assembled from **two** variables — `HC_JAVA_OPTS` and `HC_OTEL_JAVA_OPTS` — so an
+operator raising the heap cannot detach the agent by accident. hc-patient folds both into one
+string; here that would be a footgun, because the failure is silent and looks like the service
+simply having nothing to say.
+
+Instrumentation was verified rather than assumed: Tomcat `SERVER` spans carrying `http.route` and
+JDBC spans carrying `db.operation`, on 2.30.0 under Java 25. A green up-tile proves only that the
+agent read some MBeans.
+
+Alert rules live in `deploy/observability/hc-market-rules.yaml`, five alerts in three groups, and
+that file names what deliberately has **no** rule and why — Kafka consumer lag (no series exists),
+seed completeness (a deploy-time check, not runtime), browser signals (no front end), and payout
+settlement failures (no provider is wired, per D15). An absent rule that looks like an oversight
+gets "fixed" later into an alert that cannot fire.
+
+**Installing it is not this repository's job**, exactly as with nginx: the file is staged here and
+the architect copies it to the monitoring stack and restarts Mimir. The instructions are in the file.
+
 ### And the SSE claim, which is not in §13
 
 The spec header advertises **"Kafka, SSE"**. No SSE endpoint is defined in §6 or §7, none is built,

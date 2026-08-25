@@ -27,7 +27,29 @@ x-service-base: &service-base
     JHIPSTER_SECURITY_AUTHENTICATION_JWT_BASE64_SECRET: ${JWT_BASE64_SECRET:?platform JWT secret is required}
     # The seed loader is unreachable under prod regardless; this is the second, explicit lock.
     HEALTHCONNECT_SEED_ENABLED: ${HEALTHCONNECT_SEED_ENABLED:-false}
-    JAVA_OPTS: ${HC_JAVA_OPTS:--Xmx512m -Xms256m}
+    # --- OpenTelemetry -----------------------------------------------------------------------
+    #
+    # PUSH, not scrape. The `monitoring` network below carries the host's shared collector; every
+    # other product in this workspace borrows the same one rather than shipping its own. That stack
+    # deliberately has NO application scrape targets, so the /management/prometheus endpoint these
+    # services expose is read by nothing.
+    #
+    # Nothing needs changing in the monitoring stack for this to appear: its service:* recording
+    # rules aggregate `sum by (service_name)` with no allow-list, so setting OTEL_SERVICE_NAME per
+    # service below is what puts hc-market on the existing dashboards.
+    OTEL_EXPORTER_OTLP_ENDPOINT: ${HC_OTEL_ENDPOINT:-http://otel-collector:4317}
+    OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+    # deployment.environment ONLY. Adding service.version=${HC_TAG} is tempting -- a deploy would
+    # show as a series change -- and it is wrong: the collector turns every resource attribute into
+    # a metric label, so a version that changes each deploy starts a whole new series set and
+    # orphans the old one for the full retention period. The agent picks up a stable version from
+    # the jar manifest by itself.
+    OTEL_RESOURCE_ATTRIBUTES: deployment.environment=production
+
+    # Two variables, not one. If the agent flag were folded into HC_JAVA_OPTS's default, an
+    # operator raising the heap would silently switch telemetry off for that service and nothing
+    # would report an error -- the app would start, serve, and go quiet on the dashboards.
+    JAVA_OPTS: ${HC_JAVA_OPTS:--Xmx512m -Xms256m} ${HC_OTEL_JAVA_OPTS:--javaagent:/app/otel-javaagent.jar}
   # Jib images have no curl and no wget, but they do have bash -- so this speaks HTTP over
   # bash's /dev/tcp rather than shelling out to a tool that is not there.
   healthcheck:
@@ -43,6 +65,9 @@ x-service-base: &service-base
   logging:
     driver: json-file
     options: { max-size: '10m', max-file: '3' }
+  # `default` is infranet (Kafka, Consul, the databases); `monitoring` reaches the shared
+  # otel-collector. Both are host-wide and external -- see the note above the networks block.
+  networks: [default, monitoring]
 
 services:
   gateway:
@@ -52,6 +77,10 @@ services:
       - '${HC_GATEWAY_PORT:-8080}:8080'
     environment:
       <<: *service-env
+      # The identity label every dashboard and recording rule groups by, so it must stay stable
+      # across deploys. Matches the published image name, and distinguishes hc-market from the
+      # sibling stacks that push to the same collector.
+      OTEL_SERVICE_NAME: hc-market-gateway
       # SPRING_MONGODB_URI: Spring Boot 4 renamed spring.data.mongodb.* to spring.mongodb.*
       SPRING_MONGODB_URI: ${HC_GATEWAY_MONGODB_URI:?gateway mongodb uri is required}
 
@@ -60,6 +89,7 @@ services:
     image: ${HC_IMAGE_PREFIX}${HC_IMAGE_SEP}catalog:${HC_TAG}
     environment:
       <<: *service-env
+      OTEL_SERVICE_NAME: hc-market-catalog
       SPRING_DATASOURCE_URL: ${HC_CATALOG_DB_URL:?catalog datasource url is required}
       SPRING_DATASOURCE_USERNAME: ${HC_CATALOG_DB_USER:-healthconnectCatalog}
       SPRING_DATASOURCE_PASSWORD: ${HC_CATALOG_DB_PASSWORD:?catalog datasource password is required}
@@ -69,6 +99,7 @@ services:
     image: ${HC_IMAGE_PREFIX}${HC_IMAGE_SEP}booking:${HC_TAG}
     environment:
       <<: *service-env
+      OTEL_SERVICE_NAME: hc-market-booking
       SPRING_DATASOURCE_URL: ${HC_BOOKING_DB_URL:?booking datasource url is required}
       SPRING_DATASOURCE_USERNAME: ${HC_BOOKING_DB_USER:-healthconnectBooking}
       SPRING_DATASOURCE_PASSWORD: ${HC_BOOKING_DB_PASSWORD:?booking datasource password is required}
@@ -78,6 +109,7 @@ services:
     image: ${HC_IMAGE_PREFIX}${HC_IMAGE_SEP}messaging:${HC_TAG}
     environment:
       <<: *service-env
+      OTEL_SERVICE_NAME: hc-market-messaging
       SPRING_DATASOURCE_URL: ${HC_MESSAGING_DB_URL:?messaging datasource url is required}
       SPRING_DATASOURCE_USERNAME: ${HC_MESSAGING_DB_USER:-healthconnectMessaging}
       SPRING_DATASOURCE_PASSWORD: ${HC_MESSAGING_DB_PASSWORD:?messaging datasource password is required}
@@ -87,6 +119,7 @@ services:
     image: ${HC_IMAGE_PREFIX}${HC_IMAGE_SEP}payout:${HC_TAG}
     environment:
       <<: *service-env
+      OTEL_SERVICE_NAME: hc-market-payout
       SPRING_DATASOURCE_URL: ${HC_PAYOUT_DB_URL:?payout datasource url is required}
       SPRING_DATASOURCE_USERNAME: ${HC_PAYOUT_DB_USER:-healthconnectPayout}
       SPRING_DATASOURCE_PASSWORD: ${HC_PAYOUT_DB_PASSWORD:?payout datasource password is required}
@@ -99,4 +132,9 @@ services:
 networks:
   default:
     name: ${HC_NETWORK:-infranet}
+    external: true
+  # The host's observability stack (~/webroot/02-monitoring/services). External for the same reason
+  # infranet is: it is shared with every other product on the box and is not this stack's to create.
+  monitoring:
+    name: ${HC_MONITORING_NETWORK:-monitoring}
     external: true

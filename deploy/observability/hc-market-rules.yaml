@@ -1,0 +1,161 @@
+# Mimir ruler rules for hc-market.
+#
+# A SEPARATE FILE, not an append to the fleet's shared mimir-rules.yaml. Mimir's local ruler store
+# reads every file in the tenant directory, so this loads alongside the shared one without touching
+# it. hc-admin appended its groups into the shared file; doing the same here would make every future
+# rule change to this stack an edit to a file the whole fleet's alerting depends on, and one YAML
+# mistake would take out alerting for every other application on the box. This costs one volume line
+# in the monitoring stack's compose and buys a blast radius of exactly one application.
+#
+# Group names share ONE namespace across every file in the tenant directory, so all of them carry
+# the hc-market- prefix.
+#
+# ---------------------------------------------------------------------------------------------
+# THIS FILE IS NOT INSTALLED BY THIS REPOSITORY.
+#
+# The architect owns the monitoring stack on webserver, exactly as they own /etc/nginx. This repo
+# provides and stages the artefact; installing it is:
+#
+#     scp deploy/observability/hc-market-rules.yaml \
+#         webserver:~/webroot/02-monitoring/services/configs/
+#     ssh webserver 'cd ~/webroot/02-monitoring/services && docker compose up -d mimir'
+#
+# mounted at /etc/mimir/rules/anonymous/hc-market.yaml. The `anonymous` path segment is
+# load-bearing: multitenancy is disabled, so that is the tenant Mimir looks under, and rules placed
+# at /etc/mimir/rules/rules.yaml are silently ignored. A RESTART is required — the local ruler store
+# does not reliably notice content changes to a file it has already loaded.
+#
+# Confirm the ruler picked them up:
+#     ssh webserver 'docker exec mimir wget -qO- http://127.0.0.1:9009/prometheus/api/v1/rules'
+# ---------------------------------------------------------------------------------------------
+#
+# Label schema, verified against hc-patient's live rules rather than assumed:
+#   service_name                  set by OTEL_SERVICE_NAME in docker-compose.prod.yml
+#   http_response_status_code     the OTel semantic-convention name, NOT `status`
+#   http_server_request_duration_seconds_count   NOT `http_server_requests_seconds_count`,
+#                                                which is the Micrometer/Prometheus name and is
+#                                                scraped by nothing here
+#
+# WHAT DELIBERATELY HAS NO RULE, and why — an absent rule that looks like an oversight gets
+# "fixed" by someone later into an alert that cannot fire:
+#
+#   * Kafka consumer lag. The apps push no consumer-lag metric and the broker is not scraped, so
+#     there is no series to alert on. The outbox is the real guard: a failed publish leaves the row
+#     unsent and deploy/verify-outbox-recovery.sh exercises exactly that path.
+#   * Seed completeness. Production never seeds — it is double-locked on profile and property — so
+#     "0 professionals" is a deploy-time check, not a runtime alert. deploy-prod.sh verifies it.
+#   * Browser/RUM signals. hc-market is API-only. There is no front end, so no page-load or JS-error
+#     series exists.
+#   * Payout settlement failures. No payment provider is wired (decisions.md D15 defers it), so
+#     Payout.status never reaches FAILED by any code path that exists today.
+
+groups:
+  - name: hc-market-availability
+    interval: 30s
+    rules:
+      # The gateway is the only public entrance. If it is down, the estate is down regardless of
+      # what the four services think of themselves.
+      - alert: HcMarketGatewayDown
+        expr: |
+          absent(jvm_thread_count{service_name="hc-market-gateway"})
+        for: 5m
+        labels:
+          severity: critical
+          service: hc-market-gateway
+        annotations:
+          summary: 'hc-market gateway is not reporting'
+          description: >-
+            No telemetry from hc-market-gateway for five minutes. Note this fires on ABSENCE, which
+            also covers "the agent stopped being attached" — check JAVA_OPTS carries
+            -javaagent:/app/otel-javaagent.jar before concluding the service is down. HC_JAVA_OPTS
+            and HC_OTEL_JAVA_OPTS are separate variables precisely so raising the heap cannot
+            detach the agent, but an operator can still override both.
+
+      - alert: HcMarketServiceDown
+        expr: |
+          absent(jvm_thread_count{service_name="hc-market-catalog"})
+            or absent(jvm_thread_count{service_name="hc-market-booking"})
+            or absent(jvm_thread_count{service_name="hc-market-messaging"})
+            or absent(jvm_thread_count{service_name="hc-market-payout"})
+        for: 5m
+        labels:
+          severity: critical
+          service: hc-market
+        annotations:
+          summary: 'An hc-market domain service is not reporting'
+          description: >-
+            Public reads (Discover, Browse) are served by catalog through the gateway, so a catalog
+            outage is customer-visible immediately. booking, messaging and payout degrade the
+            workspace rather than the catalogue.
+
+  - name: hc-market-errors
+    interval: 30s
+    rules:
+      - alert: HcMarketGatewayErrorRateHigh
+        expr: |
+          sum(rate(http_server_request_duration_seconds_count{
+            service_name="hc-market-gateway", http_response_status_code=~"5.."
+          }[5m]))
+            /
+          sum(rate(http_server_request_duration_seconds_count{service_name="hc-market-gateway"}[5m]))
+            > 0.01
+        for: 5m
+        labels:
+          severity: critical
+          service: hc-market-gateway
+        annotations:
+          summary: 'hc-market gateway is returning 5xx for {{ $value | humanizePercentage }} of requests'
+          description: >-
+            Sustained above 1% for five minutes. A 5xx from the gateway on /services/** usually
+            means the downstream service is unreachable rather than erroring — routing is static in
+            production (Consul is development-only here), so check the target container first.
+
+      - alert: HcMarketServiceErrorRateHigh
+        expr: |
+          sum by (service_name) (rate(http_server_request_duration_seconds_count{
+            service_name=~"hc-market-(catalog|booking|messaging|payout)",
+            http_response_status_code=~"5.."
+          }[5m]))
+            /
+          sum by (service_name) (rate(http_server_request_duration_seconds_count{
+            service_name=~"hc-market-(catalog|booking|messaging|payout)"
+          }[5m]))
+            > 0.02
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: '{{ $labels.service_name }} is returning 5xx for {{ $value | humanizePercentage }} of requests'
+          description: >-
+            Two known 500s in this estate look like nothing in the logs and both are worth ruling
+            out early: a one-row aggregate declared as Object[] rather than List<Object[]> throws a
+            ClassCastException naming neither the query nor the caller, and a constraint violation
+            caught inside a @Transactional method still fails at commit as an
+            UnexpectedRollbackException, thrown after the handler returned.
+
+  - name: hc-market-latency
+    interval: 30s
+    rules:
+      # Browse builds every professional card per request, including the rating-view join, and
+      # filters them in Java (decisions.md D19). That is fine at 18 professionals and is the first
+      # thing to degrade as the catalogue grows — this alert is the measurement D19 says to move to
+      # SQL on, rather than moving on a hunch.
+      - alert: HcMarketCatalogLatencyHigh
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(http_server_request_duration_seconds_bucket{
+              service_name="hc-market-catalog"
+            }[5m]))
+          ) > 1
+        for: 10m
+        labels:
+          severity: warning
+          service: hc-market-catalog
+        annotations:
+          summary: 'hc-market catalog p95 is {{ $value | humanizeDuration }}'
+          description: >-
+            If this is Browse rather than a single profile read, it is the in-memory filter path in
+            MarketplaceService and the fix is decisions.md D19 — push filtering, sorting and
+            faceting into SQL with a tsvector GIN index. Keep excluding unrated professionals from
+            minRating when you do; a COALESCE(rating, 0) in the rewrite silently collapses
+            "unrated" and "rated badly" into the same number.
