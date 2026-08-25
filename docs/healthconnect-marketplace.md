@@ -396,6 +396,17 @@ Every endpoint below exists because a prototype screen needs it. Public reads ne
 | `GET`/`PUT` | `/api/pro/profile` | Listing editor |
 | `GET`/`PUT` | `/api/pro/availability` | Working hours |
 
+**Built.** All eleven professional endpoints answer, split by which service owns the data:
+`overview`, `earnings` and `payouts` in **payout**; `requests` and `schedule` in **booking**;
+`services`, `profile`, `availability` and `reviews` in **catalog**. None takes a professional
+parameter — the caller comes from the JWT, and in catalog the ownership is *in the query* rather
+than a check afterwards, so a reference that is not yours simply is not found.
+
+`overview` is the one endpoint that spans services: its "next up" card reads booking's schedule.
+That call has a **2 s timeout** and reports `nextUpAvailable` separately from `nextUp`, so a booking
+outage costs one card rather than the screen — and "nothing is booked" stays distinguishable from
+"could not ask".
+
 **Contract rule.** Chart endpoints return the *rows*, not a rendered series. `/api/pro/earnings` returns per-month `{month, sessions, grossMinor, commissionMinor, netMinor}` — the client draws either the chart or the table view from the same payload, which is exactly how the prototype's chart/table toggle stays honest.
 
 ---

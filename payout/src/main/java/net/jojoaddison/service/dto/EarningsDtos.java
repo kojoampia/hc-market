@@ -51,4 +51,41 @@ public final class EarningsDtos {
 
     /** A breakdown bucket — by delivery format, or by service. {@code label} is null for formats. */
     public record Slice(String key, String label, long sessions, long grossMinor) {}
+
+    /** One row of the payout table. */
+    public record PayoutRow(
+        String reference,
+        java.time.LocalDate periodStart,
+        java.time.LocalDate periodEnd,
+        long grossMinor,
+        long commissionMinor,
+        long netMinor,
+        String currency,
+        String status,
+        java.time.LocalDate settledOn,
+        String bankReference
+    ) {}
+
+    /**
+     * The Overview screen — spec §6's "four stat tiles, both charts, next up".
+     *
+     * <p>{@code nextUp} is nullable, and that is not laziness. It comes from the booking service,
+     * and an overview that fails entirely because booking is restarting would be a worse screen than
+     * one that shows every earnings figure and an empty "next up" card. The other six fields are
+     * this service's own data and are always present.
+     */
+    public record Overview(
+        String professionalLogin,
+        Totals lifetime,
+        MonthToDate monthToDate,
+        long averageSessionValueMinor,
+        List<MonthRow> months,
+        List<Slice> byDeliveryMode,
+        List<Slice> byService,
+        NextUp nextUp,
+        boolean nextUpAvailable
+    ) {}
+
+    /** The next confirmed appointment, as the booking service reports it. */
+    public record NextUp(String bookingReference, String customerName, String serviceName, String scheduledDate, String scheduledTime, String deliveryMode) {}
 }

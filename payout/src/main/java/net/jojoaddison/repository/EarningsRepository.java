@@ -104,4 +104,18 @@ public interface EarningsRepository extends JpaRepository<Ledger, Long> {
      * this on every redelivered event, and the ledger only ever grows.
      */
     boolean existsByBookingReference(String bookingReference);
+
+    /**
+     * The professional reference behind a login.
+     *
+     * <p>{@code Payout} is keyed by {@code professionalRef} while a JWT carries a login, and this
+     * service does not own {@code Professional}. Rather than add a column to an entity that has no
+     * rows yet — or make every payouts read depend on the catalog service being up — the mapping is
+     * taken from the ledger, which already carries both and is written by the same events.
+     *
+     * <p>A professional with no ledger entries has no payouts either, so the empty case is correct
+     * rather than merely tolerable.
+     */
+    @Query("select distinct l.professionalRef from Ledger l where l.professionalLogin = :login")
+    List<String> professionalRefsFor(@Param("login") String login);
 }

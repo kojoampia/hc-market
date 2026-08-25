@@ -252,6 +252,12 @@ healthconnect:
     enabled: false
     file: demo/seed-data.json
     anchor-dates: false
+  # Where the booking service lives. The Overview screen's "next up" card reads the professional's
+  # schedule from it; a failure there degrades the card rather than the screen.
+  booking:
+    base-url: http://healthconnectbooking
+    # Short on purpose: this call decorates one card. See BookingScheduleClient.
+    timeout-ms: 2000
 
 # ===================================================================
 # Liquibase must finish BEFORE the seed loader runs.

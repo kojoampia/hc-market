@@ -53,4 +53,25 @@ public interface MarketplaceQueryRepository extends org.springframework.data.jpa
 
     @Query("select count(r) from Review r")
     long countAllReviews();
+
+    // ------------------------------------------------------ the professional workspace --
+
+    Optional<Professional> findByUserLogin(String userLogin);
+
+    /** The editor lists hidden services too — that is the whole point of a publish toggle. */
+    @Query("select s from ServiceOffering s where s.professional.userLogin = :login order by s.sortOrder, s.name")
+    List<ServiceOffering> findAllServicesForOwner(@Param("login") String login);
+
+    @Query("select s from ServiceOffering s where s.reference = :ref and s.professional.userLogin = :login")
+    Optional<ServiceOffering> findOwnedService(@Param("ref") String reference, @Param("login") String login);
+
+    @Query("select r from Review r where r.professional.userLogin = :login order by r.publishedOn desc")
+    List<Review> findReviewsForOwner(@Param("login") String login);
+
+    @Query("select r from Review r where r.reference = :ref and r.professional.userLogin = :login")
+    Optional<Review> findOwnedReview(@Param("ref") String reference, @Param("login") String login);
+
+    /** Working hours: every slot the professional holds, taken or not, from today onward. */
+    @Query("select s from AvailabilitySlot s where s.professional.userLogin = :login and s.slotDate >= :from order by s.slotDate, s.slotTime")
+    List<AvailabilitySlot> findOwnedSlots(@Param("login") String login, @Param("from") LocalDate from);
 }

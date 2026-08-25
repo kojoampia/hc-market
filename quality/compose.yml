@@ -244,6 +244,8 @@ services:
       <<: *service-env
       SPRING_DATASOURCE_URL: jdbc:postgresql://payout-db:5432/healthconnectPayout
       SPRING_DATASOURCE_USERNAME: healthconnectPayout
+      # Overview's "next up" card. Degrades to nextUpAvailable=false if booking is down.
+      HEALTHCONNECT_BOOKING_BASE_URL: http://booking:8080
       SPRING_LIQUIBASE_CONTEXTS: dev
       HEALTHCONNECT_SEED_ENABLED: "true"
       HEALTHCONNECT_SEED_FILE: /app/seed/seed-data.json

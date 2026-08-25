@@ -228,6 +228,9 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://payout-db:5432/healthconnectPayout
       SPRING_DATASOURCE_USERNAME: healthconnectPayout
       SPRING_LIQUIBASE_CONTEXTS: dev
+      # The Overview screen's "next up" card reads this professional's schedule from booking. A
+      # failure degrades the card (nextUpAvailable=false) rather than the screen.
+      HEALTHCONNECT_BOOKING_BASE_URL: http://booking:8080
       HEALTHCONNECT_SEED_ENABLED: 'true'
       HEALTHCONNECT_SEED_FILE: /app/seed/seed-data.json
       HEALTHCONNECT_SEED_ANCHOR_DATES: ${HEALTHCONNECT_SEED_ANCHOR_DATES:-false}
