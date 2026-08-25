@@ -656,6 +656,62 @@ servlet thread per subscriber, because that service is imperative Spring MVC.
 
 ---
 
+## D26 — What of D15–D25 gets built, and in what order
+
+Four answers, taken 25 August 2026. This ratifies part of the section above and defers the rest.
+
+**Build now: D22 (currency enforcement), D25 (observability), D23 (disputes), D20 (availability
+rules), and the two defects.** Everything else stays a recommendation.
+
+**`slotTime` and `scheduledTime` become `LocalTime` now.** They are `String maxlength(5)` today and
+accept `"7:00"` and `"25:99"`. Changing them rewrites a Liquibase changelog, so it is only cheap
+while no environment holds data worth keeping — **which is true today and will not be true again.**
+Dev and quality schemas get dropped and rebuilt; the generated changelog is a fresh install, not a
+migration, and there is no production to migrate.
+
+**Payments (D15) waits for the provider decision.** Nothing gets built, deliberately. The split
+model makes `Payout` a *reconciliation* against a provider's settlement report; escrow makes it a
+payment the platform executes. That is a structural difference, not a detail behind an interface, so
+a `Charge` written now would be a guess at which — and unpicking the wrong one costs more than the
+delay. The collection gap stays open and stays visible.
+
+**Disputes stop at the hc-market API.** The `Dispute` aggregate, its state machine, the
+`ROLE_BROKERAGE` endpoints and the compensating ledger entry all live here. The desk UI in
+`hc-admin` is deliberately *not* in scope: it is a separate git repository — a second commit at
+minimum — and hc-admin's Bootstrap/`abf-` conventions translate from nothing in this product, so
+guidance written for one inverts for the other. The API can be consumed by a console designed on its
+own schedule.
+
+### Order, and why it is not the order the questions were asked in
+
+**Corrected before any of it was built.** The first version of this list put observability first, on
+the reasoning that it was "configuration only, no generator run, independent of everything else."
+That was wrong. hc-market has **no Dockerfiles** — it builds images with Jib, configured in
+`pom.xml`, and `pom.xml` is generated. It carries no `jhipster-needle-*` markers, so
+`jhipster jdl --force` rewrites it wholesale rather than merging into it. Wiring the agent first
+would have put the whole of D25 in front of a regeneration that discards it.
+
+This is a structural difference from the siblings and not a mistake they could have warned about:
+`hc-patient` bakes its agent in through `docker/gateway.Dockerfile`, a hand-written file in a
+*deploy* repository that no generator touches. hc-market has no such file to edit.
+
+So: regenerate first, then wire, and **add the Jib/OTel pom block to the regeneration-hazard
+checklist**, because the next regeneration will discard it just as readily.
+
+1. **The JDL changes, one regeneration per app** — `LocalTime` in catalog and booking,
+   `AvailabilityRule`/`AvailabilityException` in catalog, `Dispute` in booking. Batched
+   deliberately: `jhipster jdl --force` regenerates *every* entity in an app, so each extra run is
+   another pass through the regeneration-hazard checklist and another chance to drop the
+   `professional_rating` view include or leave an ambiguous mapping behind. Two runs, not four.
+2. **D25 observability** — now that nothing will overwrite it. The agent comes from Maven Central
+   via `maven-dependency-plugin` rather than a jar committed to a public repository.
+3. **Currency enforcement** — service-layer, no generator.
+4. **Availability generation** — the rule-to-slot materialiser.
+5. **Dispute workflow and compensating entries** — the largest, and last because it depends on the
+   `Dispute` entity landing in step 1.
+
+---
+
 ## Still open after this section
 
 Only what engineering cannot settle alone:
@@ -666,3 +722,6 @@ Only what engineering cannot settle alone:
 | D16 | Whether the verification badge's meaning is acceptable given no register exists | Product |
 | D24 | Retention periods, lawful basis, controller registration, data residency | Counsel |
 | D17, D18 | Budget for a video provider and a WhatsApp BSP, if either is wanted | Architect |
+
+D16's *audit* half — recording who verified a professional, when and on what evidence — is an
+engineering gap rather than a product question, but it is not in D26's scope and stays unbuilt.
