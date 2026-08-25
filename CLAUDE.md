@@ -277,6 +277,20 @@ at all. The dev compose file's healthcheck and `deploy-dev.sh`'s topic creation 
 `depends_on: condition: service_healthy`, and the script sits on `waiting for Kafka` until it times
 out — with no error explaining why. Use **`apache/kafka:3.9.0`**, the JVM image.
 
+### Spring Data does not discover nested repository interfaces
+
+Grouping the three availability query repositories as nested interfaces inside one outer class reads
+well and does not work. The repository scanner creates no beans for them, and the failure arrives at
+context startup, in a test rather than a compile:
+
+```
+No qualifying bean of type 'net.jojoaddison.repository.AvailabilityPlanRepository$Rules'
+```
+
+One interface per file. The existing `FavouriteQueryRepository` beside the generated
+`FavouriteRepository` is the pattern to copy — a new top-level file, so regeneration leaves it alone
+while methods added to the generated repository would be discarded.
+
 ### Jib's `extraDirectories` needs `combine.self="override"`, or the agent silently vanishes
 
 JHipster's `pluginManagement` declares the simple form:

@@ -102,6 +102,47 @@ public final class ProDtos {
      */
     public record SetWorkingDay(@NotNull LocalDate date, @NotNull List<@NotBlank @Size(max = 5) String> slots) {}
 
+    // ------------------------------------------------------------------ availability rules --
+    //
+    // decisions.md D20. The rule is what a professional edits; the slot is what a customer books.
+    // Times cross the wire as HH:mm, the same five characters slots have always used, so nothing
+    // downstream has to learn a second time format.
+
+    public record RuleView(
+        Long id,
+        String weekday,
+        String startTime,
+        String endTime,
+        Integer slotMinutes,
+        LocalDate validFrom,
+        LocalDate validUntil,
+        boolean active
+    ) {}
+
+    public record SaveRule(
+        @NotBlank String weekday,
+        @NotBlank @Size(max = 5) String startTime,
+        @NotBlank @Size(max = 5) String endTime,
+        @NotNull Integer slotMinutes,
+        @NotNull LocalDate validFrom,
+        LocalDate validUntil,
+        Boolean active
+    ) {}
+
+    /** {@code closed} true means no sessions that day; false with a window means those hours instead. */
+    public record OverrideView(Long id, LocalDate date, boolean closed, String startTime, String endTime, String note) {}
+
+    public record SaveOverride(
+        @NotNull LocalDate date,
+        @NotNull Boolean closed,
+        @Size(max = 5) String startTime,
+        @Size(max = 5) String endTime,
+        @Size(max = 200) String note
+    ) {}
+
+    /** What a generation run actually did, so the professional sees the effect rather than assuming it. */
+    public record GeneratedView(LocalDate from, LocalDate to, int created, int removed, int daysClosed, int keptBecauseTaken) {}
+
     // -------------------------------------------------------------------- reviews --
 
     /**

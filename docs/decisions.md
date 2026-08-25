@@ -543,6 +543,35 @@ only by the accident of zero-padded 24-hour text, and it accepts `"7:00"` and `"
 `scheduledTime` on `Booking` has the same shape. Both should be `LocalTime`. That is a JDL change, so
 it rewrites a Liquibase changelog and needs a real migration rather than a regeneration.
 
+**As built (D26 step 4).** `AvailabilityRule` + `AvailabilityOverride` → `AvailabilityPlanner`, with
+rule management on `/api/pro/**` because the generated `AvailabilityRuleResource` and
+`AvailabilityOverrideResource` were **deleted**: their unscoped CRUD on `/api/availability-rules`
+would have let any authenticated user edit anyone's working hours. That is the same disclosure the
+hand-written `FavouritesResource` exists to prevent, and adding two more of them would have been a
+regression dressed as a feature.
+
+Three decisions worth having written down:
+
+- A window is **exclusive of its end**. 07:00–11:00 at 60 minutes is four sessions, the last starting
+  at 10:00 — not five, with one running past the hours the professional set.
+- An override that opens different hours **borrows the slot length** from a rule on that weekday, so
+  "same sessions, different time" does not silently change how long a session is.
+- Generation is **explicit**, not scheduled. There is no scheduler in this estate and inventing one
+  here would be a second thing to operate; a professional generating their own calendar also gets to
+  see what changed, which is what the response reports.
+
+**The guarantee that matters, and it is tested:** generation *never* removes a slot that is taken,
+including when a day is closed. A booked appointment is a commitment to a customer, and deleting it
+by editing working hours would cancel someone's session without telling them.
+`ProWorkspaceResource.setAvailability` already refuses for that reason, and generation must not
+become a way around that refusal — "close this day" is precisely the operation that would try.
+
+**Known limitation, stated rather than hidden.** Generation is additive on ordinary rule days, so a
+hand-edited day is authoritative only until the next run. Making a day genuinely different means
+recording an override. Fixing that properly needs an origin marker on the slot so generated and
+hand-added rows can be told apart; without one, any deletion rule is a guess about which of two
+sources of truth wins, and guessing wrong deletes a professional's working day.
+
 ### D21 — Time zones: keep Africa/Accra, but store it instead of assuming it
 
 **Recommended: the booking's wall clock stays as written, and gains an explicit `zoneId` defaulting

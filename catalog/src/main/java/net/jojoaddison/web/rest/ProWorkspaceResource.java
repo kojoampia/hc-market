@@ -9,6 +9,16 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import net.jojoaddison.service.SlotTime;
+import java.time.LocalTime;
+import net.jojoaddison.domain.AvailabilityOverride;
+import net.jojoaddison.domain.AvailabilityRule;
+import net.jojoaddison.domain.enumeration.Weekday;
+import net.jojoaddison.service.AvailabilityPlanner;
+import net.jojoaddison.service.dto.marketplace.ProDtos.GeneratedView;
+import net.jojoaddison.service.dto.marketplace.ProDtos.OverrideView;
+import net.jojoaddison.service.dto.marketplace.ProDtos.RuleView;
+import net.jojoaddison.service.dto.marketplace.ProDtos.SaveOverride;
+import net.jojoaddison.service.dto.marketplace.ProDtos.SaveRule;
 import net.jojoaddison.domain.AvailabilitySlot;
 import net.jojoaddison.domain.Credential;
 import net.jojoaddison.domain.Highlight;
@@ -53,6 +63,7 @@ public class ProWorkspaceResource {
     private final CredentialRepository credentials;
     private final HighlightRepository highlights;
     private final MarketplaceService marketplaceService;
+    private final AvailabilityPlanner planner;
 
     public ProWorkspaceResource(
         MarketplaceQueryRepository marketplace,
@@ -61,7 +72,8 @@ public class ProWorkspaceResource {
         ReviewRepository reviews,
         CredentialRepository credentials,
         HighlightRepository highlights,
-        MarketplaceService marketplaceService
+        MarketplaceService marketplaceService,
+        AvailabilityPlanner planner
     ) {
         this.marketplace = marketplace;
         this.services = services;
@@ -70,6 +82,7 @@ public class ProWorkspaceResource {
         this.credentials = credentials;
         this.highlights = highlights;
         this.marketplaceService = marketplaceService;
+        this.planner = planner;
     }
 
     // ------------------------------------------------------------------- services --
@@ -248,6 +261,154 @@ public class ProWorkspaceResource {
             slots.save(new AvailabilitySlot().slotDate(body.date()).slotTime(SlotTime.parse(time)).taken(false).professional(owner));
         }
         return availability(body.date());
+    }
+
+    // --------------------------------------------------------- availability rules --
+    //
+    // decisions.md D20. These endpoints exist HERE, on /api/pro/**, and not as the generated
+    // AvailabilityRuleResource and AvailabilityOverrideResource, which were deleted: their unscoped
+    // CRUD on /api/availability-rules would have let any authenticated user edit anyone's working
+    // hours. Like every other /api/pro/** endpoint, none of these takes a professional parameter --
+    // the owner comes from the JWT subject and nowhere else.
+
+    @GetMapping("/availability/rules")
+    @Transactional(readOnly = true)
+    public List<RuleView> listRules() {
+        return planner.rulesOf(meOrThrow()).stream().map(ProWorkspaceResource::toView).toList();
+    }
+
+    @PostMapping("/availability/rules")
+    public ResponseEntity<RuleView> addRule(@Valid @RequestBody SaveRule body) {
+        Professional owner = meOrThrow();
+        AvailabilityRule rule = apply(new AvailabilityRule(), body).professional(owner);
+        return ResponseEntity.status(HttpStatus.CREATED).body(toView(planner.saveRule(rule)));
+    }
+
+    @PutMapping("/availability/rules/{id}")
+    public RuleView updateRule(@PathVariable Long id, @Valid @RequestBody SaveRule body) {
+        return toView(planner.saveRule(apply(ownedRule(id), body)));
+    }
+
+    @DeleteMapping("/availability/rules/{id}")
+    public ResponseEntity<Void> deleteRule(@PathVariable Long id) {
+        // Deleting a rule stops FUTURE generation. Slots it already materialised stay until a
+        // generation run over a window that no longer justifies them, and taken ones stay
+        // regardless -- see AvailabilityPlanner. Deleting a rule is not a way to cancel bookings.
+        planner.deleteRule(ownedRule(id));
+        return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/availability/overrides")
+    @Transactional(readOnly = true)
+    public List<OverrideView> listOverrides() {
+        return planner.overridesOf(meOrThrow()).stream().map(ProWorkspaceResource::toView).toList();
+    }
+
+    /** One override per date, so saving the same date twice edits it rather than stacking. */
+    @PutMapping("/availability/overrides")
+    public OverrideView saveOverride(@Valid @RequestBody SaveOverride body) {
+        Professional owner = meOrThrow();
+        AvailabilityOverride override = planner.overrideOn(owner, body.date()).orElseGet(AvailabilityOverride::new).professional(owner);
+        override
+            .overrideDate(body.date())
+            .closed(Boolean.TRUE.equals(body.closed()))
+            .startTime(body.startTime() == null ? null : SlotTime.parse(body.startTime()))
+            .endTime(body.endTime() == null ? null : SlotTime.parse(body.endTime()))
+            .note(body.note());
+        return toView(planner.saveOverride(override));
+    }
+
+    @DeleteMapping("/availability/overrides/{date}")
+    public ResponseEntity<Void> deleteOverride(@PathVariable LocalDate date) {
+        planner.overrideOn(meOrThrow(), date).ifPresent(planner::deleteOverride);
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Materialises the rules into bookable slots.
+     *
+     * <p>Explicit rather than scheduled: there is no scheduler in this estate, and inventing one
+     * here would be a second thing to operate. A professional generating their own calendar also
+     * gets to see what changed, which {@link GeneratedView} reports.
+     */
+    @PostMapping("/availability/generate")
+    public GeneratedView generate(@RequestParam(required = false) Integer weeks, @RequestParam(required = false) LocalDate from) {
+        Professional owner = meOrThrow();
+        LocalDate start = from == null ? LocalDate.now() : from;
+        int horizon = weeks == null ? planner.defaultHorizonWeeks() : weeks;
+        if (horizon < 1 || horizon > 52) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "weeks must be between 1 and 52");
+        }
+        var result = planner.generate(owner, start, start.plusWeeks(horizon).minusDays(1));
+        return new GeneratedView(
+            result.from(),
+            result.to(),
+            result.created(),
+            result.removed(),
+            result.daysClosed(),
+            result.keptBecauseTaken()
+        );
+    }
+
+    private AvailabilityRule ownedRule(Long id) {
+        String login = me();
+        return planner
+            .rulesOf(meOrThrow())
+            .stream()
+            .filter(r -> r.getId().equals(id))
+            .findFirst()
+            // 404 rather than 403, the same as everywhere else here: a rule that is not yours is
+            // indistinguishable from one that does not exist, and saying which is a disclosure.
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "no such availability rule for " + login));
+    }
+
+    private static AvailabilityRule apply(AvailabilityRule rule, SaveRule body) {
+        LocalTime start = SlotTime.parse(body.startTime());
+        LocalTime end = SlotTime.parse(body.endTime());
+        if (!start.isBefore(end)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "a rule must start before it ends: %s to %s".formatted(start, end));
+        }
+        if (body.validUntil() != null && body.validUntil().isBefore(body.validFrom())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "validUntil is before validFrom");
+        }
+        Weekday weekday;
+        try {
+            weekday = Weekday.valueOf(body.weekday().toUpperCase(java.util.Locale.ROOT));
+        } catch (IllegalArgumentException notADay) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "'%s' is not a weekday".formatted(body.weekday()));
+        }
+        return rule
+            .weekday(weekday)
+            .startTime(start)
+            .endTime(end)
+            .slotMinutes(body.slotMinutes())
+            .validFrom(body.validFrom())
+            .validUntil(body.validUntil())
+            .active(body.active() == null || body.active());
+    }
+
+    private static RuleView toView(AvailabilityRule r) {
+        return new RuleView(
+            r.getId(),
+            r.getWeekday() == null ? null : r.getWeekday().name(),
+            SlotTime.format(r.getStartTime()),
+            SlotTime.format(r.getEndTime()),
+            r.getSlotMinutes(),
+            r.getValidFrom(),
+            r.getValidUntil(),
+            Boolean.TRUE.equals(r.getActive())
+        );
+    }
+
+    private static OverrideView toView(AvailabilityOverride o) {
+        return new OverrideView(
+            o.getId(),
+            o.getOverrideDate(),
+            Boolean.TRUE.equals(o.getClosed()),
+            SlotTime.format(o.getStartTime()),
+            SlotTime.format(o.getEndTime()),
+            o.getNote()
+        );
     }
 
     // -------------------------------------------------------------------- reviews --
