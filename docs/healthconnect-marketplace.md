@@ -78,8 +78,19 @@ instances rather than separate schemas, so a service can be moved to its own hos
 migration. The gateway is the exception: it stores only user accounts, and runs MongoDB so that the
 estate can be uniformly Spring Boot 4 (§3).
 
+**The broker and Consul are borrowed, never bundled — `decisions.md` D27.** No deployment in this
+repository declares either one: dev, quality and production all point at a broker and a Consul that
+some other thing owns, by container name, over a network they declare `external`. Locally and on
+the quality box that is `hc-infra`'s shared plane on `hcnet`; in production it is the host's own
+`infranet` infrastructure, which every sibling product borrows too. Bring the shared plane up before
+either stack; both refuse to start without it, because the failure it prevents is silent — a service
+whose broker is unreachable starts, serves and reports healthy while everything it publishes goes
+nowhere.
+
 Discovery is **Consul**, matching `hc-admin`, `hc-patient` and `hc-professional`. Nothing listens on
-8761.
+8761. Consul **registers; it does not route**: every gateway route in every environment is static,
+so a shared catalogue holding four products' services can never mint a route into somebody else's
+running estate.
 
 ```
                     ┌─────────────┐
@@ -175,6 +186,30 @@ entity AvailabilitySlot {
   taken Boolean required
 }
 
+// ADDED, decisions.md D20/D26. The rule is what a professional edits; the slot is what a customer
+// books. Slots stay materialised rows because `taken` needs a row to LOCK — two customers booking
+// the same 07:00 must collide on a unique constraint, and with availability computed at read time
+// there is nothing to contend on and the double booking is silent.
+entity AvailabilityRule {
+  weekday Weekday required                  // names match java.time.DayOfWeek exactly
+  startTime LocalTime required
+  endTime LocalTime required                // EXCLUSIVE: 07:00–11:00 at 60min is four sessions
+  slotMinutes Integer required min(5) max(480)
+  validFrom LocalDate required
+  validUntil LocalDate                      // null = open-ended
+  active Boolean required
+}
+
+// Named Override, NOT Exception: a JPA entity ending in `Exception` reads as a Throwable wherever
+// it appears, and this repo already paid that tax renaming Thread to Conversation.
+entity AvailabilityOverride {
+  overrideDate LocalDate required
+  closed Boolean required                   // true = no sessions; false + window = those hours
+  startTime LocalTime
+  endTime LocalTime
+  note String maxlength(200)
+}
+
 entity Review {
   reference String required unique
   customerLogin String required             // AMENDED: decisions.md D8
@@ -246,6 +281,39 @@ entity Booking {
 entity BookingStatusChange {
   fromStatus BookingStatus
   toStatus BookingStatus required
+  actor String required
+  occurredAt Instant required
+  note String maxlength(400)
+}
+
+// ADDED, decisions.md D23/D26. A SEPARATE lifecycle from BookingStatus, deliberately: a booking can
+// be disputed and still be completed, so folding disputes into that enum would force one of the two
+// facts to be discarded. Hand-written logic lives in DisputeWorkflow, never DisputeService — the
+// JDL generates that name and regeneration would replace it silently.
+enum DisputeStatus { OPEN, UNDER_REVIEW, RESOLVED, REJECTED }
+
+entity Dispute {
+  reference String required unique
+  bookingReference String required unique   // one dispute per booking, as a schema guarantee
+  raisedBy CancelledBy required
+  raisedByLogin String required
+  professionalRef String required
+  reason String required maxlength(1000)
+  status DisputeStatus required
+  raisedAt Instant required
+  dueBy Instant required                    // the five-working-day promise. RECORDED, NOT ENFORCED:
+                                            // there is no scheduler in this estate, so nothing
+                                            // escalates on expiry. It sorts the desk queue.
+  resolution String maxlength(1000)
+  resolvedBy String
+  resolvedAt Instant
+  refundMinor Long min(0)                   // never negative here; payout applies the sign
+  currency String maxlength(3)
+}
+
+entity DisputeStatusChange {
+  fromStatus DisputeStatus
+  toStatus DisputeStatus required
   actor String required
   occurredAt Instant required
   note String maxlength(400)
@@ -330,6 +398,20 @@ entity Ledger {                       // one row per completed or late-cancelled
   netMinor Long required
   currency String required maxlength(3)
   earnedOn LocalDate required
+  reversalOf String                   // ADDED, decisions.md D23/D26. Set on a compensating entry,
+                                      // naming the booking whose earning it reverses.
+                                      //
+                                      // A reversal CANNOT reuse the original bookingReference —
+                                      // that column is unique and its uniqueness is the guard
+                                      // against a replayed booking.completed double-crediting a
+                                      // professional. So a compensating entry carries the DISPUTE
+                                      // reference in bookingReference (also unique, so a replayed
+                                      // dispute.resolved cannot double-reverse) and records the
+                                      // original here.
+                                      //
+                                      // Session counts must exclude these rows. A bare count(l)
+                                      // reports one MORE session on the day one is reversed, while
+                                      // gross falls — two figures moving in opposite directions.
   payout Payout
 }
 entity Payout {
@@ -406,6 +488,18 @@ Every endpoint below exists because a prototype screen needs it. Public reads ne
 | `GET` | `/api/pro/reviews` · `POST /api/pro/reviews/{ref}/reply` | Reviews and public replies |
 | `GET`/`PUT` | `/api/pro/profile` | Listing editor |
 | `GET`/`PUT` | `/api/pro/availability` | Working hours |
+| `GET`/`POST`/`PUT`/`DELETE` | `/api/pro/availability/rules[/{id}]` | Recurring working hours — **added D20/D26** |
+| `GET`/`PUT`/`DELETE` | `/api/pro/availability/overrides[/{date}]` | A day that departs from the rules — **added D20/D26** |
+| `POST` | `/api/pro/availability/generate?weeks&from` | Materialise rules into bookable slots — **added D20/D26** |
+
+The three availability-rule rows live under `/api/pro/**` **because the generated
+`AvailabilityRuleResource` and `AvailabilityOverrideResource` were deleted.** Their unscoped CRUD on
+`/api/availability-rules` would have let any authenticated user edit anyone's working hours — the
+same disclosure the hand-written `FavouritesResource` exists to prevent.
+
+Generation **never removes a slot that is taken**, including when a day is closed. A booked
+appointment is a commitment to a customer; removing one is a cancellation, and cancellations go
+through the booking service where they raise an event.
 
 **Built.** All eleven professional endpoints answer, split by which service owns the data:
 `overview`, `earnings` and `payouts` in **payout**; `requests` and `schedule` in **booking**;
@@ -418,13 +512,35 @@ That call has a **2 s timeout** and reports `nextUpAvailable` separately from `n
 outage costs one card rather than the screen — and "nothing is booked" stays distinguishable from
 "could not ask".
 
+### Disputes (added D23/D26)
+
+| Method | Path | Who |
+|---|---|---|
+| `GET` | `/api/disputes` | the customer's own disputes |
+| `POST` | `/api/disputes/bookings/{bookingRef}` | a customer raises one, against a completed or no-show booking |
+| `GET` | `/api/disputes/{reference}` | the customer's own, 404 for anyone else's |
+| `GET` | `/api/desk/disputes` | **`ROLE_BROKERAGE`** — the queue, oldest deadline first |
+| `POST` | `/api/desk/disputes/{ref}/review` · `/uphold` · `/reject` | the desk's three decisions |
+
+`ROLE_BROKERAGE`, deliberately not `ROLE_ADMIN`: upholding a dispute writes a compensating entry
+against a professional's earnings, a narrower and more consequential power than general
+administration.
+
+Only **upholding** publishes an event, because only upholding moves money. Payout then writes a
+compensating `Ledger` row — negative amounts, never a deletion or an edit of the original — so the
+ledger stays append-only and every earnings figure remains a plain aggregate. Session counts exclude
+reversals; see the note on `Ledger.reversalOf` in §5.4.
+
+There is **no desk UI here**. D26 stops at the API — the console belongs in `hc-admin`, a separate
+repository.
+
 **Contract rule.** Chart endpoints return the *rows*, not a rendered series. `/api/pro/earnings` returns per-month `{month, sessions, grossMinor, commissionMinor, netMinor}` — the client draws either the chart or the table view from the same payload, which is exactly how the prototype's chart/table toggle stays honest.
 
 ---
 
 ## 7. Kafka
 
-Eight topics, three partitions each, keyed by aggregate reference so per-booking ordering holds. `healthconnect.` prefix; Avro or JSON Schema in the registry; consumers are idempotent on `eventId`.
+**Nine** topics (eight as specified, plus `dispute.resolved` from D23/D26), three partitions each, keyed by aggregate reference so per-booking ordering holds. `healthconnect.` prefix; Avro or JSON Schema in the registry; consumers are idempotent on `eventId`.
 
 | Topic | Producer | Consumers | Carries |
 |---|---|---|---|
@@ -436,6 +552,7 @@ Eight topics, three partitions each, keyed by aggregate reference so per-booking
 | `review.published` | catalog | messaging | Notify the professional; refresh the rating read model |
 | `payout.settled` | payout | messaging | Notify the professional that money moved |
 | `notification.raised` | any | messaging | Generic fan-in for anything without its own topic |
+| `dispute.resolved` | booking | payout | **Added D23/D26.** Reverse the earning with a compensating ledger entry. Keyed by the BOOKING reference, not the dispute's, so it cannot overtake the booking events it concerns — a consumer that sees "reverse the earning for b-123" before "b-123 completed" has nothing to reverse. Only *upholding* publishes; a rejected dispute changes nothing downstream. |
 
 **Transactional outbox.** Services write the domain change and an `outbox_event` row in one transaction; a Debezium-style poller publishes and marks sent. Without this, a booking can be accepted while the notification is silently lost — the failure mode a prototype never has to think about and a marketplace cannot afford.
 
@@ -602,9 +719,13 @@ What it does, in order:
    skipped here on purpose (`decisions.md` D9): the Cucumber tests stand up Testcontainers, so
    `clean verify` costs minutes per app and wants a Docker daemon that an image build does not have.
    `--with-tests` runs the full verify.
-3. **Infrastructure** — Consul, Kafka, MongoDB for the gateway, one PostgreSQL per domain service;
-   waits on `/v1/status/leader`, waits for Kafka to answer `--list`, then creates all eight topics
-   idempotently.
+3. **Infrastructure** — MongoDB for the gateway and one PostgreSQL per domain service, and *only*
+   those. The broker and Consul are `hc-infra`'s (D27), so preflight asserts them instead: the
+   `hcnet` network exists, both containers are running, Consul has elected a **leader** (it answers
+   `/v1/status/leader` before it has one, and every KV read fails until it does), and the broker
+   answers `kafka-broker-api-versions.sh`. Then it creates the nine topics idempotently on the
+   shared broker — `--if-not-exists` throughout, so topics another stack already made are left
+   exactly as they are.
 4. **Services** — exports the profiles, `HEALTHCONNECT_SEED_ENABLED=true` and the seed mount path,
    starts the five apps, gates on `/management/health` per service with a timeout and dumps the last
    40 log lines on failure.
@@ -612,8 +733,16 @@ What it does, in order:
    **and checks the first professional's derived rating equals the average of its own reviews in the
    seed**. A mismatch fails the run. The rating check is the only one here that would catch a broken
    `professional_rating` view — the counts would all still pass.
-6. **Banner** — gateway URL, Swagger UI, Consul UI, and a note that the prototype is a closed demo
-   and cannot be pointed at this estate.
+6. **Banner** — gateway URL, Swagger UI, the shared plane's Consul UI and broker address (labelled
+   as `hc-infra`'s, not this stack's), and a note that the prototype is a closed demo and cannot be
+   pointed at this estate.
+
+Two things it will not do. It never starts a broker or a Consul — that is D27, and the refusal is
+the point. And it warns, without refusing, when the quality stack is running: one broker means one
+topic set, topic names are compiled into the `@KafkaListener` annotations, and the two estates'
+consumer groups differ — so completing a booking in dev writes a ledger row in quality. Separating
+them needs a configurable topic prefix in the four services, which is application work and is not
+done.
 
 Full script: **Appendix A**. Keep the two in step with `./deploy/sync-appendices.sh`.
 
@@ -736,11 +865,15 @@ Carried over from the prototype's verification discipline, adapted to a backend.
       exactly one ledger row.** Automated as `deploy/verify-cycle.sh`; crosses catalog, booking,
       Kafka and payout. Last run: rating 4.7 (7) → 4.3 (8) on a one-star review, ledger 257 → 258,
       gross +28000, commission 3360, second review refused with 409, booking flagged reviewed.
-- [x] **Killing Kafka mid-accept leaves the booking accepted and the notification pending in the
-      outbox, delivered on recovery.** Automated as `deploy/verify-outbox-recovery.sh`, which stops
-      the broker, accepts a booking, asserts the accept succeeded and the event is UNSENT with no
-      notification raised, then restarts the broker and asserts the row drains and the notification
-      arrives **exactly once**.
+- [x] **Losing the broker mid-accept leaves the booking accepted and the notification pending in the
+      outbox, delivered on recovery.** Automated as `deploy/verify-outbox-recovery.sh`. It used to
+      stop the broker; since D27 there is only one, shared by four products, so stopping it would
+      take the estate down to test one service. It **disconnects the booking container from
+      `hcnet`** instead — the same event from the outbox's point of view, and a strictly better test
+      because nothing else on the host is affected. It then accepts a booking, asserts the accept
+      succeeded and the event is UNSENT with no notification raised, reconnects, and asserts the row
+      drains and the notification arrives **exactly once**. Reconnection is on an `EXIT` trap, so a
+      failure part-way through cannot leave booking off the plane.
 - [ ] A deliberately failing deploy rolls back and the previous tag serves traffic. *(Needs a host.)*
 
 ---
@@ -756,9 +889,15 @@ with the `diff` one-liner in `../CLAUDE.md`.*
 # ==============================================================================
 #  HealthConnect Marketplace — dev / test deployment
 #
-#  Brings up the whole microservice estate locally: Consul, Kafka, MongoDB for the gateway,
-#  one PostgreSQL per domain service, the gateway and the four domain services, then loads
-#  demo/seed-data.json through the test,dev seed loader.
+#  Brings up the whole microservice estate locally: MongoDB for the gateway, one PostgreSQL per
+#  domain service, the gateway and the four domain services, then loads demo/seed-data.json through
+#  the test,dev seed loader.
+#
+#  IT DOES NOT START A BROKER OR A CONSUL, and will not. Both live once, in hc-infra, and every
+#  stack in this estate points at them by container name over the shared `hcnet` network. Start
+#  that first — this script checks it and refuses to continue without it:
+#
+#      cd ~/webroot/01-healthconnect/hc-infra && ./startup.sh
 #
 #  Usage:
 #     ./deploy-dev.sh up                      # build, start everything, seed
@@ -782,6 +921,12 @@ with the `diff` one-liner in `../CLAUDE.md`.*
 #  reactor, exactly as in hc-admin, hc-patient and hc-professional.
 #
 #  Discovery is CONSUL (decisions.md D5), not the JHipster Registry. There is no service on 8761.
+#  Consul REGISTERS these services; it does not route them — the gateway's routes are static, in
+#  docker/docker-compose.dev.yml, exactly as production's are.
+#
+#  Compose service names are `dev-<service>`; the names below are the ones you type. The prefix
+#  exists because compose publishes a service name as a DNS alias on every network it joins, and
+#  `catalog` and `booking` are already claimed on hcnet by the quality stack.
 # ==============================================================================
 set -Eeuo pipefail
 
@@ -804,7 +949,7 @@ TIMEOUT=180
 # mode is an incremental build that silently passes — see the workspace guide.
 JAVA_HOME="${JAVA_HOME:-/usr/lib/jvm/jdk-25.0.2-oracle-x64}"
 
-case "${1:-}" in -h|--help) sed -n '2,32p' "$0"; exit 0 ;; esac
+case "${1:-}" in -h|--help) sed -n '2,43p' "$0"; exit 0 ;; esac
 # the first bare word is the command; anything starting with "-" is an option
 if [[ $# -gt 0 && "$1" != -* ]]; then COMMAND="$1"; shift; else COMMAND="up"; fi
 
@@ -817,10 +962,24 @@ declare -A PORTS=(
   [messaging]="${HC_MESSAGING_PORT:-8083}"
   [payout]="${HC_PAYOUT_PORT:-8084}"
 )
-CONSUL_PORT="${HC_CONSUL_PORT:-8500}"
 export HC_GATEWAY_PORT="${PORTS[gateway]}" HC_CATALOG_PORT="${PORTS[catalog]}" \
        HC_BOOKING_PORT="${PORTS[booking]}" HC_MESSAGING_PORT="${PORTS[messaging]}" \
-       HC_PAYOUT_PORT="${PORTS[payout]}" HC_CONSUL_PORT="$CONSUL_PORT" 
+       HC_PAYOUT_PORT="${PORTS[payout]}"
+
+# The shared infrastructure plane — hc-infra, not this stack. Addressed by CONTAINER NAME, which is
+# what the applications use over hcnet; the published port is only for the banner and for anything
+# on the host that wants the UI. There is no HC_KAFKA_PORT and no HC_CONSUL_PORT here any more:
+# this stack publishes neither, because it runs neither.
+SHARED_NETWORK="${HC_SHARED_NETWORK:-hcnet}"
+SHARED_CONSUL="${HC_SHARED_CONSUL:-hc-shared-quality-consul}"
+SHARED_KAFKA="${HC_SHARED_KAFKA:-hc-shared-quality-kafka}"
+SHARED_CONSUL_UI_PORT="${HC_SHARED_CONSUL_UI_PORT:-18510}"
+SHARED_INFRA_DIR="${HC_SHARED_INFRA_DIR:-$HOME/webroot/01-healthconnect/hc-infra}"
+export HC_SHARED_NETWORK="$SHARED_NETWORK" HC_SHARED_CONSUL="$SHARED_CONSUL" \
+       HC_SHARED_KAFKA="$SHARED_KAFKA"
+
+# Compose service names carry a `dev-` prefix; the CLI names do not. See the header for why.
+compose_name() { printf 'dev-%s' "$1"; }
 
 # --------------------------------------------------------------------- output --
 c_reset=$'\033[0m'; c_dim=$'\033[2m'; c_b=$'\033[1m'
@@ -842,7 +1001,7 @@ while [[ $# -gt 0 ]]; do
     --with-tests) RUN_TESTS=1; shift ;;
     --clean)     DO_CLEAN=1; shift ;;
     --timeout)   TIMEOUT="$2"; shift 2 ;;
-    -h|--help)   sed -n '2,32p' "$0"; exit 0 ;;
+    -h|--help)   sed -n '2,43p' "$0"; exit 0 ;;
     *)           die "unknown option: $1 (try --help)" ;;
   esac
 done
@@ -886,6 +1045,41 @@ preflight() {
     *,prod,*) die "refusing to run the dev script with the 'prod' profile — use deploy-prod.sh" ;;
   esac
   ok "profiles: $PROFILES"
+
+  shared_plane
+}
+
+# The broker and Consul are hc-infra's, on a network this stack declares external. Compose's own
+# error for a missing external network names the network and nothing else, and the error for a
+# missing broker is no error at all — the apps start, serve, report healthy, and everything they
+# publish goes nowhere. So all three are checked here, by name, with the fix printed.
+running() { [[ "$(docker inspect -f '{{.State.Running}}' "$1" 2>/dev/null)" == "true" ]]; }
+shared_plane() {
+  local fix="start it with:  (cd $SHARED_INFRA_DIR && ./startup.sh)"
+  docker network inspect "$SHARED_NETWORK" >/dev/null 2>&1 \
+    || die "the shared network '$SHARED_NETWORK' does not exist — $fix"
+  running "$SHARED_CONSUL" || die "$SHARED_CONSUL is not running — $fix"
+  running "$SHARED_KAFKA"  || die "$SHARED_KAFKA is not running — $fix"
+
+  # A leader, not merely an answering agent: Consul serves /v1/status/leader and `consul members`
+  # before it has elected one, and every KV read fails with "No cluster leader" until it does.
+  docker exec "$SHARED_CONSUL" consul operator raft list-peers >/dev/null 2>&1 \
+    || die "$SHARED_CONSUL has no leader yet — wait, or $fix"
+  docker exec "$SHARED_KAFKA" /opt/kafka/bin/kafka-broker-api-versions.sh \
+    --bootstrap-server localhost:9092 >/dev/null 2>&1 \
+    || die "$SHARED_KAFKA is not answering — wait, or $fix"
+  ok "shared plane: $SHARED_CONSUL (leader elected), $SHARED_KAFKA on $SHARED_NETWORK"
+
+  # ONE BUS, ONE TOPIC SET. Topic names are compiled into the @KafkaListener annotations, so there
+  # is no per-estate prefix and the two estates cannot be separated on the broker. The consumer
+  # groups differ (hc-market-dev-* against hc-market-*), which stops them stealing each other's
+  # partitions — and that is exactly what makes both of them receive every event either publishes.
+  # Completing a booking here writes a ledger row over there. A warning rather than a refusal: it
+  # is a developer's machine and there are legitimate reasons to have both up.
+  if running hc-market-quality-booking; then
+    warn "the hc-market QUALITY stack is running on the same broker — events will cross between the"
+    warn "two estates in both directions. Stop it (quality/startup.sh --local --down) for a clean run."
+  fi
 }
 
 compose() { docker compose -p "$PROJECT" -f "$COMPOSE_FILE" "$@"; }
@@ -930,26 +1124,23 @@ build() {
   ok "images built$( (( RUN_TESTS )) && printf ' (tests passed)' || printf ' (tests skipped)')"
 }
 
+# Databases only. The broker and Consul are already up — preflight refused to get this far
+# otherwise — and neither is a service in this project any more.
 infra_up() {
   step "Infrastructure"
   local dbs=()
   for s in "${SERVICES[@]}"; do dbs+=("${s}-db"); done
-  compose up -d consul kafka "${dbs[@]}"
-  wait_http "consul" "http://localhost:${CONSUL_PORT}/v1/status/leader" 120 || die "Consul did not start"
-  log "waiting for Kafka"
-  local waited=0
-  until docker compose -p "$PROJECT" -f "$COMPOSE_FILE" exec -T kafka \
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1; do
-    (( waited += 3 )); sleep 3
-    (( waited >= 120 )) && die "Kafka did not become ready"
-  done
-  ok "Kafka ready"
-  log "ensuring topics"
+  compose up -d "${dbs[@]}"
+  ok "databases started"
+
+  # Topics on the SHARED broker, via docker exec rather than `compose exec`: it is not this
+  # project's container. --if-not-exists throughout, so topics the quality stack or another product
+  # already created are left exactly as they are — this adds, it never redefines.
+  log "ensuring topics on $SHARED_KAFKA"
   for t in booking.requested booking.accepted booking.declined booking.cancelled \
            booking.completed review.published payout.settled notification.raised \
            dispute.resolved; do
-    docker compose -p "$PROJECT" -f "$COMPOSE_FILE" exec -T kafka \
-      /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 \
+    docker exec "$SHARED_KAFKA" /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 \
       --create --if-not-exists --topic "healthconnect.$t" --partitions 3 --replication-factor 1 >/dev/null
   done
   ok "9 topics present"
@@ -962,7 +1153,8 @@ apps_up() {
   export SEED_HOST_PATH
   : "${JWT_BASE64_SECRET:?set JWT_BASE64_SECRET (one key across the estate — see the workspace guide)}"
   export JWT_BASE64_SECRET
-  compose up -d "${SERVICES[@]}"
+  local names=(); for s in "${SERVICES[@]}"; do names+=("$(compose_name "$s")"); done
+  compose up -d "${names[@]}"
   local failed=0
   for s in "${SERVICES[@]}"; do
     wait_http "$s" "http://localhost:${PORTS[$s]}/management/health" "$TIMEOUT" || failed=1
@@ -1002,10 +1194,12 @@ banner() {
 $c_b HealthConnect Marketplace — dev estate up$c_reset
   Gateway API      http://localhost:${PORTS[gateway]}
   API docs         http://localhost:${PORTS[gateway]}/swagger-ui/index.html
-  Consul UI        http://localhost:${CONSUL_PORT}
-  Kafka bootstrap  localhost:9092
   Profiles         $PROFILES
   Seed             $SEED_FILE
+
+$c_dim  Shared plane (hc-infra, not this stack):$c_reset
+  Consul UI        http://localhost:${SHARED_CONSUL_UI_PORT}/ui  — services register as hc-market-dev-*
+  Kafka            $SHARED_KAFKA:9092 from a container; localhost:19192 from this host
 
 $c_dim  The prototype at docs/Abofonsa_BridgeCare_Marketplace.html is a CLOSED demo: it has no
   fetch calls and no API_BASE hook, so it cannot be pointed at this estate. Driving it from the
@@ -1037,10 +1231,18 @@ case "$COMMAND" in
     done
     verify_seed
     ;;
-  restart) preflight; compose restart "${SERVICES[@]}"; for s in "${SERVICES[@]}"; do
+  restart) preflight
+           names=(); for s in "${SERVICES[@]}"; do names+=("$(compose_name "$s")"); done
+           compose restart "${names[@]}"; for s in "${SERVICES[@]}"; do
              wait_http "$s" "http://localhost:${PORTS[$s]}/management/health" "$TIMEOUT" || true; done ;;
   status)  compose ps ;;
-  logs)    compose logs -f --tail=120 "${SERVICES[@]}" ;;
+  logs)    names=(); for s in "${SERVICES[@]}"; do names+=("$(compose_name "$s")"); done
+           compose logs -f --tail=120 "${names[@]}" ;;
+  # `down` cannot take the shared plane with it and does not try: hc-infra's Consul and Kafka are
+  # not services in this project, and hcnet is external, which is exactly why it is declared that
+  # way. --remove-orphans additionally sweeps the pre-2026-08-31 containers — this stack's own
+  # broker and Consul, and the un-prefixed service containers — which is how you migrate a running
+  # estate onto this file.
   down)
     if (( DO_CLEAN )); then warn "removing containers AND volumes"; compose down -v --remove-orphans;
     else compose down --remove-orphans; fi

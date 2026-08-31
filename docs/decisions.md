@@ -846,6 +846,125 @@ checklist**, because the next regeneration will discard it just as readily.
 
 ---
 
+## D27 — One broker, one Consul, borrowed from `hc-infra`. This repository declares neither.
+
+**Decided 2026-08-31.** No deployment in hc-market runs its own Kafka or its own Consul. Both live
+once, outside this repository, and every stack points at them by container name over a network it
+declares `external`.
+
+| Stack | Broker | Consul | Network |
+|---|---|---|---|
+| `quality/compose.yml` | `hc-shared-quality-kafka:9092` | `hc-shared-quality-consul:8500` | `hcnet`, external, created by `hc-infra/startup.sh` |
+| `deploy/docker/docker-compose.dev.yml` | the same | the same | the same |
+| `deploy/docker/docker-compose.prod.yml` | the host's `kafka:9092` | the host's `consul:8500` | `infranet`, external, host-wide |
+
+Production already worked this way — it borrowed the host's infrastructure from the first deploy,
+the way every sibling product does. The change is that **dev and quality now do too**, and that
+"borrow, never bundle" is now the rule rather than an accident of what production happened to have.
+
+### Why: four brokers is the same as no broker
+
+Until 2026-08-31 `hc-admin`, `hc-professional` and hc-market's quality stack each ran a private
+single-node broker and `hc-patient` ran none, so every cross-product event path in the estate was
+configured, deployed and **never once exercised**. Nothing failed. Each stack came up green, every
+producer's send succeeded, and the topic simply existed more than once. A broken bus gets fixed; a
+bus that is four buses does not, because nothing reports it.
+
+hc-market's *dev* estate was the last holdout, and leaving it there would have preserved the same
+defect in miniature — a five-service estate whose event paths are only ever exercised against a
+broker nothing else can see.
+
+Consul is the same story from the other end. All four stacks had it switched off, so the estate had
+no service inventory at all and Consul's catalogue was empty for four days.
+
+### What this does *not* change: Consul registers, it does not route
+
+The generated gateway ships `spring.cloud.gateway.server.webflux.discovery.locator.enabled: true`.
+That was harmless while the dev estate had a private Consul holding only its own five services. On a
+**shared** Consul the catalogue also holds hc-admin, hc-patient, hc-professional and hc-market's
+quality estate — so the locator would mint routes into other people's running services, and the
+symptom would be a gateway answering correctly most of the time.
+
+So the locator is **`false` in every environment**, with four static routes beneath it, exactly as
+production has always had. Turning it on would not make quality more production-like; it would make
+it less. The four static paths in the dev file are byte-for-byte what the locator used to produce,
+so no client URL changed.
+
+Registration is safe because of two settings, both per service and both non-negotiable:
+`DISCOVERY_PREFER_IP_ADDRESS: "false"` and `DISCOVERY_HOSTNAME` set to the **container** name. These
+containers are on two networks and so have two addresses; Spring picks one and Consul health-checks
+whatever it was handed. Pick the wrong one and the service registers, then flaps critical — and the
+registration reads as the broken thing rather than the address.
+
+KV-backed config stays off. The prefix is empty, and an application reading config from a store with
+nothing in it starts identically to one that does not — right up until somebody adds a key.
+
+### The consequence that cost the most thought: DNS on a shared network
+
+Compose publishes a service's **name** as a DNS alias on **every network it joins**. The dev file's
+services were called `gateway`, `catalog`, `booking`, `messaging`, `payout` — and `catalog` and
+`booking` are already aliases on `hcnet`, claimed by the quality stack. Verified by resolving them
+from an unrelated container: `getent hosts catalog` from `hc-admin-quality-service` answers with
+hc-market **quality**'s catalog.
+
+A second `catalog` on that network does not error. Docker answers with whichever it likes, so the
+quality gateway would have started routing a share of its traffic into the dev catalog, and the dev
+catalog would have verified bookings against the quality booking service. Nothing logs anything.
+
+Three consequences, all in `docker-compose.dev.yml`:
+
+- every service is named **`dev-<service>`**, unique across the host;
+- every service carries an explicit `container_name: hc-market-dev-<service>`;
+- every intra-stack address is a **container name** (`http://hc-market-dev-booking:8080`), never a
+  short service name.
+
+`deploy-dev.sh` keeps the un-prefixed names on its CLI and maps them, so `--services catalog` still
+works.
+
+The **databases deliberately stay off `hcnet`**. Another product has no business reaching this
+stack's Postgres, and keeping them on the project's own network is also what lets them keep the
+short, obvious names (`catalog-db`, `gateway-db`) without ambiguity.
+
+### The consequence that is not solved: dev and quality share a topic set
+
+Topic names are compiled in — `@KafkaListener(topics = "healthconnect.booking.completed")` — so
+there is no per-estate prefix and the two estates cannot be separated on the broker.
+
+Consumer groups **are** distinct (`hc-market-dev-*` against `hc-market-*`), which stops the two
+estates stealing each other's partitions. Distinct groups mean the opposite thing for delivery:
+**both** estates receive every event either one publishes. Completing a booking in dev writes a
+ledger row in quality.
+
+`deploy-dev.sh` warns when it finds the quality stack running, and does not refuse — it is a
+developer's machine and there are legitimate reasons to have both up. Making it *safe* rather than
+merely *visible* needs a configurable topic prefix in booking, payout, messaging and catalog. That
+is application work; it is not done, and it is not in D26's scope.
+
+### What was checked
+
+- `docker network inspect hcnet` and `getent hosts` from three containers, before and after, to
+  establish that the alias collision is real and that the `dev-` prefix removes it.
+- `deploy-dev.sh up --no-build --services catalog` against the live shared plane: the catalog
+  registered as `hc-market-dev-catalog` with **two passing** Consul checks, seeded 18/63 with the
+  derived rating matching, logged **zero** `MessageDeliveryException` (it logs those on a timer when
+  no broker is reachable), and — the point of the exercise — `catalog` still resolved to the quality
+  container from the quality gateway, which continued to serve `/api/professionals/count` = 18
+  throughout.
+- Both stacks' preflights fail with the `hc-infra` command printed when the network or either
+  container is absent.
+
+### The five containers that could not be removed
+
+The pre-migration dev containers had been crash-looping for twelve hours against a `consul` that no
+longer existed. They are wedged in the daemon: `docker stop`, `kill`, `rm -f` and
+`update --restart=no` all return *"tried to kill container, but did not receive an exit event"*.
+Clearing them needs a Docker daemon restart, which would bounce the quality stack, the monitoring
+stack, `hc-infra` and every sibling product on the box — so they were left in place. They are inert
+and hold no ports. `deploy-dev.sh down --remove-orphans` will sweep them once the daemon is next
+restarted.
+
+---
+
 ## Still open after this section
 
 Only what engineering cannot settle alone:

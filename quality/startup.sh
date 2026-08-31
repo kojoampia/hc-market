@@ -8,6 +8,18 @@
 #   ./startup.sh --host=X         a different ssh target (default: jacserver)
 #   ./startup.sh --images=local   use images built here rather than pulling (the default; see below)
 #
+# --- Bring the shared plane up first -----------------------------------------------------------
+#
+# compose.yml declares NO Kafka and NO Consul. Since 2026-08-31 no deployment in this estate does:
+# both live once, in hc-infra, and all four product stacks point at them by container name over the
+# external `hcnet` network. Four brokers was the same as no broker — four disjoint logs, and every
+# cross-product event path configured, deployed and never once exercised.
+#
+#     cd ~/webroot/01-healthconnect/hc-infra && ./startup.sh
+#
+# Preflight checks it and refuses to continue without it, because the failure it prevents is silent:
+# a service whose broker is unreachable starts, serves and reports healthy.
+#
 # --- Where this runs ---------------------------------------------------------------------------
 #
 # On jacserver — ssh alias `jacserver`, 192.168.1.2 on the LAN. Its config lives in
@@ -83,7 +95,7 @@ for arg in "$@"; do
     --clean)     ACTION="clean" ;;
     --host=*)    SSH_HOST="${arg#*=}" ;;
     --images=*)  IMAGES="${arg#*=}" ;;
-    -h|--help)   sed -n '2,45p' "$0"; exit 0 ;;
+    -h|--help)   sed -n '2,63p' "$0"; exit 0 ;;
     *)           die "unknown option: $arg (try --help)" ;;
   esac
 done
@@ -112,6 +124,35 @@ check_ports() {
   [[ "$in_conf" == "$GATEWAY_PORT" ]] \
     || die "host-site.conf proxies to $in_conf but GATEWAY_PORT is $GATEWAY_PORT — nginx would 502. Change both."
   ok "vhost and compose agree on port $GATEWAY_PORT"
+}
+
+# --- The shared plane is hc-infra's, and this stack cannot start without it ----------------------
+#
+# compose.yml declares no broker and no Consul — since 2026-08-31 no deployment in this estate does
+# — and joins `hcnet` as an external network. Compose's own error for a missing external network
+# names the network and stops there; the error for a broker that is simply not running is no error
+# at all, because a service with an unreachable broker starts, serves and reports healthy while
+# everything it publishes goes nowhere. Both are checked here, by name, with the fix printed.
+SHARED_NETWORK="${HC_SHARED_NETWORK:-hcnet}"
+SHARED_CONSUL="${HC_SHARED_CONSUL:-hc-shared-quality-consul}"
+SHARED_KAFKA="${HC_SHARED_KAFKA:-hc-shared-quality-kafka}"
+SHARED_INFRA_DIR="${HC_SHARED_INFRA_DIR:-$HOME/webroot/01-healthconnect/hc-infra}"
+check_shared_plane() {
+  local fix="start it with:  (cd $SHARED_INFRA_DIR && ./startup.sh)"
+  docker network inspect "$SHARED_NETWORK" >/dev/null 2>&1 \
+    || die "the shared network '$SHARED_NETWORK' does not exist — $fix"
+  for c in "$SHARED_CONSUL" "$SHARED_KAFKA"; do
+    [[ "$(docker inspect -f '{{.State.Running}}' "$c" 2>/dev/null)" == "true" ]] \
+      || die "$c is not running — $fix"
+  done
+  # A leader, not merely an answering agent: Consul serves /v1/status/leader before it has elected
+  # one, and every KV read fails with "No cluster leader" until it does.
+  docker exec "$SHARED_CONSUL" consul operator raft list-peers >/dev/null 2>&1 \
+    || die "$SHARED_CONSUL has no leader yet — wait, or $fix"
+  docker exec "$SHARED_KAFKA" /opt/kafka/bin/kafka-broker-api-versions.sh \
+    --bootstrap-server localhost:9092 >/dev/null 2>&1 \
+    || die "$SHARED_KAFKA is not answering — wait, or $fix"
+  ok "shared plane: $SHARED_CONSUL (leader elected), $SHARED_KAFKA on $SHARED_NETWORK"
 }
 
 # --- The estate's shared signing key ------------------------------------------------------------
@@ -222,6 +263,7 @@ esac
 step "Preflight"
 assert_not_production
 check_ports
+check_shared_plane
 resolve_secret
 env_for_compose
 [[ -f "$ROOT/deploy/demo/seed-data.json" ]] || die "no seed at $ROOT/deploy/demo/seed-data.json"

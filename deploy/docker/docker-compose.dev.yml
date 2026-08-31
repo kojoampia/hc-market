@@ -1,17 +1,61 @@
 # ==============================================================================
 #  HealthConnect Marketplace — dev / test estate
 #
-#  Consul, Kafka (KRaft), MongoDB for the gateway, one PostgreSQL per domain service, and the five
-#  applications. Started by ../deploy-dev.sh, which is the only supported entry point — it does the
-#  preflight, topic creation, health gating and seed verification this file cannot express.
+#  MongoDB for the gateway, one PostgreSQL per domain service, and the five applications. Started by
+#  ../deploy-dev.sh, which is the only supported entry point — it does the preflight, topic creation,
+#  health gating and seed verification this file cannot express.
 #
-#  Discovery is Consul, not the JHipster Registry: decisions.md D5, matching hc-admin, hc-patient
-#  and hc-professional.
+#  --- THERE IS NO BROKER AND NO CONSUL HERE, AND THAT IS THE POINT ---------------------------
+#
+#  This file declared its own single-node Kafka and its own `consul agent -dev` until 2026-08-31.
+#  It does not any more, and neither does any other deployment in this estate: both live once, in
+#  hc-infra (~/webroot/01-healthconnect/hc-infra), and every stack points at them by CONTAINER NAME
+#  over the shared `hcnet` network. hc-market's dev estate was the last holdout — the quality stack
+#  moved first, and leaving dev on a private broker would have preserved in miniature exactly the
+#  thing the migration was for.
+#
+#  Four brokers is the same as no broker: four disjoint logs, every cross-service event path
+#  configured and never once exercised, and every stack green while it was wrong.
+#
+#  Bring the shared plane up FIRST — these services depend on it, `hcnet` is external, and compose
+#  refuses to start a stack whose external network does not exist:
+#
+#      cd ~/webroot/01-healthconnect/hc-infra && ./startup.sh
+#
+#  --- WHY EVERY SERVICE NAME HERE STARTS `dev-` ---------------------------------------------
+#
+#  Compose publishes a service's NAME as a DNS alias on every network it joins, and this stack now
+#  joins the network four other stacks are on. `catalog` and `booking` are ALREADY aliases on hcnet,
+#  claimed by hc-market's quality stack — verified by resolving them from an unrelated container.
+#  A second `catalog` there does not error: docker answers with whichever it likes, so the QUALITY
+#  gateway starts routing a share of its traffic into the DEV catalog, and vice versa. Nothing logs
+#  anything. The names are therefore unique across the host, and every intra-stack address below is
+#  a CONTAINER name rather than a short service name for the same reason.
+#
+#  The databases deliberately stay OFF hcnet. Another product has no business reaching this stack's
+#  Postgres, and keeping them off the shared plane is also what lets them keep the short, obvious
+#  names (`catalog-db`, `gateway-db`) without ambiguity.
+#
+#  --- ONE BUS MEANS DEV AND QUALITY SHARE A TOPIC SET ----------------------------------------
+#
+#  Topic names are compiled in (`@KafkaListener(topics = "healthconnect.booking.completed")`), so
+#  there is no per-estate prefix to set. Consumer groups ARE distinct — `hc-market-dev-*` here
+#  against `hc-market-*` in quality/compose.yml — which stops the two estates stealing each other's
+#  partitions, but distinct groups mean the opposite thing for delivery: BOTH estates receive every
+#  event either one publishes. Completing a booking in dev writes a ledger row in quality.
+#
+#  So: do not run this stack and quality/compose.yml at the same time. deploy-dev.sh warns when it
+#  finds both. Making that safe needs a configurable topic prefix in the four services, which is
+#  application work and is not done.
 # ==============================================================================
 name: healthconnect-dev
 
 x-service-base: &service-base
   restart: unless-stopped
+  # `default` is this project's own network — the databases and nothing else. `hcnet` is the shared
+  # application plane where hc-infra's Consul and Kafka live; it is external, and this stack will
+  # not start without it.
+  networks: [default, hcnet]
   environment: &service-env
     # Every service listens on 8080 INSIDE its container, overriding the per-service serverPort
     # the JDL assigns (catalog 8081, booking 8082, ...). Those numbers exist so the apps can run
@@ -19,9 +63,50 @@ x-service-base: &service-base
     # map the wrong one. Host ports still differ -- see the `ports:` entries.
     SERVER_PORT: 8080
     SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-test,dev}
-    SPRING_CLOUD_CONSUL_HOST: consul
+    # --- The shared broker, by container name, and BOTH property names -------------------------
+    #
+    # hc-market talks to Kafka through Spring Kafka directly and reads SPRING_KAFKA_BOOTSTRAP_SERVERS;
+    # its siblings bind through Spring Cloud Stream and read the binder property. Both are set so
+    # that a binding added later cannot quietly point somewhere else.
+    #
+    # NEVER `kafka`. These containers are on hcnet with every other stack, and a short name resolves
+    # across every network a container is on — the broker's own compose file advertises itself as
+    # hc-shared-quality-kafka for precisely this reason.
+    SPRING_KAFKA_BOOTSTRAP_SERVERS: ${HC_SHARED_KAFKA:-hc-shared-quality-kafka}:9092
+    SPRING_CLOUD_STREAM_KAFKA_BINDER_BROKERS: ${HC_SHARED_KAFKA:-hc-shared-quality-kafka}:9092
+    # --- Shared Consul: REGISTERS, does not ROUTE ----------------------------------------------
+    #
+    # Two separate statements, and the second is the one that changed. These five register with
+    # hc-infra's Consul and appear in its catalog with health checks. They no longer ROUTE through
+    # it: see DISCOVERY_LOCATOR_ENABLED on the gateway, which is now false with four static routes
+    # beneath it.
+    #
+    # That is not a preference, it is forced. The generated gateway ships
+    # `discovery.locator.enabled: true`, which was harmless while this stack had a private Consul
+    # holding only its own five services. On the shared one the catalog also holds hc-admin,
+    # hc-patient, hc-professional and hc-market's QUALITY estate — so the locator would mint routes
+    # into other people's running services. Production routes statically anyway, so static routes
+    # here rehearse production rather than diverging from it.
+    #
+    # PREFER_IP_ADDRESS false, and each service sets DISCOVERY_HOSTNAME to its container name below.
+    # These containers are on two networks and so have two addresses; Spring picks one and Consul
+    # health-checks whatever it was handed. Pick the wrong one and the service registers, then flaps
+    # critical — and the registration reads as the broken thing rather than the address.
+    SPRING_CLOUD_CONSUL_HOST: ${HC_SHARED_CONSUL:-hc-shared-quality-consul}
     SPRING_CLOUD_CONSUL_PORT: 8500
-    SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    SPRING_CLOUD_CONSUL_ENABLED: 'true'
+    SPRING_CLOUD_CONSUL_DISCOVERY_ENABLED: 'true'
+    SPRING_CLOUD_CONSUL_DISCOVERY_REGISTER: 'true'
+    SPRING_CLOUD_CONSUL_DISCOVERY_PREFER_IP_ADDRESS: 'false'
+    SPRING_CLOUD_CONSUL_DISCOVERY_HEALTH_CHECK_PATH: /management/health
+    SPRING_CLOUD_CONSUL_DISCOVERY_HEALTH_CHECK_INTERVAL: 10s
+    # KV-backed config stays OFF: the prefix is empty, and an application reading config from a store
+    # with nothing in it starts identically to one that does not — until somebody adds a key.
+    SPRING_CLOUD_CONSUL_CONFIG_ENABLED: 'false'
+    # Never fail-fast. A Consul merely slow to elect a leader would otherwise take all five services
+    # down at startup, making the shared plane a hard dependency. It is meant to be an optional one:
+    # losing it must cost visibility, not the estate.
+    SPRING_CLOUD_CONSUL_CONFIG_FAIL_FAST: 'false'
     # One signing key across the estate. A per-service override here silently wins and the symptom
     # is a successful login followed by 401s from the services — see the workspace guide.
     JHIPSTER_SECURITY_AUTHENTICATION_JWT_BASE64_SECRET: ${JWT_BASE64_SECRET:?set JWT_BASE64_SECRET in deploy/.env}
@@ -42,46 +127,11 @@ x-service-base: &service-base
 
 services:
   # ------------------------------------------------------------- infrastructure --
-  # Every published port is overridable. A workstation running several of these products at once
-  # WILL collide otherwise -- this one already has abofonsa_api on 8080 and a dev_consul on 8500.
-  # Defaults are the spec's ports; deploy-dev.sh reads the same variables for its health gates.
-  consul:
-    image: hashicorp/consul:1.20
-    command: 'consul agent -dev -ui -client 0.0.0.0 -log-level=INFO'
-    ports:
-      - '${HC_CONSUL_PORT:-8500}:8500'
-    healthcheck:
-      test: ['CMD', 'curl', '-f', 'http://localhost:8500/v1/status/leader']
-      interval: 5s
-      timeout: 3s
-      retries: 20
-
-  # apache/kafka, NOT apache/kafka-native. The native image is a GraalVM binary containing only
-  # `kafka.Kafka` -- it ships no /opt/kafka/bin scripts at all. With the native image the healthcheck
-  # below can never pass, so `depends_on: condition: service_healthy` blocks all five apps forever
-  # and deploy-dev.sh sits on "waiting for Kafka" until it times out. Topic creation needs the same
-  # scripts. Fast startup is not worth losing the tooling this estate depends on.
-  kafka:
-    image: apache/kafka:3.9.0
-    ports:
-      - '${HC_KAFKA_PORT:-9092}:9092'
-    environment:
-      KAFKA_NODE_ID: 1
-      KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
-      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-    healthcheck:
-      test: ['CMD-SHELL', '/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1']
-      interval: 10s
-      timeout: 10s
-      retries: 20
-
+  # Databases only. The broker and Consul are hc-infra's — see the header.
+  #
+  # These keep short names because they are on `default` alone: nothing outside this project can
+  # resolve them, so `catalog-db` cannot collide with anybody else's.
+  #
   # The gateway owns users on MongoDB — decisions.md D1. Every domain service is PostgreSQL.
   gateway-db:
     image: mongo:8.0
@@ -135,31 +185,73 @@ services:
       - payout-data:/var/lib/postgresql/data
 
   # ------------------------------------------------------------------ services --
-  gateway:
+  # Every published port is overridable. A workstation running several of these products at once
+  # WILL collide otherwise -- this one already has abofonsa_api on 8080. Defaults are the spec's
+  # ports; deploy-dev.sh reads the same variables for its health gates.
+  #
+  # Nothing here publishes a Consul or Kafka port any more: this stack no longer runs either, and
+  # hc-infra publishes them once, on 18510 and 19192.
+  dev-gateway:
     <<: *service-base
+    container_name: hc-market-dev-gateway
     image: healthconnect/gateway:local
     ports:
       - '${HC_GATEWAY_PORT:-8080}:8080'
     environment:
       <<: *service-env
+      # This service's identity in Consul. `hc-market-dev-` and not `hc-market-`, which is the
+      # quality estate's prefix: registering both under one name would present two estates as
+      # instances of one service, and the health of either would read as the health of both.
+      SPRING_CLOUD_CONSUL_DISCOVERY_HOSTNAME: hc-market-dev-gateway
+      SPRING_CLOUD_CONSUL_DISCOVERY_INSTANCE_ID: hc-market-dev-gateway
+      SPRING_CLOUD_CONSUL_DISCOVERY_SERVICE_NAME: hc-market-dev-gateway
+      # An explicit consumer group. Without one an anonymous group is generated per instance: no
+      # committed offsets, so a restart resumes at the end of the log and everything published in
+      # between is gone. Worse, two applications landing in the same generated group split the
+      # partitions and each sees about half, silently.
+      SPRING_CLOUD_STREAM_DEFAULT_GROUP: hc-market-dev-gateway
       # SPRING_MONGODB_URI, not SPRING_DATA_MONGODB_URI. Spring Boot 4 moved MongoDB config from
       # spring.data.mongodb.* to spring.mongodb.*, and JHipster 9.2.0 generates the new form. The old
       # variable sets a property nobody reads, so application-dev.yml's localhost:27017 wins and the
       # gateway dies in Mongock with "Connection refused ... localhost:27017" -- a message that points
       # at the database, not at the variable name. The sibling stacks use SPRING_MONGODB_URI too.
       SPRING_MONGODB_URI: mongodb://gateway-db:27017/healthconnectGateway
+      # Static routes, and the locator OFF. See the long note on the anchor above: the generated
+      # default is `true`, and on a SHARED Consul that would route this gateway into whatever else
+      # is registered on the host. The four paths below are exactly what the locator used to
+      # produce, so no client URL changes.
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_DISCOVERY_LOCATOR_ENABLED: 'false'
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_0_ID: healthconnectcatalog
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_0_URI: http://hc-market-dev-catalog:8080
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_0_PREDICATES_0: Path=/services/healthconnectcatalog/**
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_0_FILTERS_0: StripPrefix=2
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_1_ID: healthconnectbooking
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_1_URI: http://hc-market-dev-booking:8080
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_1_PREDICATES_0: Path=/services/healthconnectbooking/**
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_1_FILTERS_0: StripPrefix=2
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_2_ID: healthconnectmessaging
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_2_URI: http://hc-market-dev-messaging:8080
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_2_PREDICATES_0: Path=/services/healthconnectmessaging/**
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_2_FILTERS_0: StripPrefix=2
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_3_ID: healthconnectpayout
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_3_URI: http://hc-market-dev-payout:8080
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_3_PREDICATES_0: Path=/services/healthconnectpayout/**
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_3_FILTERS_0: StripPrefix=2
     depends_on:
-      consul: { condition: service_healthy }
-      kafka: { condition: service_healthy }
       gateway-db: { condition: service_healthy }
 
-  catalog:
+  dev-catalog:
     <<: *service-base
+    container_name: hc-market-dev-catalog
     image: healthconnect/catalog:local
     ports:
       - '${HC_CATALOG_PORT:-8081}:8080'
     environment:
       <<: *service-env
+      SPRING_CLOUD_CONSUL_DISCOVERY_HOSTNAME: hc-market-dev-catalog
+      SPRING_CLOUD_CONSUL_DISCOVERY_INSTANCE_ID: hc-market-dev-catalog
+      SPRING_CLOUD_CONSUL_DISCOVERY_SERVICE_NAME: hc-market-dev-catalog
+      SPRING_CLOUD_STREAM_DEFAULT_GROUP: hc-market-dev-catalog
       SPRING_DATASOURCE_URL: jdbc:postgresql://catalog-db:5432/healthconnectCatalog
       SPRING_DATASOURCE_USERNAME: healthconnectCatalog
       # 'faker' is deliberately absent — it loads 30 nonsense rows per entity and makes the seed
@@ -168,45 +260,51 @@ services:
       HEALTHCONNECT_SEED_ENABLED: 'true'
       HEALTHCONNECT_SEED_FILE: /app/seed/seed-data.json
       HEALTHCONNECT_SEED_ANCHOR_DATES: ${HEALTHCONNECT_SEED_ANCHOR_DATES:-false}
-      # POST /api/reviews verifies the booking before accepting a review. Resolved through Consul
-      # inside the estate; the service name is the JHipster baseName, lowercased.
-      HEALTHCONNECT_BOOKING_BASE_URL: http://booking:8080
+      # POST /api/reviews verifies the booking before accepting a review. The CONTAINER name, not
+      # `booking` — that short name belongs to the quality stack on hcnet as well as to this one.
+      HEALTHCONNECT_BOOKING_BASE_URL: http://hc-market-dev-booking:8080
     volumes:
       - ${SEED_HOST_PATH:-../demo}:/app/seed:ro
     depends_on:
-      consul: { condition: service_healthy }
-      kafka: { condition: service_healthy }
       catalog-db: { condition: service_healthy }
 
-  booking:
+  dev-booking:
     <<: *service-base
+    container_name: hc-market-dev-booking
     image: healthconnect/booking:local
     ports:
       - '${HC_BOOKING_PORT:-8082}:8080'
     environment:
       <<: *service-env
+      SPRING_CLOUD_CONSUL_DISCOVERY_HOSTNAME: hc-market-dev-booking
+      SPRING_CLOUD_CONSUL_DISCOVERY_INSTANCE_ID: hc-market-dev-booking
+      SPRING_CLOUD_CONSUL_DISCOVERY_SERVICE_NAME: hc-market-dev-booking
+      SPRING_CLOUD_STREAM_DEFAULT_GROUP: hc-market-dev-booking
       SPRING_DATASOURCE_URL: jdbc:postgresql://booking-db:5432/healthconnectBooking
       SPRING_DATASOURCE_USERNAME: healthconnectBooking
       SPRING_LIQUIBASE_CONTEXTS: dev
       # The receipt modal asks payout for the brokerage split. Fails closed by design.
-      HEALTHCONNECT_PAYOUT_BASE_URL: http://payout:8080
+      HEALTHCONNECT_PAYOUT_BASE_URL: http://hc-market-dev-payout:8080
       HEALTHCONNECT_SEED_ENABLED: 'true'
       HEALTHCONNECT_SEED_FILE: /app/seed/seed-data.json
       HEALTHCONNECT_SEED_ANCHOR_DATES: ${HEALTHCONNECT_SEED_ANCHOR_DATES:-false}
     volumes:
       - ${SEED_HOST_PATH:-../demo}:/app/seed:ro
     depends_on:
-      consul: { condition: service_healthy }
-      kafka: { condition: service_healthy }
       booking-db: { condition: service_healthy }
 
-  messaging:
+  dev-messaging:
     <<: *service-base
+    container_name: hc-market-dev-messaging
     image: healthconnect/messaging:local
     ports:
       - '${HC_MESSAGING_PORT:-8083}:8080'
     environment:
       <<: *service-env
+      SPRING_CLOUD_CONSUL_DISCOVERY_HOSTNAME: hc-market-dev-messaging
+      SPRING_CLOUD_CONSUL_DISCOVERY_INSTANCE_ID: hc-market-dev-messaging
+      SPRING_CLOUD_CONSUL_DISCOVERY_SERVICE_NAME: hc-market-dev-messaging
+      SPRING_CLOUD_STREAM_DEFAULT_GROUP: hc-market-dev-messaging
       SPRING_DATASOURCE_URL: jdbc:postgresql://messaging-db:5432/healthconnectMessaging
       SPRING_DATASOURCE_USERNAME: healthconnectMessaging
       SPRING_LIQUIBASE_CONTEXTS: dev
@@ -216,32 +314,42 @@ services:
     volumes:
       - ${SEED_HOST_PATH:-../demo}:/app/seed:ro
     depends_on:
-      consul: { condition: service_healthy }
-      kafka: { condition: service_healthy }
       messaging-db: { condition: service_healthy }
 
-  payout:
+  dev-payout:
     <<: *service-base
+    container_name: hc-market-dev-payout
     image: healthconnect/payout:local
     ports:
       - '${HC_PAYOUT_PORT:-8084}:8080'
     environment:
       <<: *service-env
+      SPRING_CLOUD_CONSUL_DISCOVERY_HOSTNAME: hc-market-dev-payout
+      SPRING_CLOUD_CONSUL_DISCOVERY_INSTANCE_ID: hc-market-dev-payout
+      SPRING_CLOUD_CONSUL_DISCOVERY_SERVICE_NAME: hc-market-dev-payout
+      SPRING_CLOUD_STREAM_DEFAULT_GROUP: hc-market-dev-payout
       SPRING_DATASOURCE_URL: jdbc:postgresql://payout-db:5432/healthconnectPayout
       SPRING_DATASOURCE_USERNAME: healthconnectPayout
       SPRING_LIQUIBASE_CONTEXTS: dev
       # The Overview screen's "next up" card reads this professional's schedule from booking. A
       # failure degrades the card (nextUpAvailable=false) rather than the screen.
-      HEALTHCONNECT_BOOKING_BASE_URL: http://booking:8080
+      HEALTHCONNECT_BOOKING_BASE_URL: http://hc-market-dev-booking:8080
       HEALTHCONNECT_SEED_ENABLED: 'true'
       HEALTHCONNECT_SEED_FILE: /app/seed/seed-data.json
       HEALTHCONNECT_SEED_ANCHOR_DATES: ${HEALTHCONNECT_SEED_ANCHOR_DATES:-false}
     volumes:
       - ${SEED_HOST_PATH:-../demo}:/app/seed:ro
     depends_on:
-      consul: { condition: service_healthy }
-      kafka: { condition: service_healthy }
       payout-db: { condition: service_healthy }
+
+networks:
+  # The application plane, carrying hc-infra's Consul and Kafka. External because four product
+  # stacks join it and none of them owns it: a network compose owns is a network compose deletes,
+  # and `docker compose down` here would then tear the estate's event bus out from under stacks that
+  # are still running. Created by hc-infra/startup.sh; this stack will not start without it.
+  hcnet:
+    external: true
+    name: ${HC_SHARED_NETWORK:-hcnet}
 
 volumes:
   gateway-data:
