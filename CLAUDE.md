@@ -202,10 +202,12 @@ file, so regeneration leaves it alone. Without it, the generated
 `.pathMatchers("/services/**").authenticated()` returns 401 for Discover and Browse **before
 routing**, and "public reads need no token" is only true if you bypass the gateway.
 
-Two things were made regeneration-proof on purpose and need no re-applying: `SeedProperties` is
-`@Component`-annotated rather than listed on the generated app class, and public read access lives
-in a new `MarketplacePublicSecurityConfiguration` rather than as an edit to the generated
-`SecurityConfiguration`.
+Three things were made regeneration-proof on purpose and need no re-applying: `SeedProperties` is
+`@Component`-annotated rather than listed on the generated app class, public read access lives in a
+new `MarketplacePublicSecurityConfiguration` rather than as an edit to the generated
+`SecurityConfiguration`, and `/internal/**` gets its own new `InternalApiSecurityConfiguration`
+beside it. The internal lookup goes through the hand-written `MarketplaceService` for the same
+reason — a `findByUserLogin` added to the generated `ProfessionalRepository` would be discarded.
 
 `src/test/.../ProfessionalResourceIT.java` is **not a test** — it holds fixtures that four generated
 ITs call. Keep the `...IT` name; the callers are generated and will keep referencing it.
@@ -430,6 +432,13 @@ production points at the host's own `infranet` infrastructure, as it always has.
 the same as no broker — four disjoint logs, every cross-product event path configured and never once
 exercised, every stack green while it was wrong.
 
+**Gateway routes match `/services/<service>/api/**`, not `/**`, and that is a security control.**
+Catalog's `/internal/professionals/{ref}/login` answers an unauthenticated caller — booking holds no
+credential of its own, because this estate has no service-to-service authentication — so the only
+thing keeping it off the internet is that no route matches it (`decisions.md` D28). Widen those four
+predicates in any of the three compose files and the endpoint is public. Nothing is lost by the
+narrowing: every consumer in the repository already goes through `/api/**`.
+
 **Consul registers; it does not route.** `discovery.locator.enabled` is `false` in every
 environment, with static routes beneath it — a shared catalogue holding four products must never be
 able to mint a route into somebody else's running estate. Registration is only safe with
@@ -521,6 +530,13 @@ time.**
 - To exercise a `/api/pro/**` endpoint by hand, mint an HS512 token with the estate's
   `JWT_BASE64_SECRET`: subject is the login, authorities go in the `auth` claim as a
   space-delimited string (`SecurityUtils.AUTHORITIES_CLAIM`).
+- **Nothing a client sends decides what a booking costs or whose it is.** `POST /api/bookings` takes
+  `priceMinor`, `currency` and `serviceName` from the catalogue (D22) and `professionalLogin` from
+  catalog's `/internal/**` lookup (D28); a request that disagrees is 409, an unreachable catalogue is
+  503, never a guess. The fields stay denormalised on the booking on purpose — a receipt must not
+  change when a price is later edited, and the professional's inbox must not have to ask catalog on
+  every read — but *denormalised* is not *unverified*. Adding another client-supplied field that
+  something downstream trusts reopens this.
 - Review integrity is one-directional: there is **no** endpoint to delete a review. The only
   response is a public reply. `bookingReference` is unique, making "one review per booking" a schema
   guarantee.

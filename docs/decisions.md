@@ -965,6 +965,121 @@ restarted.
 
 ---
 
+## D28 — `professionalLogin` is verified against the catalogue, over a path the gateway cannot reach
+
+**Decided 2026-08-31**, closing the first of the two holes D22 recorded and did not fix.
+
+### The hole
+
+`POST /api/bookings` took `professionalLogin` from the request body and stored it unverified. D12
+put it there deliberately — so the professional's *inbox*, a constantly-hit read path, never has to
+ask catalog who a `professionalRef` belongs to — and D22 then closed the price hole beside it while
+explicitly leaving this one open, because the public profile endpoint correctly does not expose
+logins and there was therefore nothing to check against.
+
+The consequence is not a mispriced booking, it is a **misdelivered** one: a caller who sends a
+truthful `professionalRef` with somebody else's login puts a real, valid booking into a professional
+it does not belong to. Every downstream figure stays consistent, because everything derives
+faithfully from the login that was stored. The victim sees a request for a service they do not
+offer; the intended professional sees nothing at all.
+
+### The answer: disclose to the cluster, never to the edge
+
+Catalog gains **`GET /internal/professionals/{ref}/login`**, and it is the *only* thing under
+`/internal/**`. Booking asks it on every create and uses the answer as the authority — a request
+that omits `professionalLogin` gets the catalogue's, and one that disagrees is **409**, the same
+treatment and for the same reason as the price: the realistic cause is a stale profile in the
+wizard, and silently correcting a caller's data teaches it nothing.
+
+Fails closed like the price call: catalog unreachable is **503**, never a guessed login. That
+inverts D12's availability-over-correctness reasoning for exactly the reason D22 gave — availability
+beats correctness on the read, correctness beats availability on the write.
+
+### What actually protects it
+
+**The path, plus the gateway's route predicates, and nothing else.** There is no service-to-service
+authentication in this estate; every service only validates tokens, and booking holds none of its
+own. So the four gateway routes narrow:
+
+```
+-  Path=/services/healthconnectcatalog/**
++  Path=/services/healthconnectcatalog/api/**
+```
+
+`/internal/**` then matches no route at all, and the gateway is the only ingress in every
+environment — quality binds every published port to `127.0.0.1` behind one nginx vhost, and
+production publishes the gateway alone. Narrowing costs nothing: every consumer in the repository
+already goes through `/api/**`, checked before the change.
+
+Catalog also gets an explicit filter chain for `/internal/**` in a **new** file
+(`InternalApiSecurityConfiguration`, the same regeneration-proofing as
+`MarketplacePublicSecurityConfiguration`) rather than relying on what the generated chain does with
+a path none of its matchers mention. `GET` is permitted, everything else denied — and the comment
+says plainly that the chain is not the protection, the routing is.
+
+**The threat model, stated rather than implied.** Anything already inside the estate's docker
+network can read any professional's login. That is the same trust level as being able to reach the
+databases, which are on those networks too. What this closes is the *external* caller, who is the
+one who could previously do it through a documented public endpoint with a valid customer token.
+
+### Rejected
+
+- **A service-to-service token.** Correct in principle and a whole mechanism this estate does not
+  have: something must mint it, hold it, and rotate it alongside the one shared signing key. Worth
+  building when a second internal call needs it; not worth inventing for one field.
+- **Kafka-fed read model.** Catalog publishes `ref → login`, booking projects it locally. No
+  synchronous dependency, and an entire consistency surface — staleness, replay, backfill — for one
+  string on a write path that is already synchronous for the price.
+- **A verify-don't-disclose endpoint** (`POST .../verify-login` returning a boolean). Strictly less
+  disclosure, but it leaves the request body authoritative for a field the caller controls, so
+  booking could still only reject and never *establish* the truth. Disclosure lets the field be
+  dropped from the request entirely, which is where this should end up.
+
+### Found while doing it: production does not route statically
+
+Every document in this repository says production routes statically, and D27 leans on it to justify
+`discovery.locator.enabled: false` in dev and quality. **`docker-compose.prod.yml` sets no routes at
+all and does not disable the locator**, so production routes *dynamically* through a Consul on
+`infranet` that it shares with `hc-admin`, `hc-patient` and `hc-professional`.
+
+Two consequences, and the first is why this is fixed here rather than filed:
+
+1. **The control above would not exist in production.** A locator-derived route is
+   `/services/{serviceId}/**` — the unnarrowed form — so `/internal/**` would be reachable from the
+   internet through the very gateway this decision relies on.
+2. hc-market's production gateway would publish routes to whatever else is registered on that
+   Consul, which is three other products.
+
+So `docker-compose.prod.yml` now carries `DISCOVERY_LOCATOR_ENABLED: "false"` and the same four
+narrowed static routes, making the documentation true rather than aspirational.
+
+### What was checked
+
+Against the running quality stack, with an HS512 `ROLE_CUSTOMER` token minted from the estate's
+signing key — because **no test in this repository can assert this**. Both new ITs talk to their
+service directly, so a green suite says nothing about what the gateway will route.
+
+Before narrowing, that ordinary customer token reached catalog on
+`/services/healthconnectcatalog/management/health` (**200**) and on
+`/services/healthconnectcatalog/internal/professionals/p1/login` (**403** — refused by the service,
+having been proxied to it; against the new catalog image it would have returned the login). After
+narrowing, both are **404** at the gateway with no route, while `/api/professionals/count` and
+`/api/professionals/p1` still answer 200 with the token, the three anonymous public reads still
+answer 200, and booking and messaging still route.
+
+That is the whole control, and it is worth restating why it had to be measured rather than reasoned
+about: `/services/**` is `authenticated()` at the gateway, so an *anonymous* probe returns 401 for
+both the safe and the unsafe case and proves nothing at all.
+
+**Not resolved, and it needs the host to settle:** production's compose services are named
+`gateway`, `catalog`, `booking`, `messaging`, `payout` on the shared external `infranet`, and
+compose publishes a service name as a DNS alias on every network it joins — the exact collision D27
+had to fix on `hcnet`, where `catalog` and `booking` were already claimed. Whether `gateway` is
+already taken on `infranet` by a sibling product cannot be checked from a workstation. The static
+routes above address the *routing* half; the naming half stays open and is listed below.
+
+---
+
 ## Still open after this section
 
 Only what engineering cannot settle alone:
@@ -975,6 +1090,15 @@ Only what engineering cannot settle alone:
 | D16 | Whether the verification badge's meaning is acceptable given no register exists | Product |
 | D24 | Retention periods, lawful basis, controller registration, data residency | Counsel |
 | D17, D18 | Budget for a video provider and a WhatsApp BSP, if either is wanted | Architect |
+| D28 | Whether `gateway` is already a DNS alias on production's `infranet` | Architect, on the host |
 
 D16's *audit* half — recording who verified a professional, when and on what evidence — is an
 engineering gap rather than a product question, but it is not in D26's scope and stays unbuilt.
+
+Engineering items left open on purpose, none of them blocked on anyone:
+
+| # | What | Why not now |
+|---|---|---|
+| D22 | `deliveryMode` still defaults to `ONLINE` when absent from an event, mislabelling the earnings-by-format breakdown | Same class of silent default as the currency one; small, and not on the critical path |
+| D27 | Dev and quality share a topic set, so both receive every event either publishes | Needs a configurable topic prefix in four services; `deploy-dev.sh` warns meanwhile |
+| D25 | The header advertises "Kafka, SSE" and no SSE endpoint exists | Either drop the claim or build it at the reactive gateway; not both, and not by accident |

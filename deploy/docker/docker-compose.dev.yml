@@ -218,24 +218,33 @@ services:
       SPRING_MONGODB_URI: mongodb://gateway-db:27017/healthconnectGateway
       # Static routes, and the locator OFF. See the long note on the anchor above: the generated
       # default is `true`, and on a SHARED Consul that would route this gateway into whatever else
-      # is registered on the host. The four paths below are exactly what the locator used to
-      # produce, so no client URL changes.
+      # is registered on the host.
+      #
+      # --- `/api/**`, NOT `/**`, AND THAT IS A SECURITY CONTROL ------------------------------
+      #
+      # These four predicates are the only thing keeping catalog's /internal/** off the internet
+      # (decisions.md D28). It answers "who owns professional ref p1?" for the booking service, with
+      # no token, because this estate has no service-to-service authentication — so what protects it
+      # is that no gateway route matches it. Widen these back to `/**` and it is public.
+      #
+      # Nothing is lost by narrowing: every consumer in the repository already goes through /api/**,
+      # and /management is reached per-container rather than through the edge.
       SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_DISCOVERY_LOCATOR_ENABLED: 'false'
       SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_0_ID: healthconnectcatalog
       SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_0_URI: http://hc-market-dev-catalog:8080
-      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_0_PREDICATES_0: Path=/services/healthconnectcatalog/**
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_0_PREDICATES_0: Path=/services/healthconnectcatalog/api/**
       SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_0_FILTERS_0: StripPrefix=2
       SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_1_ID: healthconnectbooking
       SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_1_URI: http://hc-market-dev-booking:8080
-      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_1_PREDICATES_0: Path=/services/healthconnectbooking/**
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_1_PREDICATES_0: Path=/services/healthconnectbooking/api/**
       SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_1_FILTERS_0: StripPrefix=2
       SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_2_ID: healthconnectmessaging
       SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_2_URI: http://hc-market-dev-messaging:8080
-      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_2_PREDICATES_0: Path=/services/healthconnectmessaging/**
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_2_PREDICATES_0: Path=/services/healthconnectmessaging/api/**
       SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_2_FILTERS_0: StripPrefix=2
       SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_3_ID: healthconnectpayout
       SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_3_URI: http://hc-market-dev-payout:8080
-      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_3_PREDICATES_0: Path=/services/healthconnectpayout/**
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_3_PREDICATES_0: Path=/services/healthconnectpayout/api/**
       SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_3_FILTERS_0: StripPrefix=2
     depends_on:
       gateway-db: { condition: service_healthy }

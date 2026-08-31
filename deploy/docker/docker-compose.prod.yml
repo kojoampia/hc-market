@@ -83,6 +83,45 @@ services:
       OTEL_SERVICE_NAME: hc-market-gateway
       # SPRING_MONGODB_URI: Spring Boot 4 renamed spring.data.mongodb.* to spring.mongodb.*
       SPRING_MONGODB_URI: ${HC_GATEWAY_MONGODB_URI:?gateway mongodb uri is required}
+      # --- STATIC ROUTES. Production did not have these, and every document said it did ---------
+      #
+      # Found on 2026-08-31 while narrowing the routes for decisions.md D28. This file set nothing
+      # about routing at all, so the generated application.yml won — and it ships
+      # `discovery.locator.enabled: true`. Production was therefore routing DYNAMICALLY through a
+      # Consul on infranet shared with hc-admin, hc-patient and hc-professional, while CLAUDE.md,
+      # decisions.md D27, the spec and both other compose files all asserted it routed statically
+      # and used that as the justification for their own configuration.
+      #
+      # Two things that cost. A locator-derived route is `/services/{serviceId}/**` — the UNNARROWED
+      # form — so catalog's /internal/** would have been reachable from the internet through the
+      # very gateway D28 relies on. And the gateway would publish routes to whatever else happened
+      # to be registered on that Consul, which is three other products.
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_DISCOVERY_LOCATOR_ENABLED: 'false'
+      # `/api/**`, not `/**` — see D28 and the identical note in quality/compose.yml. This is the
+      # only thing keeping /internal/** off the internet.
+      #
+      # The hosts are overridable because these are compose SERVICE names on the shared external
+      # infranet, and compose publishes a service name as a DNS alias on every network it joins —
+      # the exact collision D27 had to fix on hcnet, where `catalog` and `booking` were already
+      # claimed by another stack. Whether `gateway` or any of these is already taken on infranet
+      # cannot be checked from a workstation; if it is, set these to container names rather than
+      # renaming services on a live host.
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_0_ID: healthconnectcatalog
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_0_URI: http://${HC_CATALOG_HOST:-catalog}:8080
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_0_PREDICATES_0: Path=/services/healthconnectcatalog/api/**
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_0_FILTERS_0: StripPrefix=2
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_1_ID: healthconnectbooking
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_1_URI: http://${HC_BOOKING_HOST:-booking}:8080
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_1_PREDICATES_0: Path=/services/healthconnectbooking/api/**
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_1_FILTERS_0: StripPrefix=2
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_2_ID: healthconnectmessaging
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_2_URI: http://${HC_MESSAGING_HOST:-messaging}:8080
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_2_PREDICATES_0: Path=/services/healthconnectmessaging/api/**
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_2_FILTERS_0: StripPrefix=2
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_3_ID: healthconnectpayout
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_3_URI: http://${HC_PAYOUT_HOST:-payout}:8080
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_3_PREDICATES_0: Path=/services/healthconnectpayout/api/**
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_3_FILTERS_0: StripPrefix=2
 
   catalog:
     <<: *service-base

@@ -182,6 +182,37 @@ jobs:
           done
           exit "$fail"
 
+      # catalog's /internal/** answers an UNAUTHENTICATED caller — booking holds no credential of
+      # its own, because this estate has no service-to-service authentication (decisions.md D28).
+      # The only thing keeping it off the internet is that no gateway route matches it, and that
+      # lives in three compose files as four `Path=` predicates each.
+      #
+      # Widen one back to /services/<service>/** and the endpoint is public. Nothing fails, nothing
+      # logs, and every existing check still passes: the public reads work, the private ones work,
+      # the stack is green. Measured before the narrowing went in — an ordinary ROLE_CUSTOMER token
+      # reached catalog on /services/healthconnectcatalog/internal/professionals/p1/login.
+      #
+      # So this asserts the shape rather than the count: every route predicate in every compose file
+      # must end in /api/**.
+      - name: Every gateway route must stay narrowed to /api/**
+        run: |
+          fail=0
+          for f in quality/compose.yml deploy/docker/docker-compose.dev.yml deploy/docker/docker-compose.prod.yml; do
+            n=$(grep -cE 'ROUTES_[0-9]+_PREDICATES_0: *Path=/services/[a-z]+/api/\*\*' "$f" || true)
+            bad=$(grep -nE 'ROUTES_[0-9]+_PREDICATES_0: *Path=' "$f" | grep -vE '/api/\*\*$' || true)
+            if [ -n "$bad" ]; then
+              echo "::error file=$f::a gateway route is not narrowed to /api/** — this publishes catalog's /internal/** to the internet. See decisions.md D28."
+              echo "$bad"
+              fail=1
+            elif [ "$n" != 4 ]; then
+              echo "::error file=$f::expected 4 narrowed gateway routes, found $n"
+              fail=1
+            else
+              echo "ok   $f — 4 routes, all /api/**"
+            fi
+          done
+          exit "$fail"
+
       # An unparseable rules file is only discovered when Mimir silently declines to load it, and
       # the symptom is an alert that never fires — indistinguishable from a system that is fine.
       - name: The alert rules must parse and stay uniquely named

@@ -6,6 +6,7 @@ import java.util.List;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
@@ -82,11 +83,53 @@ public class CatalogClient {
             .orElseThrow(() -> new UnknownOffering("professional " + professionalRef + " does not offer an active service " + serviceRef));
     }
 
+    /**
+     * The login that owns a professional reference — {@code decisions.md} D28.
+     *
+     * <p>This is the second hole D22 recorded and did not close. {@code professionalLogin} came
+     * from the request body and was stored unverified, so a caller sending a truthful
+     * {@code professionalRef} with somebody else's login put a real booking into the wrong inbox —
+     * and nothing downstream disagreed, because every figure derives faithfully from the login that
+     * was stored.
+     *
+     * <p><strong>{@code /internal/**}, not {@code /api/**}, and the difference is the security
+     * control.</strong> The gateway's routes match {@code /services/<service>/api/**}, so this path
+     * is unroutable from outside in every environment; the public profile endpoint deliberately
+     * exposes no login and must stay that way. Widening those predicates publishes this.
+     *
+     * <p>Fails closed like {@link #priceOf}: a catalogue that cannot be reached yields no login,
+     * never a guessed one.
+     *
+     * @throws CatalogUnavailable if the catalogue cannot be reached
+     * @throws UnknownOffering if no professional carries that reference
+     */
+    public String loginOf(String professionalRef) {
+        ProfessionalLogin answer;
+        try {
+            answer = http.get().uri("/internal/professionals/{ref}/login", professionalRef).retrieve().body(ProfessionalLogin.class);
+        } catch (RestClientException unreachable) {
+            // Includes the 404 the endpoint raises for an unknown reference, which RestClient turns
+            // into a RestClientResponseException. Separated below rather than here so that "cannot
+            // ask" and "asked, and there is no such professional" stay different answers.
+            if (unreachable instanceof HttpClientErrorException.NotFound) {
+                throw new UnknownOffering("no such professional: " + professionalRef);
+            }
+            throw new CatalogUnavailable("could not reach the catalog service to confirm who " + professionalRef + " is");
+        }
+        if (answer == null || answer.login() == null || answer.login().isBlank()) {
+            throw new UnknownOffering("no such professional: " + professionalRef);
+        }
+        return answer.login();
+    }
+
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record ProfessionalDetail(List<ServiceView> services) {}
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record ServiceView(String ref, String name, long priceMinor, String currency, boolean active) {}
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record ProfessionalLogin(String reference, String login) {}
 
     /** The catalogue could not be asked. Distinct from "it answered and said no". */
     public static class CatalogUnavailable extends RuntimeException {

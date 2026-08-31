@@ -161,6 +161,25 @@ public class MarketplaceService {
         return marketplace.findByReference(reference).isPresent();
     }
 
+    /**
+     * The login that owns a professional reference — {@code decisions.md} D28.
+     *
+     * <p><strong>Never put this on a public DTO.</strong> {@code ProfessionalCard} and
+     * {@code ProfessionalDetail} deliberately carry no login, and that is what made booking unable
+     * to verify the {@code professionalLogin} its clients sent it. The answer was a second,
+     * unroutable endpoint rather than a new field on the profile — see
+     * {@link net.jojoaddison.web.rest.InternalProfessionalResource}.
+     *
+     * <p>Empty for an unknown reference, and empty for a blank login. The column is
+     * {@code required unique}, so a null cannot be persisted — but {@code @NotNull} says nothing
+     * about the empty string, which is why this filters on blankness rather than on presence.
+     * Callers cannot act differently on the two: both mean the reference cannot be attributed to
+     * anybody.
+     */
+    public Optional<String> loginOf(String reference) {
+        return marketplace.findByReference(reference).map(Professional::getUserLogin).filter(login -> !login.isBlank());
+    }
+
     // ---------------------------------------------------------------- availability --
 
     public List<AvailabilityDay> availability(String reference, LocalDate from, LocalDate to) {

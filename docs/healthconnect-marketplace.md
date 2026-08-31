@@ -451,7 +451,7 @@ Every endpoint below exists because a prototype screen needs it. Public reads ne
 | `GET` | `/api/professionals/{ref}` | Profile — with services, rating, verification |
 | `GET` | `/api/professionals/{ref}/availability?from&to` | Profile and booking wizard step 2 |
 | `GET` | `/api/professionals/{ref}/reviews?page&size` | Profile — paginated reviews |
-| `POST` | `/api/bookings` | Wizard step 4 — creates `REQUESTED` |
+| `POST` | `/api/bookings` | Wizard step 4 — creates `REQUESTED`. Price, currency, service name **and `professionalLogin`** come from the catalogue, never from the body — 409 on disagreement, 503 if catalog cannot be asked |
 | `GET` | `/api/bookings/mine?status` | My bookings — the four tabs |
 | `POST` | `/api/bookings/{ref}/reschedule` | Reschedule modal |
 | `POST` | `/api/bookings/{ref}/cancel` | Cancel modal — returns the fee that will apply |
@@ -511,6 +511,23 @@ than a check afterwards, so a reference that is not yours simply is not found.
 That call has a **2 s timeout** and reports `nextUpAvailable` separately from `nextUp`, so a booking
 outage costs one card rather than the screen — and "nothing is booked" stays distinguishable from
 "could not ask".
+
+### Estate-facing (`/internal/**`, added D28)
+
+| Method | Path | Caller |
+|---|---|---|
+| `GET` | `/internal/professionals/{ref}/login` | **booking**, on every create — who owns this reference |
+
+**Not under `/api/`, and that is the security control.** The gateway's four routes match
+`/services/<service>/api/**` and nothing else, so no request from outside can be routed to
+`/internal/**` in any environment. There is no service-to-service authentication in this estate —
+every service validates JWTs and none holds one of its own — so an unroutable path is what stands in
+for one. Widening those predicates back to `/services/<service>/**` publishes this endpoint.
+
+The threat model, stated rather than implied: anything already on the estate's docker network can
+read any professional's login, which is the same trust level as being able to reach the databases.
+What D28 closes is the **external** caller, who could previously put a booking in someone else's
+inbox through a documented public endpoint with an ordinary customer token.
 
 ### Disputes (added D23/D26)
 
@@ -785,10 +802,15 @@ Full script: **Appendix B**.
 
 ## 13. Open questions
 
-The four architectural gaps are settled in §2. **All twelve questions below now have a proposed
-answer in `decisions.md` D15–D25 — recommendations, not yet ratified, none of them implemented.**
-Each entry there carries the reasoning, what it would cost to build, and whether it is an
-engineering call at all.
+The four architectural gaps are settled in §2. **All twelve questions below have a proposed answer
+in `decisions.md` D15–D25.** Each entry there carries the reasoning, what it would cost to build,
+and whether it is an engineering call at all.
+
+**Four are no longer proposals.** D26 ratified D20 (availability rules), D22 (currency enforcement),
+D23 (disputes) and D25 (observability), and all four are built — the entities are in §5, the
+endpoints in §6, and the checklist in §14 records what was verified. The remaining eight stay
+recommendations: some wait on a decision that is not engineering's to take (D15, D24), the rest are
+listed with the other open engineering items at the end of `decisions.md`.
 
 Three of the questions below are **framed on premises the code contradicts**, and `decisions.md`
 opens by correcting them: there is no care summary stored anywhere (Q10), there is no PostgreSQL
@@ -874,6 +896,23 @@ Carried over from the prototype's verification discipline, adapted to a backend.
       succeeded and the event is UNSENT with no notification raised, reconnects, and asserts the row
       drains and the notification arrives **exactly once**. Reconnection is on an `EXIT` trap, so a
       failure part-way through cannot leave booking off the plane.
+- [x] **A booking cannot be put into somebody else's inbox.** `professionalLogin` is established
+      from catalog's `/internal/professionals/{ref}/login` on every create, not read from the
+      request. Covered by `CustomerBookingCreateIT`: the catalogue's answer is stored when the
+      request agrees and when it omits the field, a disagreeing login is 409 with nothing written,
+      the refusal does not name the real owner, an unreachable catalogue is 503 and an unknown
+      reference 404. `InternalProfessionalResourceIT` covers the endpoint itself, unauthenticated.
+- [x] **`/internal/**` is unreachable through the gateway** — checked against the running quality
+      stack with a minted `ROLE_CUSTOMER` token, because no test in the repository can assert it:
+      both ITs above talk to their service directly, so a green suite is not evidence.
+
+      Before narrowing, an ordinary customer token reached catalog on
+      `/services/healthconnectcatalog/management/health` (**200**) and on
+      `/services/healthconnectcatalog/internal/professionals/p1/login` (**403** — refused by the
+      service, having been proxied to it). After: both **404** at the gateway, no route, while
+      `/api/professionals/count` and `/api/professionals/p1` still answer 200 with the token,
+      `/api/professionals/count`, `/api/categories` and `/api/reviews/count` still answer 200
+      anonymously, and booking and messaging still route.
 - [ ] A deliberately failing deploy rolls back and the previous tag serves traffic. *(Needs a host.)*
 
 ---

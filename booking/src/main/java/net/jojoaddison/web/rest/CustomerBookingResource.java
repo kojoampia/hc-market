@@ -89,11 +89,17 @@ public class CustomerBookingResource {
      * changed while the customer was in the wizard, and completing the booking at a price they were
      * never shown is not a fix — it charges them something they did not agree to. The client
      * re-reads the profile and asks again.
+     *
+     * <p><strong>{@code professionalLogin} comes from the catalogue too</strong>, as of D28. That
+     * one was not a wrong number but a wrong <em>recipient</em>: a truthful {@code professionalRef}
+     * sent with somebody else's login put a real booking into an inbox it did not belong to, and
+     * nothing anywhere disagreed. Same 409 on a mismatch, same 503 when catalog cannot be asked.
      */
     @PostMapping
     public ResponseEntity<BookingView> create(@Valid @RequestBody CreateBooking request) {
         String login = currentLogin();
         CatalogClient.ServiceView offering = priceFromCatalogue(request);
+        String professionalLogin = loginFromCatalogue(request);
         Booking booking = new Booking()
             // Short, unique, and not guessable in sequence — a booking reference ends up in URLs
             // and emails, and b1/b2/b3 would let anyone walk the estate's bookings by hand.
@@ -101,9 +107,10 @@ public class CustomerBookingResource {
             .customerLogin(login)
             .customerName(request.customerName() == null || request.customerName().isBlank() ? login : request.customerName())
             .professionalRef(request.professionalRef())
-            // Carried on the booking so the professional's inbox never has to ask catalog who
-            // this ref belongs to. Supplied by the client from the profile it just read.
-            .professionalLogin(request.professionalLogin())
+            // Carried on the booking so the professional's inbox never has to ask catalog who this
+            // ref belongs to (D12) — but taken from the CATALOGUE, not from the request. See
+            // loginFromCatalogue below.
+            .professionalLogin(professionalLogin)
             .serviceRef(request.serviceRef())
             // All three from the catalogue's answer, not the request body.
             .serviceName(offering.name())
@@ -293,6 +300,44 @@ public class CustomerBookingResource {
             );
         }
         return offering;
+    }
+
+    /**
+     * Establishes whose booking this actually is — {@code decisions.md} D28.
+     *
+     * <p>{@code professionalLogin} used to be stored exactly as sent. The field is on the booking
+     * for a good reason (D12: the professional's inbox must not have to ask catalog on every read),
+     * but denormalised was being used as if it meant unverified, and the cost was not a wrong number
+     * — it was a real booking landing in <strong>someone else's inbox</strong>, with every derived
+     * figure downstream perfectly consistent with the login that was stored.
+     *
+     * <p>The catalogue's answer is now the authority. A request that omits the field gets it; a
+     * request that disagrees is <strong>409</strong>, matching how a stale price is handled and for
+     * the same reason — the realistic cause is a profile read before an ownership change, and
+     * silently correcting the caller teaches it nothing. A caller that meant to lie learns only
+     * that it was refused.
+     *
+     * <p>The message names neither login. Confirming "no, it is actually <em>this</em> person"
+     * would turn a refusal into the disclosure the endpoint exists to avoid.
+     */
+    private String loginFromCatalogue(CreateBooking request) {
+        String actual;
+        try {
+            actual = catalog.loginOf(request.professionalRef());
+        } catch (CatalogClient.UnknownOffering unknown) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, unknown.getMessage());
+        } catch (CatalogClient.CatalogUnavailable down) {
+            // 503 for the same reason the price call uses it: nothing is broken, the fact simply
+            // cannot be established right now, and a guessed owner is worse than a retry.
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, down.getMessage());
+        }
+        if (request.professionalLogin() != null && !request.professionalLogin().equals(actual)) {
+            throw new ResponseStatusException(
+                HttpStatus.CONFLICT,
+                "professional %s is not held by that login — reload the profile and try again".formatted(request.professionalRef())
+            );
+        }
+        return actual;
     }
 
     /** 404, never 403 — see the class comment. */
