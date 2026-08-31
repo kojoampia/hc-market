@@ -52,6 +52,18 @@ jobs:
           distribution: temurin
           cache: maven
 
+      # Same reason as build.yml's: setup-java's `cache: maven` covers ~/.m2/repository, not the
+      # wrapper's own distribution in ~/.m2/wrapper/dists, so every job re-fetched Maven from
+      # repo.maven.apache.org. A failed fetch is cheap on a pull request and expensive here — it is
+      # the difference between a service being published at this SHA and not being, and D13 records
+      # what a partially-published matrix costs to notice.
+      - name: Cache the Maven wrapper distribution
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/wrapper
+          key: maven-wrapper-${{ hashFiles('**/maven-wrapper.properties') }}
+          restore-keys: maven-wrapper-
+
       - name: Log in to ghcr.io
         uses: docker/login-action@v3
         with:
