@@ -1556,10 +1556,36 @@ Engineering items genuinely open, none of them blocked on anyone:
 
 | # | What | Why not now |
 |---|---|---|
-| D29 | `sendMsg()` is the one prototype write still in memory — it mutates `THREADS` and invents a reply on a timer | Messaging's write surface is larger than booking's or reviewing's, and phase 5 stopped at the two that exercise D22/D28/D21 |
-| D29 | An event published to Kafka is not asserted to arrive **on the wire** as SSE data | `MarketplaceStreamFramingIT` now covers the real-port connection with a real token; the data frame still does not arrive in a RANDOM_PORT context while it does reliably under MOCK, and that difference is not yet understood. Verified outside the suite by `verify-prototype-live.mjs --writes` |
-| — | *(closed)* The prototype was finally loaded in a browser, served same-origin from the quality vhost at `/prototype` | It found `₵NaN` on every profile and browse card within seconds — see below |
-| D13 | `deploy-prod.sh` rebuilds and re-pushes at the same SHA, overwriting the images CI built and verified | `--no-build` exists; which one a production deploy should use is a decision, not an oversight |
-| D14 | `deploy-prod.sh --dry-run` prints `✓ authenticated to ghcr.io` and `✓ host reachable` unconditionally, while both operations are skipped | A dry run that implies a check it never made is the same class of false confidence D14 exists to prevent |
-| D13 | `deploy-prod.sh`'s header and spec §12 say the github channel produces `ghcr.io/<owner>/healthconnect-<service>`; the code produces `hc-market-<service>` | `sync-appendices.sh` cannot catch it — the appendix faithfully reproduces the script's own stale header |
 | D19 | Search is `contains()` in Java over every card | **Measured, not deferred on feel:** p95 26 ms at 18 professionals against a 5 ms control. D19's trigger is ~200 professionals or a latency measurement; neither is met. Figures and the re-measure command are in D19 |
+
+**Six rows left this table on 2026-08-31, and every one of them had already been fixed while it went
+on listing them.** Two were D29's.
+
+`sendMsg()` is no longer the prototype write left in memory: live mode **rewrites** it rather than
+wrapping it, because the demo's version invents a reply from the professional 1.6 s later and against
+a live estate that would put words into a real person's mouth. `verify-prototype-live.mjs --writes`
+asserts the message was sent, that the thread was re-read from the server, and — waiting a full two
+seconds so a fabricated reply would have landed — that **no reply was fabricated**.
+
+And an event published to Kafka *is* now asserted to arrive on the wire as SSE data:
+`MarketplaceStreamFramingIT.anEventArrivesOnTheWire` connects to the real port with a real token and
+asserts the payload, plus the absence of `nodeType` and `bigDecimal` so a regression cannot pass as
+"some JSON arrived". The RANDOM_PORT-versus-MOCK difference that this row called "not yet understood"
+was not a test artefact at all — it was the bean-property bug D30 found, and the row outlived its own
+explanation.
+
+Of the other four, one had been sitting there already annotated *(closed)* — which is its own small
+lesson, since a row marked closed in a table headed "genuinely open" is still a row somebody has to
+read and dismiss. The remaining three were deploy-path defects.
+
+`deploy-prod.sh` no longer rebuilds by default — `DO_BUILD=0`, with `--build` to opt in, so a
+production deploy uses the image CI built and verified rather than overwriting it at the same SHA.
+`--dry-run` now prints `○ [dry-run] would …` for operations it skips instead of a `✓` implying a check
+it never made. And the `healthconnect-<service>` image name was corrected in the script header, in
+§12, and — a week later than the other two — in §11's acceptance checklist, which is the worst place
+of the three for a name that cannot exist, because a checklist line is read as evidence rather than as
+prose.
+
+Which is the same failure this table exists to prevent, arriving from the other direction: an open-items
+list that keeps closed items is read as current, and someone re-fixes what is already fixed. Check a
+row against the code before acting on it.

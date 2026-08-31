@@ -951,8 +951,10 @@ Carried over from the prototype's verification discipline, adapted to a backend.
 - [x] `customerLogin` does not leak into the public review DTO.
 - [x] Unknown professional reference returns 404; public reads need no token.
 - [x] `deploy-prod.sh --dry-run` on both channels prints the correct image coordinates
-      (`docker.jojoaddison.net/healthconnect/catalog` vs `ghcr.io/<owner>/healthconnect-catalog`)
-      and leaks no token.
+      (`docker.jojoaddison.net/healthconnect/catalog` vs `ghcr.io/<owner>/hc-market-catalog`)
+      and leaks no token. The second name said `healthconnect-catalog` here until 2026-08-31,
+      outliving the §12 correction by a week — a checklist line claiming it was *verified* is the
+      worst place for a name that cannot exist, because it is read as evidence rather than as prose.
 - [x] `prod` profile refuses to seed even with `HEALTHCONNECT_SEED_ENABLED=true` — confirmed against
       a separate database that stayed empty.
 
