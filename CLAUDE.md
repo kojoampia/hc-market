@@ -273,6 +273,12 @@ touch neither the entities nor a service that does — it would have to forward 
 what the generated `broker.KafkaConsumer` is. Reacting to a domain event **is** application logic, so
 both event consumers live in `service`. Putting one in `broker` cost 51 violations.
 
+**And nothing at all may reach `config`** — not even `web`. A `@ConfigurationProperties` holder that a
+resource has to read therefore cannot live beside the other configuration classes: `PrivacyProperties`
+is in `service` for exactly that reason, and was moved there after three violations from a
+three-line resource. The rule is right about the general case and does not distinguish a properties
+holder from a `@Configuration`, so the fix is always to move the holder, never to relax the rule.
+
 ### Test fixtures must match the generated call signature
 
 `BookingStatusChangeResourceIT` calls `BookingResourceIT.createEntity()` in one place and

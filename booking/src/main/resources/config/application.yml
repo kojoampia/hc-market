@@ -258,6 +258,11 @@ healthconnect:
   payout:
     base-url: http://healthconnectpayout
     timeout-ms: 3000
+  # Retention -- decisions.md D24. Deliberately absent rather than set to a plausible number: a
+  # default here would be a legal position taken by whoever typed it. Counsel supplies the number,
+  # this supplies the mechanism. Nothing sweeps on it yet -- there is no scheduler in this estate.
+  privacy: {}
+  #   retention-days: 365
 
 # ===================================================================
 # Liquibase must finish BEFORE the seed loader runs.

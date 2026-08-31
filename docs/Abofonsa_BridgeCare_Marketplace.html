@@ -1532,6 +1532,19 @@ function viewPro(id){
       + (p.insured?'<span class="pill info">Insured</span>':'')
       + (p.dbs?'<span class="pill gold">Police clearance</span>':'')+'</div>'
       + '<p style="color:var(--ink-2);margin:6px 0 0;font-size:15px">'+esc(p.title)+'</p>'
+      /* WHAT THE BADGE ACTUALLY MEANS — decisions.md D16/D31.
+         The tick above is a trust signal customers act on when choosing who comes into their home,
+         and there is no register for non-medical professionals to check anyone against: it means
+         documents were seen by a person. Saying so beside the badge, rather than in a policy page
+         nobody opens, is the whole point. The DATE appears only when something records it; every
+         seeded professional predates the audit trail, so most profiles honestly say nothing more. */
+      + (p.verified
+          ? '<p class="small muted" style="margin:8px 0 0;max-width:52ch">Verified means BridgeCare '
+            + 'saw this professional\'s documents'
+            + (p.verifiedOn ? ' on ' + fmtD(p.verifiedOn.slice(0,10)) : '')
+            + '. There is no public register for non-medical professionals, so this is a check of '
+            + 'documents, not a licence.</p>'
+          : '')
       + '<div class="row wrap-r" style="gap:14px;margin-top:10px">'
         + starsHTML(p.rating)+'<span class="small muted">'+rs.length+' reviews</span>'
         + '<span class="small muted">📍 '+esc(p.city)+'</span>'
@@ -2733,7 +2746,9 @@ window.addEventListener('resize', ()=>{ clearTimeout(rz); rz = setTimeout(()=>{ 
         services:(d.services || []).filter(s => s.active !== false).map(s => ({
           id:s.ref, name:s.name, dur:s.durationMinutes, price:cedis(s.priceMinor), desc:s.description || ''
         })),
-        zoneId:c.zoneId || null
+        zoneId:c.zoneId || null,
+        /* Date only. The reviewer and the evidence reference stay on the desk endpoint (D16/D31). */
+        verifiedOn:d.verifiedOn || null
       });
     });
 
