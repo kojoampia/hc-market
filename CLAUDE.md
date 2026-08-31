@@ -597,9 +597,12 @@ time.**
   the first block, and never let the last block redefine what the first one exports.
   A literal closing script tag inside a comment in that block ends the element and renders the rest
   as text — the tags are spelled out in words there for that reason.
-  **Reads are live. Booking and reviewing are too, with a token; messaging is not** — `sendMsg()`
-  still mutates `THREADS` and invents a reply on a timer. The writes deliberately omit `priceMinor`,
-  `currency` and `professionalLogin` so the server establishes them (D22, D28).
+  **Reads are live, and so are all four writes with a token**: booking, reviewing, messaging, and
+  the customer's own bookings and threads. The writes deliberately omit `priceMinor`, `currency` and
+  `professionalLogin` so the server establishes them (D22, D28).
+  `sendMsg` is **rewritten, not wrapped** — the demo fabricates a reply from the professional 1.6s
+  after sending, which is a fine demo beat and a lie against a live estate. The verifier asserts no
+  reply is invented.
   ```bash
   node deploy/verify-prototype-live.mjs http://127.0.0.1:15509                      # reads only
   node deploy/verify-prototype-live.mjs http://127.0.0.1:15509 --writes /tmp/tok.txt # CREATES DATA
