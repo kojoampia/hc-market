@@ -2631,11 +2631,19 @@ window.addEventListener('resize', ()=>{ clearTimeout(rz); rz = setTimeout(()=>{ 
        &token=<jwt>                unlocks the live channel; public reads need none
        &svc=/services/healthconnectcatalog   the gateway route prefix, if it ever changes
 
-   WHAT IS LIVE, AND WHAT IS NOT. The read path is: categories, professionals, their services,
-   reviews and availability all come from catalog, and the ratings are recomputed from the reviews
-   that arrived — the same derivation the demo does, so a rating that disagrees with its reviews is
-   as impossible here as it is there. Writes are NOT wired: booking, reviewing and messaging still
-   mutate memory. That is the next piece of work and is listed as open rather than half-done.
+   WHAT IS LIVE, AND WHAT IS NOT. Reads: categories, professionals, their services, reviews and
+   availability come from catalog, and ratings are recomputed from the reviews that arrived — the
+   same derivation the demo does, so a rating that disagrees with its reviews is as impossible here
+   as it is there. WITH A TOKEN, the customer's own bookings come from booking as well, and two
+   writes go to the estate: creating a booking and publishing a review.
+
+   MESSAGING IS STILL IN MEMORY. sendMsg() mutates THREADS and invents a reply on a timer, exactly
+   as the demo does. Said plainly because a page where three of four actions are real is otherwise
+   the worst kind of half-finished: the one that looks done.
+
+   The writes deliberately do NOT send priceMinor, currency or professionalLogin. The server
+   establishes all three (decisions.md D22, D28), and sending them would mean the prototype was
+   testing its own arithmetic rather than the estate's.
    ========================================================================== */
 (function live(){
   const params = new URLSearchParams(location.search);
@@ -2643,6 +2651,9 @@ window.addEventListener('resize', ()=>{ clearTimeout(rz); rz = setTimeout(()=>{ 
 
   const BASE    = params.get('api') || '';             // '' = same origin
   const CATALOG = BASE + (params.get('svc') ?? '/services/healthconnectcatalog');
+  /* The gateway routes by service id, so writes to booking go through a different prefix than reads
+     from catalog. Both are `/services/<id>/api/**` — the gateway matches nothing else (D28). */
+  const BOOKING = BASE + (params.get('svcBooking') ?? '/services/healthconnectbooking');
   const TOKEN   = params.get('token') || '';
   const headers = TOKEN ? { Authorization: 'Bearer ' + TOKEN } : {};
 
@@ -2748,8 +2759,13 @@ window.addEventListener('resize', ()=>{ clearTimeout(rz); rz = setTimeout(()=>{ 
 
     Object.keys(AVAIL).forEach(k => delete AVAIL[k]);
     cards.forEach((c, i) => {
+      /* `slots`, not `times`. AvailabilityDay(date, slots) — checked in the DTO, not guessed.
+         This read `day.times` first, which is undefined, so every day arrived with an empty slot
+         list: the calendar rendered three weeks of a fully-booked professional and nothing errored.
+         The phase-4 verifier passed it too, because it asserted only that DAYS existed. It now
+         asserts free times exist, which is what actually makes the screen usable. */
       AVAIL[c.ref] = (avail[i] || []).map(day => ({
-        date:day.date, dow:new Date(day.date + 'T00:00:00').getDay(), times:day.times || []
+        date:day.date, dow:new Date(day.date + 'T00:00:00').getDay(), times:day.slots || []
       }));
     });
 
@@ -2800,7 +2816,118 @@ window.addEventListener('resize', ()=>{ clearTimeout(rz); rz = setTimeout(()=>{ 
     }
   }
 
-  load().then(stream).catch(e => banner('Live mode failed: ' + e.message, 'warn'));
+
+  /* --------------------------------------------------------------- writes -- */
+  /* All of this needs a token; without one live mode stays read-only, which is why the banner
+     says so. The pattern for both writes is the same and the ORDER is the point:
+
+         POST  ->  original()  ->  reload from the server
+
+     POST first, so a refusal never shows a success modal. Then the ORIGINAL demo function, which
+     owns the confirmation UI and does an optimistic in-memory update. Then a reload, which replaces
+     that optimistic row with what the estate actually stored. The demo's screens are reused whole
+     rather than reimplemented, and the last word belongs to the server. */
+
+  const send = async (base, path, body) => {
+    const res = await fetch(base + path, {
+      method:'POST',
+      headers:{ ...headers, 'Content-Type':'application/json' },
+      body:JSON.stringify(body)
+    });
+    if(!res.ok){
+      /* The estate's refusals are specific and worth showing rather than flattening to "failed":
+         409 is a stale price, a stale professional, or an already-reviewed booking; 503 is catalog
+         unreachable, which is a retry rather than a mistake. */
+      const detail = await res.text().catch(() => '');
+      throw new Error(res.status + (detail ? ' — ' + detail.slice(0, 200) : ''));
+    }
+    return res.status === 204 ? null : res.json();
+  };
+
+  /* API status -> the demo's four buckets. NO_SHOW and DECLINED both land in `cancelled` because
+     that is all the screen has; lossy, and better than inventing a tab the prototype never had. */
+  const STATUS = {
+    REQUESTED:'pending', RESCHEDULE_PROPOSED:'pending', CONFIRMED:'confirmed',
+    COMPLETED:'completed', CANCELLED:'cancelled', DECLINED:'cancelled', NO_SHOW:'cancelled'
+  };
+  const ENUM_MODE = { 'In person':'IN_PERSON', 'Online':'ONLINE', 'Home visit':'HOME_VISIT' };
+
+  /* The customer's real bookings. Note what this quietly fixes: the demo's booking ids are
+     'b1','b2x'…, and in live mode they become the estate's own references — which is the only
+     reason submitReview below can pass one to the API and have it mean anything. */
+  async function loadBookings(){
+    if(!TOKEN) return;
+    const rows = await (await fetch(BOOKING + '/api/bookings/mine', { headers })).json();
+    BOOKINGS.length = 0;
+    (rows || []).forEach(b => BOOKINGS.push({
+      id:b.reference, pro:b.professionalRef, svc:b.serviceRef, date:b.scheduledDate,
+      time:b.scheduledTime, mode:MODE[b.deliveryMode] || 'Online',
+      status:STATUS[b.status] || 'pending', price:cedis(b.priceMinor),
+      note:b.customerNote || '', forWhom:b.onBehalfOf || null, reviewed:!!b.reviewed
+    }));
+  }
+
+  async function refreshReviewsFor(ref){
+    const rows = await (await fetch(CATALOG + '/api/professionals/' + ref + '/reviews?page=0&size=200', { headers })).json();
+    for(let i = REVIEWS.length - 1; i >= 0; i--) if(REVIEWS[i].pro === ref) REVIEWS.splice(i, 1);
+    (rows.content || []).forEach(r => REVIEWS.push({
+      id:r.ref, pro:ref, author:r.authorName, ini:r.authorInitials,
+      stars:r.stars, date:r.publishedOn, text:r.body || '', reply:r.professionalReply || ''
+    }));
+    const p = PROS.find(x => x.id === ref);
+    if(p){
+      const rs = REVIEWS.filter(r => r.pro === ref);
+      p.reviewCount = rs.length;
+      p.rating = rs.length ? Math.round(avg(rs.map(r => r.stars)) * 10) / 10 : 0;
+    }
+  }
+
+  if(TOKEN){
+    const demoConfirm = confirmBooking;
+    confirmBooking = async function(){
+      const b = state.booking;
+      try {
+        await send(BOOKING, '/api/bookings', {
+          professionalRef:b.pro, serviceRef:b.svc, customerName:ME.name,
+          scheduledDate:b.date, scheduledTime:b.time, deliveryMode:ENUM_MODE[b.mode],
+          customerNote:b.notes || null,
+          onBehalfOf:b.forWhom === 'other' ? (b.who || 'A person in my care') : null,
+          careSummaryShared:false
+        });
+      } catch(e){
+        /* No modal, no optimistic row, no toast claiming success. */
+        return toast('The estate refused this booking: ' + e.message, 'warn');
+      }
+      demoConfirm();
+      await loadBookings();
+      render();
+    };
+
+    const demoReview = submitReview;
+    submitReview = async function(id){
+      const stars = window._rv || 5;
+      const text = ($('#rvText') && $('#rvText').value.trim()) || 'Booked through BridgeCare. A good session.';
+      const booking = BOOKINGS.find(x => x.id === id);
+      try {
+        /* `id` is the estate's booking reference in live mode — see loadBookings. The API proves a
+           COMPLETED booking backs the review and that it is the caller's, so a review that would be
+           refused there is refused here rather than appearing and vanishing on the next reload. */
+        await send(CATALOG, '/api/reviews', { bookingReference:id, stars, body:text });
+      } catch(e){
+        return toast('The estate refused this review: ' + e.message, 'warn');
+      }
+      /* demoReview(id), not demoReview(). It looks up the booking by that id, and calling it bare
+         throws on `undefined.pro` AFTER the POST has already succeeded — leaving a review published
+         on the server and an error on the screen. demoConfirm above takes no argument, which is the
+         only reason the same slip did not happen twice. */
+      demoReview(id);
+      if(booking) await refreshReviewsFor(booking.pro);
+      await loadBookings();
+      render();
+    };
+  }
+
+  load().then(loadBookings).then(stream).catch(e => banner('Live mode failed: ' + e.message, 'warn'));
 })();
 </script>
 </body>

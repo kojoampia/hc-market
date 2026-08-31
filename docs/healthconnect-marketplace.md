@@ -471,7 +471,7 @@ Every endpoint below exists because a prototype screen needs it. Public reads ne
 | `GET` | `/api/professionals/{ref}` | Profile — with services, rating, verification |
 | `GET` | `/api/professionals/{ref}/availability?from&to` | Profile and booking wizard step 2 |
 | `GET` | `/api/professionals/{ref}/reviews?page&size` | Profile — paginated reviews |
-| `POST` | `/api/bookings` | Wizard step 4 — creates `REQUESTED`. Price, currency, service name **and `professionalLogin`** come from the catalogue, never from the body — 409 on disagreement, 503 if catalog cannot be asked |
+| `POST` | `/api/bookings` | Wizard step 4 — creates `REQUESTED`. Price, currency, service name, `professionalLogin` **and `zoneId`** come from the catalogue, never from the body — 409 on disagreement, 503 if catalog cannot be asked. **Requires `HEALTHCONNECT_CATALOG_BASE_URL`**: it was unset in all three compose files until 2026-08-31, so this endpoint 503'd in every deployed environment and no test noticed, because the ITs mock `CatalogClient` |
 | `GET` | `/api/bookings/mine?status` | My bookings — the four tabs |
 | `POST` | `/api/bookings/{ref}/reschedule` | Reschedule modal |
 | `POST` | `/api/bookings/{ref}/cancel` | Cancel modal — returns the fee that will apply |

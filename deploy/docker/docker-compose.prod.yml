@@ -129,6 +129,10 @@ services:
     environment:
       <<: *service-env
       OTEL_SERVICE_NAME: hc-market-catalog
+      # POST /api/reviews proves a COMPLETED booking backs the review before accepting it (spec §9),
+      # which means catalog calls booking. Fails closed: without this it answers 503 "cannot verify
+      # the booking right now" for every review, in production only.
+      HEALTHCONNECT_BOOKING_BASE_URL: http://${HC_BOOKING_HOST:-booking}:8080
       SPRING_DATASOURCE_URL: ${HC_CATALOG_DB_URL:?catalog datasource url is required}
       SPRING_DATASOURCE_USERNAME: ${HC_CATALOG_DB_USER:-healthconnectCatalog}
       SPRING_DATASOURCE_PASSWORD: ${HC_CATALOG_DB_PASSWORD:?catalog datasource password is required}
@@ -139,6 +143,12 @@ services:
     environment:
       <<: *service-env
       OTEL_SERVICE_NAME: hc-market-booking
+      # POST /api/bookings prices the booking from the catalogue and establishes who owns the
+      # professional reference (decisions.md D22, D28). Both calls FAIL CLOSED, so without this the
+      # create path 503s every time. It was unset in all three compose files until 2026-08-31 and
+      # nothing noticed: the ITs mock CatalogClient, and no health check exercises a write.
+      HEALTHCONNECT_CATALOG_BASE_URL: http://${HC_CATALOG_HOST:-catalog}:8080
+      HEALTHCONNECT_PAYOUT_BASE_URL: http://${HC_PAYOUT_HOST:-payout}:8080
       SPRING_DATASOURCE_URL: ${HC_BOOKING_DB_URL:?booking datasource url is required}
       SPRING_DATASOURCE_USERNAME: ${HC_BOOKING_DB_USER:-healthconnectBooking}
       SPRING_DATASOURCE_PASSWORD: ${HC_BOOKING_DB_PASSWORD:?booking datasource password is required}
@@ -159,6 +169,10 @@ services:
     environment:
       <<: *service-env
       OTEL_SERVICE_NAME: hc-market-payout
+      # The Overview screen's "next up" card reads this professional's schedule from booking. Unlike
+      # the two above this one DEGRADES rather than failing closed — nextUpAvailable=false costs one
+      # card, not the screen — which is exactly why it would have gone unnoticed indefinitely.
+      HEALTHCONNECT_BOOKING_BASE_URL: http://${HC_BOOKING_HOST:-booking}:8080
       SPRING_DATASOURCE_URL: ${HC_PAYOUT_DB_URL:?payout datasource url is required}
       SPRING_DATASOURCE_USERNAME: ${HC_PAYOUT_DB_USER:-healthconnectPayout}
       SPRING_DATASOURCE_PASSWORD: ${HC_PAYOUT_DB_PASSWORD:?payout datasource password is required}
