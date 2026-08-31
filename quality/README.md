@@ -39,13 +39,45 @@ Dates load **unshifted** (`HEALTHCONNECT_SEED_ANCHOR_DATES: true`), unlike the d
 seed is right for a demo and wrong for a place whose job is catching drift: the figures here are the
 prototype's own, so they can be compared against it directly.
 
-## Consul is off
+## No broker and no Consul of its own
 
-As in every sibling quality stack, and for the reason production does it: the gateway routes
-statically. Discovery is a development convenience, and leaving it on would mean rehearsing a
-routing mechanism production does not use. The four routes are spelled out in `compose.yml` — without
-them the gateway starts, answers `/management` perfectly, and 404s every `/services/**` path, which
-is a healthy edge in front of nothing.
+**Since 2026-08-31 this stack declares neither.** It used to run its own single-node Kafka
+(`hc-market-quality-kafka`); that service and the five `depends_on: kafka` entries that held it up
+are gone. One Kafka and one Consul now serve the whole estate from `hc-infra`, and all four product
+stacks point at them by container name over the external `hcnet` network.
+
+Bring the shared plane up **first** — `startup.sh` does not, and these services depend on it:
+
+```bash
+cd /home/kojo/webroot/01-healthconnect/hc-infra && ./startup.sh
+```
+
+### Consul registers; it does not route
+
+Two separate statements. This section read "Consul is off" until 2026-08-31, and half of that is
+still true. The five services now **register** with `hc-shared-quality-consul` and appear in its
+catalog with health checks.
+
+The gateway still routes **statically**, for the reason production does it:
+`DISCOVERY_LOCATOR_ENABLED` stays `false` and the four routes are spelled out in `compose.yml`.
+Discovery-based routing is a development convenience, and turning it on would mean rehearsing a
+mechanism production does not use — it would also replace those four routes with whatever happens to
+be registered on the host. Without them the gateway starts, answers `/management` perfectly, and
+404s every `/services/**` path, which is a healthy edge in front of nothing.
+
+### This stack was the last to move, because it was broken first
+
+On 2026-08-30 it was found running **9 of its 11 services**: the five apps up without the
+`gateway-db` and `kafka` they depend on, the gateway crash-looped **767 times in nine hours**, the
+other four unhealthy against a broker that did not exist. That is what a partial `docker compose up`
+looks like, and `docker compose ls` shows it in one line — a project is healthy when its status reads
+`running(N)` and nothing else.
+
+Adoption then surfaced a separate, pre-existing defect: `catalog`, `booking` and `payout` failed
+Liquibase validation because `20231205141236_added_entity_AvailabilitySlot.xml` had a different
+checksum than the one recorded in databases created on 2026-08-27. `gateway` and `messaging` came up
+healthy on the identical change. Resolved with `./startup.sh --local --clean`, which drops the
+volumes and reseeds — the remedy this script already had for exactly this.
 
 ## Images are published, and that is the point
 

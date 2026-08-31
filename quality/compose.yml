@@ -13,11 +13,17 @@
 # rehearse — the class of bug that lives between two nginxes cannot appear here, because there is
 # only one.
 #
-# --- CONSUL IS OFF -----------------------------------------------------------------------------
+# --- CONSUL REGISTERS, AND IT DOES NOT ROUTE ---------------------------------------------------
 #
-# As in every sibling quality stack, and for the same reason production does it: the gateway routes
-# statically. Discovery is a development convenience, and leaving it on here would mean testing a
-# routing mechanism that production does not use.
+# Two separate statements, and this section read "CONSUL IS OFF" until 2026-08-31. What changed is
+# registration, and only registration: these five services now register with hc-shared-quality-consul
+# and appear in its catalog with health checks, as every sibling quality stack does.
+#
+# The gateway still routes STATICALLY — DISCOVERY_LOCATOR_ENABLED stays "false" and the four
+# hand-written routes below are what it uses, for the same reason production does it. Discovery-based
+# routing is a development convenience; turning it on here would mean testing a routing mechanism
+# production does not use, and would replace those four routes with whatever happens to be registered
+# on the host.
 name: hc-market-quality
 
 x-service: &service
@@ -193,7 +199,8 @@ services:
       # and the old name sets something nothing reads — the gateway then dies inside Mongock with
       # "Connection refused ... localhost:27017", pointing at the database rather than the variable.
       SPRING_MONGODB_URI: mongodb://gateway-db:27017/healthconnectGateway
-      # Static routes, because Consul is off. Without these the gateway starts, answers /management
+      # Static routes, because the discovery LOCATOR is off — not because Consul is (it is on, for
+      # registration; see the header). Without these the gateway starts, answers /management
       # perfectly, and 404s every /services/** path — a healthy edge in front of nothing.
       SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_DISCOVERY_LOCATOR_ENABLED: "false"
       SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_0_ID: healthconnectcatalog
