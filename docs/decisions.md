@@ -1195,6 +1195,46 @@ This is not a decision to build the product's frontend. `api/` and `web/` stay e
 chosen, and nothing here commits the eventual client to a stack. What it commits to is that every
 endpoint in §6 gets exercised by something other than curl.
 
+**As built.** The demo remains the default: opened with no query string the prototype behaves exactly
+as it always has, because it is still the acceptance target *and* the seed's source. `?api=` opts in;
+`&token=` additionally opens `/api/stream`.
+
+**The seam is the script block, and it is load-bearing.** `extract-seed.mjs` slices the *first* script
+block and evaluates it in a vm sandbox with no `fetch` and no `window`, so live mode is the *last*
+block and mutates the data consts in place rather than reassigning them. CI regenerates the seed on
+every push, which is what keeps the two halves apart. Confirmed byte-identical after the change.
+
+**Reads are live; writes are not.** Categories, professionals, services, reviews and availability all
+come from catalog, and the ratings are recomputed from the reviews that arrived — the same derivation
+the demo does, so a rating cannot disagree with its own reviews in either mode. Booking, reviewing and
+messaging still mutate memory. That is the next piece and is listed as open rather than left looking
+finished.
+
+**The live channel needed `fetch`, not `EventSource`.** `EventSource` cannot send an `Authorization`
+header and `/api/stream` is authenticated, so the alternative would have been accepting the token in
+the query string — putting a credential into every access log and `Referer`. The client parses SSE
+frames itself instead, which is about twenty lines, and drops the comment-only keep-alives exactly as
+`EventSource` would.
+
+**What it cost, and what caught it.** Two field names were guessed wrong: reviews are `authorName`,
+`publishedOn` and `professionalReply`, not `customerName`, `postedOn` and `reply`. Nothing threw. The
+cards rendered with a blank byline and no date, which reads as sparse demo data rather than as a bug.
+`deploy/verify-prototype-live.mjs` exists because of that — it extracts the **shipped** block and runs
+it against a live estate rather than restating the mapping, since a restated copy would pass while the
+page drifted. Against the quality stack it reproduces the demo's own figures exactly: 18 professionals,
+63 reviews, 52 services, p1 at 4.7 from 7 reviews, prices in cedis.
+
+**A literal closing script tag inside a comment ends the element.** The block's header comment
+originally described the extractor's slice using the real tags, which terminated the script early and
+rendered the rest of the file as text. The tags are spelled out in words there now. Found by
+`node --check` on the extracted block, not by looking at the page.
+
+**Not verified in a browser.** The mapping, the derivation and the banner are all exercised by the
+verifier above, against a real estate, through the real code. What is *not* covered is rendering: the
+Chrome extension available here would not hold a `localhost` page long enough to script it, and rather
+than keep retrying that, the gap is recorded. Loading the page by hand is the outstanding step, and
+CLAUDE.md's rule that a change touching a screen ends in a real browser still applies to it.
+
 ---
 
 ## Still open after this section

@@ -2600,5 +2600,208 @@ window.addEventListener('resize', ()=>{ clearTimeout(rz); rz = setTimeout(()=>{ 
   setTimeout(()=> toast('Demo loaded — you are Kojo Ampia-Addison. Use “I provide care” in the header to see the professional side.'), 700);
 })();
 </script>
+<script>
+/* ==========================================================================
+   LIVE MODE — decisions.md D29
+   ==========================================================================
+
+   Everything above this line is the closed demo, unchanged: no network, all state in memory. This
+   block is the only part of the prototype that has ever spoken to a server, and it is deliberately
+   the LAST script block in the file for two reasons.
+
+   THE SEED IS EXTRACTED FROM THE FIRST SCRIPT BLOCK, AND ONLY THAT ONE.
+   deploy/demo/extract-seed.mjs slices from the first script open tag to the first close tag,
+   evaluates it in a bare vm sandbox with no fetch and no window, and reads eighteen consts out of
+   it. (Those tags are spelled out in words here on purpose: a literal close tag inside a comment
+   ends the element, and the browser then renders the rest of this block as text. Cost one run of
+   `node --check` to find, which is the only reason it is not still in the file.) So nothing
+   here may move, rename or wrap any of that — and nothing there may start depending on a network.
+   The two halves are kept apart by that seam rather than by good intentions, and CI regenerates the
+   seed on every push to prove it.
+
+   That is also why the data below is mutated IN PLACE (PROS.length = 0; PROS.push(...)) rather than
+   reassigned: CATS, PROS, REVIEWS and AVAIL are consts in a block this file must not touch.
+
+   DEMO REMAINS THE DEFAULT. Open this file with no query string and it behaves exactly as it always
+   has — that matters, because it is still the acceptance target and still the seed's source. Live
+   mode is opt-in:
+
+       ?api=                       same origin (served behind the estate's nginx — no CORS)
+       ?api=http://localhost:15509 an explicit gateway
+       &token=<jwt>                unlocks the live channel; public reads need none
+       &svc=/services/healthconnectcatalog   the gateway route prefix, if it ever changes
+
+   WHAT IS LIVE, AND WHAT IS NOT. The read path is: categories, professionals, their services,
+   reviews and availability all come from catalog, and the ratings are recomputed from the reviews
+   that arrived — the same derivation the demo does, so a rating that disagrees with its reviews is
+   as impossible here as it is there. Writes are NOT wired: booking, reviewing and messaging still
+   mutate memory. That is the next piece of work and is listed as open rather than half-done.
+   ========================================================================== */
+(function live(){
+  const params = new URLSearchParams(location.search);
+  if(!params.has('api')) return;                       // demo, exactly as before
+
+  const BASE    = params.get('api') || '';             // '' = same origin
+  const CATALOG = BASE + (params.get('svc') ?? '/services/healthconnectcatalog');
+  const TOKEN   = params.get('token') || '';
+  const headers = TOKEN ? { Authorization: 'Bearer ' + TOKEN } : {};
+
+  /* ------------------------------------------------------------------ mapping -- */
+  /* The API speaks minor units and SCREAMING_CASE; this file speaks cedis and prose. Every
+     difference is deliberate on the API's side, so the translation lives here rather than there. */
+  const MODE  = { IN_PERSON:'In person', ONLINE:'Online', HOME_VISIT:'Home visit' };
+  const cedis = minorUnits => Math.round(Number(minorUnits||0)) / 100;
+  const modes = list => (list||[]).map(m=>MODE[m]).filter(Boolean);
+
+  const banner = (text, tone) => {
+    let el = document.getElementById('liveBanner');
+    if(!el){
+      el = document.createElement('div');
+      el.id = 'liveBanner';
+      el.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:9999;padding:6px 12px;' +
+        'font:600 12px/1.5 system-ui,sans-serif;text-align:center;color:#fff';
+      document.body.appendChild(el);
+    }
+    /* Navy for live, gold for trouble. Never white on gold — 2.74:1, fails AA — so the warning
+       state uses navy text on gold, which is the brand's own rule. */
+    el.style.background = tone === 'warn' ? '#C59437' : '#0D3058';
+    el.style.color      = tone === 'warn' ? '#0D3058' : '#fff';
+    el.textContent = text;
+  };
+
+  const get = async path => {
+    const res = await fetch(CATALOG + path, { headers });
+    if(!res.ok) throw new Error(path + ' → ' + res.status);
+    return res.json();
+  };
+
+  /* ------------------------------------------------------------------ loading -- */
+  async function load(){
+    banner('Loading from ' + (BASE || location.origin) + ' …');
+
+    const cats = await get('/api/categories');
+    CATS.forEach(c => {                                 /* keep the demo's icon and palette: the API
+                                                           carries an icon but no colours, and the
+                                                           tiles are part of the brand, not the data */
+      const live = cats.find(x => x.code.toLowerCase() === c.id);
+      if(live){ c.name = live.name; c.blurb = live.blurb; c.subs = live.specialities || c.subs; }
+    });
+
+    /* size=200 rather than paging: eighteen professionals fit in one answer and a demo that pages
+       invisibly would hide a change in the catalogue's size, which is exactly what this is for. */
+    const page  = await get('/api/professionals?size=200');
+    const cards = page.content || [];
+
+    /* One detail call each, in parallel. The card has no bio, credentials, highlights or services,
+       and Browse needs the "from" price that only the services carry. Eighteen requests against a
+       local estate is a second; against anything slower this is the first thing to make lazy. */
+    const details = await Promise.all(cards.map(c => get('/api/professionals/' + c.ref)));
+    const reviews = await Promise.all(cards.map(c => get('/api/professionals/' + c.ref + '/reviews?page=0&size=200')));
+
+    /* 21 days from the demo's TODAY, which is what the calendar strip renders. */
+    const from = iso(TODAY), to = iso(addDays(TODAY, 20));
+    const avail = await Promise.all(cards.map(c => get('/api/professionals/' + c.ref + '/availability?from=' + from + '&to=' + to)));
+
+    PROS.length = 0;
+    cards.forEach((c, i) => {
+      const d = details[i] || {};
+      PROS.push({
+        id:c.ref, name:c.displayName, ini:c.initials,
+        c:[c.avatarGradientFrom || '#0D3058', c.avatarGradientTo || '#256ABF'],
+        cat:(c.categoryCode||'').toLowerCase(), sub:c.speciality, title:c.headline, city:c.city,
+        modes:modes(c.deliveryModes), years:c.yearsPractising,
+        /* The API has four verification states; this screen has a boolean badge. Only VERIFIED
+           earns it — PENDING and SUSPENDED must not read as verified, which a truthiness test on
+           the string would have done. */
+        verified:c.verification === 'VERIFIED',
+        insured:!!c.insured, dbs:!!c.policeClearance,
+        langs:c.languages || [], responseMins:c.responseMinutes, repeat:c.rebookRatePct,
+        creds:d.credentials || [], bio:d.bio || '', highlights:d.highlights || [],
+        services:(d.services || []).filter(s => s.active !== false).map(s => ({
+          id:s.ref, name:s.name, dur:s.durationMinutes, price:cedis(s.priceMinor), desc:s.description || ''
+        })),
+        zoneId:c.zoneId || null
+      });
+    });
+
+    REVIEWS.length = 0;
+    cards.forEach((c, i) => {
+      const rows = reviews[i];
+      /* Field names taken from the API, not guessed at. The first version of this used
+         customerName/postedOn/reply and produced reviews with a blank author and no date — which
+         renders as a plausible-looking card with an empty byline rather than as an error, and would
+         have shipped. Checked against the live response instead. */
+      (rows.content || rows || []).forEach(r => REVIEWS.push({
+        id:r.ref, pro:c.ref, author:r.authorName, ini:r.authorInitials,
+        stars:r.stars, date:r.publishedOn, text:r.body || '', reply:r.professionalReply || ''
+      }));
+    });
+
+    /* Recomputed here for the same reason block 1 computes them: a rating that can disagree with
+       its own reviews is a bug the file should make impossible. The API derives them from a view
+       over the same rows, so the two agree by construction rather than by luck. */
+    PROS.forEach(p => {
+      const rs = REVIEWS.filter(r => r.pro === p.id);
+      p.reviewCount = rs.length;
+      p.rating = rs.length ? Math.round(avg(rs.map(r => r.stars)) * 10) / 10 : 0;
+    });
+
+    Object.keys(AVAIL).forEach(k => delete AVAIL[k]);
+    cards.forEach((c, i) => {
+      AVAIL[c.ref] = (avail[i] || []).map(day => ({
+        date:day.date, dow:new Date(day.date + 'T00:00:00').getDay(), times:day.times || []
+      }));
+    });
+
+    render();
+
+    /* The demo's calendar is anchored to 2026-08-10 and cannot be moved — TODAY is a const in the
+       block this file must not touch. An estate seeded with anchor-dates=false shifts every date to
+       real time, and the strip then renders three weeks with nothing in them. Saying so is cheaper
+       than the twenty minutes it otherwise costs to work out why the live catalogue looks closed. */
+    const firstLive = Object.values(AVAIL).flat().map(d => d.date).sort()[0];
+    const drift = firstLive ? Math.abs(new Date(firstLive + 'T00:00:00') - TODAY) / 86400000 : 0;
+    if(drift > 21){
+      banner('Live — but availability starts ' + firstLive + ', and this calendar is fixed to ' +
+             iso(TODAY) + '. Reseed with anchor-dates=true.', 'warn');
+    } else {
+      banner('LIVE — ' + PROS.length + ' professionals, ' + REVIEWS.length + ' reviews from ' +
+             (BASE || location.origin) + (TOKEN ? ' · streaming' : ' · public reads only'));
+    }
+  }
+
+  /* ------------------------------------------------------------- live channel -- */
+  /* GET /api/stream, decisions.md D25/D29.
+
+     fetch + ReadableStream rather than EventSource, and not by preference: EventSource cannot send
+     an Authorization header, and /api/stream is authenticated at the gateway. The alternative would
+     be accepting the token in the query string, which puts a credential into every access log and
+     every Referer — so the client does the small amount of frame parsing instead. */
+  async function stream(){
+    if(!TOKEN) return;
+    const res = await fetch(BASE + '/api/stream', { headers:{ ...headers, Accept:'text/event-stream' } });
+    if(!res.ok || !res.body) return;
+    const reader = res.body.getReader(), dec = new TextDecoder();
+    let buf = '';
+    for(;;){
+      const { value, done } = await reader.read();
+      if(done) return;
+      buf += dec.decode(value, { stream:true });
+      let i;
+      while((i = buf.indexOf('\n\n')) >= 0){            /* frames are blank-line separated */
+        const frame = buf.slice(0, i); buf = buf.slice(i + 2);
+        const type = (frame.match(/^event:\s*(.*)$/m) || [,''])[1];
+        /* Comment-only frames are the 20-second keep-alive the gateway sends so no proxy in the
+           path decides an idle stream has stalled. They carry no event line and are dropped here,
+           which is exactly what EventSource would do with them. */
+        if(!type) continue;
+        toast('Live: ' + type.replace('healthconnect.', '').replace(/\./g, ' '));
+      }
+    }
+  }
+
+  load().then(stream).catch(e => banner('Live mode failed: ' + e.message, 'warn'));
+})();
+</script>
 </body>
 </html>

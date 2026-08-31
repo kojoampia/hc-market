@@ -583,5 +583,20 @@ time.**
   the **booking container** from `hcnet` instead: the same event from the outbox's point of view,
   and nothing else on the host is affected. Reconnection is on an `EXIT` trap, so a failure
   part-way through cannot leave booking off the plane.
-- The prototype is a **closed demo** — no `fetch`, no `API_BASE` hook, `TODAY` hardcoded. Pointing it
-  at the live API is unbuilt work, not configuration.
+- **The prototype has two modes, and the default is still the closed demo.** Opened with no query
+  string it behaves exactly as it always did — no network, all state in memory — because it is still
+  the acceptance target *and* the seed's source. `?api=` turns on live mode (D29):
+  ```
+  ?api=                        same origin, served behind the estate's nginx — no CORS
+  ?api=http://localhost:15509  an explicit gateway
+  &token=<jwt>                 unlocks /api/stream; public reads need none
+  ```
+  **The seed is extracted from the FIRST script block and only that one**, in a vm sandbox with no
+  `fetch` and no `window`. Live mode is therefore the LAST block, and the data consts are mutated in
+  place (`PROS.length = 0; PROS.push(...)`) rather than reassigned. Never move a network call into
+  the first block, and never let the last block redefine what the first one exports.
+  A literal closing script tag inside a comment in that block ends the element and renders the rest
+  as text — the tags are spelled out in words there for that reason.
+  **Reads are live; writes are not.** Booking, reviewing and messaging still mutate memory.
+  `node deploy/verify-prototype-live.mjs [base]` runs the *shipped* block against a live estate and
+  checks its figures against the demo's own.

@@ -839,8 +839,7 @@ What it does, in order:
    seed**. A mismatch fails the run. The rating check is the only one here that would catch a broken
    `professional_rating` view — the counts would all still pass.
 6. **Banner** — gateway URL, Swagger UI, the shared plane's Consul UI and broker address (labelled
-   as `hc-infra`'s, not this stack's), and a note that the prototype is a closed demo and cannot be
-   pointed at this estate.
+   as `hc-infra`'s, not this stack's), and how to point the prototype at this estate.
 
 Two things it will not do. It never starts a broker or a Consul — that is D27, and the refusal is
 the point. And it warns, without refusing, when the quality stack is running: one broker means one
@@ -1337,9 +1336,10 @@ $c_dim  Shared plane (hc-infra, not this stack):$c_reset
   Consul UI        http://localhost:${SHARED_CONSUL_UI_PORT}/ui  — services register as hc-market-dev-*
   Kafka            $SHARED_KAFKA:9092 from a container; localhost:19192 from this host
 
-$c_dim  The prototype at docs/Abofonsa_BridgeCare_Marketplace.html is a CLOSED demo: it has no
-  fetch calls and no API_BASE hook, so it cannot be pointed at this estate. Driving it from the
-  live API is unbuilt work, not a configuration step.$c_reset
+$c_dim  The prototype at docs/Abofonsa_BridgeCare_Marketplace.html can drive this estate (D29).
+  Open it with ?api=http://localhost:${PORTS[gateway]} — reads go live, writes stay in memory.
+  Without a query string it is still the closed demo, which is what the seed is extracted from.
+  Check it agrees:  node deploy/verify-prototype-live.mjs http://localhost:${PORTS[gateway]}$c_reset
 
 EOF
 }
