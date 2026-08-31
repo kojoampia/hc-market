@@ -1324,10 +1324,32 @@ put it on — and comments only, no configuration touched. The shifted ports sta
 the file already explains: a port that means one thing in the file and another on the host is how an
 afternoon gets lost.
 
-### The SSE-on-the-wire gap gets investigated rather than routed around
+### The SSE-on-the-wire gap gets investigated rather than routed around — and it was a real bug
 
-An unexplained difference between two test contexts, in a live channel, is worth understanding. See
-the open list for where that got to.
+An unexplained difference between two test contexts, in a live channel, was worth understanding. It
+took one bisect to find that **every SSE frame this estate has ever sent carried garbage**.
+
+The bisect subscribed to the fan-out directly and over HTTP in the same context and the same run.
+Result: `fanout=2 http=1` — the consumer was fine, so the fault was between the sink and the socket.
+The single HTTP frame read:
+
+```
+{"array":false,"bigDecimal":false,"binary":false,"containerNode":true,"nodeType":"OBJECT", …}
+```
+
+The payload was a `JsonNode` in the `ServerSentEvent`'s data, and Jackson serialised it by its BEAN
+PROPERTIES — the results of `isArray()`, `isBigDecimal()`, `getNodeType()` — instead of the JSON it
+represents. Not a subset of the event, not a mangled event: none of it.
+
+**Nothing failed.** The connection opened, frames arrived on time, the fan-out test passed, and
+`verify-prototype-live.mjs` passed end to end against a live estate — because the only client that
+exists reads the `event:` name to raise a toast and never looks at `data`. A stream that is live,
+punctual and carrying nothing is the exact shape of defect this repository keeps producing, and the
+only reason it surfaced is that somebody insisted on asserting the wire rather than the behaviour.
+
+Fixed by converting the payload to plain maps at ingestion, so the record is usable by anything that
+subscribes and there is one place to get it right. The wire test now asserts the real payload *and*
+that `nodeType` and `bigDecimal` are absent, so a regression cannot pass as "some JSON arrived".
 
 ---
 

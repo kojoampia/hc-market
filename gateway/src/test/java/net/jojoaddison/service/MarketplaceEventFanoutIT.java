@@ -95,7 +95,11 @@ class MarketplaceEventFanoutIT {
                 // and must never reach a client.
                 assertThat(event.type()).isEqualTo("healthconnect.booking.cancelled");
                 assertThat(event.aggregateRef()).isEqualTo("b-sse-1");
-                assertThat(event.payload().path("bookingRef").asText()).isEqualTo("b-sse-1");
+                /* The payload is plain maps now, not a JsonNode — see MarketplaceEventFanout.plain.
+                   A JsonNode here was serialised by its bean properties on the way out to clients,
+                   so every SSE frame carried isArray/isBigDecimal/nodeType instead of the event. */
+                assertThat(event.payload()).isInstanceOf(java.util.Map.class);
+                assertThat(((java.util.Map<?, ?>) event.payload()).get("bookingRef")).isEqualTo("b-sse-1");
             });
         } finally {
             subscription.dispose();
