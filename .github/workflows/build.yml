@@ -249,6 +249,27 @@ jobs:
           done
           exit "$fail"
 
+      # The image name is written in THREE places: image_for() in deploy-prod.sh, that script's own
+      # header, and spec §12's channel table. They disagreed for weeks — header and spec said
+      # ghcr.io/<owner>/healthconnect-<service>, the code produced hc-market-<service> — and
+      # sync-appendices.sh could not catch it, because the appendix faithfully reproduces the
+      # script's header, so both copies were wrong together and matched each other perfectly.
+      #
+      # A documented image name that cannot exist sends whoever hits a 404 hunting for a registry
+      # fault instead of a missing tag, which is the confusion quality/startup.sh warns about.
+      - name: The documented image name must match the one the code builds
+        run: |
+          prefix=$(grep -oE 'IMAGE_PREFIX="ghcr\.io/\$\{GHCR_OWNER\}/[a-z-]+"' deploy/deploy-prod.sh | sed -E 's#.*/([a-z-]+)"#\1#')
+          echo "image_for builds: ghcr.io/<owner>/${prefix}-<service>"
+          test -n "$prefix"
+          fail=0
+          grep -q "ghcr.io/<owner>/${prefix}-<service>" deploy/deploy-prod.sh || {
+            echo "::error file=deploy/deploy-prod.sh::header does not document ${prefix}-<service>"; fail=1; }
+          grep -q "ghcr.io/<owner>/${prefix}-<service>" docs/healthconnect-marketplace.md || {
+            echo "::error file=docs/healthconnect-marketplace.md::spec §12 does not document ${prefix}-<service>"; fail=1; }
+          [ "$fail" = 0 ] && echo "ok   header and spec both document ${prefix}-<service>"
+          exit "$fail"
+
       # An unparseable rules file is only discovered when Mimir silently declines to load it, and
       # the symptom is an alert that never fires — indistinguishable from a system that is fine.
       - name: The alert rules must parse and stay uniquely named

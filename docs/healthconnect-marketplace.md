@@ -859,9 +859,11 @@ Multi-channel by design: the same build lands in either registry, and the channe
 | Channel | Flag | Image | Credentials |
 |---|---|---|---|
 | **Default** | *(none)* | `docker.jojoaddison.net/healthconnect/<service>:<tag>` | `HC_REGISTRY_USER` / `HC_REGISTRY_TOKEN` |
-| **GitHub** | `--channel github` | `ghcr.io/<owner>/healthconnect-<service>:<tag>` | `GHCR_OWNER` / `GHCR_TOKEN` |
+| **GitHub** | `--channel github` | `ghcr.io/<owner>/hc-market-<service>:<tag>` | `GHCR_OWNER` / `GHCR_TOKEN` |
 
 GHCR has no nested-path namespaces the way a private Harbor does, so the channel switches the separator (`/` vs `-`) as well as the host. Both channels tag three ways: the version, the short git SHA, and `latest`.
+
+**`hc-market-`, not `healthconnect-`.** This table and the script's own header both said `healthconnect-<service>` until 2026-08-31 while `image_for` produced `hc-market-<service>` — and `sync-appendices.sh` could not catch it, because the appendix faithfully reproduces the script's header, so both copies were wrong in step. `healthconnect` is the *platform's* name and four products share it; the sibling packages are all `hc-<product>-<service>`. A documented name that cannot exist sends whoever reads a 404 hunting for a registry fault instead of a missing tag.
 
 ```bash
 ./deploy-prod.sh --tag 1.4.0                                  # default channel
@@ -873,8 +875,8 @@ GHCR has no nested-path namespaces the way a private Harbor does, so the channel
 
 Sequence:
 
-1. **Preflight** — resolves the tag from `pom.xml` if not given; warns on a dirty working tree; logs in to the channel registry; proves SSH and remote compose v2 before building anything.
-2. **Build** — `mvn -Pprod`, then `jib:build` per service straight to the registry. Credentials go through `JIB_TO_USERNAME` / `JIB_TO_PASSWORD` in the environment, never as `-D` flags, so they cannot appear in `ps`, in CI logs, or in `--dry-run` output.
+1. **Preflight** — resolves the tag from `pom.xml` if not given; warns on a dirty working tree; logs in to the channel registry; proves SSH and remote compose v2 before anything else. Under `--dry-run` none of that happens, and it now **says so** rather than printing a tick: both checks used to report `✓ authenticated` and `✓ host reachable` while skipping the login and never contacting the host — false confidence in the one command run *before* touching production.
+2. **Verify, not build — the default changed on 2026-08-31.** A deploy now ships the images **CI already built and proved exist** (D13, D14), confirming each tag is in the registry before touching the host. It used to rebuild all five on the operator's workstation and push over them: the tag stayed the same while the bytes behind it changed, which is precisely what D13 set out to prevent. `--build` opts back in for a tag CI has never seen; `--no-build` is still accepted, and is now what happens anyway. When the workstation has no registry credentials the existence check is skipped with a warning rather than failing — the *host* pulls these, so refusing there would block a legitimate deploy over a convenience.
 3. **Deploy** — uploads `docker-compose.prod.yml` and a generated `.env`, **keeping the outgoing `.env` as `.env.previous`** (this is what makes rollback possible), authenticates the host, pulls, then `up -d`.
 4. **Health gate** — polls `/management/health/readiness` inside each container for up to 240s.
 5. **Smoke test** — hits the public gateway for a live professional count and checks `/management/info` reports the tag just deployed.
@@ -1404,7 +1406,12 @@ esac
 #
 #  Channels:
 #     (default)          docker.jojoaddison.net/healthconnect/<service>:<tag>
-#     --channel github   ghcr.io/<owner>/healthconnect-<service>:<tag>
+#     --channel github   ghcr.io/<owner>/hc-market-<service>:<tag>
+#
+#  hc-market-, NOT healthconnect-. This header said healthconnect- until 2026-08-31 while the code
+#  produced hc-market- (see image_for and decisions.md D13), and sync-appendices.sh could not catch
+#  it: the spec appendix faithfully reproduces this header, so both copies were wrong together. A
+#  name that cannot exist sends whoever reads it hunting for a registry fault instead of a tag.
 #
 #  Usage:
 #     ./deploy-prod.sh --tag 1.4.0
@@ -1419,7 +1426,9 @@ esac
 #     --host <target>    SSH target                  (default: $HC_PROD_HOST)
 #     --path <dir>       Remote stack directory      (default: /srv/healthconnect)
 #     --services <list>  Comma-separated subset      (default: all)
-#     --no-build         Reuse images already built locally
+#     --build            Rebuild and re-push at this tag, OVERWRITING what CI published.
+#                        Not the default — see DO_BUILD below.
+#     --no-build         Accepted and now the default; kept so existing invocations still work
 #     --no-push          Build and deploy without pushing (host must reach them)
 #     --rollback         Redeploy the previous tag recorded on the host
 #     --dry-run          Print every command instead of running it
@@ -1446,7 +1455,14 @@ HOST="${HC_PROD_HOST:-}"
 REMOTE_PATH="/srv/healthconnect"
 ALL_SERVICES=(gateway catalog booking messaging payout)
 SERVICES=("${ALL_SERVICES[@]}")
-DO_BUILD=1
+# DEPLOY WHAT CI PUBLISHED. This defaulted to 1 until 2026-08-31, which meant an ordinary production
+# deploy rebuilt all five services on the operator's workstation and pushed them over the images CI
+# had already built and — per D14's verify job — proved existed at that SHA. The tag stayed the same
+# while the bytes behind it changed, which is exactly what D13 set out to prevent: images are built
+# by CI, tagged by commit, and a deploy chooses one.
+#
+# `--build` opts back in for the case the flag exists for: an unreleased tag CI has never seen.
+DO_BUILD=0
 DO_PUSH=1
 DO_ROLLBACK=0
 DRY_RUN=0
@@ -1460,6 +1476,9 @@ log()  { printf '%s▸%s %s\n' "$c_info" "$c_reset" "$*"; }
 ok()   { printf '%s✓%s %s\n' "$c_ok" "$c_reset" "$*"; }
 warn() { printf '%s!%s %s\n' "$c_warn" "$c_reset" "$*"; }
 die()  { printf '%s✗ %s%s\n' "$c_err" "$*" "$c_reset" >&2; exit 1; }
+# Deliberately NOT a tick. Under --dry-run the checks below are not performed, and the output must
+# not be readable as though they were.
+skipped() { printf '%s  ○ [dry-run] %s%s\n' "$c_dim" "$*" "$c_reset"; }
 step() { printf '\n%s%s%s\n' "$c_b" "$*" "$c_reset"; }
 run()  { if (( DRY_RUN )); then printf '%s  [dry-run] %s%s\n' "$c_dim" "$*" "$c_reset"; else "$@"; fi; }
 trap 'die "failed at line $LINENO: ${BASH_COMMAND}"' ERR
@@ -1472,6 +1491,9 @@ while [[ $# -gt 0 ]]; do
     --host)      HOST="$2"; shift 2 ;;
     --path)      REMOTE_PATH="$2"; shift 2 ;;
     --services)  IFS=',' read -r -a SERVICES <<< "$2"; shift 2 ;;
+    --build)     DO_BUILD=1; shift ;;
+    # Kept as an accepted no-op: it is documented, it is in muscle memory, and silently rejecting it
+    # would fail a deploy for asking for what is now the default.
     --no-build)  DO_BUILD=0; shift ;;
     --no-push)   DO_PUSH=0; shift ;;
     --rollback)  DO_ROLLBACK=1; shift ;;
@@ -1559,16 +1581,28 @@ preflight() {
   if (( DO_PUSH )); then
     [[ -n "$REGISTRY_TOKEN" ]] || die "registry credentials missing — set $CRED_HINT"
     log "docker login $REGISTRY_HOST as $REGISTRY_USER"
-    (( DRY_RUN )) || printf '%s' "$REGISTRY_TOKEN" \
-      | docker login "$REGISTRY_HOST" -u "$REGISTRY_USER" --password-stdin >/dev/null \
-      || die "registry login failed for $REGISTRY_HOST"
-    ok "authenticated to $REGISTRY_HOST"
+    # A tick here used to print under --dry-run too, while the login it claims was skipped. That is
+    # false confidence in the one command somebody runs BEFORE touching production: the output read
+    # as though the credentials and the host had been checked when neither had been contacted. Both
+    # of these now say plainly that they were skipped.
+    if (( DRY_RUN )); then
+      skipped "would authenticate to $REGISTRY_HOST as $REGISTRY_USER"
+    else
+      printf '%s' "$REGISTRY_TOKEN" \
+        | docker login "$REGISTRY_HOST" -u "$REGISTRY_USER" --password-stdin >/dev/null \
+        || die "registry login failed for $REGISTRY_HOST"
+      ok "authenticated to $REGISTRY_HOST"
+    fi
   fi
 
   log "checking ssh to $HOST"
-  (( DRY_RUN )) || ssh -o BatchMode=yes -o ConnectTimeout=8 "$HOST" 'docker compose version >/dev/null' \
-    || die "cannot reach $HOST over ssh, or docker compose v2 is missing there"
-  ok "host reachable"
+  if (( DRY_RUN )); then
+    skipped "would check ssh to $HOST — NOT contacted"
+  else
+    ssh -o BatchMode=yes -o ConnectTimeout=8 "$HOST" 'docker compose version >/dev/null' \
+      || die "cannot reach $HOST over ssh, or docker compose v2 is missing there"
+    ok "host reachable"
+  fi
 
   # Both networks are declared `external: true`, so compose will not create them and `up` fails
   # outright if either is absent. They belong to the host, not to this stack: infranet carries
@@ -1629,6 +1663,40 @@ build_local_only() {
     run bash -c "cd '$ROOT_DIR/$s' && ./mvnw -q -ntp jib:dockerBuild -Pprod -Djib.to.image='$(image_for "$s" "$TAG")'"
   done
   ok "images built locally"
+}
+
+# Deploying a tag without building it is only safe if the tag is actually THERE. D14 records a
+# release that exited 0 having pushed three of five images, so "the tag exists for one service" says
+# nothing about the others — and the failure surfaces on the host, mid-deploy, as a pull error.
+#
+# NOT FATAL when credentials are absent. The workstation does not need registry access for this
+# deploy to work — the HOST pulls — so refusing here would block a legitimate deploy over a check
+# that is a convenience. It says so instead of implying it checked.
+verify_published() {
+  step "Verify images"
+  if (( DRY_RUN )); then
+    for s in "${SERVICES[@]}"; do skipped "would confirm $(image_for "$s" "$TAG") exists"; done
+    return 0
+  fi
+  if [[ -z "$REGISTRY_TOKEN" ]]; then
+    warn "no registry credentials on this machine, so image existence was NOT confirmed."
+    warn "The host pulls these itself; if $TAG was never published the failure appears mid-deploy."
+    return 0
+  fi
+  printf '%s' "$REGISTRY_TOKEN" | docker login "$REGISTRY_HOST" -u "$REGISTRY_USER" --password-stdin >/dev/null \
+    || die "registry login failed for $REGISTRY_HOST"
+  local missing=0
+  for s in "${SERVICES[@]}"; do
+    local img; img="$(image_for "$s" "$TAG")"
+    if docker manifest inspect "$img" >/dev/null 2>&1; then
+      ok "$img"
+    else
+      printf '%s✗ %s is not in the registry%s\n' "$c_err" "$img" "$c_reset" >&2
+      missing=1
+    fi
+  done
+  (( missing )) && die "refusing to deploy a tag the registry does not hold. Re-run the release workflow, or use --build."
+  ok "all $TAG images present"
 }
 
 # -------------------------------------------------------------------- deploy --
@@ -1732,7 +1800,7 @@ preflight
 confirm
 if   (( DO_BUILD && DO_PUSH )); then build_and_push
 elif (( DO_BUILD ));            then build_local_only
-else                                 warn "--no-build: deploying whatever $TAG already exists"
+else                                 verify_published
 fi
 remote_deploy
 
