@@ -1540,6 +1540,74 @@ worth being able to tell apart from one that was simply already satisfied.
 
 ---
 
+## D32 — Erasure has to outlive the moment it runs in
+
+Found by verifying D31's endpoints on the quality box, which is the only reason it was found at all:
+every test passed, the endpoint did what it said, and the estate was green throughout.
+
+### The race
+
+Create a booking, erase the customer immediately, and messaging raises the conversation *afterwards* —
+from the `booking.requested` event still in flight. Under the original login. The evidence:
+
+```
+t-b-a2216d8d | verify.subject
+```
+
+still sitting there, seconds after `verify.subject` had been erased and a clean receipt filed saying
+so. The window is small and the row held only the login, no name or message body. It is still the one
+class of request where "we erased them, then re-created them from a queue" is not an answer anybody
+can give.
+
+**Erasure was a one-shot sweep, and a sweep is only correct if nothing arrives afterwards.**
+
+### `erased_subject`, holding pseudonyms and nothing else
+
+A table in messaging — hand-written and included in `master.xml` like `processed_event` and
+`outbox_event`, because it is infrastructure rather than anything the JDL should model. The consumer
+consults it before writing anything keyed to a person, and writes the pseudonym instead of the login
+when it finds a match.
+
+**There is deliberately no column for the login.** A register of erased people that names them is
+precisely the thing erasure was asked to remove, and — unlike every row being redacted — it would have
+to be kept forever for the check to keep working. So the check runs the other way: the consumer
+already holds a login, hashes it with the same rule everything else uses, and looks for the result.
+Neither side ever stores the original. The cost is that the table cannot answer *who* has been erased,
+only whether *this* person has, and that is the only question anything here asks.
+
+**The row is still written.** Skipping it would leave a professional's thread list and bell menu with
+holes where a real booking is, in order to protect an identifier that can simply be replaced.
+
+### And a second gap the same investigation opened
+
+Reading the consumer to fix the race showed where else a customer's identity ends up:
+
+- **`Notification.recipientLogin`** was never touched by erasure at all. Notifications addressed to
+  the customer — "Your home visit on 12 Sep is confirmed" — kept their login indefinitely.
+- Worse, **`booking.requested` puts the customer's NAME in the professional's notification**: "Ama
+  Mensah asked for a home visit on 12 Sep". That row is keyed to the *professional's* login, so no
+  query by recipient returns it, which is exactly why it survived. It is found through `deepLink`,
+  which is `/bookings/<ref>` for everything this service raises, matched against the erased customer's
+  own conversations.
+
+Notifications to the customer are re-keyed; notifications about them, held by somebody else, have
+their body redacted and the row kept — it is a real event in the professional's history, and the name
+can be removed without removing the event. The receipt reports the two counts separately, because a
+single total would give an operator no way to tell that data held *about* this person *by another
+user* was dealt with too.
+
+### What this says about the testing
+
+`BookingEventConsumer` had **no test of any kind** before this. It is the only code in the service
+that stores a person's login without a person having just authenticated, and it was the one place
+erasure did not reach. The gap and the missing coverage were the same gap, and the tests that existed
+all passed while both were true.
+
+D24's mechanism now has an integration test for the late event, for the name in somebody else's menu,
+and for the register answering about a login it has never stored.
+
+---
+
 ## Still open after this section
 
 Only what engineering cannot settle alone:

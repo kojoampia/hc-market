@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+        Who has been erased - decisions.md D24/D32. Hand-written, not generated from JDL, for the
+        same reason processed_event is: it is infrastructure, not a domain concept anyone models.
+        Regenerating messaging from JDL rewrites master.xml and DROPS this include, at which point
+        an erased customer silently comes back the next time an event mentions them.
+
+        The table holds PSEUDONYMS ONLY. There is deliberately no column for the login it came from:
+        a register of erased people that names them is the thing erasure was asked to remove, and it
+        would sit here forever. The consumer hashes the login it already has and looks for the
+        result, so the comparison works without either side storing the original.
+    -->
+    <changeSet id="20260901090000-1" author="healthconnect">
+        <createTable tableName="erased_subject">
+            <column name="pseudonym" type="varchar(64)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="erased_at" type="${datetimeType}"><constraints nullable="false"/></column>
+        </createTable>
+    </changeSet>
+</databaseChangeLog>

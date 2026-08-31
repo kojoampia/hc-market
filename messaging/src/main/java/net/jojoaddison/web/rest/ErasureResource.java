@@ -33,16 +33,33 @@ public class ErasureResource {
     @PostMapping("/{login}/erase")
     public ErasureReceipt erase(@PathVariable String login) {
         ErasureWorkflow.Erased erased = erasure.eraseCustomer(login);
-        return new ErasureReceipt(ErasureWorkflow.pseudonym(login), erased.conversationsPseudonymised(), erased.messagesRedacted());
+        return new ErasureReceipt(
+            ErasureWorkflow.pseudonym(login),
+            erased.conversationsPseudonymised(),
+            erased.messagesRedacted(),
+            erased.notificationsReKeyed(),
+            erased.notificationsRedacted()
+        );
     }
 
     /**
      * @param conversationsPseudonymised threads re-keyed to the pseudonym
      * @param messagesErased message bodies replaced
+     * @param notificationsReKeyed notifications addressed to the customer, now addressed to the alias
+     * @param notificationsRedacted notifications in somebody ELSE's list whose body named the
+     *     customer — the professional's "Ama Mensah asked for a home visit". Reported separately
+     *     because an operator reading a single total would have no way to tell that data held about
+     *     this person by another user was dealt with too
      *     <p>Both, because this reported the second alone until a real erasure returned zero for a
      *     customer whose conversation had just been re-keyed — a booking raises a thread before
      *     anyone writes in it. The receipt is what an operator files against the request, so it must
      *     not under-report.
      */
-    public record ErasureReceipt(String pseudonym, int conversationsPseudonymised, int messagesErased) {}
+    public record ErasureReceipt(
+        String pseudonym,
+        int conversationsPseudonymised,
+        int messagesErased,
+        int notificationsReKeyed,
+        int notificationsRedacted
+    ) {}
 }
