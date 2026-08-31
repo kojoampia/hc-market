@@ -1128,7 +1128,7 @@ outbox stays a log of domain events rather than of Kafka addresses.
 What this does *not* fix: the two estates still share one broker, and a dev estate configured with
 an empty prefix by mistake is back to crossing. `deploy-dev.sh` keeps its warning.
 
-### SSE: built, at the gateway, and only there
+### SSE: built, at the gateway, and only there — with three things found on the way
 
 D25's closing note said drop the claim or build it at the reactive gateway fed by Kafka, never in
 imperative `messaging`. It gets built. The gateway is the only reactive application in the estate and
@@ -1139,6 +1139,50 @@ The alternative considered and rejected was dropping the claim: there is no fron
 channel would have no reader. That reasoning inverts with the decision below — the prototype is being
 opened up, so there *will* be a reader, and a marketplace whose bookings change state under the
 customer is exactly the case polling serves worst.
+
+**What JHipster generates is a sample, not this.** `broker.KafkaConsumer` and
+`/api/healthconnect-gateway-kafka/consume` look exactly like the feature and are wrong in four ways
+at once: the sink is `unicast()`, so the **second** connected client gets an error; there is no
+`text/event-stream` content type, so it is not SSE; there is **no per-user filtering**, so every
+subscriber would see every event and customers would read each other's bookings; and it binds to
+`sse-topic`, which nothing in hc-market publishes to. Both are left in place — they are generated, and
+a regeneration would put them back — with the real implementation in new files beside them.
+
+**The consumer group is unique per instance, inverting the estate's own rule.** Everywhere else a
+shared explicit group is right: work is divided, each event is handled once, and D27's compose files
+warn at length against anonymous groups losing offsets. For a fan-out it is the opposite. Every
+gateway instance must see *every* event, because the user it needs to reach may be connected to any of
+them — a shared group would give two instances half the partitions each and half the connected users
+would silently never be told anything. So the group carries `${random.uuid}` and its offsets are
+deliberately disposable; events published while an instance was down are worthless to a live stream by
+definition.
+
+**`@KafkaListener` in the gateway had to be proven, not assumed.** The gateway carries
+`spring-cloud-starter-stream-kafka` and no `spring-boot-starter-kafka`, and everything JHipster
+generates for it goes through Spring Cloud Stream bindings instead — so a listener that was never
+wired would have failed in the way this repository keeps getting caught by: context starts, bean
+exists, endpoint answers, stream opens, nothing ever arrives. `MarketplaceEventFanoutIT` publishes to a
+real broker and waits for it to come out of the sink. It works.
+
+**What could not be tested, and why it is written down rather than quietly skipped.** The SSE framing
+is not asserted over HTTP. `@IntegrationTest` binds `WebTestClient` to the application context rather
+than to a port, and a mock-bound client buffers the whole response before returning from `exchange()`
+— which never happens for a stream that by design never completes. Measured at every timeout it was
+given, up to 40 seconds. Only the 401 can be asserted, because it short-circuits before a body exists.
+
+So the filter moved: `streamFor(login)` lives on the fan-out rather than as a predicate in the
+resource. Addressing was already that class's concern — it decides who an event is *for* — so it
+should also decide who may see it, and the disclosure boundary is now one file that a real-broker test
+can exercise with no HTTP client in the way. Covering the framing end to end needs a real port and a
+real minted token; that test is not written and is listed as open.
+
+**Two nginx directives became load-bearing for a reason they were not written for.**
+`quality/host-site.conf` already had `proxy_buffering off` and `proxy_read_timeout 1h`. With buffering
+on, nginx holds each frame until its buffer fills, so events arrive in clumps or not until the
+connection closes; with the default 60-second read timeout an idle stream is cut every minute. Neither
+looks like a failure — the browser reconnects silently and the only symptom is a channel that misses
+things. The gateway also sends a keep-alive comment every 20 seconds, which covers a default-configured
+proxy that this file does not control.
 
 ### The prototype gets opened up
 

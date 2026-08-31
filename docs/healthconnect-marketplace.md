@@ -532,6 +532,30 @@ That call has a **2 s timeout** and reports `nextUpAvailable` separately from `n
 outage costs one card rather than the screen — and "nothing is booked" stays distinguishable from
 "could not ask".
 
+### Live channel (added D25/D29)
+
+| Method | Path | Screen |
+|---|---|---|
+| `GET` | `/api/stream` | The prototype's `toast()` — everything happening to the caller, as it happens |
+
+**On the gateway, not on `messaging`.** It is the only reactive application in the estate and the only
+one already holding a connection to every client, so a long-lived per-user stream costs nothing
+structurally here and would cost a thread per subscriber in an imperative service.
+
+`text/event-stream`, authenticated, and **filtered to the JWT subject** — there is no `?login=` and
+there must never be one. The event name is the domain event type (`healthconnect.booking.accepted`),
+so a client can `addEventListener` per kind; the estate topic prefix is transport and never reaches a
+client. A comment frame goes out every 20 s, because an idle stream is otherwise cut by the first
+proxy that believes it has stalled.
+
+**Not durable, and not a record.** Events are dropped for a subscriber that cannot keep up and are
+never replayed on reconnect. The durable copy is messaging's notification table, which is what a
+client reads on connect and after any gap. This is a toast, not an accounting entry.
+
+The generated `broker.KafkaConsumer` and `/api/healthconnect-gateway-kafka/consume` beside it are a
+**sample, not this feature**: the sink is `unicast()` so the second client errors, it is not SSE, it
+binds to a topic nothing publishes to, and it has no per-user filtering at all.
+
 ### Verification desk (`ROLE_BROKERAGE`, added D16/D29)
 
 | Method | Path | Who |
@@ -905,9 +929,9 @@ full-text search (Q6), and hc-market wires no observability at all (Q12).
 12. **Observability.** JHipster ships Micrometer. Which backend — Prometheus/Grafana, or something already running on `docker.jojoaddison.net`?
     → **D25:** the host's existing OTLP-push stack. No new backend, and not Prometheus scraping.
 
-One further gap, not numbered above: the header advertises **"Kafka, SSE"** and no SSE endpoint is
-defined or built. → **D25's closing note:** drop the claim and poll; if real-time is wanted, SSE
-belongs at the reactive gateway fed by Kafka, not in imperative `messaging`.
+One further gap, not numbered above: the header advertised **"Kafka, SSE"** and no SSE endpoint was
+defined or built. → **CLOSED (D29).** `GET /api/stream` exists, at the reactive gateway fed by Kafka,
+exactly where D25's closing note said it would have to be. See §6.
 
 ---
 

@@ -541,6 +541,16 @@ time.**
 - To exercise a `/api/pro/**` endpoint by hand, mint an HS512 token with the estate's
   `JWT_BASE64_SECRET`: subject is the login, authorities go in the `auth` claim as a
   space-delimited string (`SecurityUtils.AUTHORITIES_CLAIM`).
+- **`GET /api/stream` is the live channel, and it is on the GATEWAY** (D25/D29) — the only reactive
+  app in the estate. Filtered to the JWT subject by `MarketplaceEventFanout.streamFor`, which is the
+  disclosure boundary; there is no `?login=`. Its consumer group is unique per instance
+  (`${random.uuid}`), **inverting** the shared-group rule everywhere else: a fan-out needs every
+  instance to see every event, and a shared group would give two instances half the partitions each
+  while half the connected users are silently never told anything. Lossy on purpose — the durable
+  copy is messaging's notification table.
+  The generated `broker.KafkaConsumer` and `/api/healthconnect-gateway-kafka/consume` are a **sample**,
+  not this: `unicast()` sink (the second client errors), not SSE, no per-user filter, bound to a topic
+  nothing publishes to.
 - **Wall-clock times carry their zone.** `Professional.zoneId` and `Booking.zoneId` are IANA names,
   defaulting to `Africa/Accra` (D21). Ghana is UTC+0 all year, so the implicit model was correct —
   just illegible. **Do not convert appointments to `Instant`.** An `Instant` is right for "when did
