@@ -1176,6 +1176,14 @@ should also decide who may see it, and the disclosure boundary is now one file t
 can exercise with no HTTP client in the way. Covering the framing end to end needs a real port and a
 real minted token; that test is not written and is listed as open.
 
+**The heartbeat's first tick had to move to zero, and a test found it.** `Flux.interval(HEARTBEAT,
+HEARTBEAT)` meant the stream emitted nothing for twenty seconds — and WebFlux does not commit the
+response until the first element is written. So a client received no status line and no headers for
+those twenty seconds: an `EventSource` sitting in CONNECTING, and any proxy with a short header
+timeout free to kill a connection that had not yet said anything. Firing the first comment
+immediately commits the response, which is what an SSE endpoint should do. Found by a real-port test
+that could not get past `exchange()` — the client was not slow, the server had genuinely sent nothing.
+
 **Two nginx directives became load-bearing for a reason they were not written for.**
 `quality/host-site.conf` already had `proxy_buffering off` and `proxy_read_timeout 1h`. With buffering
 on, nginx holds each frame until its buffer fills, so events arrive in clumps or not until the
@@ -1280,7 +1288,7 @@ Engineering items genuinely open, none of them blocked on anyone:
 | # | What | Why not now |
 |---|---|---|
 | D29 | `sendMsg()` is the one prototype write still in memory — it mutates `THREADS` and invents a reply on a timer | Messaging's write surface is larger than booking's or reviewing's, and phase 5 stopped at the two that exercise D22/D28/D21 |
-| D29 | The SSE framing is not asserted over HTTP — a mock-bound `WebTestClient` buffers a stream that never completes | Needs a real port and a minted token; the disclosure boundary is covered in `MarketplaceEventFanoutIT` meanwhile |
+| D29 | An event published to Kafka is not asserted to arrive **on the wire** as SSE data | `MarketplaceStreamFramingIT` now covers the real-port connection with a real token; the data frame still does not arrive in a RANDOM_PORT context while it does reliably under MOCK, and that difference is not yet understood. Verified outside the suite by `verify-prototype-live.mjs --writes` |
 | D29 | The prototype has never been loaded in a real browser | Recorded twice now. `CLAUDE.md`'s rule that a change touching a screen ends in a browser still applies |
 | D13 | `deploy-prod.sh` rebuilds and re-pushes at the same SHA, overwriting the images CI built and verified | `--no-build` exists; which one a production deploy should use is a decision, not an oversight |
 | D14 | `deploy-prod.sh --dry-run` prints `✓ authenticated to ghcr.io` and `✓ host reachable` unconditionally, while both operations are skipped | A dry run that implies a check it never made is the same class of false confidence D14 exists to prevent |
