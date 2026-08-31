@@ -156,6 +156,7 @@ await new Promise(r => setTimeout(r, TOKEN ? 2500 : 500));
 const live = vm.runInContext(
   `({ pros: PROS.length, reviews: REVIEWS.length,
       p1: PROS.find(p=>p.id==='p1'),
+      ratesFinite: PROS.every(p => Number.isFinite(p.rate)),
       services: PROS.reduce((n,p)=>n+p.services.length,0),
       avail: (AVAIL['p1']||[]).length,
       availTimes: Object.values(AVAIL).flat().reduce((n,d)=>n+(d.times||[]).length,0),
@@ -181,6 +182,12 @@ const checks = [
   ['p1 bio present', (p1.bio || '').length > 0, true],
   ['p1 credentials present', (p1.creds || []).length > 0, true],
   ['prices are cedis, not pesewas', p1.services?.[0]?.price, 280],
+  /* `rate` is a DERIVED field block 1 computes once at load, and replacing PROS wholesale left it
+     undefined — every profile and browse card rendered "₵NaN". Not caught by the check above,
+     which reads services[0].price: the figure on screen comes from a different field entirely.
+     Found by loading the page in a browser, which is why that step is not optional. */
+  ['every "from" rate is a number, not NaN', live.ratesFinite, true],
+  ['p1 "from" rate is its cheapest paid service', p1.rate, Math.min(...(p1.services || []).filter(s => s.price > 0).map(s => s.price))],
   ['availability days present', live.avail > 0, true],
   /* Days alone proved nothing: the mapping once read `day.times` where the API sends `slots`, so
      every day arrived empty and this file still passed. A catalogue nobody can be booked in is not

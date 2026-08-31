@@ -610,3 +610,11 @@ time.**
   It runs the **shipped** blocks against a live estate rather than restating the mapping, and loads
   *every* script block in document order — `confirmBooking` and `submitReview` live in the third,
   not the last. Three field names were wrong before it existed and none of them threw.
+- **The quality vhost serves the prototype same-origin** at `http://market.healthconnect.local/prototype`,
+  so `?api=` needs no CORS and `/api/stream` works. That location carries a **deliberately weaker
+  CSP** than the site's `default-src 'none'` — the page is inline script and style. Scoped to that
+  one path; the API keeps the strict policy, and `add_header` replaces rather than merges, so check
+  the header on an `/api/**` path after touching it.
+- **End in a real browser.** Not optional, and not satisfied by the headless verifier: `p.rate` is
+  derived once in block 1 and live mode forgot to recompute it, so every profile and browse card read
+  `₵NaN` while every automated check passed.
