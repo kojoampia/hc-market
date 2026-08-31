@@ -1,6 +1,7 @@
 package net.jojoaddison.service;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -13,9 +14,12 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import net.jojoaddison.domain.Category;
 import net.jojoaddison.domain.Professional;
+import net.jojoaddison.domain.enumeration.VerificationState;
+import net.jojoaddison.domain.VerificationReview;
 import net.jojoaddison.domain.ProfessionalRating;
 import net.jojoaddison.repository.CategoryRepository;
 import net.jojoaddison.repository.MarketplaceQueryRepository;
+import net.jojoaddison.repository.VerificationReviewQueryRepository;
 import net.jojoaddison.repository.ProfessionalRatingRepository;
 import net.jojoaddison.service.dto.marketplace.MarketplaceDtos.AvailabilityDay;
 import net.jojoaddison.service.dto.marketplace.MarketplaceDtos.CategoryView;
@@ -44,11 +48,18 @@ public class MarketplaceService {
     private final MarketplaceQueryRepository marketplace;
     private final CategoryRepository categories;
     private final ProfessionalRatingRepository ratings;
+    private final VerificationReviewQueryRepository reviewQueries;
 
-    public MarketplaceService(MarketplaceQueryRepository marketplace, CategoryRepository categories, ProfessionalRatingRepository ratings) {
+    public MarketplaceService(
+        MarketplaceQueryRepository marketplace,
+        CategoryRepository categories,
+        ProfessionalRatingRepository ratings,
+        VerificationReviewQueryRepository reviewQueries
+    ) {
         this.marketplace = marketplace;
         this.categories = categories;
         this.ratings = ratings;
+        this.reviewQueries = reviewQueries;
     }
 
     // ------------------------------------------------------------------ categories --
@@ -140,7 +151,8 @@ public class MarketplaceService {
                     p.getCredentials().stream().sorted(Comparator.comparing(c -> nullSafe(c.getSortOrder()))).map(c -> c.getLabel()).toList(),
                     p.getHighlights().stream().sorted(Comparator.comparing(h -> nullSafe(h.getSortOrder()))).map(h -> h.getLabel()).toList(),
                     services,
-                    starDistribution(reference)
+                    starDistribution(reference),
+                    verifiedOn(reference)
                 );
             });
     }
@@ -159,6 +171,27 @@ public class MarketplaceService {
 
     public boolean exists(String reference) {
         return marketplace.findByReference(reference).isPresent();
+    }
+
+    /**
+     * When this professional was last VERIFIED, or empty if nothing records it — {@code decisions.md}
+     * D16/D31.
+     *
+     * <p>Only a {@code VERIFIED} decision counts. Taking the latest review of any kind would date a
+     * badge from the review that removed it, which is worse than saying nothing.
+     *
+     * <p>Empty for every seeded professional: the seed is extracted from a prototype that has no
+     * review history, so there is genuinely nothing to report and the profile says as much. The
+     * reviewer and the evidence reference are deliberately not returned — see the DTO.
+     */
+    public Instant verifiedOn(String reference) {
+        return reviewQueries
+            .findByProfessionalReferenceOrderByReviewedAtDesc(reference)
+            .stream()
+            .filter(r -> r.getDecision() == VerificationState.VERIFIED)
+            .map(VerificationReview::getReviewedAt)
+            .findFirst()
+            .orElse(null);
     }
 
     /**

@@ -1,6 +1,7 @@
 package net.jojoaddison.service.dto.marketplace;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 
@@ -78,7 +79,21 @@ public final class MarketplaceDtos {
         List<String> credentials,
         List<String> highlights,
         List<ServiceView> services,
-        List<Integer> starDistribution
+        List<Integer> starDistribution,
+        /**
+         * When this professional was last verified, or null if there is no record — decisions.md
+         * D16/D31.
+         *
+         * <p>The DATE ONLY. The reviewer's login and the evidence reference stay on the desk
+         * endpoint: a customer needs to know that a person checked and when, not which member of
+         * staff it was or what case number they filed. Widening this to carry either would turn an
+         * audit trail into a disclosure.
+         *
+         * <p>Null for every seeded professional, because the prototype it is extracted from has no
+         * review history to extract. That is the honest answer and the screen says so rather than
+         * inventing a date.
+         */
+        Instant verifiedOn
     ) {}
 
     public record ServiceView(
