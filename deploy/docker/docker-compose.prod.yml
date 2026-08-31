@@ -70,7 +70,8 @@ x-service-base: &service-base
   networks: [default, monitoring]
 
 services:
-  gateway:
+  hc-market-gateway:
+    container_name: hc-market-gateway
     <<: *service-base
     image: ${HC_IMAGE_PREFIX}${HC_IMAGE_SEP}gateway:${HC_TAG}
     ports:
@@ -100,30 +101,38 @@ services:
       # `/api/**`, not `/**` — see D28 and the identical note in quality/compose.yml. This is the
       # only thing keeping /internal/** off the internet.
       #
-      # The hosts are overridable because these are compose SERVICE names on the shared external
-      # infranet, and compose publishes a service name as a DNS alias on every network it joins —
-      # the exact collision D27 had to fix on hcnet, where `catalog` and `booking` were already
-      # claimed by another stack. Whether `gateway` or any of these is already taken on infranet
-      # cannot be checked from a workstation; if it is, set these to container names rather than
-      # renaming services on a live host.
+      # These are CONTAINER names now, not service names, and that is the D28 fix.
+      #
+      # Compose publishes a service NAME as a DNS alias on every network it joins, and infranet is
+      # shared with hc-admin, hc-patient and hc-professional. Services called `gateway`, `catalog`
+      # and `booking` would therefore claim those aliases there — the exact collision D27 had to fix
+      # on hcnet, where `catalog` and `booking` were already taken and docker answered with whichever
+      # container it felt like. Nothing logs that; the gateway simply routes a share of its traffic
+      # into another product.
+      #
+      # Whether those names are in fact already taken on infranet could not be checked from a
+      # workstation, so the collision is made impossible rather than investigated: every service is
+      # `hc-market-<name>` with an explicit container_name, and these hosts point at those. The
+      # aliases the services still publish are now unique to this product.
       SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_0_ID: healthconnectcatalog
-      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_0_URI: http://${HC_CATALOG_HOST:-catalog}:8080
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_0_URI: http://${HC_CATALOG_HOST:-hc-market-catalog}:8080
       SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_0_PREDICATES_0: Path=/services/healthconnectcatalog/api/**
       SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_0_FILTERS_0: StripPrefix=2
       SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_1_ID: healthconnectbooking
-      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_1_URI: http://${HC_BOOKING_HOST:-booking}:8080
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_1_URI: http://${HC_BOOKING_HOST:-hc-market-booking}:8080
       SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_1_PREDICATES_0: Path=/services/healthconnectbooking/api/**
       SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_1_FILTERS_0: StripPrefix=2
       SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_2_ID: healthconnectmessaging
-      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_2_URI: http://${HC_MESSAGING_HOST:-messaging}:8080
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_2_URI: http://${HC_MESSAGING_HOST:-hc-market-messaging}:8080
       SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_2_PREDICATES_0: Path=/services/healthconnectmessaging/api/**
       SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_2_FILTERS_0: StripPrefix=2
       SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_3_ID: healthconnectpayout
-      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_3_URI: http://${HC_PAYOUT_HOST:-payout}:8080
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_3_URI: http://${HC_PAYOUT_HOST:-hc-market-payout}:8080
       SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_3_PREDICATES_0: Path=/services/healthconnectpayout/api/**
       SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_3_FILTERS_0: StripPrefix=2
 
-  catalog:
+  hc-market-catalog:
+    container_name: hc-market-catalog
     <<: *service-base
     image: ${HC_IMAGE_PREFIX}${HC_IMAGE_SEP}catalog:${HC_TAG}
     environment:
@@ -132,12 +141,13 @@ services:
       # POST /api/reviews proves a COMPLETED booking backs the review before accepting it (spec §9),
       # which means catalog calls booking. Fails closed: without this it answers 503 "cannot verify
       # the booking right now" for every review, in production only.
-      HEALTHCONNECT_BOOKING_BASE_URL: http://${HC_BOOKING_HOST:-booking}:8080
+      HEALTHCONNECT_BOOKING_BASE_URL: http://${HC_BOOKING_HOST:-hc-market-booking}:8080
       SPRING_DATASOURCE_URL: ${HC_CATALOG_DB_URL:?catalog datasource url is required}
       SPRING_DATASOURCE_USERNAME: ${HC_CATALOG_DB_USER:-healthconnectCatalog}
       SPRING_DATASOURCE_PASSWORD: ${HC_CATALOG_DB_PASSWORD:?catalog datasource password is required}
 
-  booking:
+  hc-market-booking:
+    container_name: hc-market-booking
     <<: *service-base
     image: ${HC_IMAGE_PREFIX}${HC_IMAGE_SEP}booking:${HC_TAG}
     environment:
@@ -147,13 +157,14 @@ services:
       # professional reference (decisions.md D22, D28). Both calls FAIL CLOSED, so without this the
       # create path 503s every time. It was unset in all three compose files until 2026-08-31 and
       # nothing noticed: the ITs mock CatalogClient, and no health check exercises a write.
-      HEALTHCONNECT_CATALOG_BASE_URL: http://${HC_CATALOG_HOST:-catalog}:8080
-      HEALTHCONNECT_PAYOUT_BASE_URL: http://${HC_PAYOUT_HOST:-payout}:8080
+      HEALTHCONNECT_CATALOG_BASE_URL: http://${HC_CATALOG_HOST:-hc-market-catalog}:8080
+      HEALTHCONNECT_PAYOUT_BASE_URL: http://${HC_PAYOUT_HOST:-hc-market-payout}:8080
       SPRING_DATASOURCE_URL: ${HC_BOOKING_DB_URL:?booking datasource url is required}
       SPRING_DATASOURCE_USERNAME: ${HC_BOOKING_DB_USER:-healthconnectBooking}
       SPRING_DATASOURCE_PASSWORD: ${HC_BOOKING_DB_PASSWORD:?booking datasource password is required}
 
-  messaging:
+  hc-market-messaging:
+    container_name: hc-market-messaging
     <<: *service-base
     image: ${HC_IMAGE_PREFIX}${HC_IMAGE_SEP}messaging:${HC_TAG}
     environment:
@@ -163,7 +174,8 @@ services:
       SPRING_DATASOURCE_USERNAME: ${HC_MESSAGING_DB_USER:-healthconnectMessaging}
       SPRING_DATASOURCE_PASSWORD: ${HC_MESSAGING_DB_PASSWORD:?messaging datasource password is required}
 
-  payout:
+  hc-market-payout:
+    container_name: hc-market-payout
     <<: *service-base
     image: ${HC_IMAGE_PREFIX}${HC_IMAGE_SEP}payout:${HC_TAG}
     environment:
@@ -172,7 +184,7 @@ services:
       # The Overview screen's "next up" card reads this professional's schedule from booking. Unlike
       # the two above this one DEGRADES rather than failing closed — nextUpAvailable=false costs one
       # card, not the screen — which is exactly why it would have gone unnoticed indefinitely.
-      HEALTHCONNECT_BOOKING_BASE_URL: http://${HC_BOOKING_HOST:-booking}:8080
+      HEALTHCONNECT_BOOKING_BASE_URL: http://${HC_BOOKING_HOST:-hc-market-booking}:8080
       SPRING_DATASOURCE_URL: ${HC_PAYOUT_DB_URL:?payout datasource url is required}
       SPRING_DATASOURCE_USERNAME: ${HC_PAYOUT_DB_USER:-healthconnectPayout}
       SPRING_DATASOURCE_PASSWORD: ${HC_PAYOUT_DB_PASSWORD:?payout datasource password is required}

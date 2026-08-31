@@ -520,6 +520,26 @@ whichever comes first — not on feel.
 tuning and synonyms become a product feature in their own right. For a Ghanaian marketplace of
 non-medical professionals, that is not a realistic horizon. Postgres covers it.
 
+**MEASURED 2026-08-31, so the trigger is a number rather than a feeling.** Against the quality estate
+at 18 professionals, through the gateway, 60 samples each:
+
+| Endpoint | p50 | p95 | max |
+|---|---|---|---|
+| `GET /api/professionals?size=200` (browse) | 21 ms | **26 ms** | 41 ms |
+| `GET /api/professionals?q=nutrition&minRating=4` | 20 ms | 23 ms | 26 ms |
+| `GET /api/professionals/facets` | 20 ms | 26 ms | 45 ms |
+| `GET /api/professionals/count` (control — one query) | 4 ms | 5 ms | 5 ms |
+
+So the load-everything-and-filter-in-Java approach costs about **21 ms over a single-query control**,
+and that gap is what scales with the catalogue: browse builds every card, rating-view join included,
+before filtering any of them. At ~200 professionals the same shape lands somewhere around 200–250 ms,
+which is where this stops being free.
+
+**Conclusion: not now.** 26 ms is not a latency problem and 18 is not 200. Re-take the measurement
+before deciding otherwise — the command is above and takes a minute — rather than reasoning from the
+fact that `contains()` in a loop looks wrong. It is wrong in principle and irrelevant in practice at
+this size, and D19 exists to keep those two apart.
+
 **One constraint to respect:** rating comes from the `professional_rating` view and is `null` for the
 unrated. Sorting and `minRating` in SQL must join that view and keep excluding unrated professionals
 rather than coalescing them to zero — the whole point of D-the-rating-rule. A `LEFT JOIN` plus a
@@ -1284,6 +1304,75 @@ CLAUDE.md's rule that a change touching a screen ends in a real browser still ap
 
 ---
 
+## D30 — Four answers, 2026-08-31
+
+Taken after the D29 work, and recorded because three of them close items that had been sitting on the
+"needs a person" list.
+
+### D28's `infranet` question is closed by making it moot
+
+The question was whether `gateway` is already a DNS alias on production's shared `infranet`. It cannot
+be answered from a workstation, so it is not answered: **the production compose services are renamed
+`hc-market-*` with explicit container names**, and the gateway's static route hosts point at those.
+The aliases this stack publishes on that shared network are now unique to this product, whatever else
+is on it.
+
+Making a collision impossible beats investigating whether one exists — the same conclusion D27 reached
+on `hcnet`, where `catalog` and `booking` turned out to be taken and docker was answering with
+whichever container it felt like, silently.
+
+`deploy-prod.sh` maps the short CLI names onto the compose ones, so `--services catalog,booking` is
+unchanged. That mapping is not cosmetic: `docker compose up -d gateway` against a file with no such
+service fails loudly, but `docker compose pull` with no arguments would quietly pull everything.
+
+### The release agent no longer tells itself to skip consent
+
+`~/.claude/agents/code-pipeline.md` Step 5 read *"production is launched and returns a 200 but it is
+not operational so deploy without asking for express permission."* Two halves had come apart in it:
+whether production is *operational* is a different question from whether deploying to it needs
+consent, and a standing instruction to skip consent outlives the circumstance that motivated it.
+
+Step 5 now halts before production and produces a `--dry-run` plan. An operator who wants a deploy
+says so in the invoking prompt; an agent concluding on its own that permission was implied is the
+failure the wording now prevents.
+
+### `hc-infra`'s header no longer claims ports hc-market gave back
+
+It said hc-market's dev estate holds 18500 and 19092. False since D27 removed that stack's private
+broker and Consul. Corrected in place — `hc-infra` is not a git repository, so there is no branch to
+put it on — and comments only, no configuration touched. The shifted ports stay where they are, which
+the file already explains: a port that means one thing in the file and another on the host is how an
+afternoon gets lost.
+
+### The SSE-on-the-wire gap gets investigated rather than routed around — and it was a real bug
+
+An unexplained difference between two test contexts, in a live channel, was worth understanding. It
+took one bisect to find that **every SSE frame this estate has ever sent carried garbage**.
+
+The bisect subscribed to the fan-out directly and over HTTP in the same context and the same run.
+Result: `fanout=2 http=1` — the consumer was fine, so the fault was between the sink and the socket.
+The single HTTP frame read:
+
+```
+{"array":false,"bigDecimal":false,"binary":false,"containerNode":true,"nodeType":"OBJECT", …}
+```
+
+The payload was a `JsonNode` in the `ServerSentEvent`'s data, and Jackson serialised it by its BEAN
+PROPERTIES — the results of `isArray()`, `isBigDecimal()`, `getNodeType()` — instead of the JSON it
+represents. Not a subset of the event, not a mangled event: none of it.
+
+**Nothing failed.** The connection opened, frames arrived on time, the fan-out test passed, and
+`verify-prototype-live.mjs` passed end to end against a live estate — because the only client that
+exists reads the `event:` name to raise a toast and never looks at `data`. A stream that is live,
+punctual and carrying nothing is the exact shape of defect this repository keeps producing, and the
+only reason it surfaced is that somebody insisted on asserting the wire rather than the behaviour.
+
+Fixed by converting the payload to plain maps at ingestion, so the record is usable by anything that
+subscribes and there is one place to get it right. The wire test now asserts the real payload *and*
+that `nodeType` and `bigDecimal` are absent, so a regression cannot pass as "some JSON arrived".
+
+---
+
 ## Still open after this section
 
 Only what engineering cannot settle alone:
@@ -1315,4 +1404,4 @@ Engineering items genuinely open, none of them blocked on anyone:
 | D13 | `deploy-prod.sh` rebuilds and re-pushes at the same SHA, overwriting the images CI built and verified | `--no-build` exists; which one a production deploy should use is a decision, not an oversight |
 | D14 | `deploy-prod.sh --dry-run` prints `✓ authenticated to ghcr.io` and `✓ host reachable` unconditionally, while both operations are skipped | A dry run that implies a check it never made is the same class of false confidence D14 exists to prevent |
 | D13 | `deploy-prod.sh`'s header and spec §12 say the github channel produces `ghcr.io/<owner>/healthconnect-<service>`; the code produces `hc-market-<service>` | `sync-appendices.sh` cannot catch it — the appendix faithfully reproduces the script's own stale header |
-| D19 | Search is `contains()` in Java over every card | By D19's own terms the threshold is ~200 professionals. There are 18 |
+| D19 | Search is `contains()` in Java over every card | **Measured, not deferred on feel:** p95 26 ms at 18 professionals against a 5 ms control. D19's trigger is ~200 professionals or a latency measurement; neither is met. Figures and the re-measure command are in D19 |

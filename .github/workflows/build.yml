@@ -18,8 +18,18 @@ name: Build and check
 on:
   push:
     branches: [main]
+  # EVERY pull request, not just those targeting main.
+  #
+  # This carried `branches: [main]`, so a PR based on another branch got NO CHECKS AT ALL — and a PR
+  # with no CI is worse than one with failing CI: GitHub shows nothing, which reads as "nothing to
+  # worry about" rather than "never ran". Found when a stacked PR sat green-looking and unverified.
+  #
+  # Stacking is the normal shape here now that work goes on branches: a follow-up based on an open
+  # PR should be gated exactly as hard as one based on main.
+  #
+  # release.yml is deliberately NOT widened. It publishes five images to GHCR and must stay on
+  # `push: branches: [main]` — the point of a PR is to get the gate without the publish.
   pull_request:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
