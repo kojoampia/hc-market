@@ -160,6 +160,8 @@ const live = vm.runInContext(
       avail: (AVAIL['p1']||[]).length,
       availTimes: Object.values(AVAIL).flat().reduce((n,d)=>n+(d.times||[]).length,0),
       bookings: BOOKINGS.length, bookingIds: BOOKINGS.map(b=>b.id),
+      threads: THREADS.length, threadIds: THREADS.map(t=>t.id),
+      firstThreadMsgs: (THREADS[0]||{}).msgs || [],
       review: REVIEWS[0] })`,
   ctx
 );
@@ -222,6 +224,25 @@ if (TOKEN) {
        customer. A toast naming it is the only end-to-end evidence that D25's live channel works. */
     const toasts = vm.runInContext('(globalThis.__t||[]).join(" | ")', ctx);
     checks.push(['the SSE channel delivered the event back', /Live: booking/.test(toasts), true]);
+  }
+
+  /* --- messaging ---------------------------------------------------------------------------- */
+  checks.push(['threads loaded with their messages', live.threads > 0 && live.firstThreadMsgs.length > 0, true]);
+  checks.push(['message direction maps to me/them', live.firstThreadMsgs.every(m => m === undefined || ['me', 'them'].includes(m.from)), true]);
+  checks.push(['message timestamps are rendered, not raw instants', /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test((live.firstThreadMsgs[0] || {}).t || ''), true]);
+
+  if (live.threadIds.length) {
+    const ref = live.threadIds[0];
+    const before = vm.runInContext(`(THREADS.find(t=>t.id===${JSON.stringify(ref)})||{}).msgs.length`, ctx);
+    vm.runInContext(`state.route='#/messages'; state.threadId=${JSON.stringify(ref)};`, ctx);
+    await vm.runInContext('sendMsg()', ctx);
+    await new Promise(r => setTimeout(r, 2000));
+    const after = vm.runInContext(`(THREADS.find(t=>t.id===${JSON.stringify(ref)})||{}).msgs`, ctx);
+    checks.push(['a message was sent and the thread re-read', after.length, before + 1]);
+    checks.push(['the sent message is attributed to me', (after[after.length - 1] || {}).from, 'me']);
+    /* The demo invents a reply 1.6s after sending. Live mode must NOT — it would put words into a
+       real professional's mouth. Waited 2s above precisely so a fabricated reply would have landed. */
+    checks.push(['no reply was fabricated', after.filter(m => /come back to you properly/.test(m.x || '')).length, 0]);
   }
 }
 

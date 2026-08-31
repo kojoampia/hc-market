@@ -2637,9 +2637,10 @@ window.addEventListener('resize', ()=>{ clearTimeout(rz); rz = setTimeout(()=>{ 
    as it is there. WITH A TOKEN, the customer's own bookings come from booking as well, and two
    writes go to the estate: creating a booking and publishing a review.
 
-   MESSAGING IS STILL IN MEMORY. sendMsg() mutates THREADS and invents a reply on a timer, exactly
-   as the demo does. Said plainly because a page where three of four actions are real is otherwise
-   the worst kind of half-finished: the one that looks done.
+   MESSAGING IS LIVE TOO, and its override is a REWRITE rather than a wrapper. The demo's sendMsg
+   fabricates a reply from the professional 1.6 seconds later; against a real estate that would put
+   words into a real person's mouth in a real conversation, so it is gone and the thread is re-read
+   from the server instead.
 
    The writes deliberately do NOT send priceMinor, currency or professionalLogin. The server
    establishes all three (decisions.md D22, D28), and sending them would mean the prototype was
@@ -2654,6 +2655,7 @@ window.addEventListener('resize', ()=>{ clearTimeout(rz); rz = setTimeout(()=>{ 
   /* The gateway routes by service id, so writes to booking go through a different prefix than reads
      from catalog. Both are `/services/<id>/api/**` — the gateway matches nothing else (D28). */
   const BOOKING = BASE + (params.get('svcBooking') ?? '/services/healthconnectbooking');
+  const MESSAGING = BASE + (params.get('svcMessaging') ?? '/services/healthconnectmessaging');
   const TOKEN   = params.get('token') || '';
   const headers = TOKEN ? { Authorization: 'Bearer ' + TOKEN } : {};
 
@@ -2867,6 +2869,44 @@ window.addEventListener('resize', ()=>{ clearTimeout(rz); rz = setTimeout(()=>{ 
     }));
   }
 
+  /* Threads and their messages. One detail call per thread — there are four, and the list endpoint
+     carries no bodies. */
+  async function loadThreads(){
+    if(!TOKEN) return;
+    const list = await (await fetch(MESSAGING + '/api/threads', { headers })).json();
+    const details = await Promise.all((list || []).map(t =>
+      fetch(MESSAGING + '/api/threads/' + t.reference, { headers }).then(r => r.json())));
+    THREADS.length = 0;
+    (list || []).forEach((t, i) => THREADS.push({
+      id:t.reference, pro:t.professionalRef, unread:t.unread || 0,
+      msgs:((details[i] || {}).messages || []).map(m => ({
+        /* Direction, not authorship: the API says CUSTOMER_TO_PROFESSIONAL, and this page is the
+           customer's side (ME). A professional's token would need the opposite mapping — live mode
+           does not offer the professional workspace, and this is where that assumption lives. */
+        from:m.direction === 'CUSTOMER_TO_PROFESSIONAL' ? 'me' : 'them',
+        t:stamp(m.sentAt), x:m.body || ''
+      }))
+    }));
+  }
+
+  /* 'YYYY-MM-DD HH:MM', which is what the demo's message list renders. The API sends an Instant. */
+  const stamp = iso8601 => {
+    if(!iso8601) return '';
+    const d = new Date(iso8601);
+    const p2 = n => String(n).padStart(2, '0');
+    return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()) + ' ' + p2(d.getHours()) + ':' + p2(d.getMinutes());
+  };
+
+  async function refreshThread(ref){
+    const d = await (await fetch(MESSAGING + '/api/threads/' + ref, { headers })).json();
+    const t = THREADS.find(x => x.id === ref);
+    if(!t) return;
+    t.msgs = (d.messages || []).map(m => ({
+      from:m.direction === 'CUSTOMER_TO_PROFESSIONAL' ? 'me' : 'them', t:stamp(m.sentAt), x:m.body || ''
+    }));
+    t.unread = (d.thread || {}).unread || 0;
+  }
+
   async function refreshReviewsFor(ref){
     const rows = await (await fetch(CATALOG + '/api/professionals/' + ref + '/reviews?page=0&size=200', { headers })).json();
     for(let i = REVIEWS.length - 1; i >= 0; i--) if(REVIEWS[i].pro === ref) REVIEWS.splice(i, 1);
@@ -2903,6 +2943,27 @@ window.addEventListener('resize', ()=>{ clearTimeout(rz); rz = setTimeout(()=>{ 
       render();
     };
 
+    /* sendMsg is REWRITTEN rather than wrapped, unlike confirmBooking and submitReview above.
+       The demo's version pushes the message, then after 1.6s pushes a reply from the professional
+       and toasts "<name> replied". That is a scripted demo beat and it is fine in a demo. Against a
+       live estate it would put words into a real professional's mouth on a real conversation — the
+       one place where reusing the original would have been actively dishonest rather than merely
+       optimistic. So the fabricated reply is gone, and the thread is re-read from the server. */
+    sendMsg = async function(){
+      const inp = $('#msgIn'); if(!inp) return;
+      const v = inp.value.trim(); if(!v) return;
+      const t = THREADS.find(x => x.id === state.threadId); if(!t) return;
+      try {
+        await send(MESSAGING, '/api/threads/' + t.id + '/messages', { body:v });
+      } catch(e){
+        return toast('The estate refused this message: ' + e.message, 'warn');
+      }
+      inp.value = '';
+      await refreshThread(t.id);
+      render();
+      const cb = $('#convoBody'); if(cb) cb.scrollTop = cb.scrollHeight;
+    };
+
     const demoReview = submitReview;
     submitReview = async function(id){
       const stars = window._rv || 5;
@@ -2927,7 +2988,7 @@ window.addEventListener('resize', ()=>{ clearTimeout(rz); rz = setTimeout(()=>{ 
     };
   }
 
-  load().then(loadBookings).then(stream).catch(e => banner('Live mode failed: ' + e.message, 'warn'));
+  load().then(loadBookings).then(loadThreads).then(stream).catch(e => banner('Live mode failed: ' + e.message, 'warn'));
 })();
 </script>
 </body>

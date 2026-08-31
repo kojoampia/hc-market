@@ -1208,8 +1208,10 @@ every push, which is what keeps the two halves apart. Confirmed byte-identical a
 and availability come from catalog, and ratings are recomputed from the reviews that arrived — the
 same derivation the demo does, so a rating cannot disagree with its own reviews in either mode. With
 a token the customer's own bookings load from booking, and **creating a booking and publishing a
-review go to the estate**. `sendMsg()` is still in memory and is listed as open; a page where three
-of four actions are real is otherwise the worst kind of half-finished — the one that looks done.
+review go to the estate**. `sendMsg()` is live too, and is the one override that is a **rewrite rather than a wrapper**: the
+demo pushes a reply from the professional 1.6 seconds after you send, and against a real estate that
+would put words into a real person's mouth in a real conversation. The thread is re-read from the
+server instead, and the verifier asserts no reply was fabricated.
 
 The writes deliberately omit `priceMinor`, `currency` and `professionalLogin`, so the server
 establishes all three. Verified on the row the prototype created: `professional_login` was
