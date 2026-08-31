@@ -1176,6 +1176,28 @@ should also decide who may see it, and the disclosure boundary is now one file t
 can exercise with no HTTP client in the way. Covering the framing end to end needs a real port and a
 real minted token; that test is not written and is listed as open.
 
+**The browser check found a defect in seconds that nothing headless had caught.** The prototype is
+now served same-origin from the quality vhost at `http://market.healthconnect.local/prototype`, which
+also removes CORS from the picture entirely — `?api=` with no value reaches the gateway directly,
+including `/api/stream`. The first thing on screen was **`FROM ₵NaN / session`**, on the profile and
+on every browse card.
+
+`p.rate` — the indicative "from" price — is a *derived* field that block 1 computes once at load,
+`Math.min` over the professional's paid services. Live mode replaces `PROS` wholesale and recomputed
+`rating` and `reviewCount` but not `rate`, so `money(undefined)` rendered `₵NaN`. Nothing threw. The
+verifier did not catch it because it asserted `services[0].price`, and the figure on screen comes from
+a different field.
+
+That is the case for the rule `CLAUDE.md` already states — a change touching a screen ends in a real
+browser — and it had been deferred three times before this. The verifier now checks every `rate` is
+finite and that p1's equals its cheapest paid service.
+
+**The vhost's CSP needed a scoped exception, and it is the one the file warned about.** The site
+policy is `default-src 'none'`, truthful for an API and fatal to a single HTML file of inline script
+and style. The `/prototype` location grants `'unsafe-inline'` for script and style plus
+`connect-src 'self'`, and nothing else; the API keeps the strict policy, confirmed by reading the
+header back. `add_header` REPLACES rather than merges, so that confirmation matters.
+
 **The heartbeat's first tick had to move to zero, and a test found it.** `Flux.interval(HEARTBEAT,
 HEARTBEAT)` meant the stream emitted nothing for twenty seconds — and WebFlux does not commit the
 response until the first element is written. So a client received no status line and no headers for
@@ -1289,7 +1311,7 @@ Engineering items genuinely open, none of them blocked on anyone:
 |---|---|---|
 | D29 | `sendMsg()` is the one prototype write still in memory — it mutates `THREADS` and invents a reply on a timer | Messaging's write surface is larger than booking's or reviewing's, and phase 5 stopped at the two that exercise D22/D28/D21 |
 | D29 | An event published to Kafka is not asserted to arrive **on the wire** as SSE data | `MarketplaceStreamFramingIT` now covers the real-port connection with a real token; the data frame still does not arrive in a RANDOM_PORT context while it does reliably under MOCK, and that difference is not yet understood. Verified outside the suite by `verify-prototype-live.mjs --writes` |
-| D29 | The prototype has never been loaded in a real browser | Recorded twice now. `CLAUDE.md`'s rule that a change touching a screen ends in a browser still applies |
+| — | *(closed)* The prototype was finally loaded in a browser, served same-origin from the quality vhost at `/prototype` | It found `₵NaN` on every profile and browse card within seconds — see below |
 | D13 | `deploy-prod.sh` rebuilds and re-pushes at the same SHA, overwriting the images CI built and verified | `--no-build` exists; which one a production deploy should use is a decision, not an oversight |
 | D14 | `deploy-prod.sh --dry-run` prints `✓ authenticated to ghcr.io` and `✓ host reachable` unconditionally, while both operations are skipped | A dry run that implies a check it never made is the same class of false confidence D14 exists to prevent |
 | D13 | `deploy-prod.sh`'s header and spec §12 say the github channel produces `ghcr.io/<owner>/healthconnect-<service>`; the code produces `hc-market-<service>` | `sync-appendices.sh` cannot catch it — the appendix faithfully reproduces the script's own stale header |

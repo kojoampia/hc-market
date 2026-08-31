@@ -2750,6 +2750,18 @@ window.addEventListener('resize', ()=>{ clearTimeout(rz); rz = setTimeout(()=>{ 
       }));
     });
 
+    /* The indicative "from" price, recomputed with block 1's formula verbatim.
+       
+       Block 1 derives `rate` once, at load, from the demo's own services. Replacing PROS wholesale
+       leaves it undefined, and `money(undefined)` renders "₵NaN" on the profile and on every browse
+       card — which is exactly what it did until a browser was finally pointed at this page. Nothing
+       threw, no check caught it, and the headless verifier was asserting `services[0].price` while
+       the figure actually on screen came from a different field.
+       
+       Same formula rather than a tidier one, deliberately: live and demo must agree on the same
+       data, including on the edge where a professional's services are all free. */
+    PROS.forEach(p => { p.rate = Math.min.apply(null, p.services.filter(s => s.price > 0).map(s => s.price)); });
+
     /* Recomputed here for the same reason block 1 computes them: a rating that can disagree with
        its own reviews is a bug the file should make impossible. The API derives them from a view
        over the same rows, so the two agree by construction rather than by luck. */
