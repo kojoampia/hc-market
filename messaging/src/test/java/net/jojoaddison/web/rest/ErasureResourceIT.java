@@ -12,7 +12,9 @@ import net.jojoaddison.domain.Conversation;
 import net.jojoaddison.domain.Message;
 import net.jojoaddison.domain.enumeration.Direction;
 import net.jojoaddison.repository.ConversationRepository;
+import net.jojoaddison.domain.Notification;
 import net.jojoaddison.repository.MessageRepository;
+import net.jojoaddison.repository.NotificationRepository;
 import net.jojoaddison.service.ErasureWorkflow;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -48,6 +50,12 @@ class ErasureResourceIT {
 
     @Autowired
     private MessageRepository messages;
+
+    @Autowired
+    private NotificationRepository notifications;
+
+    @Autowired
+    private ErasureWorkflow erasure;
 
     private Conversation thread(String reference) {
         return conversations.saveAndFlush(
@@ -121,6 +129,78 @@ class ErasureResourceIT {
         // The thread itself survives, so the professional's list does not develop holes.
         assertThat(conversations.findById(c.getId())).isPresent();
         assertThat(conversations.findById(c.getId()).orElseThrow().getProfessionalRef()).isEqualTo(PRO);
+    }
+
+
+    /**
+     * The notification sitting in somebody <em>else's</em> bell menu.
+     *
+     * <p>{@code booking.requested} raises "Ama Mensah asked for a home visit" addressed to the
+     * <strong>professional</strong>, so the customer's name lives in a row keyed to a different
+     * person's login and no query by recipient will ever return it. That is why it survived the first
+     * implementation untouched. The row stays — it is a real event in the professional's history —
+     * and only the body goes.
+     */
+    @Test
+    @Transactional
+    @WithMockUser(username = "desk", authorities = "ROLE_BROKERAGE")
+    @DisplayName("a notification about the customer, addressed to the professional, is redacted")
+    void redactsNotificationsHeldByOtherPeople() throws Exception {
+        Conversation c = thread("c-named");
+        Notification mine = notifications.saveAndFlush(
+            new Notification()
+                .recipientLogin(CUSTOMER)
+                .kind("Booking confirmed")
+                .body("Your home visit on 12 Sep at 10:00 is confirmed.")
+                .raisedAt(Instant.now())
+                .deepLink("/bookings/" + c.getBookingReference())
+        );
+        Notification theirs = notifications.saveAndFlush(
+            new Notification()
+                .recipientLogin(PRO)
+                .kind("Booking requested")
+                .body("Ama Tobeforgotten asked for a home visit on 12 Sep at 10:00.")
+                .raisedAt(Instant.now())
+                .deepLink("/bookings/" + c.getBookingReference())
+        );
+
+        mockMvc
+            .perform(post(URL, CUSTOMER).with(csrf()))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.notificationsReKeyed").value(1))
+            .andExpect(jsonPath("$.notificationsRedacted").value(1));
+
+        assertThat(notifications.findById(mine.getId()).orElseThrow().getRecipientLogin()).isEqualTo(
+            ErasureWorkflow.pseudonym(CUSTOMER)
+        );
+        Notification after = notifications.findById(theirs.getId()).orElseThrow();
+        assertThat(after.getBody()).doesNotContain("Ama").doesNotContain("Tobeforgotten");
+        // Still the professional's row, still in their history.
+        assertThat(after.getRecipientLogin()).isEqualTo(PRO);
+        assertThat(after.getDeepLink()).isEqualTo("/bookings/" + c.getBookingReference());
+    }
+
+    /**
+     * <strong>Erasure has to outlive the moment it runs in.</strong>
+     *
+     * <p>Found on the quality box, not here: booking publishes {@code booking.requested} and messaging
+     * raises the thread from it seconds later, so a desk that erased in between got a clean receipt
+     * and a fresh row under the original login. {@code ErasedSubject} is what makes the erasure a
+     * standing fact, and this asserts the register answers for a login it has never stored.
+     */
+    @Test
+    @Transactional
+    @WithMockUser(username = "desk", authorities = "ROLE_BROKERAGE")
+    @DisplayName("the register remembers, so a late event has something to consult")
+    void erasureIsRememberedAfterwards() throws Exception {
+        assertThat(erasure.isErased(CUSTOMER)).isFalse();
+
+        mockMvc.perform(post(URL, CUSTOMER).with(csrf())).andExpect(status().isOk());
+
+        assertThat(erasure.isErased(CUSTOMER)).isTrue();
+        assertThat(erasure.isErased("someone.else")).isFalse();
+        assertThat(erasure.isErased(null)).isFalse();
+        assertThat(erasure.isErased("")).isFalse();
     }
 
     @Test

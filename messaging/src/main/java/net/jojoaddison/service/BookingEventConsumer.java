@@ -50,17 +50,40 @@ public class BookingEventConsumer {
     private final MessagingQueryRepository conversations;
     private final ProcessedEventRepository processed;
     private final ObjectMapper mapper;
+    private final ErasureWorkflow erasure;
 
     public BookingEventConsumer(
         NotificationRepository notifications,
         MessagingQueryRepository conversations,
         ProcessedEventRepository processed,
-        ObjectMapper mapper
+        ObjectMapper mapper,
+        ErasureWorkflow erasure
     ) {
         this.notifications = notifications;
         this.conversations = conversations;
         this.processed = processed;
         this.mapper = mapper;
+        this.erasure = erasure;
+    }
+
+    /**
+     * Resolves the login an event carries into the one this service may store — {@code decisions.md} D32.
+     *
+     * <p>Returns the pseudonym when the person has been erased, and the login otherwise. Every write
+     * keyed to a person goes through here, because erasure is a standing fact and an event in flight
+     * does not know about it: a lagging {@code booking.requested} re-created a conversation under a
+     * login that had been erased seconds earlier, against a receipt already filed saying it was gone.
+     *
+     * <p>The row is still written. Skipping it would leave the professional's thread list and bell
+     * menu with holes where a real booking was, to protect an identifier that can simply be replaced.
+     */
+    private String storable(String login) {
+        return erasure.isErased(login) ? ErasureWorkflow.pseudonym(login) : login;
+    }
+
+    /** The customer's display name, or nothing anyone can be identified by once they are erased. */
+    private String storableName(JsonNode p) {
+        return erasure.isErased(p.path("customerLogin").asText()) ? "A customer" : name(p);
     }
 
     @KafkaListener(
@@ -102,23 +125,23 @@ public class BookingEventConsumer {
                 case "healthconnect.booking.requested" -> {
                     // The professional is the one who needs to act, so they are the recipient.
                     raise(p.path("professionalLogin").asText(), "Booking requested",
-                        "%s asked for %s on %s at %s.".formatted(name(p), service(p), p.path("scheduledDate").asText(), p.path("scheduledTime").asText()),
+                        "%s asked for %s on %s at %s.".formatted(storableName(p), service(p), p.path("scheduledDate").asText(), p.path("scheduledTime").asText()),
                         p.path("bookingRef").asText());
                     openThreadIfNone(p);
                 }
-                case "healthconnect.booking.accepted" -> raise(p.path("customerLogin").asText(), "Booking confirmed",
+                case "healthconnect.booking.accepted" -> raise(storable(p.path("customerLogin").asText()), "Booking confirmed",
                     "Your %s on %s at %s is confirmed.".formatted(service(p), p.path("scheduledDate").asText(), p.path("scheduledTime").asText()),
                     p.path("bookingRef").asText());
-                case "healthconnect.booking.declined" -> raise(p.path("customerLogin").asText(), "Booking declined",
+                case "healthconnect.booking.declined" -> raise(storable(p.path("customerLogin").asText()), "Booking declined",
                     "Your request for %s on %s could not be taken.".formatted(service(p), p.path("scheduledDate").asText()),
                     p.path("bookingRef").asText());
                 case "healthconnect.booking.cancelled" -> {
-                    raise(p.path("customerLogin").asText(), "Booking cancelled",
+                    raise(storable(p.path("customerLogin").asText()), "Booking cancelled",
                         "Your %s on %s was cancelled.".formatted(service(p), p.path("scheduledDate").asText()), p.path("bookingRef").asText());
                     raise(p.path("professionalLogin").asText(), "Booking cancelled",
-                        "%s cancelled %s on %s.".formatted(name(p), service(p), p.path("scheduledDate").asText()), p.path("bookingRef").asText());
+                        "%s cancelled %s on %s.".formatted(storableName(p), service(p), p.path("scheduledDate").asText()), p.path("bookingRef").asText());
                 }
-                case "healthconnect.booking.completed" -> raise(p.path("customerLogin").asText(), "Review requested",
+                case "healthconnect.booking.completed" -> raise(storable(p.path("customerLogin").asText()), "Review requested",
                     "How was your %s? Leave a review.".formatted(service(p)), p.path("bookingRef").asText());
                 default -> LOG.debug("no notification defined for {}", type);
             }
@@ -132,7 +155,8 @@ public class BookingEventConsumer {
 
     /** Spec §7: booking.requested should "open a thread if none exists". */
     private void openThreadIfNone(JsonNode p) {
-        String customerLogin = p.path("customerLogin").asText();
+        // storable, not the raw login: this is the write that reappeared under an erased login.
+        String customerLogin = storable(p.path("customerLogin").asText());
         String professionalRef = p.path("professionalRef").asText();
         boolean exists = conversations
             .findVisibleTo(customerLogin, professionalRef)

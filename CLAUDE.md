@@ -161,6 +161,7 @@ regeneration.
 | The `unique_availability_slot` include | catalog `master.xml` | **concurrent double bookings stop colliding** and both succeed |
 | The two `VerificationReview` includes | catalog `master.xml` | the verification audit table is never created; the desk 500s on every call |
 | The `outbox_event` include | booking `master.xml` | every accept fails on a missing table |
+| The `erased_subject` include | messaging `master.xml` | the erasure register is never created; **an erased customer silently comes back** the next time an event mentions them |
 | The `processed_event` include | payout `master.xml` | consumer idempotency keys gone; replays double-credit |
 | `contexts: dev` (not `dev, faker`) | each `config/application-dev.yml` | see faker collision below |
 | The `healthconnect` block | each `config/application.yml` **and** `application-prod.yml` | seed never loads |

@@ -2,19 +2,24 @@ package net.jojoaddison.service;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.Instant;
 import java.util.HexFormat;
 import java.util.List;
 import net.jojoaddison.domain.Conversation;
+import net.jojoaddison.domain.ErasedSubject;
 import net.jojoaddison.domain.Message;
+import net.jojoaddison.domain.Notification;
+import net.jojoaddison.repository.ErasedSubjectRepository;
 import net.jojoaddison.repository.MessageRepository;
 import net.jojoaddison.repository.MessagingQueryRepository;
+import net.jojoaddison.repository.NotificationEraseRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Erasing a customer from the messaging service — {@code decisions.md} D24/D31.
+ * Erasing a customer from the messaging service — {@code decisions.md} D24/D31/D32.
  *
  * <h2>This is the service that holds the worst of it</h2>
  *
@@ -32,6 +37,23 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>Both directions are redacted, not just the customer's own messages. A professional's reply
  * quotes what it is replying to often enough that leaving one side intact would leave the other
  * side's content sitting in it.
+ *
+ * <h2>Notifications, including the ones addressed to somebody else</h2>
+ *
+ * <p>Two kinds, and the second is the one that was missed. Notifications <strong>to</strong> the
+ * customer are re-keyed to the pseudonym. Notifications <strong>about</strong> the customer sit in
+ * the <em>professional's</em> bell menu — {@code booking.requested} raises "Ama Mensah asked for a
+ * home visit on 12 Sep", the customer's name in a row keyed to a different person's login. No query
+ * by recipient returns those, which is exactly why they survived the first implementation. They are
+ * found through {@code deepLink}, and their bodies are redacted while the row stays, so the
+ * professional's timeline keeps its shape.
+ *
+ * <h2>And erasure is now a standing fact, not a moment</h2>
+ *
+ * <p>See {@link ErasedSubject}. A sweep is only correct if nothing arrives afterwards, and things do
+ * — a lagging {@code booking.requested} re-created a conversation under the original login seconds
+ * after that login had been erased, with a clean receipt already filed. The pseudonym is recorded
+ * here and {@code BookingEventConsumer} consults it before writing anything keyed to a person.
  */
 @Service
 public class ErasureWorkflow {
@@ -39,16 +61,26 @@ public class ErasureWorkflow {
     private static final Logger LOG = LoggerFactory.getLogger(ErasureWorkflow.class);
 
     static final String REDACTED_BODY = "[message erased at the customer's request]";
+    static final String REDACTED_NOTIFICATION = "[details erased at the customer's request]";
 
     private final MessagingQueryRepository conversations;
     private final MessageRepository messages;
+    private final NotificationEraseRepository notifications;
+    private final ErasedSubjectRepository erased;
 
-    public ErasureWorkflow(MessagingQueryRepository conversations, MessageRepository messages) {
+    public ErasureWorkflow(
+        MessagingQueryRepository conversations,
+        MessageRepository messages,
+        NotificationEraseRepository notifications,
+        ErasedSubjectRepository erased
+    ) {
         this.conversations = conversations;
         this.messages = messages;
+        this.notifications = notifications;
+        this.erased = erased;
     }
 
-    /** Identical rule to booking's, so the same person carries the same alias in both. */
+    /** Identical rule to booking's and catalog's, so the same person carries the same alias in all three. */
     public static String pseudonym(String login) {
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256").digest(login.getBytes(StandardCharsets.UTF_8));
@@ -58,23 +90,35 @@ public class ErasureWorkflow {
         }
     }
 
+    /** Whether this login has already been erased. The only question the register can answer. */
+    @Transactional(readOnly = true)
+    public boolean isErased(String login) {
+        return login != null && !login.isBlank() && erased.existsById(pseudonym(login));
+    }
+
     /**
-     * Redacts this customer's messages and re-keys their conversations.
+     * Redacts this customer's messages and notifications, re-keys their conversations, and records
+     * that it happened.
      *
-     * <p>Returns <strong>both</strong> counts, and that is a correction rather than a nicety. It
-     * returned the message count alone until a real erasure on the quality box answered
-     * {@code messagesErased: 0} for a customer whose conversation it had just pseudonymised — the
-     * booking had raised a thread that nobody had written in yet. An operator recording that zero
-     * against a data subject request would conclude messaging held nothing for that person, when it
-     * held a row keyed to their login. A receipt that under-reports what was done is worse than a
-     * verbose one, because it is the thing somebody files.
+     * <p>Returns every count, and that is a correction rather than a nicety. It returned the message
+     * count alone until a real erasure on the quality box answered {@code messagesErased: 0} for a
+     * customer whose conversation it had just pseudonymised — the booking had raised a thread that
+     * nobody had written in yet. An operator recording that zero against a data subject request would
+     * conclude messaging held nothing for that person, when it held a row keyed to their login. A
+     * receipt that under-reports what was done is worse than a verbose one, because it is the thing
+     * somebody files.
      */
     @Transactional
     public Erased eraseCustomer(String login) {
+        String alias = pseudonym(login);
+
+        // Recorded first, so an event that arrives while the rest of this runs is already covered by
+        // the time it commits.
+        erased.save(new ErasedSubject(alias, Instant.now()));
+
         // professionalRef "" so the query's professional half matches nothing and only this
         // customer's own conversations come back.
         List<Conversation> mine = conversations.findVisibleTo(login, "");
-        String alias = pseudonym(login);
         int redacted = 0;
         for (Conversation c : mine) {
             /* findMessages(id), not findAll().filter(...). The repository already answers this
@@ -88,14 +132,52 @@ public class ErasureWorkflow {
             c.setCustomerLogin(alias);
             conversations.save(c);
         }
-        LOG.info("erased {} message(s) across {} conversation(s), now {}", redacted, mine.size(), alias);
-        return new Erased(mine.size(), redacted);
+
+        int reKeyed = 0;
+        for (Notification n : notifications.addressedTo(login)) {
+            n.setRecipientLogin(alias);
+            notifications.save(n);
+            reKeyed++;
+        }
+
+        /* The ones sitting in somebody else's bell menu. Bodies only: the row belongs to the
+           professional, and deleting it would take a real event out of their history to remove a
+           name that can be removed on its own. */
+        int aboutThem = 0;
+        List<String> links = mine
+            .stream()
+            .map(Conversation::getBookingReference)
+            .filter(ref -> ref != null && !ref.isBlank())
+            .map(ref -> "/bookings/" + ref)
+            .toList();
+        if (!links.isEmpty()) {
+            for (Notification n : notifications.linkedToAny(links)) {
+                if (alias.equals(n.getRecipientLogin())) {
+                    continue; // already re-keyed above, and its body names nobody
+                }
+                n.setBody(REDACTED_NOTIFICATION);
+                notifications.save(n);
+                aboutThem++;
+            }
+        }
+
+        LOG.info(
+            "erased {} message(s) across {} conversation(s), re-keyed {} notification(s) and redacted {} about them, now {}",
+            redacted,
+            mine.size(),
+            reKeyed,
+            aboutThem,
+            alias
+        );
+        return new Erased(mine.size(), redacted, reKeyed, aboutThem);
     }
 
     /**
      * @param conversationsPseudonymised threads re-keyed to the pseudonym — can be non-zero while
      *     {@code messagesRedacted} is zero, which is exactly the case that made this record necessary
      * @param messagesRedacted message bodies replaced
+     * @param notificationsReKeyed notifications addressed to the customer, now addressed to the alias
+     * @param notificationsRedacted notifications in somebody else's list whose body named the customer
      */
-    public record Erased(int conversationsPseudonymised, int messagesRedacted) {}
+    public record Erased(int conversationsPseudonymised, int messagesRedacted, int notificationsReKeyed, int notificationsRedacted) {}
 }
