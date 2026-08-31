@@ -66,8 +66,14 @@ public class DisputeEventConsumer {
     }
 
     @KafkaListener(
-        topics = { "healthconnect.dispute.resolved" },
-        groupId = "healthconnect-payout",
+        // Each carries its canonical name as an INLINE DEFAULT, and that is not belt-and-braces.
+        // JHipster's src/test/resources/config/application.yml SHADOWS the main one, so the
+        // composed properties do not exist under test and a bare placeholder fails the context with
+        // "Could not resolve placeholder" — which reads as a typo rather than as a config file that
+        // was never loaded. The default also keeps the real topic name visible at the listener, and
+        // survives a regeneration of application.yml.
+        topics = { "${healthconnect.topics.dispute-resolved:healthconnect.dispute.resolved}" },
+        groupId = "${healthconnect.kafka.group-id:healthconnect-payout}",
         autoStartup = "${healthconnect.kafka.consumer-enabled:true}"
     )
     @Transactional

@@ -64,15 +64,25 @@ public class BookingEventConsumer {
     }
 
     @KafkaListener(
+        // Property-driven, not literal — decisions.md D29. The prefix is empty in production and
+        // quality and `dev.` in the dev estate, which is what stops two stacks on the one shared
+        // broker consuming each other's events. The switch below is untouched: it matches the
+        // envelope's event TYPE, which is never prefixed, rather than the topic it arrived by.
+        // Each carries its canonical name as an INLINE DEFAULT, and that is not belt-and-braces.
+        // JHipster's src/test/resources/config/application.yml SHADOWS the main one, so the
+        // composed properties do not exist under test and a bare placeholder fails the context with
+        // "Could not resolve placeholder" — which reads as a typo rather than as a config file that
+        // was never loaded. The default also keeps the real topic name visible at the listener, and
+        // survives a regeneration of application.yml.
         topics = {
-            "healthconnect.booking.requested",
-            "healthconnect.booking.accepted",
-            "healthconnect.booking.declined",
-            "healthconnect.booking.cancelled",
-            "healthconnect.booking.completed",
-            "healthconnect.notification.raised",
+            "${healthconnect.topics.booking-requested:healthconnect.booking.requested}",
+            "${healthconnect.topics.booking-accepted:healthconnect.booking.accepted}",
+            "${healthconnect.topics.booking-declined:healthconnect.booking.declined}",
+            "${healthconnect.topics.booking-cancelled:healthconnect.booking.cancelled}",
+            "${healthconnect.topics.booking-completed:healthconnect.booking.completed}",
+            "${healthconnect.topics.notification-raised:healthconnect.notification.raised}",
         },
-        groupId = "healthconnect-messaging",
+        groupId = "${healthconnect.kafka.group-id:healthconnect-messaging}",
         autoStartup = "${healthconnect.kafka.consumer-enabled:true}"
     )
     @Transactional

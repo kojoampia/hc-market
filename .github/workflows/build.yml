@@ -213,6 +213,20 @@ jobs:
           done
           exit "$fail"
 
+      # The dev estate's topic prefix is written TWICE: the compose file configures the apps with it
+      # and deploy-dev.sh creates the topics with it (decisions.md D29). They must agree.
+      #
+      # Disagreeing is silent in the worst way. The apps subscribe to topics nobody publishes to and
+      # the publisher creates topics nobody reads; every container is healthy, every health check is
+      # green, and the only symptom is that nothing ever happens — which reads as a broken consumer
+      # rather than as two halves of one variable drifting apart.
+      - name: The dev topic prefix must be the same in the compose file and the script
+        run: |
+          compose=$(grep -oE 'HEALTHCONNECT_TOPICS_PREFIX: \$\{HC_TOPIC_PREFIX-[^}]*\}' deploy/docker/docker-compose.dev.yml | sed -E 's/.*HC_TOPIC_PREFIX-([^}]*)\}/\1/')
+          script=$(grep -oE '^TOPIC_PREFIX="\$\{HC_TOPIC_PREFIX-[^}]*\}"' deploy/deploy-dev.sh | sed -E 's/.*HC_TOPIC_PREFIX-([^}]*)\}"/\1/')
+          echo "compose='$compose' script='$script'"
+          test -n "$compose" && test -n "$script" && test "$compose" = "$script"
+
       # An unparseable rules file is only discovered when Mimir silently declines to load it, and
       # the symptom is an alert that never fires — indistinguishable from a system that is fine.
       - name: The alert rules must parse and stay uniquely named

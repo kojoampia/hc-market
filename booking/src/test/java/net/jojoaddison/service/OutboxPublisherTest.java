@@ -3,6 +3,7 @@ package net.jojoaddison.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -45,7 +46,9 @@ class OutboxPublisherTest {
 
     @BeforeEach
     void setUp() {
-        publisher = new OutboxPublisher(outbox, kafka);
+        // Empty prefix — production and quality's setting, and what keeps the assertions below
+        // about the topic readable. The prefixed case has its own test.
+        publisher = new OutboxPublisher(outbox, kafka, "");
     }
 
     private static OutboxEvent event() {
@@ -57,6 +60,25 @@ class OutboxPublisherTest {
             .actor("akosua.mensah")
             .occurredAt(Instant.parse("2026-08-25T09:00:00Z"))
             .payload("{\"bookingRef\":\"b-1\"}");
+    }
+
+    /**
+     * The estate prefix (decisions.md D29) is applied at SEND time, not when the row is written, so
+     * the stored topic stays logical and a row written before the prefix changed still publishes to
+     * the right place. This asserts both halves: the row is untouched, the send is prefixed.
+     */
+    @Test
+    @DisplayName("the estate prefix is applied to the topic sent, and not to the row")
+    void prefixAppliesAtSendTime() {
+        OutboxEvent e = event();
+        OutboxPublisher prefixed = new OutboxPublisher(outbox, kafka, "dev.");
+        when(outbox.findUnsent(any(Pageable.class))).thenReturn(List.of(e));
+        when(kafka.send(anyString(), anyString(), anyString())).thenReturn(CompletableFuture.completedFuture(mockResult()));
+
+        prefixed.drain();
+
+        verify(kafka).send(eq("dev.healthconnect.booking.accepted"), eq("b-1"), anyString());
+        assertThat(e.getTopic()).isEqualTo("healthconnect.booking.accepted");
     }
 
     @Test

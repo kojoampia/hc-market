@@ -446,11 +446,17 @@ able to mint a route into somebody else's running estate. Registration is only s
 containers have two addresses, and a service registered on the wrong one flaps critical while the
 registration, not the address, reads as the broken thing.
 
-**One broker means one topic set.** Topic names are compiled into the `@KafkaListener` annotations,
-so dev and quality cannot be separated on the bus. Consumer groups differ (`hc-market-dev-*` against
-`hc-market-*`), which stops them stealing partitions and therefore guarantees *both* receive every
-event either publishes — completing a booking in dev writes a ledger row in quality. `deploy-dev.sh`
-warns; don't run the two at once.
+**One broker, two estates, separated by a topic prefix.** `healthconnect.topics.prefix` defaults to
+**empty**, so production and quality keep the names they already use; `docker-compose.dev.yml` is the
+only place that sets one (`dev.`), and `deploy-dev.sh` creates the prefixed topics from the same
+variable — change one without the other and the apps sit on topics nobody publishes to, silently.
+
+Before D29 the names were compiled into the `@KafkaListener` annotations, so the two estates shared a
+topic set and their differing consumer groups guaranteed *both* received everything either published:
+completing a booking in dev wrote a ledger row in quality. Two things kept the fix small — consumers
+`switch` on the envelope's **`type`**, never on `record.topic()`, so no consumer logic changed; and
+the prefix is applied at **send** time in `OutboxPublisher`, so `outbox_event.topic` stays logical and
+an unsent row survives a prefix change.
 
 **The gateway runs MongoDB, and that is load-bearing.** JHipster 9.2.0 decides the Boot generation
 with `springBoot4 = !(databaseTypeSql && reactive)`, and a JHipster gateway is *always* reactive. A

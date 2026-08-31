@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -37,14 +38,32 @@ public class OutboxPublisher {
     private final OutboxEventRepository outbox;
     private final KafkaTemplate<String, String> kafka;
 
+    /**
+     * Prepended to the topic at SEND time, never at record time — {@code decisions.md} D29.
+     *
+     * <p>Empty everywhere except the dev estate, which sets {@code dev.}, so production and quality
+     * keep the topic names they already have and nothing on the shared broker moves. Since D27 there
+     * is one broker for the whole estate, and topic names alone are what separate two stacks running
+     * against it.
+     *
+     * <p>Applied here rather than in {@link OutboxRecorder} on purpose. The outbox is a log of domain
+     * events, not of Kafka addresses: the stored {@code topic} stays logical, so an unsent row
+     * written before a prefix changed still publishes to the right place afterwards. The envelope's
+     * {@code type} is likewise unprefixed, which is why no consumer's {@code switch} had to change —
+     * they match on the event type, not on the topic they arrived by.
+     */
+    private final String topicPrefix;
+
     public OutboxPublisher(
         OutboxEventRepository outbox,
         // By name: the autoconfigured template is Spring Cloud Stream's byte-array producer, and
         // injecting it here fails at publish time rather than at startup.
-        @org.springframework.beans.factory.annotation.Qualifier("outboxKafkaTemplate") KafkaTemplate<String, String> kafka
+        @org.springframework.beans.factory.annotation.Qualifier("outboxKafkaTemplate") KafkaTemplate<String, String> kafka,
+        @Value("${healthconnect.topics.prefix:}") String topicPrefix
     ) {
         this.outbox = outbox;
         this.kafka = kafka;
+        this.topicPrefix = topicPrefix;
     }
 
     @Scheduled(fixedDelayString = "${healthconnect.outbox.poll-ms:2000}")
@@ -58,7 +77,7 @@ public class OutboxPublisher {
             try {
                 // Synchronous: the send must be known to have succeeded before the row is marked,
                 // otherwise "publish then mark" degenerates into "mark and hope".
-                kafka.send(event.getTopic(), event.getAggregateRef(), envelope(event)).get();
+                kafka.send(topicPrefix + event.getTopic(), event.getAggregateRef(), envelope(event)).get();
                 event.setSentAt(Instant.now());
                 event.setLastError(null);
                 LOG.debug("published {} for {}", event.getType(), event.getAggregateRef());

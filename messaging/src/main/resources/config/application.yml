@@ -247,6 +247,28 @@ jhipster:
 # NOTE: `jhipster jdl --force` rewrites this file and drops this block.
 # ===================================================================
 healthconnect:
+  # --- Kafka topic names, and the prefix that separates two estates on one broker ---------------
+  #
+  # decisions.md D29. Since D27 there is ONE broker for the whole estate, and hc-market runs on it
+  # twice — dev and quality. Topic names were compiled into the @KafkaListener annotations, so the
+  # two shared a topic set: distinct consumer groups meant BOTH received every event either
+  # published, and completing a booking in dev wrote a ledger row in quality.
+  #
+  # The prefix is EMPTY here and stays empty in production and quality, so neither moves off the
+  # names it already uses — consumer offsets are keyed by (group, topic, partition) and renaming a
+  # live topic resets every one of them. Only docker-compose.dev.yml sets one.
+  #
+  # The names below are the transport addresses. The event TYPE inside the envelope is never
+  # prefixed, which is why every consumer's switch is untouched by this.
+  topics:
+    prefix: ''
+    booking-requested: ${healthconnect.topics.prefix}healthconnect.booking.requested
+    booking-accepted: ${healthconnect.topics.prefix}healthconnect.booking.accepted
+    booking-declined: ${healthconnect.topics.prefix}healthconnect.booking.declined
+    booking-cancelled: ${healthconnect.topics.prefix}healthconnect.booking.cancelled
+    booking-completed: ${healthconnect.topics.prefix}healthconnect.booking.completed
+    notification-raised: ${healthconnect.topics.prefix}healthconnect.notification.raised
+
   seed:
     enabled: false
     file: demo/seed-data.json

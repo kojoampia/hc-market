@@ -1080,6 +1080,79 @@ routes above address the *routing* half; the naming half stays open and is liste
 
 ---
 
+## D29 — The rest of the open list: what gets built, in what order, and why that order
+
+**Decided 2026-08-31**, answering the engineering items D26 left and D27/D28 added. Five things are
+in: the `deliveryMode` default, per-estate topic prefixes, the D16 audit trail, D21 time zones, and
+SSE at the gateway. One more is a change of stance: the prototype gets opened up and pointed at the
+live estate.
+
+### The order, and why it is not the order they were asked in
+
+**Regeneration first, everything else after.** D16 adds an entity and D21 adds fields, so both are
+JDL changes — and `jhipster jdl --force` rewrites every generated file in an app, including
+`pom.xml`, the Liquibase master changelog and `application*.yml`. This is the same trap D26 hit and
+corrected: it put observability first because it looked like "configuration only", and would have
+put the whole of D25 in front of a regeneration that discards it.
+
+So:
+
+1. **Topic prefix** and **`deliveryMode`** — hand-written service classes only, no generator, no
+   schema change. Immediate, and independent of everything below.
+2. **D16 + D21 in one regeneration per app.** Batched deliberately: each extra `jhipster jdl --force`
+   run is another pass through the regeneration-hazard checklist in `CLAUDE.md` and another chance to
+   drop the `professional_rating` view include or leave an ambiguous mapping behind.
+3. **SSE at the gateway** — the gateway has no JDL entities, so nothing above touches it.
+4. **Open the prototype** — last, because it consumes the API rather than changing it, and every
+   screen it drives should be driving the finished contract.
+
+### The topic prefix: a property, defaulting to empty
+
+`healthconnect.topics.prefix` defaults to `""`, so **production and quality keep the exact topic
+names they have today** and nothing on the shared broker moves. Only the dev compose sets one
+(`dev.`). A mistake in this mechanism therefore cannot rename a production topic — the failure mode
+is a dev estate that talks to itself, which is the intent anyway.
+
+The alternative — an explicit prefix per environment, `prod.`/`quality.`/`dev.` — is more
+symmetrical and self-describing, and it renames topics two running estates already use. Consumer
+offsets are keyed by (group, topic, partition), so renaming resets every one of them and strands
+whatever is in flight on the old names. Symmetry is not worth that.
+
+**Two things make this cheap, and both are prior decisions paying off.** Consumers switch on the
+*envelope's* `type` field, not on `record.topic()`, so a prefixed topic does not break a single
+`switch` — the domain event type was never the transport address. And booking publishes through the
+outbox, so the prefix is applied at **send** time in `OutboxPublisher` rather than at record time:
+the stored row keeps the logical topic, which means an unsent row survives a prefix change and the
+outbox stays a log of domain events rather than of Kafka addresses.
+
+What this does *not* fix: the two estates still share one broker, and a dev estate configured with
+an empty prefix by mistake is back to crossing. `deploy-dev.sh` keeps its warning.
+
+### SSE: built, at the gateway, and only there
+
+D25's closing note said drop the claim or build it at the reactive gateway fed by Kafka, never in
+imperative `messaging`. It gets built. The gateway is the only reactive application in the estate and
+the only one already holding a connection to every client, so it is the only place a long-lived
+per-user stream costs nothing structurally.
+
+The alternative considered and rejected was dropping the claim: there is no frontend today, so the
+channel would have no reader. That reasoning inverts with the decision below — the prototype is being
+opened up, so there *will* be a reader, and a marketplace whose bookings change state under the
+customer is exactly the case polling serves worst.
+
+### The prototype gets opened up
+
+Until now the prototype was a **closed demo** — no `fetch`, no `API_BASE` hook, `TODAY` hardcoded —
+and that was the right shape while it was the acceptance target and nothing else. It changes role
+here: it becomes the first client, which makes it the fastest way to find out whether the API a
+screen needs is the API it got.
+
+This is not a decision to build the product's frontend. `api/` and `web/` stay empty, no framework is
+chosen, and nothing here commits the eventual client to a stack. What it commits to is that every
+endpoint in §6 gets exercised by something other than curl.
+
+---
+
 ## Still open after this section
 
 Only what engineering cannot settle alone:

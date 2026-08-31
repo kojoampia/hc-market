@@ -36,17 +36,20 @@
 #  Postgres, and keeping them off the shared plane is also what lets them keep the short, obvious
 #  names (`catalog-db`, `gateway-db`) without ambiguity.
 #
-#  --- ONE BUS MEANS DEV AND QUALITY SHARE A TOPIC SET ----------------------------------------
+#  --- ONE BUS, TWO ESTATES, SEPARATED BY A TOPIC PREFIX ---------------------------------------
 #
-#  Topic names are compiled in (`@KafkaListener(topics = "healthconnect.booking.completed")`), so
-#  there is no per-estate prefix to set. Consumer groups ARE distinct — `hc-market-dev-*` here
-#  against `hc-market-*` in quality/compose.yml — which stops the two estates stealing each other's
-#  partitions, but distinct groups mean the opposite thing for delivery: BOTH estates receive every
-#  event either one publishes. Completing a booking in dev writes a ledger row in quality.
+#  Topic names used to be compiled in (`@KafkaListener(topics = "healthconnect.booking.completed")`),
+#  so dev and quality shared a topic set. Consumer groups were already distinct — `hc-market-dev-*`
+#  here against `hc-market-*` in quality/compose.yml — which stopped the two estates stealing each
+#  other's partitions, and meant the opposite thing for delivery: BOTH received every event either
+#  one published, and completing a booking here wrote a ledger row over there.
 #
-#  So: do not run this stack and quality/compose.yml at the same time. deploy-dev.sh warns when it
-#  finds both. Making that safe needs a configurable topic prefix in the four services, which is
-#  application work and is not done.
+#  Closed by decisions.md D29. HEALTHCONNECT_TOPICS_PREFIX below is `dev.`, and it is the only place
+#  in the repository that sets one — the property defaults to empty in every application.yml, so
+#  production and quality keep the names they already use.
+#
+#  The consumer groups stay distinct anyway. They cost nothing and they are the second line if a
+#  prefix is ever cleared by mistake.
 # ==============================================================================
 name: healthconnect-dev
 
@@ -107,6 +110,19 @@ x-service-base: &service-base
     # down at startup, making the shared plane a hard dependency. It is meant to be an optional one:
     # losing it must cost visibility, not the estate.
     SPRING_CLOUD_CONSUL_CONFIG_FAIL_FAST: 'false'
+    # --- The topic prefix that separates this estate from quality ------------------------------
+    #
+    # decisions.md D29. One broker serves the whole estate since D27, and hc-market runs on it
+    # twice. Topic names were compiled into the @KafkaListener annotations, so dev and quality
+    # shared a topic set: distinct consumer groups meant BOTH received every event either one
+    # published, and completing a booking here wrote a ledger row over there.
+    #
+    # `dev.` is set ONLY here. The property defaults to empty in every application.yml, so
+    # production and quality keep the names they already use — renaming a live topic resets every
+    # consumer offset keyed to it. deploy-dev.sh creates the prefixed topics using this same value.
+    #
+    # The trailing dot is part of it: the property is concatenated, not joined.
+    HEALTHCONNECT_TOPICS_PREFIX: ${HC_TOPIC_PREFIX-dev.}
     # One signing key across the estate. A per-service override here silently wins and the symptom
     # is a successful login followed by 401s from the services — see the workspace guide.
     JHIPSTER_SECURITY_AUTHENTICATION_JWT_BASE64_SECRET: ${JWT_BASE64_SECRET:?set JWT_BASE64_SECRET in deploy/.env}

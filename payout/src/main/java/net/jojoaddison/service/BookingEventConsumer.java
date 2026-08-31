@@ -76,8 +76,18 @@ public class BookingEventConsumer {
     }
 
     @KafkaListener(
-        topics = { "healthconnect.booking.completed", "healthconnect.booking.cancelled" },
-        groupId = "healthconnect-payout",
+        // Property-driven, not literal — decisions.md D29. The prefix is empty in production and
+        // quality and `dev.` in the dev estate, which is what stops two stacks on the one shared
+        // broker consuming each other's events. The switch below is untouched: it matches the
+        // envelope's event TYPE, which is never prefixed, rather than the topic it arrived by.
+        // Each carries its canonical name as an INLINE DEFAULT, and that is not belt-and-braces.
+        // JHipster's src/test/resources/config/application.yml SHADOWS the main one, so the
+        // composed properties do not exist under test and a bare placeholder fails the context with
+        // "Could not resolve placeholder" — which reads as a typo rather than as a config file that
+        // was never loaded. The default also keeps the real topic name visible at the listener, and
+        // survives a regeneration of application.yml.
+        topics = { "${healthconnect.topics.booking-completed:healthconnect.booking.completed}", "${healthconnect.topics.booking-cancelled:healthconnect.booking.cancelled}" },
+        groupId = "${healthconnect.kafka.group-id:healthconnect-payout}",
         autoStartup = "${healthconnect.kafka.consumer-enabled:true}"
     )
     @Transactional
@@ -127,12 +137,49 @@ public class BookingEventConsumer {
                 .commissionMinor(commission)
                 .netMinor(gross - commission)
                 .currency(currencyOf(p, config))
-                .deliveryMode(DeliveryMode.valueOf(p.path("deliveryMode").asText("ONLINE")))
+                .deliveryMode(deliveryModeOf(p))
                 .serviceRef(p.path("serviceRef").asText(null))
                 .serviceName(p.path("serviceName").asText(null))
                 .earnedOn(LocalDate.now())
         );
         LOG.info("ledger entry for {} — gross {} commission {}", bookingRef, gross, commission);
+    }
+
+    /**
+     * The delivery mode of a ledger row, refused rather than guessed — {@code decisions.md} D22's
+     * second recorded gap, closed by D29.
+     *
+     * <p>This replaced {@code DeliveryMode.valueOf(p.path("deliveryMode").asText("ONLINE"))}, the
+     * same shape as the currency default beside it and with the same consequence: an event missing
+     * the field minted an {@code ONLINE} row regardless, so the earnings-by-format breakdown on the
+     * professional's Overview reported income under a mode the session was never delivered in. The
+     * totals stay right, which is what makes it hard to see — only the split moves, and only
+     * against a figure nobody has an independent copy of.
+     *
+     * <p>{@code deliveryMode} is {@code required} on {@code Booking}, so an event without one is
+     * malformed rather than merely sparse. Throwing means the caller rethrows, the container
+     * retries and the event is never marked processed — the same trade the currency check makes,
+     * and the same warning applies: with no dead-letter topic a genuinely unfixable event will
+     * retry indefinitely. Better a stalled partition somebody notices than a silent mislabel
+     * nobody does.
+     */
+    private static DeliveryMode deliveryModeOf(JsonNode p) {
+        String mode = p.path("deliveryMode").asText(null);
+        if (mode == null || mode.isBlank()) {
+            throw new IllegalArgumentException(
+                "booking event for %s carries no deliveryMode; refusing to guess one".formatted(p.path("bookingRef").asText())
+            );
+        }
+        try {
+            return DeliveryMode.valueOf(mode);
+        } catch (IllegalArgumentException unknown) {
+            // Named explicitly. valueOf's own message is "No enum constant ...DeliveryMode.HYBRID",
+            // which reads as a code fault rather than as an event this service is too old to
+            // understand — which is what it usually is.
+            throw new IllegalArgumentException(
+                "booking event for %s carries an unknown deliveryMode '%s'".formatted(p.path("bookingRef").asText(), mode)
+            );
+        }
     }
 
     /**
@@ -193,7 +240,7 @@ public class BookingEventConsumer {
                 .commissionMinor(commission)
                 .netMinor(fee - commission)
                 .currency(currencyOf(p, config))
-                .deliveryMode(DeliveryMode.valueOf(p.path("deliveryMode").asText("ONLINE")))
+                .deliveryMode(deliveryModeOf(p))
                 .serviceRef(p.path("serviceRef").asText(null))
                 .serviceName("Late cancellation fee")
                 .earnedOn(LocalDate.now())

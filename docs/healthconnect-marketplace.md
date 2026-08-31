@@ -573,6 +573,22 @@ repository.
 
 **Transactional outbox.** Services write the domain change and an `outbox_event` row in one transaction; a Debezium-style poller publishes and marks sent. Without this, a booking can be accepted while the notification is silently lost — the failure mode a prototype never has to think about and a marketplace cannot afford.
 
+**An estate prefix sits in front of every topic name — `decisions.md` D29.** `healthconnect.topics.prefix`
+defaults to **empty**, so production and quality use exactly the names in the table above; only
+`docker-compose.dev.yml` sets one (`dev.`), making the dev estate's topics `dev.healthconnect.*`.
+
+It exists because D27 left one broker serving the whole estate and hc-market runs on it twice. Topic
+names were compiled into the `@KafkaListener` annotations, so dev and quality shared a topic set —
+and because their consumer groups differ, *both* received everything either published. Completing a
+booking in dev wrote a ledger row in quality.
+
+Two properties of the design above made this a configuration change rather than a rewrite. Consumers
+`switch` on the envelope's **`type`**, never on the topic a record arrived by, so no consumer logic
+changed — the event type is not the transport address and stays unprefixed. And booking publishes
+through the outbox, so the prefix is applied at **send** time rather than when the row is written:
+`outbox_event.topic` keeps the logical name, and a row written before a prefix changed still
+publishes to the right place afterwards.
+
 Event envelope:
 
 ```json
@@ -1013,9 +1029,16 @@ SHARED_NETWORK="${HC_SHARED_NETWORK:-hcnet}"
 SHARED_CONSUL="${HC_SHARED_CONSUL:-hc-shared-quality-consul}"
 SHARED_KAFKA="${HC_SHARED_KAFKA:-hc-shared-quality-kafka}"
 SHARED_CONSUL_UI_PORT="${HC_SHARED_CONSUL_UI_PORT:-18510}"
+# Topics are prefixed so this estate cannot consume quality's events, or be consumed by it
+# (decisions.md D29). MUST match HEALTHCONNECT_TOPICS_PREFIX in docker/docker-compose.dev.yml —
+# create one set and configure another and the apps sit on topics nobody publishes to, silently.
+# `-` and not `:-`: an EXPLICIT empty must stay empty, because that is the documented
+# escape hatch for reproducing the crossed-events state, and `:-` would silently
+# substitute the default for it and make the warning below unreachable.
+TOPIC_PREFIX="${HC_TOPIC_PREFIX-dev.}"
 SHARED_INFRA_DIR="${HC_SHARED_INFRA_DIR:-$HOME/webroot/01-healthconnect/hc-infra}"
 export HC_SHARED_NETWORK="$SHARED_NETWORK" HC_SHARED_CONSUL="$SHARED_CONSUL" \
-       HC_SHARED_KAFKA="$SHARED_KAFKA"
+       HC_SHARED_KAFKA="$SHARED_KAFKA" HC_TOPIC_PREFIX="$TOPIC_PREFIX"
 
 # Compose service names carry a `dev-` prefix; the CLI names do not. See the header for why.
 compose_name() { printf 'dev-%s' "$1"; }
@@ -1109,15 +1132,17 @@ shared_plane() {
     || die "$SHARED_KAFKA is not answering — wait, or $fix"
   ok "shared plane: $SHARED_CONSUL (leader elected), $SHARED_KAFKA on $SHARED_NETWORK"
 
-  # ONE BUS, ONE TOPIC SET. Topic names are compiled into the @KafkaListener annotations, so there
-  # is no per-estate prefix and the two estates cannot be separated on the broker. The consumer
-  # groups differ (hc-market-dev-* against hc-market-*), which stops them stealing each other's
-  # partitions — and that is exactly what makes both of them receive every event either publishes.
-  # Completing a booking here writes a ledger row over there. A warning rather than a refusal: it
-  # is a developer's machine and there are legitimate reasons to have both up.
+  # One bus, two estates — separated by the topic prefix since decisions.md D29, so events no
+  # longer cross. This stays as a note rather than a warning because the separation depends on a
+  # value that can be cleared: run with HC_TOPIC_PREFIX='' beside a live quality stack and both
+  # receive everything either publishes, which is precisely the state D29 closed.
   if running hc-market-quality-booking; then
-    warn "the hc-market QUALITY stack is running on the same broker — events will cross between the"
-    warn "two estates in both directions. Stop it (quality/startup.sh --local --down) for a clean run."
+    if [[ -z "$TOPIC_PREFIX" ]]; then
+      warn "the QUALITY stack is running and HC_TOPIC_PREFIX is EMPTY — the two estates will consume"
+      warn "each other's events. Unset it to take the 'dev.' default, or stop quality."
+    else
+      log "quality is also running; separated by the '${TOPIC_PREFIX}' topic prefix"
+    fi
   fi
 }
 
@@ -1175,12 +1200,12 @@ infra_up() {
   # Topics on the SHARED broker, via docker exec rather than `compose exec`: it is not this
   # project's container. --if-not-exists throughout, so topics the quality stack or another product
   # already created are left exactly as they are — this adds, it never redefines.
-  log "ensuring topics on $SHARED_KAFKA"
+  log "ensuring topics on $SHARED_KAFKA (prefix '${TOPIC_PREFIX}')"
   for t in booking.requested booking.accepted booking.declined booking.cancelled \
            booking.completed review.published payout.settled notification.raised \
            dispute.resolved; do
     docker exec "$SHARED_KAFKA" /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 \
-      --create --if-not-exists --topic "healthconnect.$t" --partitions 3 --replication-factor 1 >/dev/null
+      --create --if-not-exists --topic "${TOPIC_PREFIX}healthconnect.$t" --partitions 3 --replication-factor 1 >/dev/null
   done
   ok "9 topics present"
 }
