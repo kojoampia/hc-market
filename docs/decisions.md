@@ -1264,13 +1264,23 @@ Only what engineering cannot settle alone:
 | D17, D18 | Budget for a video provider and a WhatsApp BSP, if either is wanted | Architect |
 | D28 | Whether `gateway` is already a DNS alias on production's `infranet` | Architect, on the host |
 
-D16's *audit* half — recording who verified a professional, when and on what evidence — is an
-engineering gap rather than a product question, but it is not in D26's scope and stays unbuilt.
+D16's *audit* half — recording who verified a professional, when and on what evidence — **is built**
+as of D29: `VerificationReview` and the `ROLE_BROKERAGE` desk. What remains of D16 is the product
+question above, not an engineering gap.
 
-Engineering items left open on purpose, none of them blocked on anyone:
+**Closed by D29, and listed here because this table said otherwise until 2026-08-31:** the `D22`
+`deliveryMode` default now refuses rather than guessing; `D27`'s shared topic set is separated by
+`healthconnect.topics.prefix`; and `D25`'s SSE endpoint exists at `GET /api/stream`. A table of open
+items that keeps closed ones is worse than no table — it is read as current.
+
+Engineering items genuinely open, none of them blocked on anyone:
 
 | # | What | Why not now |
 |---|---|---|
-| D22 | `deliveryMode` still defaults to `ONLINE` when absent from an event, mislabelling the earnings-by-format breakdown | Same class of silent default as the currency one; small, and not on the critical path |
-| D27 | Dev and quality share a topic set, so both receive every event either publishes | Needs a configurable topic prefix in four services; `deploy-dev.sh` warns meanwhile |
-| D25 | The header advertises "Kafka, SSE" and no SSE endpoint exists | Either drop the claim or build it at the reactive gateway; not both, and not by accident |
+| D29 | `sendMsg()` is the one prototype write still in memory — it mutates `THREADS` and invents a reply on a timer | Messaging's write surface is larger than booking's or reviewing's, and phase 5 stopped at the two that exercise D22/D28/D21 |
+| D29 | The SSE framing is not asserted over HTTP — a mock-bound `WebTestClient` buffers a stream that never completes | Needs a real port and a minted token; the disclosure boundary is covered in `MarketplaceEventFanoutIT` meanwhile |
+| D29 | The prototype has never been loaded in a real browser | Recorded twice now. `CLAUDE.md`'s rule that a change touching a screen ends in a browser still applies |
+| D13 | `deploy-prod.sh` rebuilds and re-pushes at the same SHA, overwriting the images CI built and verified | `--no-build` exists; which one a production deploy should use is a decision, not an oversight |
+| D14 | `deploy-prod.sh --dry-run` prints `✓ authenticated to ghcr.io` and `✓ host reachable` unconditionally, while both operations are skipped | A dry run that implies a check it never made is the same class of false confidence D14 exists to prevent |
+| D13 | `deploy-prod.sh`'s header and spec §12 say the github channel produces `ghcr.io/<owner>/healthconnect-<service>`; the code produces `hc-market-<service>` | `sync-appendices.sh` cannot catch it — the appendix faithfully reproduces the script's own stale header |
+| D19 | Search is `contains()` in Java over every card | By D19's own terms the threshold is ~200 professionals. There are 18 |
