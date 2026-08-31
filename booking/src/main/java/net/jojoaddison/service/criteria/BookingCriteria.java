@@ -120,6 +120,8 @@ public class BookingCriteria implements Serializable, Criteria {
 
     private LocalTimeFilter scheduledTime;
 
+    private StringFilter zoneId;
+
     private DeliveryModeFilter deliveryMode;
 
     private BookingStatusFilter status;
@@ -167,6 +169,7 @@ public class BookingCriteria implements Serializable, Criteria {
         this.currency = other.optionalCurrency().map(StringFilter::copy).orElse(null);
         this.scheduledDate = other.optionalScheduledDate().map(LocalDateFilter::copy).orElse(null);
         this.scheduledTime = other.optionalScheduledTime().map(LocalTimeFilter::copy).orElse(null);
+        this.zoneId = other.optionalZoneId().map(StringFilter::copy).orElse(null);
         this.deliveryMode = other.optionalDeliveryMode().map(DeliveryModeFilter::copy).orElse(null);
         this.status = other.optionalStatus().map(BookingStatusFilter::copy).orElse(null);
         this.customerNote = other.optionalCustomerNote().map(StringFilter::copy).orElse(null);
@@ -416,6 +419,25 @@ public class BookingCriteria implements Serializable, Criteria {
 
     public void setScheduledTime(LocalTimeFilter scheduledTime) {
         this.scheduledTime = scheduledTime;
+    }
+
+    public StringFilter getZoneId() {
+        return zoneId;
+    }
+
+    public Optional<StringFilter> optionalZoneId() {
+        return Optional.ofNullable(zoneId);
+    }
+
+    public StringFilter zoneId() {
+        if (zoneId == null) {
+            setZoneId(new StringFilter());
+        }
+        return zoneId;
+    }
+
+    public void setZoneId(StringFilter zoneId) {
+        this.zoneId = zoneId;
     }
 
     public DeliveryModeFilter getDeliveryMode() {
@@ -744,6 +766,7 @@ public class BookingCriteria implements Serializable, Criteria {
             Objects.equals(currency, that.currency) &&
             Objects.equals(scheduledDate, that.scheduledDate) &&
             Objects.equals(scheduledTime, that.scheduledTime) &&
+            Objects.equals(zoneId, that.zoneId) &&
             Objects.equals(deliveryMode, that.deliveryMode) &&
             Objects.equals(status, that.status) &&
             Objects.equals(customerNote, that.customerNote) &&
@@ -778,6 +801,7 @@ public class BookingCriteria implements Serializable, Criteria {
             currency,
             scheduledDate,
             scheduledTime,
+            zoneId,
             deliveryMode,
             status,
             customerNote,
@@ -813,6 +837,7 @@ public class BookingCriteria implements Serializable, Criteria {
             optionalCurrency().map(f -> "currency=" + f + ", ").orElse("") +
             optionalScheduledDate().map(f -> "scheduledDate=" + f + ", ").orElse("") +
             optionalScheduledTime().map(f -> "scheduledTime=" + f + ", ").orElse("") +
+            optionalZoneId().map(f -> "zoneId=" + f + ", ").orElse("") +
             optionalDeliveryMode().map(f -> "deliveryMode=" + f + ", ").orElse("") +
             optionalStatus().map(f -> "status=" + f + ", ").orElse("") +
             optionalCustomerNote().map(f -> "customerNote=" + f + ", ").orElse("") +

@@ -63,6 +63,11 @@ public final class BookingResourceIT {
             .currency("GHS")
             .scheduledDate(LocalDate.now().plusDays(7))
             .scheduledTime(LocalTime.of(10, 0))
+            // Required since D21, and added after generation for the same reason professionalLogin
+            // was: a generated fixture does not set it and every insert fails on the not-null
+            // constraint, in four ITs at once and with a message about the column rather than the
+            // field under test.
+            .zoneId("Africa/Accra")
             .deliveryMode(DeliveryMode.ONLINE)
             .status(BookingStatus.REQUESTED)
             .careSummaryShared(false)

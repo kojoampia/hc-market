@@ -159,6 +159,7 @@ regeneration.
 | The `professional_rating` include | catalog `config/liquibase/master.xml` | view never created; **every rating reads null** |
 | The `unique_favourite` include | catalog `master.xml` | duplicate saves stop being a schema guarantee |
 | The `unique_availability_slot` include | catalog `master.xml` | **concurrent double bookings stop colliding** and both succeed |
+| The two `VerificationReview` includes | catalog `master.xml` | the verification audit table is never created; the desk 500s on every call |
 | The `outbox_event` include | booking `master.xml` | every accept fails on a missing table |
 | The `processed_event` include | payout `master.xml` | consumer idempotency keys gone; replays double-credit |
 | `contexts: dev` (not `dev, faker`) | each `config/application-dev.yml` | see faker collision below |
@@ -173,6 +174,7 @@ against the hand-written resource that replaced it:
 | `ProfessionalResource`, `CategoryResource`, `ReviewResource` | catalog `web/rest/` | `MarketplaceResource` |
 | `FavouriteResource` | catalog `web/rest/` | `FavouritesResource` — note the **singular/plural** difference, which is the only thing that stops this being a name collision |
 | `AvailabilityRuleResource`, `AvailabilityOverrideResource` | catalog `web/rest/` | `ProWorkspaceResource` — generated CRUD would let **any authenticated user edit anyone's availability** |
+| `VerificationReviewResource` | catalog `web/rest/` | `VerificationDeskResource` — generated CRUD would let **any authenticated user forge or erase an audit trail about somebody else's trustworthiness**, and a forged verification is a public claim about a real person |
 | `BookingResource` | booking `web/rest/` | `CustomerBookingResource` |
 | `DisputeResource`, `DisputeStatusChangeResource` | booking `web/rest/` | the `ROLE_BROKERAGE` desk resource |
 | `NotificationResource` | messaging `web/rest/` | `MessagingResource` |
@@ -180,10 +182,13 @@ against the hand-written resource that replaced it:
 **And their tests.** A generated `...ResourceIT` for a resource you just deleted compiles fine and
 fails at run time against a 404. Delete `CategoryResourceIT`, `ReviewResourceIT`,
 `FavouriteResourceIT`, `AvailabilityRuleResourceIT`, `AvailabilityOverrideResourceIT`,
-`DisputeResourceIT`, `DisputeStatusChangeResourceIT`.
+`DisputeResourceIT`, `DisputeStatusChangeResourceIT`, `VerificationReviewResourceIT`.
 
 **Restore the two fixtures**, which regeneration replaces with real test classes:
-`BookingResourceIT` (0 tests → 139) and `ProfessionalResourceIT` (0 tests → 120).
+`BookingResourceIT` (0 tests → 139) and `ProfessionalResourceIT` (0 tests → 120). Both carry
+required fields the generator does not know to set — `professionalLogin` and `zoneId` on the booking,
+`zoneId` on the professional — so a restored-but-unpatched fixture fails four ITs at once on a
+not-null constraint rather than on anything they were testing.
 
 **And `pom.xml`, in all five.** The OpenTelemetry block — the `opentelemetry-javaagent.version`
 property, the `maven-dependency-plugin` execution that fetches the agent, and the `jib-maven-plugin`
@@ -536,6 +541,16 @@ time.**
 - To exercise a `/api/pro/**` endpoint by hand, mint an HS512 token with the estate's
   `JWT_BASE64_SECRET`: subject is the login, authorities go in the `auth` claim as a
   space-delimited string (`SecurityUtils.AUTHORITIES_CLAIM`).
+- **Wall-clock times carry their zone.** `Professional.zoneId` and `Booking.zoneId` are IANA names,
+  defaulting to `Africa/Accra` (D21). Ghana is UTC+0 all year, so the implicit model was correct —
+  just illegible. **Do not convert appointments to `Instant`.** An `Instant` is right for "when did
+  this happen" (`raisedAt`, `completedAt`, the ledger) and wrong for "when is the appointment": if a
+  zone's rules ever change, the 7 a.m. session must stay at 7 a.m. A booking's zone is captured from
+  the professional at creation and never recomputed.
+- **`Professional.verification` is the projection of the latest `VerificationReview`** (D16), and the
+  desk writes both in one transaction. This is a deliberate exception to "derived, never stored":
+  Browse filters on the column, and the 18 seeded professionals have a state with no history behind
+  it. The history is append-only — no edit, no delete, same as reviews.
 - **Nothing a client sends decides what a booking costs or whose it is.** `POST /api/bookings` takes
   `priceMinor`, `currency` and `serviceName` from the catalogue (D22) and `professionalLogin` from
   catalog's `/internal/**` lookup (D28); a request that disagrees is 409, an unreachable catalogue is

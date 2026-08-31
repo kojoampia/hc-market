@@ -100,6 +100,7 @@ public class ProfessionalQueryService extends QueryService<Professional> {
                     buildStringSpecification(criteria.getAvatarGradientFrom(), Professional_.avatarGradientFrom),
                     buildStringSpecification(criteria.getAvatarGradientTo(), Professional_.avatarGradientTo),
                     buildRangeSpecification(criteria.getPublishedAt(), Professional_.publishedAt),
+                    buildStringSpecification(criteria.getZoneId(), Professional_.zoneId),
                     buildSpecification(criteria.getServiceId(), root ->
                         root.join(Professional_.services, JoinType.LEFT).get(ServiceOffering_.id)
                     ),
@@ -118,6 +119,9 @@ public class ProfessionalQueryService extends QueryService<Professional> {
                     ),
                     buildSpecification(criteria.getHighlightId(), root ->
                         root.join(Professional_.highlights, JoinType.LEFT).get(Highlight_.id)
+                    ),
+                    buildSpecification(criteria.getVerificationReviewId(), root ->
+                        root.join(Professional_.verificationReviews, JoinType.LEFT).get(VerificationReview_.id)
                     ),
                     buildSpecification(criteria.getCategoryId(), root -> root.join(Professional_.category, JoinType.LEFT).get(Category_.id))
                 )

@@ -81,6 +81,11 @@ public class Booking implements Serializable {
     private LocalTime scheduledTime;
 
     @NotNull
+    @Size(max = 64)
+    @Column(name = "zone_id", length = 64, nullable = false)
+    private String zoneId;
+
+    @NotNull
     @Enumerated(EnumType.STRING)
     @Column(name = "delivery_mode", nullable = false)
     private DeliveryMode deliveryMode;
@@ -295,6 +300,19 @@ public class Booking implements Serializable {
 
     public void setScheduledTime(LocalTime scheduledTime) {
         this.scheduledTime = scheduledTime;
+    }
+
+    public String getZoneId() {
+        return this.zoneId;
+    }
+
+    public Booking zoneId(String zoneId) {
+        this.setZoneId(zoneId);
+        return this;
+    }
+
+    public void setZoneId(String zoneId) {
+        this.zoneId = zoneId;
     }
 
     public DeliveryMode getDeliveryMode() {
@@ -545,6 +563,7 @@ public class Booking implements Serializable {
             ", currency='" + getCurrency() + "'" +
             ", scheduledDate='" + getScheduledDate() + "'" +
             ", scheduledTime='" + getScheduledTime() + "'" +
+            ", zoneId='" + getZoneId() + "'" +
             ", deliveryMode='" + getDeliveryMode() + "'" +
             ", status='" + getStatus() + "'" +
             ", customerNote='" + getCustomerNote() + "'" +

@@ -58,6 +58,7 @@ public class BookingAsserts {
             .satisfies(a -> assertThat(a.getCurrency()).as("check currency").isEqualTo(expected.getCurrency()))
             .satisfies(a -> assertThat(a.getScheduledDate()).as("check scheduledDate").isEqualTo(expected.getScheduledDate()))
             .satisfies(a -> assertThat(a.getScheduledTime()).as("check scheduledTime").isEqualTo(expected.getScheduledTime()))
+            .satisfies(a -> assertThat(a.getZoneId()).as("check zoneId").isEqualTo(expected.getZoneId()))
             .satisfies(a -> assertThat(a.getDeliveryMode()).as("check deliveryMode").isEqualTo(expected.getDeliveryMode()))
             .satisfies(a -> assertThat(a.getStatus()).as("check status").isEqualTo(expected.getStatus()))
             .satisfies(a -> assertThat(a.getCustomerNote()).as("check customerNote").isEqualTo(expected.getCustomerNote()))

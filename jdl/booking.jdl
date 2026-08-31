@@ -110,6 +110,15 @@ entity Booking {
   scheduledDate LocalDate required
   scheduledTime LocalTime required          // was String(5): sorted only by the accident of
                                             // zero-padded text and accepted "7:00" and "25:99"
+  // ADDED, decisions.md D21/D29. The zone the two fields above are expressed in, captured from the
+  // professional at creation and never recomputed — the professional's zone is authoritative
+  // because that is where the session is physically delivered.
+  //
+  // Denormalised for the same reason serviceName and priceMinor are: a booking already made must
+  // not move on the clock because the professional later relocated. And deliberately NOT an Instant
+  // — an Instant is right for "when did this happen" (raisedAt, completedAt) and wrong for "when is
+  // the appointment", because a zone whose rules change must leave the 7 a.m. session at 7 a.m.
+  zoneId String required maxlength(64)      // an IANA name, e.g. Africa/Accra
   deliveryMode DeliveryMode required
   status BookingStatus required
   customerNote String maxlength(1000)

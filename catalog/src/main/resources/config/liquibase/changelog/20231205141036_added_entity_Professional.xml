@@ -74,6 +74,9 @@
             <column name="published_at" type="${datetimeType}">
                 <constraints nullable="true" />
             </column>
+            <column name="zone_id" type="varchar(64)">
+                <constraints nullable="false" />
+            </column>
             <column name="category_id" type="bigint">
                 <constraints nullable="false" />
             </column>
@@ -120,6 +123,7 @@
             <column name="avatar_gradient_from" type="string"/>
             <column name="avatar_gradient_to" type="string"/>
             <column name="published_at" type="date"/>
+            <column name="zone_id" type="string"/>
             <column name="category_id" type="numeric"/>
             <!-- jhipster-needle-liquibase-add-loadcolumn - JHipster (and/or extensions) can add load columns here -->
         </loadData>

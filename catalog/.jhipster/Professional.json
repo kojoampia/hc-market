@@ -111,6 +111,12 @@
     {
       "fieldName": "publishedAt",
       "fieldType": "Instant"
+    },
+    {
+      "fieldName": "zoneId",
+      "fieldType": "String",
+      "fieldValidateRules": ["required", "maxlength"],
+      "fieldValidateRulesMaxlength": "64"
     }
   ],
   "jpaMetamodelFiltering": true,
@@ -164,6 +170,13 @@
       "otherEntityName": "highlight",
       "otherEntityRelationshipName": "professional",
       "relationshipName": "highlight",
+      "relationshipSide": "left",
+      "relationshipType": "one-to-many"
+    },
+    {
+      "otherEntityName": "verificationReview",
+      "otherEntityRelationshipName": "professional",
+      "relationshipName": "verificationReview",
       "relationshipSide": "left",
       "relationshipType": "one-to-many"
     },

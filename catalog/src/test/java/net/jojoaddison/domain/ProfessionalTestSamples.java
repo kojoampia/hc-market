@@ -28,7 +28,8 @@ public class ProfessionalTestSamples {
             .languages("languages1")
             .deliveryModes("deliveryModes1")
             .avatarGradientFrom("avatarGradientFrom1")
-            .avatarGradientTo("avatarGradientTo1");
+            .avatarGradientTo("avatarGradientTo1")
+            .zoneId("zoneId1");
     }
 
     public static Professional getProfessionalSample2() {
@@ -48,7 +49,8 @@ public class ProfessionalTestSamples {
             .languages("languages2")
             .deliveryModes("deliveryModes2")
             .avatarGradientFrom("avatarGradientFrom2")
-            .avatarGradientTo("avatarGradientTo2");
+            .avatarGradientTo("avatarGradientTo2")
+            .zoneId("zoneId2");
     }
 
     public static Professional getProfessionalRandomSampleGenerator() {
@@ -68,6 +70,7 @@ public class ProfessionalTestSamples {
             .languages(UUID.randomUUID().toString())
             .deliveryModes(UUID.randomUUID().toString())
             .avatarGradientFrom(UUID.randomUUID().toString())
-            .avatarGradientTo(UUID.randomUUID().toString());
+            .avatarGradientTo(UUID.randomUUID().toString())
+            .zoneId(UUID.randomUUID().toString());
     }
 }

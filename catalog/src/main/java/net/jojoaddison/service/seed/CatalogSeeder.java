@@ -39,6 +39,15 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class CatalogSeeder {
 
+    /**
+     * The zone every seeded professional is in — {@code decisions.md} D21.
+     *
+     * <p>Ghana is UTC+0 all year with no daylight saving, so this was correct while it was implicit.
+     * What it was not is legible: nothing in the schema said which zone a 07:00 availability slot's
+     * 07:00 belonged to. The value has not changed; only whether it is written down.
+     */
+    static final String DEFAULT_ZONE_ID = "Africa/Accra";
+
     private static final Logger LOG = LoggerFactory.getLogger(CatalogSeeder.class);
 
     private final CategoryRepository categoryRepository;
@@ -130,6 +139,14 @@ public class CatalogSeeder {
                 .deliveryModes(join(p.deliveryModes()))
                 .avatarGradientFrom(p.avatarGradientFrom())
                 .avatarGradientTo(p.avatarGradientTo())
+                // decisions.md D21. Not in the seed file and deliberately not added to it: the seed
+                // is REGENERATED from the prototype and asserts its figures, and the prototype has
+                // no zone in it — every professional there is in Accra, implicitly, which is the
+                // assumption D21 exists to make explicit rather than to encode twice.
+                //
+                // So the default lands here, where it is one line and visibly a default, instead of
+                // in eighteen extracted records where it would look like data somebody chose.
+                .zoneId(DEFAULT_ZONE_ID)
                 .category(category);
             professional = professionalRepository.save(professional);
             professionalsByRef.put(p.ref(), professional);

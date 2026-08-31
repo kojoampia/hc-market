@@ -38,7 +38,17 @@ public class Highlight implements Serializable {
     @ManyToOne(optional = false)
     @NotNull
     @JsonIgnoreProperties(
-        value = { "services", "availabilities", "rules", "overrides", "reviews", "credentials", "highlights", "category" },
+        value = {
+            "services",
+            "availabilities",
+            "rules",
+            "overrides",
+            "reviews",
+            "credentials",
+            "highlights",
+            "verificationReviews",
+            "category",
+        },
         allowSetters = true
     )
     private Professional professional;

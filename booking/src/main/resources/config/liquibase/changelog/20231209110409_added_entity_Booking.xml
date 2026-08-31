@@ -47,6 +47,9 @@
             <column name="scheduled_time" type="${timeType}">
                 <constraints nullable="false" />
             </column>
+            <column name="zone_id" type="varchar(64)">
+                <constraints nullable="false" />
+            </column>
             <column name="delivery_mode" type="varchar(255)">
                 <constraints nullable="false" />
             </column>
@@ -126,6 +129,7 @@
             <column name="currency" type="string"/>
             <column name="scheduled_date" type="date"/>
             <column name="scheduled_time" type="time"/>
+            <column name="zone_id" type="string"/>
             <column name="delivery_mode" type="string"/>
             <column name="status" type="string"/>
             <column name="customer_note" type="string"/>

@@ -65,6 +65,12 @@
       "fieldValidateRules": ["required"]
     },
     {
+      "fieldName": "zoneId",
+      "fieldType": "String",
+      "fieldValidateRules": ["required", "maxlength"],
+      "fieldValidateRulesMaxlength": "64"
+    },
+    {
       "fieldName": "deliveryMode",
       "fieldType": "DeliveryMode",
       "fieldValidateRules": ["required"],

@@ -66,7 +66,9 @@ class CustomerBookingCreateIT {
 
     @BeforeEach
     void catalogueAnswersNormally() {
-        when(catalog.priceOf(anyString(), anyString())).thenReturn(new CatalogClient.ServiceView("s1b", "Follow-up", 15000L, "GHS", true));
+        when(catalog.priceOf(anyString(), anyString())).thenReturn(
+            new CatalogClient.Offering(new CatalogClient.ServiceView("s1b", "Follow-up", 15000L, "GHS", true), "Africa/Accra")
+        );
         when(catalog.loginOf(REF)).thenReturn(OWNER);
     }
 
@@ -137,6 +139,39 @@ class CustomerBookingCreateIT {
     void aCatalogueThatCannotBeAskedIs503() throws Exception {
         when(catalog.loginOf(REF)).thenThrow(new CatalogClient.CatalogUnavailable("down"));
         send(body(OWNER)).andExpect(status().isServiceUnavailable());
+    }
+
+    /**
+     * decisions.md D21: the booking's wall clock belongs to the PROFESSIONAL's zone, captured from
+     * the same answer that priced it and stored rather than resolved later.
+     */
+    @Test
+    @Transactional
+    void storesTheProfessionalsZone() throws Exception {
+        when(catalog.priceOf(anyString(), anyString())).thenReturn(
+            new CatalogClient.Offering(new CatalogClient.ServiceView("s1b", "Follow-up", 15000L, "GHS", true), "Europe/London")
+        );
+
+        String reference = created(body(OWNER));
+        assertThat(bookings.findAll().stream().filter(b -> reference.equals(b.getReference())).map(Booking::getZoneId))
+            .containsExactly("Europe/London");
+    }
+
+    /**
+     * A catalogue one release behind sends no zone. Ghana is UTC+0 all year, so falling back cannot
+     * make the time wrong today — and refusing would fail every booking in the estate over a field
+     * that changes nothing. The price and the owner deliberately get no such latitude.
+     */
+    @Test
+    @Transactional
+    void fallsBackToAccraWhenTheCatalogueSendsNoZone() throws Exception {
+        when(catalog.priceOf(anyString(), anyString())).thenReturn(
+            new CatalogClient.Offering(new CatalogClient.ServiceView("s1b", "Follow-up", 15000L, "GHS", true), null)
+        );
+
+        String reference = created(body(OWNER));
+        assertThat(bookings.findAll().stream().filter(b -> reference.equals(b.getReference())).map(Booking::getZoneId))
+            .containsExactly("Africa/Accra");
     }
 
     /** A reference the catalogue does not know is 404 — the customer's profile link is stale. */

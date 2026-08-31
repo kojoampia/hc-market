@@ -1,0 +1,58 @@
+{
+  "annotations": {
+    "changelogDate": "20260831022615"
+  },
+  "applications": ["healthconnectCatalog"],
+  "clientRootFolder": "healthconnectCatalog",
+  "databaseType": "sql",
+  "documentation": "ADDED, decisions.md D16/D29. Who verified this professional, when, and on what evidence.\\n\\n`Professional.verification` is a bare enum shown publicly beside somebody's name, and until this\\nexisted there was no record of how it got its value. For a trust signal that is thin: nobody could\\nanswer \"who decided this, and what did they see\" — not for a complaint, not for an audit, not for\\nthe professional asking why they were rejected.\\n\\nAPPEND-ONLY. There is no endpoint to edit or delete a review, for the same reason there is none to\\ndelete a Review: a history that can be rewritten answers none of the questions it exists for. A\\ndecision that was wrong is corrected by appending the new one.\\n\\nNote the tension with \"derived, never stored\": `Professional.verification` is now strictly the\\nprojection of the latest row here. It stays a column because `verifiedOnly` filters Browse on it\\nand because all 18 seeded professionals arrive with a state and no review history — the prototype\\nhas no such data to extract. Both are written in ONE transaction by the desk resource, which is\\nwhat stops them drifting.\\n\\nThere is no evidence STORE. `evidenceRef` names a document held somewhere else — a case number, a\\nfile reference in the back-office. Document storage is unbuilt and out of scope here (D16).",
+  "fields": [
+    {
+      "fieldName": "reference",
+      "fieldType": "String",
+      "fieldValidateRules": ["required", "unique"]
+    },
+    {
+      "fieldName": "decision",
+      "fieldType": "VerificationState",
+      "fieldTypeDocumentation": "Where a professional sits in the trust chain. The prototype had only a boolean `verified`;\\nfour states exist because suspension has to be distinguishable from never-verified.",
+      "fieldValidateRules": ["required"],
+      "fieldValues": "UNVERIFIED,PENDING,VERIFIED,SUSPENDED"
+    },
+    {
+      "fieldName": "reviewer",
+      "fieldType": "String",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "reviewedAt",
+      "fieldType": "Instant",
+      "fieldValidateRules": ["required"]
+    },
+    {
+      "fieldName": "evidenceRef",
+      "fieldType": "String",
+      "fieldValidateRules": ["maxlength"],
+      "fieldValidateRulesMaxlength": "200"
+    },
+    {
+      "fieldName": "note",
+      "fieldType": "String",
+      "fieldValidateRules": ["maxlength"],
+      "fieldValidateRulesMaxlength": "1000"
+    }
+  ],
+  "microserviceName": "healthconnectCatalog",
+  "name": "VerificationReview",
+  "relationships": [
+    {
+      "otherEntityName": "professional",
+      "otherEntityRelationshipName": "verificationReview",
+      "relationshipName": "professional",
+      "relationshipSide": "right",
+      "relationshipType": "many-to-one",
+      "relationshipValidateRules": "required"
+    }
+  ],
+  "searchEngine": "no"
+}

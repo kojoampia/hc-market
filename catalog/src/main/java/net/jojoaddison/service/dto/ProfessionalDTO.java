@@ -75,6 +75,10 @@ public class ProfessionalDTO implements Serializable {
     private Instant publishedAt;
 
     @NotNull
+    @Size(max = 64)
+    private String zoneId;
+
+    @NotNull
     private CategoryDTO category;
 
     public Long getId() {
@@ -245,6 +249,14 @@ public class ProfessionalDTO implements Serializable {
         this.publishedAt = publishedAt;
     }
 
+    public String getZoneId() {
+        return zoneId;
+    }
+
+    public void setZoneId(String zoneId) {
+        this.zoneId = zoneId;
+    }
+
     public CategoryDTO getCategory() {
         return category;
     }
@@ -299,6 +311,7 @@ public class ProfessionalDTO implements Serializable {
             ", avatarGradientFrom='" + getAvatarGradientFrom() + "'" +
             ", avatarGradientTo='" + getAvatarGradientTo() + "'" +
             ", publishedAt='" + getPublishedAt() + "'" +
+            ", zoneId='" + getZoneId() + "'" +
             ", category=" + getCategory() +
             "}";
     }

@@ -40,7 +40,11 @@ public final class ProfessionalResourceIT {
             .responseMinutes(30)
             .rebookRatePct(50)
             .languages("English")
-            .deliveryModes("ONLINE");
+            .deliveryModes("ONLINE")
+            // required since D21 — an unset zone fails @NotNull at persist time, and the four
+            // generated ITs that call this fixture would all fail on a message about the column
+            // rather than about the field they were testing.
+            .zoneId("Africa/Accra");
         professional.setCategory(persistedCategory(em));
         return professional;
     }

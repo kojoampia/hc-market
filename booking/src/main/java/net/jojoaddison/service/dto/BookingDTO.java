@@ -54,6 +54,10 @@ public class BookingDTO implements Serializable {
     private LocalTime scheduledTime;
 
     @NotNull
+    @Size(max = 64)
+    private String zoneId;
+
+    @NotNull
     private DeliveryMode deliveryMode;
 
     @NotNull
@@ -184,6 +188,14 @@ public class BookingDTO implements Serializable {
 
     public void setScheduledTime(LocalTime scheduledTime) {
         this.scheduledTime = scheduledTime;
+    }
+
+    public String getZoneId() {
+        return zoneId;
+    }
+
+    public void setZoneId(String zoneId) {
+        this.zoneId = zoneId;
     }
 
     public DeliveryMode getDeliveryMode() {
@@ -335,6 +347,7 @@ public class BookingDTO implements Serializable {
             ", currency='" + getCurrency() + "'" +
             ", scheduledDate='" + getScheduledDate() + "'" +
             ", scheduledTime='" + getScheduledTime() + "'" +
+            ", zoneId='" + getZoneId() + "'" +
             ", deliveryMode='" + getDeliveryMode() + "'" +
             ", status='" + getStatus() + "'" +
             ", customerNote='" + getCustomerNote() + "'" +

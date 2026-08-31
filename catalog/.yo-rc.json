@@ -20,12 +20,13 @@
       "Highlight",
       "Favourite",
       "AvailabilityRule",
-      "AvailabilityOverride"
+      "AvailabilityOverride",
+      "VerificationReview"
     ],
     "javaVersion": "25",
     "jhipsterVersion": "9.2.0",
     "jwtSecretKey": "ZmU2NGUxMjlmYWJhMzU4ZWE1ZjY2MTBmZGM1NGNiMzBiNjkyZDQyNjlkNjJiZTBhYTkxMGU3ODRhYmFjNTRlMDZmNzZkMDljYjMxNGI0NjE1ODgwMzhiYThmODk2ZWU0MjFmMzIyOWY2N2Y4N2E1OGNkNTA4MzljN2ZkNWFkOTg=",
-    "lastLiquibaseTimestamp": 1787690116000,
+    "lastLiquibaseTimestamp": 1788143175000,
     "messageBroker": "kafka",
     "monorepository": true,
     "packageName": "net.jojoaddison",

@@ -62,7 +62,7 @@ public class CatalogClient {
      * @throws UnknownOffering if the professional or the service does not exist, or the service is
      *     not active
      */
-    public ServiceView priceOf(String professionalRef, String serviceRef) {
+    public Offering priceOf(String professionalRef, String serviceRef) {
         ProfessionalDetail detail;
         try {
             detail = http.get().uri("/api/professionals/{ref}", professionalRef).retrieve().body(ProfessionalDetail.class);
@@ -72,7 +72,7 @@ public class CatalogClient {
         if (detail == null || detail.services() == null) {
             throw new UnknownOffering("no such professional: " + professionalRef);
         }
-        return detail
+        ServiceView offering = detail
             .services()
             .stream()
             .filter(s -> s.ref() != null && s.ref().equals(serviceRef))
@@ -81,6 +81,9 @@ public class CatalogClient {
             // error: a professional who has retired a service should not have to explain why.
             .filter(ServiceView::active)
             .orElseThrow(() -> new UnknownOffering("professional " + professionalRef + " does not offer an active service " + serviceRef));
+        // The zone comes back on the SAME response rather than from a second call. It is a property
+        // of the professional, not of the offering, so it rides on the card — see the record below.
+        return new Offering(offering, detail.card() == null ? null : detail.card().zoneId());
     }
 
     /**
@@ -122,8 +125,22 @@ public class CatalogClient {
         return answer.login();
     }
 
+    /**
+     * What one create needs from the catalogue, in one answer — {@code decisions.md} D21.
+     *
+     * <p>A booking's {@code zoneId} is the professional's, captured once and never recomputed, so it
+     * has to be established at the same moment as the price. Fetching it separately would mean a
+     * third call to catalog on a write path that already makes two, and — worse — a window in which
+     * the price came from one read of the profile and the zone from another.
+     */
+    public record Offering(ServiceView service, String zoneId) {}
+
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public record ProfessionalDetail(List<ServiceView> services) {}
+    public record ProfessionalDetail(ProfessionalCard card, List<ServiceView> services) {}
+
+    /** Only the one field this service reads. Everything else on the card is ignored. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record ProfessionalCard(String zoneId) {}
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record ServiceView(String ref, String name, long priceMinor, String currency, boolean active) {}

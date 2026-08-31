@@ -245,7 +245,8 @@ public class MarketplaceService {
             rating.map(ProfessionalRating::getRating).orElse(null),
             rating.map(ProfessionalRating::getReviewCount).orElse(0L),
             fromPrice,
-            "GHS"
+            "GHS",
+            p.getZoneId()
         );
     }
 

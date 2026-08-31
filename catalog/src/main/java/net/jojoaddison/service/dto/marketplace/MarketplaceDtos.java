@@ -58,7 +58,16 @@ public final class MarketplaceDtos {
         BigDecimal rating,
         long reviewCount,
         Long fromPriceMinor,
-        String currency
+        String currency,
+        /**
+         * The IANA zone the professional's wall clock belongs to — {@code decisions.md} D21.
+         *
+         * <p>On the CARD rather than only the detail, because Browse shows availability times too
+         * and a client that has to fetch the full profile to know what "07:00" means will simply
+         * assume. It is a display fact, not a private one: nothing here is disclosed that the city
+         * on the same card does not already imply.
+         */
+        String zoneId
     ) {}
 
     /** The profile screen: everything on the card, plus the things only that screen shows. */

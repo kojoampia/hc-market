@@ -29,6 +29,13 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class BookingSeeder {
 
+    /**
+     * The zone every seeded booking's wall clock belongs to — {@code decisions.md} D21. Ghana is
+     * UTC+0 all year, so this was correct while it was implicit; what changes is that it is written
+     * down. Live bookings take theirs from the professional, through the catalogue.
+     */
+    static final String DEFAULT_ZONE_ID = "Africa/Accra";
+
     private static final Logger LOG = LoggerFactory.getLogger(BookingSeeder.class);
 
     private final BookingQueryRepository bookingRepository;
@@ -104,6 +111,11 @@ public class BookingSeeder {
             .priceMinor(c.priceMinor())
             .currency(c.currency())
             .deliveryMode(DeliveryMode.valueOf(c.deliveryMode()))
+            // decisions.md D21. Not in the seed file: the seed is REGENERATED from the prototype
+            // and asserts its figures, and the prototype carries no zone — every session in it is
+            // in Accra implicitly, which is the assumption D21 makes explicit rather than one to
+            // encode into 256 extracted records. Catalog's seeder defaults the same way.
+            .zoneId(DEFAULT_ZONE_ID)
             // The prototype has no per-booking consent flag; sharing is off unless chosen, which is
             // the safe default for something that exposes conditions, allergies and medications.
             .careSummaryShared(false);

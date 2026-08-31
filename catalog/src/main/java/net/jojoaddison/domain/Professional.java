@@ -110,6 +110,11 @@ public class Professional implements Serializable {
     @Column(name = "published_at")
     private Instant publishedAt;
 
+    @NotNull
+    @Size(max = 64)
+    @Column(name = "zone_id", length = 64, nullable = false)
+    private String zoneId;
+
     @OneToMany(fetch = FetchType.LAZY, mappedBy = "professional")
     @Cache(usage = CacheConcurrencyStrategy.READ_WRITE)
     @JsonIgnoreProperties(value = { "professional" }, allowSetters = true)
@@ -144,6 +149,11 @@ public class Professional implements Serializable {
     @Cache(usage = CacheConcurrencyStrategy.READ_WRITE)
     @JsonIgnoreProperties(value = { "professional" }, allowSetters = true)
     private Set<Highlight> highlights = new HashSet<>();
+
+    @OneToMany(fetch = FetchType.LAZY, mappedBy = "professional")
+    @Cache(usage = CacheConcurrencyStrategy.READ_WRITE)
+    @JsonIgnoreProperties(value = { "professional" }, allowSetters = true)
+    private Set<VerificationReview> verificationReviews = new HashSet<>();
 
     @ManyToOne(optional = false)
     @NotNull
@@ -425,6 +435,19 @@ public class Professional implements Serializable {
         this.publishedAt = publishedAt;
     }
 
+    public String getZoneId() {
+        return this.zoneId;
+    }
+
+    public Professional zoneId(String zoneId) {
+        this.setZoneId(zoneId);
+        return this;
+    }
+
+    public void setZoneId(String zoneId) {
+        this.zoneId = zoneId;
+    }
+
     public Set<ServiceOffering> getServices() {
         return this.services;
     }
@@ -642,6 +665,37 @@ public class Professional implements Serializable {
         return this;
     }
 
+    public Set<VerificationReview> getVerificationReviews() {
+        return this.verificationReviews;
+    }
+
+    public void setVerificationReviews(Set<VerificationReview> verificationReviews) {
+        if (this.verificationReviews != null) {
+            this.verificationReviews.forEach(i -> i.setProfessional(null));
+        }
+        if (verificationReviews != null) {
+            verificationReviews.forEach(i -> i.setProfessional(this));
+        }
+        this.verificationReviews = verificationReviews;
+    }
+
+    public Professional verificationReviews(Set<VerificationReview> verificationReviews) {
+        this.setVerificationReviews(verificationReviews);
+        return this;
+    }
+
+    public Professional addVerificationReview(VerificationReview verificationReview) {
+        this.verificationReviews.add(verificationReview);
+        verificationReview.setProfessional(this);
+        return this;
+    }
+
+    public Professional removeVerificationReview(VerificationReview verificationReview) {
+        this.verificationReviews.remove(verificationReview);
+        verificationReview.setProfessional(null);
+        return this;
+    }
+
     public Category getCategory() {
         return this.category;
     }
@@ -699,6 +753,7 @@ public class Professional implements Serializable {
             ", avatarGradientFrom='" + getAvatarGradientFrom() + "'" +
             ", avatarGradientTo='" + getAvatarGradientTo() + "'" +
             ", publishedAt='" + getPublishedAt() + "'" +
+            ", zoneId='" + getZoneId() + "'" +
             "}";
     }
 }

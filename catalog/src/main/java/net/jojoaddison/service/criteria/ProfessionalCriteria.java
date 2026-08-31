@@ -82,6 +82,8 @@ public class ProfessionalCriteria implements Serializable, Criteria {
 
     private InstantFilter publishedAt;
 
+    private StringFilter zoneId;
+
     private LongFilter serviceId;
 
     private LongFilter availabilityId;
@@ -95,6 +97,8 @@ public class ProfessionalCriteria implements Serializable, Criteria {
     private LongFilter credentialId;
 
     private LongFilter highlightId;
+
+    private LongFilter verificationReviewId;
 
     private LongFilter categoryId;
 
@@ -123,6 +127,7 @@ public class ProfessionalCriteria implements Serializable, Criteria {
         this.avatarGradientFrom = other.optionalAvatarGradientFrom().map(StringFilter::copy).orElse(null);
         this.avatarGradientTo = other.optionalAvatarGradientTo().map(StringFilter::copy).orElse(null);
         this.publishedAt = other.optionalPublishedAt().map(InstantFilter::copy).orElse(null);
+        this.zoneId = other.optionalZoneId().map(StringFilter::copy).orElse(null);
         this.serviceId = other.optionalServiceId().map(LongFilter::copy).orElse(null);
         this.availabilityId = other.optionalAvailabilityId().map(LongFilter::copy).orElse(null);
         this.ruleId = other.optionalRuleId().map(LongFilter::copy).orElse(null);
@@ -130,6 +135,7 @@ public class ProfessionalCriteria implements Serializable, Criteria {
         this.reviewId = other.optionalReviewId().map(LongFilter::copy).orElse(null);
         this.credentialId = other.optionalCredentialId().map(LongFilter::copy).orElse(null);
         this.highlightId = other.optionalHighlightId().map(LongFilter::copy).orElse(null);
+        this.verificationReviewId = other.optionalVerificationReviewId().map(LongFilter::copy).orElse(null);
         this.categoryId = other.optionalCategoryId().map(LongFilter::copy).orElse(null);
         this.distinct = other.distinct;
     }
@@ -519,6 +525,25 @@ public class ProfessionalCriteria implements Serializable, Criteria {
         this.publishedAt = publishedAt;
     }
 
+    public StringFilter getZoneId() {
+        return zoneId;
+    }
+
+    public Optional<StringFilter> optionalZoneId() {
+        return Optional.ofNullable(zoneId);
+    }
+
+    public StringFilter zoneId() {
+        if (zoneId == null) {
+            setZoneId(new StringFilter());
+        }
+        return zoneId;
+    }
+
+    public void setZoneId(StringFilter zoneId) {
+        this.zoneId = zoneId;
+    }
+
     public LongFilter getServiceId() {
         return serviceId;
     }
@@ -652,6 +677,25 @@ public class ProfessionalCriteria implements Serializable, Criteria {
         this.highlightId = highlightId;
     }
 
+    public LongFilter getVerificationReviewId() {
+        return verificationReviewId;
+    }
+
+    public Optional<LongFilter> optionalVerificationReviewId() {
+        return Optional.ofNullable(verificationReviewId);
+    }
+
+    public LongFilter verificationReviewId() {
+        if (verificationReviewId == null) {
+            setVerificationReviewId(new LongFilter());
+        }
+        return verificationReviewId;
+    }
+
+    public void setVerificationReviewId(LongFilter verificationReviewId) {
+        this.verificationReviewId = verificationReviewId;
+    }
+
     public LongFilter getCategoryId() {
         return categoryId;
     }
@@ -720,6 +764,7 @@ public class ProfessionalCriteria implements Serializable, Criteria {
             Objects.equals(avatarGradientFrom, that.avatarGradientFrom) &&
             Objects.equals(avatarGradientTo, that.avatarGradientTo) &&
             Objects.equals(publishedAt, that.publishedAt) &&
+            Objects.equals(zoneId, that.zoneId) &&
             Objects.equals(serviceId, that.serviceId) &&
             Objects.equals(availabilityId, that.availabilityId) &&
             Objects.equals(ruleId, that.ruleId) &&
@@ -727,6 +772,7 @@ public class ProfessionalCriteria implements Serializable, Criteria {
             Objects.equals(reviewId, that.reviewId) &&
             Objects.equals(credentialId, that.credentialId) &&
             Objects.equals(highlightId, that.highlightId) &&
+            Objects.equals(verificationReviewId, that.verificationReviewId) &&
             Objects.equals(categoryId, that.categoryId) &&
             Objects.equals(distinct, that.distinct)
         );
@@ -755,6 +801,7 @@ public class ProfessionalCriteria implements Serializable, Criteria {
             avatarGradientFrom,
             avatarGradientTo,
             publishedAt,
+            zoneId,
             serviceId,
             availabilityId,
             ruleId,
@@ -762,6 +809,7 @@ public class ProfessionalCriteria implements Serializable, Criteria {
             reviewId,
             credentialId,
             highlightId,
+            verificationReviewId,
             categoryId,
             distinct
         );
@@ -791,6 +839,7 @@ public class ProfessionalCriteria implements Serializable, Criteria {
             optionalAvatarGradientFrom().map(f -> "avatarGradientFrom=" + f + ", ").orElse("") +
             optionalAvatarGradientTo().map(f -> "avatarGradientTo=" + f + ", ").orElse("") +
             optionalPublishedAt().map(f -> "publishedAt=" + f + ", ").orElse("") +
+            optionalZoneId().map(f -> "zoneId=" + f + ", ").orElse("") +
             optionalServiceId().map(f -> "serviceId=" + f + ", ").orElse("") +
             optionalAvailabilityId().map(f -> "availabilityId=" + f + ", ").orElse("") +
             optionalRuleId().map(f -> "ruleId=" + f + ", ").orElse("") +
@@ -798,6 +847,7 @@ public class ProfessionalCriteria implements Serializable, Criteria {
             optionalReviewId().map(f -> "reviewId=" + f + ", ").orElse("") +
             optionalCredentialId().map(f -> "credentialId=" + f + ", ").orElse("") +
             optionalHighlightId().map(f -> "highlightId=" + f + ", ").orElse("") +
+            optionalVerificationReviewId().map(f -> "verificationReviewId=" + f + ", ").orElse("") +
             optionalCategoryId().map(f -> "categoryId=" + f + ", ").orElse("") +
             optionalDistinct().map(f -> "distinct=" + f + ", ").orElse("") +
         "}";

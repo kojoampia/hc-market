@@ -68,7 +68,8 @@ public class ProfessionalAsserts {
                 assertThat(a.getAvatarGradientFrom()).as("check avatarGradientFrom").isEqualTo(expected.getAvatarGradientFrom())
             )
             .satisfies(a -> assertThat(a.getAvatarGradientTo()).as("check avatarGradientTo").isEqualTo(expected.getAvatarGradientTo()))
-            .satisfies(a -> assertThat(a.getPublishedAt()).as("check publishedAt").isEqualTo(expected.getPublishedAt()));
+            .satisfies(a -> assertThat(a.getPublishedAt()).as("check publishedAt").isEqualTo(expected.getPublishedAt()))
+            .satisfies(a -> assertThat(a.getZoneId()).as("check zoneId").isEqualTo(expected.getZoneId()));
     }
 
     /**

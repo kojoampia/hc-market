@@ -83,6 +83,7 @@ class BookingCriteriaTest {
         bookingCriteria.currency();
         bookingCriteria.scheduledDate();
         bookingCriteria.scheduledTime();
+        bookingCriteria.zoneId();
         bookingCriteria.deliveryMode();
         bookingCriteria.status();
         bookingCriteria.customerNote();
@@ -116,6 +117,7 @@ class BookingCriteriaTest {
                 condition.apply(criteria.getCurrency()) &&
                 condition.apply(criteria.getScheduledDate()) &&
                 condition.apply(criteria.getScheduledTime()) &&
+                condition.apply(criteria.getZoneId()) &&
                 condition.apply(criteria.getDeliveryMode()) &&
                 condition.apply(criteria.getStatus()) &&
                 condition.apply(criteria.getCustomerNote()) &&
@@ -151,6 +153,7 @@ class BookingCriteriaTest {
                 condition.apply(criteria.getCurrency(), copy.getCurrency()) &&
                 condition.apply(criteria.getScheduledDate(), copy.getScheduledDate()) &&
                 condition.apply(criteria.getScheduledTime(), copy.getScheduledTime()) &&
+                condition.apply(criteria.getZoneId(), copy.getZoneId()) &&
                 condition.apply(criteria.getDeliveryMode(), copy.getDeliveryMode()) &&
                 condition.apply(criteria.getStatus(), copy.getStatus()) &&
                 condition.apply(criteria.getCustomerNote(), copy.getCustomerNote()) &&

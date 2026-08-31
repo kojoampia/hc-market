@@ -91,6 +91,7 @@ class ProfessionalCriteriaTest {
         professionalCriteria.avatarGradientFrom();
         professionalCriteria.avatarGradientTo();
         professionalCriteria.publishedAt();
+        professionalCriteria.zoneId();
         professionalCriteria.serviceId();
         professionalCriteria.availabilityId();
         professionalCriteria.ruleId();
@@ -98,6 +99,7 @@ class ProfessionalCriteriaTest {
         professionalCriteria.reviewId();
         professionalCriteria.credentialId();
         professionalCriteria.highlightId();
+        professionalCriteria.verificationReviewId();
         professionalCriteria.categoryId();
         professionalCriteria.distinct();
     }
@@ -125,6 +127,7 @@ class ProfessionalCriteriaTest {
                 condition.apply(criteria.getAvatarGradientFrom()) &&
                 condition.apply(criteria.getAvatarGradientTo()) &&
                 condition.apply(criteria.getPublishedAt()) &&
+                condition.apply(criteria.getZoneId()) &&
                 condition.apply(criteria.getServiceId()) &&
                 condition.apply(criteria.getAvailabilityId()) &&
                 condition.apply(criteria.getRuleId()) &&
@@ -132,6 +135,7 @@ class ProfessionalCriteriaTest {
                 condition.apply(criteria.getReviewId()) &&
                 condition.apply(criteria.getCredentialId()) &&
                 condition.apply(criteria.getHighlightId()) &&
+                condition.apply(criteria.getVerificationReviewId()) &&
                 condition.apply(criteria.getCategoryId()) &&
                 condition.apply(criteria.getDistinct()),
             "every filter matches"
@@ -164,6 +168,7 @@ class ProfessionalCriteriaTest {
                 condition.apply(criteria.getAvatarGradientFrom(), copy.getAvatarGradientFrom()) &&
                 condition.apply(criteria.getAvatarGradientTo(), copy.getAvatarGradientTo()) &&
                 condition.apply(criteria.getPublishedAt(), copy.getPublishedAt()) &&
+                condition.apply(criteria.getZoneId(), copy.getZoneId()) &&
                 condition.apply(criteria.getServiceId(), copy.getServiceId()) &&
                 condition.apply(criteria.getAvailabilityId(), copy.getAvailabilityId()) &&
                 condition.apply(criteria.getRuleId(), copy.getRuleId()) &&
@@ -171,6 +176,7 @@ class ProfessionalCriteriaTest {
                 condition.apply(criteria.getReviewId(), copy.getReviewId()) &&
                 condition.apply(criteria.getCredentialId(), copy.getCredentialId()) &&
                 condition.apply(criteria.getHighlightId(), copy.getHighlightId()) &&
+                condition.apply(criteria.getVerificationReviewId(), copy.getVerificationReviewId()) &&
                 condition.apply(criteria.getCategoryId(), copy.getCategoryId()) &&
                 condition.apply(criteria.getDistinct(), copy.getDistinct()),
             "every filter matches"

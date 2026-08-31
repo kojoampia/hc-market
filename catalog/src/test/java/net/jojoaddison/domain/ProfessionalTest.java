@@ -9,6 +9,7 @@ import static net.jojoaddison.domain.HighlightTestSamples.*;
 import static net.jojoaddison.domain.ProfessionalTestSamples.*;
 import static net.jojoaddison.domain.ReviewTestSamples.*;
 import static net.jojoaddison.domain.ServiceOfferingTestSamples.*;
+import static net.jojoaddison.domain.VerificationReviewTestSamples.*;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.HashSet;
@@ -184,6 +185,28 @@ class ProfessionalTest {
         professional.setHighlights(new HashSet<>());
         assertThat(professional.getHighlights()).doesNotContain(highlightBack);
         assertThat(highlightBack.getProfessional()).isNull();
+    }
+
+    @Test
+    void verificationReviewTest() {
+        Professional professional = getProfessionalRandomSampleGenerator();
+        VerificationReview verificationReviewBack = getVerificationReviewRandomSampleGenerator();
+
+        professional.addVerificationReview(verificationReviewBack);
+        assertThat(professional.getVerificationReviews()).containsOnly(verificationReviewBack);
+        assertThat(verificationReviewBack.getProfessional()).isEqualTo(professional);
+
+        professional.removeVerificationReview(verificationReviewBack);
+        assertThat(professional.getVerificationReviews()).doesNotContain(verificationReviewBack);
+        assertThat(verificationReviewBack.getProfessional()).isNull();
+
+        professional.verificationReviews(new HashSet<>(Set.of(verificationReviewBack)));
+        assertThat(professional.getVerificationReviews()).containsOnly(verificationReviewBack);
+        assertThat(verificationReviewBack.getProfessional()).isEqualTo(professional);
+
+        professional.setVerificationReviews(new HashSet<>());
+        assertThat(professional.getVerificationReviews()).doesNotContain(verificationReviewBack);
+        assertThat(verificationReviewBack.getProfessional()).isNull();
     }
 
     @Test

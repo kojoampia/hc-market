@@ -162,6 +162,22 @@ entity Professional {
   avatarGradientFrom String maxlength(7)
   avatarGradientTo String maxlength(7)
   publishedAt Instant
+  zoneId String required maxlength(64)      // ADDED, D21/D29 — an IANA name, e.g. Africa/Accra
+}
+
+// ADDED, decisions.md D16/D29. Who verified this professional, when, and on what evidence.
+// APPEND-ONLY: there is no endpoint to edit or delete a row, for the same reason there is none to
+// delete a Review. `Professional.verification` is strictly the projection of the latest row here,
+// and the desk writes both in ONE transaction — a deliberate exception to "derived, never stored",
+// because Browse filters on the column and the 18 seeded professionals have no history to derive
+// from. `evidenceRef` names a document held elsewhere; there is no document store here.
+entity VerificationReview {
+  reference String required unique
+  decision VerificationState required
+  reviewer String required                  // the deciding login, from the JWT and never the body
+  reviewedAt Instant required
+  evidenceRef String maxlength(200)
+  note String maxlength(1000)
 }
 
 // AMENDED: credentials and highlights are child rows, not comma-separated strings, because the data
@@ -261,7 +277,11 @@ entity Booking {
   priceMinor Long required min(0)           // change when a price is edited
   currency String required maxlength(3)
   scheduledDate LocalDate required
-  scheduledTime LocalTime required          // was String(5) — decisions.md D21, D26
+  scheduledTime LocalTime required
+  zoneId String required maxlength(64)      // ADDED, D21/D29. The zone the two fields above are in,
+                                            // captured from the professional at creation. NOT an
+                                            // Instant: a zone whose rules change must leave the
+                                            // 7 a.m. session at 7 a.m.          // was String(5) — decisions.md D21, D26
   deliveryMode DeliveryMode required
   status BookingStatus required
   customerNote String maxlength(1000)
@@ -511,6 +531,34 @@ than a check afterwards, so a reference that is not yours simply is not found.
 That call has a **2 s timeout** and reports `nextUpAvailable` separately from `nextUp`, so a booking
 outage costs one card rather than the screen — and "nothing is booked" stays distinguishable from
 "could not ask".
+
+### Verification desk (`ROLE_BROKERAGE`, added D16/D29)
+
+| Method | Path | Who |
+|---|---|---|
+| `GET` | `/api/desk/professionals/{ref}/verification` | the append-only history, newest first |
+| `POST` | `/api/desk/professionals/{ref}/verification` | record a decision — **201**, because it appends |
+
+`ROLE_BROKERAGE` rather than `ROLE_ADMIN`, for the reason the dispute desk has its own authority:
+deciding whether someone carries the VERIFIED badge shown publicly beside their name is a narrower
+and more consequential power than general administration.
+
+The **reviewer is the JWT subject** and there is no such field on the request. An audit trail whose
+actor the caller supplies records nothing. A body that sends one is ignored rather than refused —
+JHipster does not fail on unknown properties — and the IT asserts what matters, which is that the
+recorded reviewer is the authenticated subject regardless of what was sent.
+
+The decision and `Professional.verification` are written in **one transaction**: the column is
+strictly the projection of the latest row, and if the two could be written separately the badge
+customers see could disagree with the only record of how it was decided.
+
+**What the badge means: documents seen by a person.** The scope note restricts this marketplace to
+non-medical professionals, who are not licensed by a statutory body, so for most listings there is no
+register to check against (D16). `evidenceRef` names a document held elsewhere; there is no document
+store in this service and D16 does not ask for one.
+
+An empty history is a real answer, not a 404 — every professional seeded before this existed has a
+state and nothing behind it.
 
 ### Estate-facing (`/internal/**`, added D28)
 

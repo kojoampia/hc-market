@@ -37,7 +37,7 @@ application {
     enableTranslation false
     testFrameworks [cucumber]
   }
-  entities Category, Professional, ServiceOffering, AvailabilitySlot, AvailabilityRule, AvailabilityOverride, Review, Credential, Highlight, Favourite
+  entities Category, Professional, ServiceOffering, AvailabilitySlot, AvailabilityRule, AvailabilityOverride, Review, Credential, Highlight, Favourite, VerificationReview
 }
 
 // ===========================================================================
@@ -105,6 +105,45 @@ entity Professional {
   avatarGradientFrom String maxlength(7)     // "#0D3058" — the prototype's duotone avatar
   avatarGradientTo String maxlength(7)
   publishedAt Instant
+  // ADDED, decisions.md D21/D29. The zone the professional's WALL CLOCK belongs to, and the reason
+  // it is stored rather than assumed: Ghana is UTC+0 all year with no daylight saving, so the
+  // implicit model is genuinely correct today — it is simply not legible. Nothing in the schema
+  // said which zone an availability slot's 07:00 was 07:00 in.
+  //
+  // The PROFESSIONAL's zone is authoritative because that is where the service is physically
+  // delivered. Appointments are NOT converted to instants: if a zone's rules ever change, the 7 a.m.
+  // session must stay at 7 a.m. rather than silently becoming 6 a.m.
+  zoneId String required maxlength(64)       // an IANA name, e.g. Africa/Accra
+}
+
+/**
+ * ADDED, decisions.md D16/D29. Who verified this professional, when, and on what evidence.
+ *
+ * `Professional.verification` is a bare enum shown publicly beside somebody's name, and until this
+ * existed there was no record of how it got its value. For a trust signal that is thin: nobody could
+ * answer "who decided this, and what did they see" — not for a complaint, not for an audit, not for
+ * the professional asking why they were rejected.
+ *
+ * APPEND-ONLY. There is no endpoint to edit or delete a review, for the same reason there is none to
+ * delete a Review: a history that can be rewritten answers none of the questions it exists for. A
+ * decision that was wrong is corrected by appending the new one.
+ *
+ * Note the tension with "derived, never stored": `Professional.verification` is now strictly the
+ * projection of the latest row here. It stays a column because `verifiedOnly` filters Browse on it
+ * and because all 18 seeded professionals arrive with a state and no review history — the prototype
+ * has no such data to extract. Both are written in ONE transaction by the desk resource, which is
+ * what stops them drifting.
+ *
+ * There is no evidence STORE. `evidenceRef` names a document held somewhere else — a case number, a
+ * file reference in the back-office. Document storage is unbuilt and out of scope here (D16).
+ */
+entity VerificationReview {
+  reference String required unique
+  decision VerificationState required
+  reviewer String required                   // the login of the person who decided, from the JWT
+  reviewedAt Instant required
+  evidenceRef String maxlength(200)          // what they looked at, held elsewhere
+  note String maxlength(1000)
 }
 
 entity ServiceOffering {
@@ -236,6 +275,7 @@ relationship OneToMany {
   Professional{review} to Review{professional required}
   Professional{credential} to Credential{professional required}
   Professional{highlight} to Highlight{professional required}
+  Professional{verificationReview} to VerificationReview{professional required}
 }
 
 service Category, Professional, ServiceOffering, AvailabilitySlot, AvailabilityRule, AvailabilityOverride, Review with serviceClass

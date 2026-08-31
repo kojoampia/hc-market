@@ -49,6 +49,9 @@ import org.springframework.web.server.ResponseStatusException;
 @RequestMapping("/api/bookings")
 public class CustomerBookingResource {
 
+    /** See {@link #zoneOf}. Ghana is UTC+0 all year, which is what makes this a safe fallback. */
+    private static final String DEFAULT_ZONE_ID = "Africa/Accra";
+
     private final BookingWorkflow bookings;
     private final BookingQueryRepository repository;
     private final BookingHistoryRepository history;
@@ -98,7 +101,7 @@ public class CustomerBookingResource {
     @PostMapping
     public ResponseEntity<BookingView> create(@Valid @RequestBody CreateBooking request) {
         String login = currentLogin();
-        CatalogClient.ServiceView offering = priceFromCatalogue(request);
+        CatalogClient.Offering offering = priceFromCatalogue(request);
         String professionalLogin = loginFromCatalogue(request);
         Booking booking = new Booking()
             // Short, unique, and not guessable in sequence — a booking reference ends up in URLs
@@ -113,9 +116,13 @@ public class CustomerBookingResource {
             .professionalLogin(professionalLogin)
             .serviceRef(request.serviceRef())
             // All three from the catalogue's answer, not the request body.
-            .serviceName(offering.name())
-            .priceMinor(offering.priceMinor())
-            .currency(offering.currency())
+            .serviceName(offering.service().name())
+            .priceMinor(offering.service().priceMinor())
+            .currency(offering.service().currency())
+            // The professional's zone, from the same answer that priced the booking (D21). Stored
+            // rather than resolved at read time: a booking already made must not move on the clock
+            // because the professional later relocated.
+            .zoneId(zoneOf(offering))
             .scheduledDate(request.scheduledDate())
             .scheduledTime(SlotTime.parse(request.scheduledTime()))
             .deliveryMode(DeliveryMode.valueOf(request.deliveryMode()))
@@ -273,8 +280,8 @@ public class CustomerBookingResource {
      * across a join is worse than no column, and the failure would otherwise first appear as a
      * ledger row denominated in something the brokerage config does not price.
      */
-    private CatalogClient.ServiceView priceFromCatalogue(CreateBooking request) {
-        CatalogClient.ServiceView offering;
+    private CatalogClient.Offering priceFromCatalogue(CreateBooking request) {
+        CatalogClient.Offering offering;
         try {
             offering = catalog.priceOf(request.professionalRef(), request.serviceRef());
         } catch (CatalogClient.UnknownOffering unknown) {
@@ -284,22 +291,35 @@ public class CustomerBookingResource {
             // and retrying is the correct response.
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, down.getMessage());
         }
-        if (request.priceMinor() != null && request.priceMinor() != offering.priceMinor()) {
+        if (request.priceMinor() != null && request.priceMinor() != offering.service().priceMinor()) {
             throw new ResponseStatusException(
                 HttpStatus.CONFLICT,
                 "this service now costs %d, not %d — reload the profile and try again".formatted(
-                        offering.priceMinor(),
+                        offering.service().priceMinor(),
                         request.priceMinor()
                     )
             );
         }
-        if (request.currency() != null && !request.currency().equals(offering.currency())) {
+        if (request.currency() != null && !request.currency().equals(offering.service().currency())) {
             throw new ResponseStatusException(
                 HttpStatus.CONFLICT,
-                "this service is priced in %s, not %s".formatted(offering.currency(), request.currency())
+                "this service is priced in %s, not %s".formatted(offering.service().currency(), request.currency())
             );
         }
         return offering;
+    }
+
+    /**
+     * The zone the booking's wall clock belongs to — {@code decisions.md} D21.
+     *
+     * <p>Falls back to Africa/Accra rather than refusing, and that is the one place in this resource
+     * where a default is right. Ghana is UTC+0 all year, so an absent zone cannot make the time
+     * wrong today; a catalogue one release behind would otherwise make every booking in the estate
+     * fail on a field that changes nothing. The price and the owner get no such latitude because
+     * guessing either produces a figure that is actually incorrect.
+     */
+    private static String zoneOf(CatalogClient.Offering offering) {
+        return offering.zoneId() == null || offering.zoneId().isBlank() ? DEFAULT_ZONE_ID : offering.zoneId();
     }
 
     /**
