@@ -1204,11 +1204,26 @@ block and evaluates it in a vm sandbox with no `fetch` and no `window`, so live 
 block and mutates the data consts in place rather than reassigning them. CI regenerates the seed on
 every push, which is what keeps the two halves apart. Confirmed byte-identical after the change.
 
-**Reads are live; writes are not.** Categories, professionals, services, reviews and availability all
-come from catalog, and the ratings are recomputed from the reviews that arrived — the same derivation
-the demo does, so a rating cannot disagree with its own reviews in either mode. Booking, reviewing and
-messaging still mutate memory. That is the next piece and is listed as open rather than left looking
-finished.
+**Reads are live, and so are two of the three writes.** Categories, professionals, services, reviews
+and availability come from catalog, and ratings are recomputed from the reviews that arrived — the
+same derivation the demo does, so a rating cannot disagree with its own reviews in either mode. With
+a token the customer's own bookings load from booking, and **creating a booking and publishing a
+review go to the estate**. `sendMsg()` is still in memory and is listed as open; a page where three
+of four actions are real is otherwise the worst kind of half-finished — the one that looks done.
+
+The writes deliberately omit `priceMinor`, `currency` and `professionalLogin`, so the server
+establishes all three. Verified on the row the prototype created: `professional_login` was
+`akosua.mensah` and `zone_id` `Africa/Accra` despite the client sending neither — the first time D22,
+D28 and D21 have all been exercised together by a real client rather than by a test with a mocked
+`CatalogClient`.
+
+**Which is how a real defect surfaced.** `HEALTHCONNECT_CATALOG_BASE_URL` was set in **none** of the
+three compose files, so booking's `CatalogClient` fell back to `http://healthconnectcatalog` — a name
+that resolves nowhere. Since D22 introduced that client, `POST /api/bookings` had been failing closed
+with **503 in every deployed environment**, including the release shipped to quality minutes earlier.
+Nothing caught it: the ITs mock `CatalogClient`, no health check exercises a write, and
+`verify-cycle.sh` — which would have caught it — needs minted tokens and had not been run. Fixed in
+all three files.
 
 **The live channel needed `fetch`, not `EventSource`.** `EventSource` cannot send an `Authorization`
 header and `/api/stream` is authenticated, so the alternative would have been accepting the token in

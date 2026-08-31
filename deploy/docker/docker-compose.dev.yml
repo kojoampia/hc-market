@@ -308,6 +308,12 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://booking-db:5432/healthconnectBooking
       SPRING_DATASOURCE_USERNAME: healthconnectBooking
       SPRING_LIQUIBASE_CONTEXTS: dev
+      # POST /api/bookings prices the booking from the catalogue and establishes who owns the
+      # professional reference (decisions.md D22, D28). Both calls FAIL CLOSED, so without this the
+      # create path 503s every time — which is exactly what it did in this stack until 2026-08-31,
+      # in silence: the ITs mock CatalogClient, and the read paths every health check exercises are
+      # unaffected. Found by driving a real booking from the prototype.
+      HEALTHCONNECT_CATALOG_BASE_URL: http://hc-market-dev-catalog:8080
       # The receipt modal asks payout for the brokerage split. Fails closed by design.
       HEALTHCONNECT_PAYOUT_BASE_URL: http://hc-market-dev-payout:8080
       HEALTHCONNECT_SEED_ENABLED: 'true'

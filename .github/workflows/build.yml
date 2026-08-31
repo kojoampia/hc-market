@@ -227,6 +227,28 @@ jobs:
           echo "compose='$compose' script='$script'"
           test -n "$compose" && test -n "$script" && test "$compose" = "$script"
 
+      # Every cross-service base URL a service READS must be SET by every compose file that runs it.
+      #
+      # booking's CatalogClient defaults to http://healthconnectcatalog, which resolves in no
+      # environment. HEALTHCONNECT_CATALOG_BASE_URL was unset in all three compose files, so
+      # POST /api/bookings failed closed with 503 everywhere from the moment D22 introduced the
+      # client — and nothing was red: the ITs mock CatalogClient, health checks only exercise reads,
+      # and the one script that would have caught it needs minted tokens. Found by driving a real
+      # booking from the prototype, after the images had already shipped to quality.
+      - name: Cross-service base URLs must be set wherever the service runs
+        run: |
+          fail=0
+          for f in quality/compose.yml deploy/docker/docker-compose.dev.yml deploy/docker/docker-compose.prod.yml; do
+            for v in HEALTHCONNECT_CATALOG_BASE_URL HEALTHCONNECT_PAYOUT_BASE_URL HEALTHCONNECT_BOOKING_BASE_URL; do
+              if ! grep -q "$v" "$f"; then
+                echo "::error file=$f::$v is not set — the service falls back to a hostname that resolves nowhere, and the call fails closed at run time with nothing red in CI."
+                fail=1
+              fi
+            done
+            [ "$fail" = 0 ] && echo "ok   $f"
+          done
+          exit "$fail"
+
       # An unparseable rules file is only discovered when Mimir silently declines to load it, and
       # the symptom is an alert that never fires — indistinguishable from a system that is fine.
       - name: The alert rules must parse and stay uniquely named
