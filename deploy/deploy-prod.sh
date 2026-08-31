@@ -390,6 +390,17 @@ smoke_test() {
 
 rollback() {
   step "Rollback"
+  # THE UNGUARDED SSH THAT USED TO BE HERE. Reading the previous tag ran even under --dry-run, so
+  # `--rollback --dry-run` contacted the production host to answer a question it then printed a plan
+  # about — while the flag's own help says "print, change nothing". A read is not a write, but a dry
+  # run that touches the host is not a dry run, and this is the one command somebody reaches for
+  # when a deploy has just gone wrong and they want to know what rolling back would do BEFORE doing
+  # it. Found by actually running `--rollback --dry-run`, which nothing had.
+  if (( DRY_RUN )); then
+    skipped "would read HC_TAG from $HOST:$REMOTE_PATH/.env.previous — NOT contacted"
+    skipped "would roll the stack back to that tag and re-run the health gate"
+    return 0
+  fi
   local prev
   prev="$(ssh "$HOST" "cd '$REMOTE_PATH' && grep -m1 '^HC_TAG=' .env.previous 2>/dev/null | cut -d= -f2" || true)"
   [[ -n "$prev" ]] || die "no previous deployment recorded on $HOST — nothing to roll back to"

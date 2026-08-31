@@ -520,6 +520,26 @@ whichever comes first — not on feel.
 tuning and synonyms become a product feature in their own right. For a Ghanaian marketplace of
 non-medical professionals, that is not a realistic horizon. Postgres covers it.
 
+**MEASURED 2026-08-31, so the trigger is a number rather than a feeling.** Against the quality estate
+at 18 professionals, through the gateway, 60 samples each:
+
+| Endpoint | p50 | p95 | max |
+|---|---|---|---|
+| `GET /api/professionals?size=200` (browse) | 21 ms | **26 ms** | 41 ms |
+| `GET /api/professionals?q=nutrition&minRating=4` | 20 ms | 23 ms | 26 ms |
+| `GET /api/professionals/facets` | 20 ms | 26 ms | 45 ms |
+| `GET /api/professionals/count` (control — one query) | 4 ms | 5 ms | 5 ms |
+
+So the load-everything-and-filter-in-Java approach costs about **21 ms over a single-query control**,
+and that gap is what scales with the catalogue: browse builds every card, rating-view join included,
+before filtering any of them. At ~200 professionals the same shape lands somewhere around 200–250 ms,
+which is where this stops being free.
+
+**Conclusion: not now.** 26 ms is not a latency problem and 18 is not 200. Re-take the measurement
+before deciding otherwise — the command is above and takes a minute — rather than reasoning from the
+fact that `contains()` in a loop looks wrong. It is wrong in principle and irrelevant in practice at
+this size, and D19 exists to keep those two apart.
+
 **One constraint to respect:** rating comes from the `professional_rating` view and is `null` for the
 unrated. Sorting and `minRating` in SQL must join that view and keep excluding unrated professionals
 rather than coalescing them to zero — the whole point of D-the-rating-rule. A `LEFT JOIN` plus a
@@ -1384,4 +1404,4 @@ Engineering items genuinely open, none of them blocked on anyone:
 | D13 | `deploy-prod.sh` rebuilds and re-pushes at the same SHA, overwriting the images CI built and verified | `--no-build` exists; which one a production deploy should use is a decision, not an oversight |
 | D14 | `deploy-prod.sh --dry-run` prints `✓ authenticated to ghcr.io` and `✓ host reachable` unconditionally, while both operations are skipped | A dry run that implies a check it never made is the same class of false confidence D14 exists to prevent |
 | D13 | `deploy-prod.sh`'s header and spec §12 say the github channel produces `ghcr.io/<owner>/healthconnect-<service>`; the code produces `hc-market-<service>` | `sync-appendices.sh` cannot catch it — the appendix faithfully reproduces the script's own stale header |
-| D19 | Search is `contains()` in Java over every card | By D19's own terms the threshold is ~200 professionals. There are 18 |
+| D19 | Search is `contains()` in Java over every card | **Measured, not deferred on feel:** p95 26 ms at 18 professionals against a 5 ms control. D19's trigger is ~200 professionals or a latency measurement; neither is met. Figures and the re-measure command are in D19 |
