@@ -58,9 +58,19 @@ public class ErasureWorkflow {
         }
     }
 
-    /** @return how many message bodies were redacted */
+    /**
+     * Redacts this customer's messages and re-keys their conversations.
+     *
+     * <p>Returns <strong>both</strong> counts, and that is a correction rather than a nicety. It
+     * returned the message count alone until a real erasure on the quality box answered
+     * {@code messagesErased: 0} for a customer whose conversation it had just pseudonymised — the
+     * booking had raised a thread that nobody had written in yet. An operator recording that zero
+     * against a data subject request would conclude messaging held nothing for that person, when it
+     * held a row keyed to their login. A receipt that under-reports what was done is worse than a
+     * verbose one, because it is the thing somebody files.
+     */
     @Transactional
-    public int eraseCustomer(String login) {
+    public Erased eraseCustomer(String login) {
         // professionalRef "" so the query's professional half matches nothing and only this
         // customer's own conversations come back.
         List<Conversation> mine = conversations.findVisibleTo(login, "");
@@ -79,6 +89,13 @@ public class ErasureWorkflow {
             conversations.save(c);
         }
         LOG.info("erased {} message(s) across {} conversation(s), now {}", redacted, mine.size(), alias);
-        return redacted;
+        return new Erased(mine.size(), redacted);
     }
+
+    /**
+     * @param conversationsPseudonymised threads re-keyed to the pseudonym — can be non-zero while
+     *     {@code messagesRedacted} is zero, which is exactly the case that made this record necessary
+     * @param messagesRedacted message bodies replaced
+     */
+    public record Erased(int conversationsPseudonymised, int messagesRedacted) {}
 }
