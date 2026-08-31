@@ -1451,6 +1451,18 @@ reference, the money fields, `professionalRef`, the status and the date all surv
    `hc-admin` desk. Until it is there the gap is real: calling one and not the others leaves a
    partially erased customer. Recorded rather than hidden.
 
+**Deploying it found something the tests did not.** Erasing a customer on the quality box returned
+`messagesErased: 0` for somebody whose conversation had just been pseudonymised — a booking raises a
+thread before anyone writes in it, so a customer can hold a row keyed to their login and no messages
+at all. The redaction was correct; the *receipt* was not, and the receipt is the thing an operator
+files against the request. Filed as "messaging held nothing for this person", it would have been
+false. It now reports `conversationsPseudonymised` beside `messagesErased`, and
+`ErasureResourceIT` covers the empty thread specifically.
+
+The general lesson is the one this repository keeps relearning: the estate was green, the endpoint
+worked, and the only thing wrong was a number nobody would have questioned. It took running it
+against real data to see.
+
 **`healthconnect.privacy.retention-days` has no default and nothing sweeps on it.** The absence is the
 point — a plausible-looking `365` would be worse than nothing, because it would stop anyone asking.
 `GET /api/desk/privacy` reports the configured value and reports `enforced: false` alongside it, so a
