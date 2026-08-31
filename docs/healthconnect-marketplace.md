@@ -1538,6 +1538,20 @@ for s in "${SERVICES[@]}"; do
   [[ " ${ALL_SERVICES[*]} " == *" $s "* ]] || die "unknown service '$s' (known: ${ALL_SERVICES[*]})"
 done
 
+# The COMPOSE service names, which are not the names you type.
+#
+# docker-compose.prod.yml calls its services hc-market-<name> (decisions.md D28): compose publishes
+# a service name as a DNS alias on every network it joins, and infranet is shared with three sibling
+# products, so plain `gateway` and `catalog` there would be claiming aliases that may already belong
+# to somebody else. The CLI keeps the short names — `--services catalog,booking` is unchanged — and
+# everything handed to `docker compose` is mapped through here.
+#
+# Get this wrong and the symptom is not an error: `docker compose up -d gateway` on a file with no
+# service called `gateway` fails loudly, but `docker compose pull` with no arguments would quietly
+# pull everything. Mapped explicitly for that reason.
+compose_name() { printf 'hc-market-%s' "$1"; }
+compose_names() { local out=() n; for n in "${SERVICES[@]}"; do out+=("$(compose_name "$n")"); done; printf '%s' "${out[*]}"; }
+
 # ------------------------------------------------------------------ preflight --
 require() { command -v "$1" >/dev/null 2>&1 || die "$1 is required but not on PATH"; }
 java_major() {                       # robust: ignores "Picked up JAVA_TOOL_OPTIONS" noise
@@ -1733,11 +1747,11 @@ remote_deploy() {
     (( DRY_RUN )) || printf '%s' "$REGISTRY_TOKEN" \
       | ssh "$HOST" "docker login '$REGISTRY_HOST' -u '$REGISTRY_USER' --password-stdin >/dev/null"
     log "pulling $TAG"
-    run ssh "$HOST" "cd '$REMOTE_PATH' && docker compose pull ${SERVICES[*]}"
+    run ssh "$HOST" "cd '$REMOTE_PATH' && docker compose pull $(compose_names)"
   fi
 
   log "rolling services"
-  run ssh "$HOST" "cd '$REMOTE_PATH' && docker compose up -d --remove-orphans ${SERVICES[*]}"
+  run ssh "$HOST" "cd '$REMOTE_PATH' && docker compose up -d --remove-orphans $(compose_names)"
 }
 
 health_gate() {
@@ -1749,7 +1763,7 @@ health_gate() {
     for s in "${SERVICES[@]}"; do
       # `docker compose exec ... curl` cannot work: the Jib images ship no curl and no wget.
       # bash IS present, so readiness is probed over bash's /dev/tcp instead.
-      ssh "$HOST" "cd '$REMOTE_PATH' && docker compose exec -T $s bash -c \
+      ssh "$HOST" "cd '$REMOTE_PATH' && docker compose exec -T $(compose_name "$s") bash -c \
         'exec 3<>/dev/tcp/localhost/8080 && printf \"GET /management/health/readiness HTTP/1.0\\r\\n\\r\\n\" >&3 && grep -q UP <&3'" \
         >/dev/null 2>&1 || bad+=" $s"
     done
@@ -1778,7 +1792,7 @@ rollback() {
   prev="$(ssh "$HOST" "cd '$REMOTE_PATH' && grep -m1 '^HC_TAG=' .env.previous 2>/dev/null | cut -d= -f2" || true)"
   [[ -n "$prev" ]] || die "no previous deployment recorded on $HOST — nothing to roll back to"
   warn "rolling back to $prev"
-  run ssh "$HOST" "cd '$REMOTE_PATH' && cp .env.previous .env && docker compose pull ${SERVICES[*]} && docker compose up -d ${SERVICES[*]}"
+  run ssh "$HOST" "cd '$REMOTE_PATH' && cp .env.previous .env && docker compose pull $(compose_names) && docker compose up -d $(compose_names)"
   TAG="$prev"
   health_gate && ok "rolled back to $prev" || die "rollback to $prev is also unhealthy — manual intervention required"
 }
