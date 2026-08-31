@@ -127,6 +127,7 @@ const demo = vm.runInContext(
   `({ pros: PROS.length, reviews: REVIEWS.length,
       p1Rating: PROS.find(p=>p.id==='p1').rating,
       p1Reviews: PROS.find(p=>p.id==='p1').reviewCount,
+      bookings: BOOKINGS.length,
       services: PROS.reduce((n,p)=>n+p.services.length,0) })`,
   ctx
 );
@@ -191,11 +192,15 @@ const checks = [
 ];
 
 if (TOKEN) {
-  /* Bookings only load with a token, and their ids become the ESTATE's references — which is the
-     only reason submitReview can pass one to the API and have it mean anything. The demo mints
-     b1..bN with no gaps, so a set containing other prefixes cannot have come from it. */
-  checks.push(['bookings loaded from the estate', live.bookings > 0, true]);
-  checks.push(['booking ids are estate references', live.bookingIds.some(i => !/^b\d+$/.test(i)), true]);
+  /* There is deliberately NO assertion here that the bookings "came from the estate", and the two
+     attempts at one are worth recording. The first asserted that some id did not match `b<digits>`;
+     it held only because that customer happened to have a `q…` booking, and failed after a reseed.
+     The second compared counts; the demo has 13 and the seeded estate gives this customer 13.
+
+     Both were asserting a coincidence, because the SEED IS EXTRACTED FROM THE DEMO — the two data
+     sets are supposed to look alike, and any check built on them differing is checking the wrong
+     thing. The load is proved behaviourally instead, below: a booking created through the prototype
+     comes back with a server-issued reference the demo could not have minted. */
 
   const slot = vm.runInContext(`(function(){const a=(AVAIL['p1']||[]).find(d=>d.times.length);return a?{date:a.date,time:a.times[0]}:null;})()`, ctx);
   if (!slot) {
