@@ -1516,10 +1516,15 @@ payment produces a booking anyway.
 
 ### The pending non-code items
 
-**Answered: merge PR #2 and retarget #3 at main; push the hc-admin branch.** Both were subsequently
-deferred by a later instruction in the same session — *"skip merging PR #2 in this run"* — so the
-decision stands and the action has not been taken. Recorded so the two do not get confused: this is
-not an open question any more, it is queued work.
+**Answered: merge PR #2 and retarget #3 at main; push the hc-admin branch.** Both are done. PR #2
+(`live-messaging-and-sse-framing`) merged, #3 was closed and reopened as **#4** against `main`, and
+`hc-admin/quality`'s `fix-stale-hc-market-port-note` is pushed and open as that repository's PR #17 —
+a comment-only correction, since hc-market's dev estate stopped holding 18500 when it moved onto
+`hc-infra`'s shared plane.
+
+The instruction *"skip merging PR #2 in this run"* came later in the same session and was overtaken:
+by then it had already been merged. Recorded because a later instruction that reads as a reversal is
+worth being able to tell apart from one that was simply already satisfied.
 
 ---
 
