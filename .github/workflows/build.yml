@@ -68,6 +68,25 @@ jobs:
           distribution: temurin
           cache: maven
 
+      # The wrapper fetches Maven itself, and setup-java's `cache: maven` does not cover it: that
+      # option caches ~/.m2/repository only, while the distribution lands in ~/.m2/wrapper/dists.
+      # So every job downloaded apache-maven-<version>-bin.zip from repo.maven.apache.org — five
+      # times a run, with no retry anywhere in the wrapper script.
+      #
+      # On 2026-08-31 that single fetch failed on one runner and turned a DOCS-ONLY pull request
+      # red, seven seconds in, before a line of Java was compiled. A red check that has nothing to
+      # do with the change is worse than a slow one: it trains whoever sees it to re-run rather than
+      # to read, which is exactly the habit that lets a real failure through.
+      #
+      # Keyed on maven-wrapper.properties, so a wrapper upgrade misses the cache and fetches once
+      # rather than being served a stale distribution.
+      - name: Cache the Maven wrapper distribution
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/wrapper
+          key: maven-wrapper-${{ hashFiles('**/maven-wrapper.properties') }}
+          restore-keys: maven-wrapper-
+
       # `verify`, never `test`. Surefire EXCLUDES **/*IT* and failsafe includes it, so `test` runs no
       # integration test at all — and the ITs are where Testcontainers, the ArchUnit layer rule and
       # the Liquibase changelogs actually get exercised. A green `test` proves very little here.
