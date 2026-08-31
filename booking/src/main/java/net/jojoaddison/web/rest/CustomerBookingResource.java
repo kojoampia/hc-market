@@ -19,6 +19,10 @@ import net.jojoaddison.repository.BookingHistoryRepository;
 import net.jojoaddison.security.SecurityUtils;
 import net.jojoaddison.service.BookingMapper;
 import net.jojoaddison.service.BookingWorkflow;
+import net.jojoaddison.service.payment.PaymentIntent;
+import net.jojoaddison.service.payment.PaymentOutcome;
+import net.jojoaddison.service.payment.PaymentProvider;
+import net.jojoaddison.service.payment.PaymentState;
 import net.jojoaddison.service.BookingCreator;
 import net.jojoaddison.service.BrokerageClient;
 import net.jojoaddison.service.dto.BookingDtos.Receipt;
@@ -59,6 +63,7 @@ public class CustomerBookingResource {
     private final BookingCreator creator;
     private final BrokerageClient brokerage;
     private final CatalogClient catalog;
+    private final PaymentProvider payments;
 
     public CustomerBookingResource(
         BookingWorkflow bookings,
@@ -67,7 +72,8 @@ public class CustomerBookingResource {
         BookingMapper mapper,
         BookingCreator creator,
         BrokerageClient brokerage,
-        CatalogClient catalog
+        CatalogClient catalog,
+        PaymentProvider payments
     ) {
         this.bookings = bookings;
         this.repository = repository;
@@ -76,6 +82,7 @@ public class CustomerBookingResource {
         this.creator = creator;
         this.brokerage = brokerage;
         this.catalog = catalog;
+        this.payments = payments;
     }
 
     /**
@@ -133,6 +140,7 @@ public class CustomerBookingResource {
             .careSummaryShared(Boolean.TRUE.equals(request.careSummaryShared()))
             .raisedAt(Instant.now())
             .reviewed(false);
+        authorizePayment(booking);
         // Saved through BookingCreator so the row and its booking.requested event share one
         // transaction — the same guarantee every transition gets.
         return ResponseEntity.status(HttpStatus.CREATED).body(mapper.toView(creator.create(booking, login)));
@@ -307,6 +315,45 @@ public class CustomerBookingResource {
             );
         }
         return offering;
+    }
+
+    /**
+     * Asks the payment seam whether this booking's money is in hand — {@code decisions.md} D15/D31.
+     *
+     * <p><strong>Today this always passes</strong>, because the only provider bean in the estate
+     * reports {@code OFF_PLATFORM}: the customer pays the professional directly, which is what has
+     * always happened and is now stated rather than assumed. So this call changes no behaviour and
+     * is not meant to.
+     *
+     * <p>What it is, is the one place a real provider gets consulted. When one is configured, a
+     * booking whose payment is declined is refused here instead of being created and reconciled
+     * later — because a booking that exists without its money is a professional's diary blocked for
+     * a session nobody paid for, and unpicking that costs two people a phone call each.
+     *
+     * <p>Called <em>before</em> {@code creator.create}, deliberately. Authorizing after the row is
+     * written would put an outbound call to a third party inside the transaction that publishes
+     * {@code booking.requested}, and a provider timing out would then roll back a booking that the
+     * customer's screen had every reason to believe was made.
+     *
+     * <p><strong>402 for a decline, 502 for a provider that fell over.</strong> The client's next
+     * move differs: one means try another instrument, the other means try again. Collapsing them into
+     * one status would make the customer re-enter details that were never the problem.
+     */
+    private void authorizePayment(Booking booking) {
+        PaymentOutcome outcome = payments.authorize(
+            new PaymentIntent(
+                booking.getReference(),
+                booking.getCustomerLogin(),
+                booking.getPriceMinor(),
+                booking.getCurrency(),
+                booking.getServiceName()
+            )
+        );
+        if (outcome.state().permitsBooking()) {
+            return;
+        }
+        HttpStatus status = outcome.state() == PaymentState.DECLINED ? HttpStatus.PAYMENT_REQUIRED : HttpStatus.BAD_GATEWAY;
+        throw new ResponseStatusException(status, outcome.reason() == null ? "payment could not be taken" : outcome.reason());
     }
 
     /**

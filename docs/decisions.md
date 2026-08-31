@@ -1373,21 +1373,174 @@ that `nodeType` and `bigDecimal` are absent, so a regression cannot pass as "som
 
 ---
 
+## D31 — The three items that were waiting on a person, answered 2026-08-31
+
+D15, D16 and D24 had sat in the "needs a person" table since the spec. They were put to the architect
+as four questions; these are the answers and what was built from them.
+
+### D16 — keep the badge, and make the profile say what it means
+
+**Answered: keep it, state its meaning on the profile.**
+
+There is no register of non-medical health professionals in Ghana to check anyone against, so
+"Verified" cannot mean what a reader assumes it means — a licence looked up somewhere. It means a
+person at BridgeCare looked at documents. The other two options both lose something real: relabelling
+it ("Documents checked") throws away a signal customers do use and that professionals worked for, and
+leaving it alone lets the screen keep an implication the business cannot stand behind.
+
+Built in three parts, and the split matters:
+
+- `ProfessionalDetail` gained **`verifiedOn` only** — the date. The reviewer's login and the evidence
+  reference stay on the `ROLE_BROKERAGE` desk endpoint where D29 put them. A public profile saying
+  *who* checked and *on what document* would publish a staff name and a document reference to anyone
+  who asks, which is a different decision that nobody made.
+- `MarketplaceService.verifiedOn` filters to `VerificationState.VERIFIED`. A professional under review,
+  or one whose verification was withdrawn, has no date — the field is absent rather than stale, so it
+  cannot outlive the state that justified it.
+- The prototype renders the qualifier next to the badge: verification is a check of documents, not a
+  licence.
+
+The seeded professionals have no verification review history, so the date is absent in demo mode and
+the qualifier still renders. That is the correct behaviour for a fresh estate and was confirmed in a
+browser rather than reasoned about.
+
+### D24 — build the erasure mechanism; retention periods stay configuration
+
+**Answered: build the mechanism, periods stay config.**
+
+The split is clean and worth stating: *how* to erase somebody is engineering, *how long* to keep their
+records is law. Waiting for counsel on both would have left the estate with no way to honour a request
+it will eventually receive; inventing a retention period would have had a developer take a legal
+position on Ghanaian data protection and on the retention obligations sitting on financial records.
+
+**Pseudonymisation, not deletion.** `ErasureWorkflow` in booking, messaging and catalog replaces
+`customerLogin` with `erased-<first 12 hex of SHA-256(login)>` and redacts the free text: the visit
+address and customer note in booking, the message bodies in messaging, the author name and initials in
+catalog. Deleting instead would break more than it protects — `Ledger` rows in payout are keyed by
+`bookingReference`, financial records carry their own retention obligation that an erasure request does
+not override, and a professional's earnings are aggregates over rows that must still exist to be
+aggregated.
+
+**The pseudonym is deterministic on purpose**, and identically derived in all three services, so one
+person carries one alias estate-wide and their rows stay reconcilable against a payout without naming
+them. A fresh random value per row would have made an erased customer's booking history impossible to
+audit.
+
+**This turned out to be cheap because of a rule chosen for another reason entirely.** Redacting a
+customer requires *no recomputation anywhere* — there is no `professional.total_earnings` and no stored
+rating, so every figure in the estate is a view or a query over rows the erasure leaves in place. Had
+those been columns, erasure would have meant recomputing each one and getting every rounding decision
+right a second time, under legal deadline. "Derived, never stored" paid off in a place nobody picked it
+for. `ErasureResourceIT` asserts both halves, and the second is the one that matters: the booking
+reference, the money fields, `professionalRef`, the status and the date all survive intact.
+
+**Three deliberate boundaries.**
+
+1. **The review body is not erased.** Author name and initials go; the text stays. A review is public
+   speech about a professional, relied on by other customers and already answered in public by the
+   professional — erasing the person is not the same as retracting what they said. This is the
+   judgement here most likely to need revisiting once counsel has an opinion, and it is one method to
+   change if the answer comes back the other way. Favourites are deleted outright instead: a saved
+   list is purely personal, nothing aggregates over it, and a tombstoned row would be an orphan.
+2. **`ROLE_BROKERAGE`, not self-service.** A customer cannot erase themselves. Not paternalism: an
+   erasure request has to be identity-checked before it is acted on, and an endpoint that erased on
+   the strength of the caller's own token would let anyone who borrowed a session destroy that
+   person's history. The check happens off-system, by a person; this is what they call afterwards.
+3. **It is three calls, not one.** There is no service-to-service authentication in this estate, so an
+   orchestrating endpoint would need a mechanism that does not exist. Sequencing belongs in the
+   `hc-admin` desk. Until it is there the gap is real: calling one and not the others leaves a
+   partially erased customer. Recorded rather than hidden.
+
+**`healthconnect.privacy.retention-days` has no default and nothing sweeps on it.** The absence is the
+point — a plausible-looking `365` would be worse than nothing, because it would stop anyone asking.
+`GET /api/desk/privacy` reports the configured value and reports `enforced: false` alongside it, so a
+configured period is never mistaken for an applied one. Enforcement needs a scheduled sweep and there
+is no scheduler anywhere in this estate, the same gap `Dispute.dueBy` records; when one exists it calls
+`eraseCustomer` and nothing else has to be decided.
+
+**Still with counsel, and unchanged by any of this:** retention periods, lawful basis, controller
+registration, data residency, and whether review text must go too.
+
+### D15 — build a provider-agnostic seam now
+
+**Answered: build a provider-agnostic seam now.**
+
+This goes against D15's own recorded position, which was to build nothing until a provider and an Act
+987 opinion exist, and the reasoning for that position has not changed: a payment seam written before
+anyone knows whether settlement is split at capture or reconciled afterwards is a guess at the shape,
+and the wrong shape is more expensive to remove than no shape at all. The instruction is explicit, so
+it is implemented — and the risk is recorded here rather than argued again later.
+
+What that means in practice, and the constraint that keeps it honest: **the seam must not encode a
+settlement model.** It carries an intent to be paid and a record of what happened, and it does not
+assume the money moves in one hop, in two, or at capture rather than at completion. The moment it
+assumes one of those it stops being provider-agnostic and becomes an unfinished integration with a
+particular provider, which is exactly what D15 wanted to avoid.
+
+**As built.** `PaymentProvider` in booking's `service.payment`, with `authorize`, `capture`, `refund`
+and `status` — and the property that makes it survivable is what is *missing*: **nothing on it pays
+the professional.** The two plausible arrangements in Ghana settle that leg completely differently. A
+split-settlement provider moves the professional's share itself at capture and the platform only
+records it; a reconcile-afterwards arrangement has the platform receive everything and disburse later
+against the ledger. A `payProfessional` method would have picked one. Payout's `Ledger` already
+records what each professional is owed, derived from completed bookings, and that record is correct
+under either model. Likewise `authorize` and `capture` are separate calls because some providers
+separate them, not because this estate has decided when either happens — a provider that only does
+immediate charges implements `authorize` as a capture and returns `CAPTURED`.
+
+**Naming today's arrangement was the unexpected value.** The seam needed a state for "the platform is
+not in the money's path", and writing `OFF_PLATFORM` down made visible an assumption that had been
+nowhere stated: bookings are created, completed, and a `Ledger` row credits a professional for money
+this estate has never touched. That is a defensible business model. It was simply not written
+anywhere, and an unstated assumption about money is the kind an accountant discovers.
+
+**Nothing is persisted, and that is the same discipline that keeps the interface honest.** There is no
+`payment_attempt` table, because the columns it needs are the provider's — reference format, status
+vocabulary, webhook identifiers — and a schema that has run in production is a migration rather than
+an edit. When a provider is chosen the table is obvious and the interface does not change.
+
+The one call site is `POST /api/bookings`, before the row is written: authorizing afterwards would put
+a third-party call inside the transaction that publishes `booking.requested`, so a provider timeout
+would roll back a booking the customer's screen had every reason to believe was made. A decline is
+**402 with nothing written** — a booking without its money blocks a professional's diary for a session
+nobody paid for — and a provider that fell over is **502**, because the client's next move is retry
+rather than find another instrument.
+
+The only implementation is `UnconfiguredPaymentProvider`, which reports `OFF_PLATFORM` and **throws**
+on `capture`, `refund` and `status`. The asymmetry is deliberate: there is no money to move and no
+provider to ask, so any caller reaching those holds a false belief, and a polite `FAILED` would let it
+survive as an apparent outage that gets retried. `PaymentSeamIT` substitutes a provider to exercise
+the decline and failure branches, because a refusal path that has never run is a refusal path nobody
+knows the shape of — and the day a provider is added is the wrong day to discover that a declined
+payment produces a booking anyway.
+
+### The pending non-code items
+
+**Answered: merge PR #2 and retarget #3 at main; push the hc-admin branch.** Both were subsequently
+deferred by a later instruction in the same session — *"skip merging PR #2 in this run"* — so the
+decision stands and the action has not been taken. Recorded so the two do not get confused: this is
+not an open question any more, it is queued work.
+
+---
+
 ## Still open after this section
 
 Only what engineering cannot settle alone:
 
 | # | Needs | From whom |
 |---|---|---|
-| D15 | Provider choice and contract; whether a split model clears Act 987 | Architect + counsel |
-| D16 | Whether the verification badge's meaning is acceptable given no register exists | Product |
-| D24 | Retention periods, lawful basis, controller registration, data residency | Counsel |
+| D15 | Provider choice and contract; whether a split model clears Act 987 | Counsel |
+| D24 | Retention periods, lawful basis, controller registration, data residency; whether review text must be erased too | Counsel |
 | D17, D18 | Budget for a video provider and a WhatsApp BSP, if either is wanted | Architect |
 | D28 | Whether `gateway` is already a DNS alias on production's `infranet` | Architect, on the host |
 
-D16's *audit* half — recording who verified a professional, when and on what evidence — **is built**
-as of D29: `VerificationReview` and the `ROLE_BROKERAGE` desk. What remains of D16 is the product
-question above, not an engineering gap.
+**D16 is closed** — see D31. Its *audit* half was built by D29 (`VerificationReview` and the
+`ROLE_BROKERAGE` desk); its product half was answered on 2026-08-31 and the profile now states what
+the badge means.
+
+D15 and D24 stay in this table with **narrower** questions than they had. Both now have engineering
+built against them — a provider-agnostic seam and the erasure mechanism — so what remains is the part
+that was never engineering's to answer, not the whole item.
 
 **Closed by D29, and listed here because this table said otherwise until 2026-08-31:** the `D22`
 `deliveryMode` default now refuses rather than guessing; `D27`'s shared topic set is separated by
