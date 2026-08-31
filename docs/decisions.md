@@ -1284,6 +1284,53 @@ CLAUDE.md's rule that a change touching a screen ends in a real browser still ap
 
 ---
 
+## D30 — Four answers, 2026-08-31
+
+Taken after the D29 work, and recorded because three of them close items that had been sitting on the
+"needs a person" list.
+
+### D28's `infranet` question is closed by making it moot
+
+The question was whether `gateway` is already a DNS alias on production's shared `infranet`. It cannot
+be answered from a workstation, so it is not answered: **the production compose services are renamed
+`hc-market-*` with explicit container names**, and the gateway's static route hosts point at those.
+The aliases this stack publishes on that shared network are now unique to this product, whatever else
+is on it.
+
+Making a collision impossible beats investigating whether one exists — the same conclusion D27 reached
+on `hcnet`, where `catalog` and `booking` turned out to be taken and docker was answering with
+whichever container it felt like, silently.
+
+`deploy-prod.sh` maps the short CLI names onto the compose ones, so `--services catalog,booking` is
+unchanged. That mapping is not cosmetic: `docker compose up -d gateway` against a file with no such
+service fails loudly, but `docker compose pull` with no arguments would quietly pull everything.
+
+### The release agent no longer tells itself to skip consent
+
+`~/.claude/agents/code-pipeline.md` Step 5 read *"production is launched and returns a 200 but it is
+not operational so deploy without asking for express permission."* Two halves had come apart in it:
+whether production is *operational* is a different question from whether deploying to it needs
+consent, and a standing instruction to skip consent outlives the circumstance that motivated it.
+
+Step 5 now halts before production and produces a `--dry-run` plan. An operator who wants a deploy
+says so in the invoking prompt; an agent concluding on its own that permission was implied is the
+failure the wording now prevents.
+
+### `hc-infra`'s header no longer claims ports hc-market gave back
+
+It said hc-market's dev estate holds 18500 and 19092. False since D27 removed that stack's private
+broker and Consul. Corrected in place — `hc-infra` is not a git repository, so there is no branch to
+put it on — and comments only, no configuration touched. The shifted ports stay where they are, which
+the file already explains: a port that means one thing in the file and another on the host is how an
+afternoon gets lost.
+
+### The SSE-on-the-wire gap gets investigated rather than routed around
+
+An unexplained difference between two test contexts, in a live channel, is worth understanding. See
+the open list for where that got to.
+
+---
+
 ## Still open after this section
 
 Only what engineering cannot settle alone:
