@@ -89,7 +89,17 @@ public class MarketplaceStreamResource {
 
         // merge, not concat or zip: the heartbeat is an independent clock and must keep ticking
         // through long silences and through bursts alike.
-        Flux<ServerSentEvent<Object>> heartbeats = Flux.interval(HEARTBEAT, HEARTBEAT).map(tick ->
+        //
+        // FIRST TICK AT ZERO, not at HEARTBEAT, and that is not a detail. WebFlux does not commit
+        // the response until the first element is written, so a stream whose first emission was 20
+        // seconds away left the client with no status line and no headers for those 20 seconds —
+        // an EventSource sitting in CONNECTING, and any proxy with a short header timeout free to
+        // kill a connection that had not yet said anything. Emitting a comment immediately commits
+        // the response, which is what every SSE endpoint should do and what this one did not.
+        //
+        // Found by a test that could not get past exchange(): the client was not slow, the server
+        // had genuinely sent nothing.
+        Flux<ServerSentEvent<Object>> heartbeats = Flux.interval(Duration.ZERO, HEARTBEAT).map(tick ->
             ServerSentEvent.builder().comment("keep-alive").build()
         );
 
