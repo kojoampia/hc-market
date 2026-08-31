@@ -551,6 +551,13 @@ time.**
   The generated `broker.KafkaConsumer` and `/api/healthconnect-gateway-kafka/consume` are a **sample**,
   not this: `unicast()` sink (the second client errors), not SSE, no per-user filter, bound to a topic
   nothing publishes to.
+  **Never put a `JsonNode` in an SSE payload.** Jackson serialises it by bean properties — clients
+  received `{"array":false,"nodeType":"OBJECT",…}` instead of the event, for as long as the endpoint
+  existed, with every test green because the only client reads the `event:` name and not the data.
+  `MarketplaceEventFanout` converts to plain maps at ingestion; the wire test asserts `nodeType` is
+  absent so a regression cannot pass as "some JSON arrived".
+  The heartbeat's first tick is at **zero**, not at the interval: WebFlux does not commit a response
+  until its first element, so a 20s-away first tick meant no status line and no headers for 20s.
 - **Wall-clock times carry their zone.** `Professional.zoneId` and `Booking.zoneId` are IANA names,
   defaulting to `Africa/Accra` (D21). Ghana is UTC+0 all year, so the implicit model was correct —
   just illegible. **Do not convert appointments to `Instant`.** An `Instant` is right for "when did

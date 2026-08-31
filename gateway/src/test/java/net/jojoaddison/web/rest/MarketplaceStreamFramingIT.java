@@ -2,13 +2,23 @@ package net.jojoaddison.web.rest;
 
 import static org.springframework.http.HttpHeaders.AUTHORIZATION;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import java.time.Duration;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 import net.jojoaddison.HealthconnectGatewayApp;
 import net.jojoaddison.config.AsyncSyncConfiguration;
 import net.jojoaddison.config.JacksonConfiguration;
 import net.jojoaddison.config.MongoDbTestContainer;
 import net.jojoaddison.config.SseKafkaTestContainer;
 import net.jojoaddison.security.jwt.JwtAuthenticationTestUtils;
+import org.apache.kafka.clients.producer.KafkaProducer;
+import org.apache.kafka.clients.producer.ProducerConfig;
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.common.serialization.StringSerializer;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -17,6 +27,9 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.context.ImportTestcontainers;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.reactive.server.WebTestClient;
+import org.springframework.web.reactive.function.client.WebClient;
+import reactor.core.Disposable;
+import reactor.core.publisher.Flux;
 
 /**
  * The SSE wire format, over a real socket — {@code decisions.md} D25/D29.
@@ -116,26 +129,76 @@ class MarketplaceStreamFramingIT {
             .contentTypeCompatibleWith(MediaType.TEXT_EVENT_STREAM);
     }
 
-    /* --- WHAT IS STILL NOT ASSERTED HERE, AND WHAT IS KNOWN ABOUT IT --------------------------
+    private static void publish(String bookingRef, String customerLogin) {
+        Map<String, Object> config = new HashMap<>();
+        config.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, SseKafkaTestContainer.bootstrapServers());
+        config.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
+        config.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
+        String envelope =
+            """
+            {
+              "eventId": "e-%s",
+              "type": "healthconnect.booking.accepted",
+              "occurredAt": "2026-08-31T09:00:00Z",
+              "aggregateRef": "%s",
+              "payload": { "bookingRef": "%s", "customerLogin": "%s", "professionalLogin": "akosua.mensah" }
+            }
+            """.formatted(bookingRef, bookingRef, bookingRef, customerLogin);
+        try (var producer = new KafkaProducer<String, String>(config)) {
+            producer.send(new ProducerRecord<>("healthconnect.booking.accepted", bookingRef, envelope));
+            producer.flush();
+        }
+    }
+
+    /**
+     * The payload a browser actually receives.
      *
-     * That an event PUBLISHED TO KAFKA arrives on this socket as SSE data. It was written, run, and
-     * removed rather than left disabled, because a red or @Disabled test is a worse record than a
-     * comment that says what was measured:
+     * <p>This is the assertion the class exists for, and getting it to pass took finding two real
+     * defects rather than fixing the test:
      *
-     *   - the connection opens and heartbeat frames flow, so the transport and the auth are fine;
-     *   - the topics are pre-created (see SseKafkaTestContainer), so the consumer is not sitting on
-     *     UNKNOWN_TOPIC_OR_PARTITION metadata — that WAS the first cause and is fixed;
-     *   - the filter is not the cause: the gateway's SecurityUtils returns jwt.getSubject(), which
-     *     is exactly the login the test payload carries;
-     *   - with all of that, a data frame still does not arrive within 35s in this RANDOM_PORT
-     *     context, while MarketplaceEventFanoutIT — same broker, same listener, MOCK env — receives
-     *     it reliably. The difference between the two contexts is not yet understood.
+     * <ol>
+     *   <li>the heartbeat's first tick was twenty seconds out, and WebFlux does not commit a response
+     *       until its first element — so no status line and no headers reached the client at all;
+     *   <li>the payload was a {@code JsonNode} in the SSE data, which Jackson serialised by its BEAN
+     *       PROPERTIES: every client received
+     *       {@code {"array":false,"bigDecimal":false,"nodeType":"OBJECT",…}} instead of the event.
+     * </ol>
      *
-     * The behaviour itself is NOT unverified. MarketplaceEventFanoutIT proves the listener reaches a
-     * broker and that streamFor filters correctly, and `deploy/verify-prototype-live.mjs --writes`
-     * drives a real booking through the prototype against a live estate and asserts the SSE event
-     * arrives back at the browser. What is missing is that last assertion inside an automated test,
-     * and it stays on the open list. */
+     * <p>Neither failed anything. The stream was live and punctual and carrying nothing, and the one
+     * client that exists reads only the {@code event:} name for its toast, so it never looked.
+     */
+    @Test
+    @Timeout(90)
+    @DisplayName("an event published to Kafka arrives on the wire as its actual payload")
+    void anEventArrivesOnTheWire() {
+        String token = JwtAuthenticationTestUtils.createValidTokenForUser(jwtKey, ME);
+        Flux<String> body = WebClient.create("http://localhost:" + port)
+            .get()
+            .uri("/api/stream")
+            .header(AUTHORIZATION, "Bearer " + token)
+            .accept(MediaType.TEXT_EVENT_STREAM)
+            .retrieve()
+            .bodyToFlux(String.class);
+
+        List<String> frames = new CopyOnWriteArrayList<>();
+        Disposable sub = body.subscribe(frames::add);
+        try {
+            /* Published only once the subscription is live: the stream has no replay by design, so a
+               test that raced would fail intermittently rather than honestly. */
+            Thread.sleep(3000);
+            publish("b-onwire-1", ME);
+            for (int i = 0; i < 60 && frames.isEmpty(); i++) Thread.sleep(500);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } finally {
+            sub.dispose();
+        }
+
+        assertThat(frames).isNotEmpty();
+        assertThat(String.join(" ", frames)).contains("b-onwire-1").contains("kojo.customer");
+        /* The bean-property leak, named so a regression cannot pass as "some JSON arrived". */
+        assertThat(String.join(" ", frames)).doesNotContain("nodeType").doesNotContain("bigDecimal");
+    }
 
     /** Still closed to anonymous callers when there is a real socket rather than a mock exchange. */
     @Test

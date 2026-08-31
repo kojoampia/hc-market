@@ -129,7 +129,9 @@ public class MarketplaceEventFanout {
                 // normal case here — usually nobody is watching — and it must not throw on a Kafka
                 // listener thread, where the exception would be retried as though the event itself
                 // were unhandled.
-                Sinks.EmitResult result = sink.tryEmitNext(new UserEvent(recipient, type, envelope.path("aggregateRef").asText(null), payload));
+                Sinks.EmitResult result = sink.tryEmitNext(
+                    new UserEvent(recipient, type, envelope.path("aggregateRef").asText(null), plain(payload))
+                );
                 if (result.isFailure() && result != Sinks.EmitResult.FAIL_ZERO_SUBSCRIBER) {
                     LOG.debug("dropped {} for {}: {}", type, recipient, result);
                 }
@@ -141,6 +143,27 @@ public class MarketplaceEventFanout {
             // Nothing here is a system of record.
             LOG.warn("could not fan out an estate event: {}", e.getMessage());
         }
+    }
+
+    /**
+     * The payload as plain maps and lists rather than as a {@code JsonNode}.
+     *
+     * <p><strong>This is not tidying, it is the difference between a working stream and a broken
+     * one.</strong> A {@code JsonNode} placed in a {@code ServerSentEvent}'s data was serialised by
+     * its BEAN PROPERTIES on the way out, so every client received
+     * {@code {"array":false,"bigDecimal":false,"containerNode":true,"nodeType":"OBJECT",…}} — the
+     * result of calling {@code isArray()}, {@code isBigDecimal()} and friends — instead of the event.
+     *
+     * <p>Nothing failed. The connection opened, frames arrived on time, and the one client that
+     * exists reads only the {@code event:} name to raise a toast, so it never looked at the data.
+     * A stream that is live, punctual and carrying nothing is exactly the shape of defect this
+     * estate keeps producing.
+     *
+     * <p>Converting here rather than at the SSE boundary keeps the fix in one place and keeps the
+     * record's payload usable by anything else that subscribes.
+     */
+    private Object plain(JsonNode payload) {
+        return mapper.convertValue(payload, Object.class);
     }
 
     /**
@@ -170,6 +193,7 @@ public class MarketplaceEventFanout {
      *
      * @param recipientLogin who may see it — the resource filters on this and nothing else, so a
      *     wrong value here is a disclosure rather than a missing message
+     * @param payload plain maps and lists, NOT a {@code JsonNode} — see {@link #plain}
      */
-    public record UserEvent(String recipientLogin, String type, String aggregateRef, JsonNode payload) {}
+    public record UserEvent(String recipientLogin, String type, String aggregateRef, Object payload) {}
 }
