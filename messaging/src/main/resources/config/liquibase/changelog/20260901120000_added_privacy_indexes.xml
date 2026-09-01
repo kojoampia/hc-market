@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+        decisions.md D34. Hand-written; a regeneration rewrites master.xml and drops this include.
+
+        conversation.customer_login backs the thread list on every page load as well as the erasure.
+        notification.recipient_login backs the bell menu. notification.deep_link is the one that only
+        the erasure uses - it is how a notification ABOUT an erased customer is found in somebody
+        else's list, and without the index that lookup is a sequential scan of the whole table.
+    -->
+    <changeSet id="20260901120000-1" author="healthconnect">
+        <createIndex indexName="idx_conversation_customer_login" tableName="conversation">
+            <column name="customer_login"/>
+        </createIndex>
+        <createIndex indexName="idx_notification_recipient_login" tableName="notification">
+            <column name="recipient_login"/>
+        </createIndex>
+        <createIndex indexName="idx_notification_deep_link" tableName="notification">
+            <column name="deep_link"/>
+        </createIndex>
+    </changeSet>
+</databaseChangeLog>

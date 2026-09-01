@@ -162,6 +162,7 @@ regeneration.
 | The two `VerificationReview` includes | catalog `master.xml` | the verification audit table is never created; the desk 500s on every call |
 | The `outbox_event` include | booking `master.xml` | every accept fails on a missing table |
 | The `erased_subject` include | messaging `master.xml` | the erasure register is never created; **an erased customer silently comes back** the next time an event mentions them |
+| The three `privacy_indexes` includes | each `master.xml` | nine columns the erasure sweeps and the thread list, bell menu and "my bookings" screens filter by go back to sequential scans, silently |
 | The `processed_event` include | payout `master.xml` | consumer idempotency keys gone; replays double-credit |
 | `contexts: dev` (not `dev, faker`) | each `config/application-dev.yml` | see faker collision below |
 | The `healthconnect` block | each `config/application.yml` **and** `application-prod.yml` | seed never loads |

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+        decisions.md D34. Hand-written; a regeneration rewrites master.xml and drops this include.
+        review.customer_login backs the erasure sweep that replaced a findAll() over every review in
+        the service; favourite.customer_login backs both the erasure and the saved-list screen.
+    -->
+    <changeSet id="20260901120000-1" author="healthconnect">
+        <createIndex indexName="idx_review_customer_login" tableName="review">
+            <column name="customer_login"/>
+        </createIndex>
+        <createIndex indexName="idx_favourite_customer_login" tableName="favourite">
+            <column name="customer_login"/>
+        </createIndex>
+    </changeSet>
+</databaseChangeLog>
