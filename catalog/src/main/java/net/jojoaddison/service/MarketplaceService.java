@@ -174,13 +174,24 @@ public class MarketplaceService {
     }
 
     /**
-     * When this professional was last VERIFIED, or empty if nothing records it — {@code decisions.md}
-     * D16/D31.
+     * When this professional was verified, or null unless they are verified <em>now</em> —
+     * {@code decisions.md} D16/D31/D33.
      *
-     * <p>Only a {@code VERIFIED} decision counts. Taking the latest review of any kind would date a
-     * badge from the review that removed it, which is worse than saying nothing.
+     * <p><strong>The latest review decides, and only then is it dated.</strong> This looked at the
+     * most recent {@code VERIFIED} review anywhere in the history until D33, which meant it scanned
+     * straight past a later suspension: a professional with {@code VERIFIED (Jan)} then
+     * {@code SUSPENDED (Mar)} was published as {@code verification: SUSPENDED} <em>and</em>
+     * {@code verifiedOn: Jan} in the same payload. Any client that renders "Verified on {date}" from
+     * the date being present — the obvious implementation, and the one the prototype uses — then
+     * shows a verification badge for somebody whose verification was taken away.
      *
-     * <p>Empty for every seeded professional: the seed is extracted from a prototype that has no
+     * <p>The original reasoning was sound and guarded the wrong direction. It stopped the badge being
+     * dated <em>from</em> the review that removed it; it did not stop the date <em>surviving</em>
+     * that review. So the latest review is taken first and its date returned only if it is
+     * {@code VERIFIED} — which also makes this agree with {@code Professional.verification}, the
+     * column the desk projects from exactly the same review, instead of being able to contradict it.
+     *
+     * <p>Null for every seeded professional: the seed is extracted from a prototype that has no
      * review history, so there is genuinely nothing to report and the profile says as much. The
      * reviewer and the evidence reference are deliberately not returned — see the DTO.
      */
@@ -188,9 +199,9 @@ public class MarketplaceService {
         return reviewQueries
             .findByProfessionalReferenceOrderByReviewedAtDesc(reference)
             .stream()
+            .findFirst()
             .filter(r -> r.getDecision() == VerificationState.VERIFIED)
             .map(VerificationReview::getReviewedAt)
-            .findFirst()
             .orElse(null);
     }
 
