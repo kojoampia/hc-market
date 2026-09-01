@@ -21,7 +21,7 @@ import net.jojoaddison.repository.BookingRepository;
 import net.jojoaddison.repository.BookingStatusChangeEraseRepository;
 import net.jojoaddison.repository.DisputeEraseRepository;
 import net.jojoaddison.repository.OutboxEraseRepository;
-import net.jojoaddison.service.ErasureWorkflow;
+import net.jojoaddison.service.SubjectPseudonym;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -47,6 +47,14 @@ class ErasureResourceIT {
 
     private static final String URL = "/api/desk/customers/{login}/erase";
     private static final String CUSTOMER = "ama.tobeforgotten";
+
+    /**
+     * The alias derivation, injected rather than called statically — decisions.md D35. It is peppered
+     * from src/test/resources/config/application.yml, and SubjectPseudonymUnitTest pins what it
+     * produces; here it is used only so the assertions ask for the same string the service wrote.
+     */
+    @Autowired
+    private SubjectPseudonym pseudonyms;
 
     @Autowired
     private MockMvc mockMvc;
@@ -138,13 +146,13 @@ class ErasureResourceIT {
             .perform(post(URL, CUSTOMER).with(csrf()))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.bookingsErased").value(1))
-            .andExpect(jsonPath("$.pseudonym").value(ErasureWorkflow.pseudonym(CUSTOMER)));
+            .andExpect(jsonPath("$.pseudonym").value(pseudonyms.of(CUSTOMER)));
 
         Booking after = bookings.findById(booking.getId()).orElseThrow();
         assertThat(after.getCancellationReason()).isNull();
 
         // gone
-        assertThat(after.getCustomerLogin()).isEqualTo(ErasureWorkflow.pseudonym(CUSTOMER)).doesNotContain("ama");
+        assertThat(after.getCustomerLogin()).isEqualTo(pseudonyms.of(CUSTOMER)).doesNotContain("ama");
         assertThat(after.getCustomerName()).isEqualTo("[erased]");
         assertThat(after.getVisitAddress()).isNull();
         assertThat(after.getCustomerNote()).isNull();
@@ -190,10 +198,10 @@ class ErasureResourceIT {
 
         OutboxEvent after = outbox.findByAggregateRefIn(List.of(booking.getReference())).get(0);
         assertThat(after.getPayload()).doesNotContain(CUSTOMER).doesNotContain("Ama To-Be-Forgotten");
-        assertThat(after.getActor()).isEqualTo(ErasureWorkflow.pseudonym(CUSTOMER));
+        assertThat(after.getActor()).isEqualTo(pseudonyms.of(CUSTOMER));
         // Still an event a consumer could act on — only the identity fields moved.
         assertThat(after.getPayload())
-            .contains(ErasureWorkflow.pseudonym(CUSTOMER))
+            .contains(pseudonyms.of(CUSTOMER))
             .contains(booking.getReference())
             .contains("28000")
             .contains("GHS");
@@ -207,7 +215,7 @@ class ErasureResourceIT {
     void redactsDisputes() throws Exception {
         mockMvc.perform(post(URL, CUSTOMER).with(csrf())).andExpect(status().isOk()).andExpect(jsonPath("$.disputesRedacted").value(1));
 
-        Dispute after = disputes.findByRaisedByLogin(ErasureWorkflow.pseudonym(CUSTOMER)).get(0);
+        Dispute after = disputes.findByRaisedByLogin(pseudonyms.of(CUSTOMER)).get(0);
         assertThat(after.getReason()).doesNotContain("Nii Boi").doesNotContain("mother");
         assertThat(after.getBookingReference()).isEqualTo(booking.getReference());
         assertThat(disputes.findByRaisedByLogin(CUSTOMER)).isEmpty();
@@ -226,7 +234,7 @@ class ErasureResourceIT {
         mockMvc.perform(post(URL, CUSTOMER).with(csrf())).andExpect(status().isOk()).andExpect(jsonPath("$.historyRowsReKeyed").value(1));
 
         assertThat(history.findByActor(CUSTOMER)).isEmpty();
-        BookingStatusChange after = history.findByActor(ErasureWorkflow.pseudonym(CUSTOMER)).get(0);
+        BookingStatusChange after = history.findByActor(pseudonyms.of(CUSTOMER)).get(0);
         // The transition itself is untouched: what happened, and when, is not personal data.
         assertThat(after.getToStatus()).isEqualTo(BookingStatus.CANCELLED);
         assertThat(after.getNote()).isEqualTo("cancel");
@@ -261,10 +269,10 @@ class ErasureResourceIT {
     @Test
     @DisplayName("the pseudonym is deterministic and does not contain the login")
     void pseudonymIsStable() {
-        String once = ErasureWorkflow.pseudonym(CUSTOMER);
-        assertThat(ErasureWorkflow.pseudonym(CUSTOMER)).isEqualTo(once);
+        String once = pseudonyms.of(CUSTOMER);
+        assertThat(pseudonyms.of(CUSTOMER)).isEqualTo(once);
         assertThat(once).startsWith("erased-").doesNotContain(CUSTOMER);
-        assertThat(ErasureWorkflow.pseudonym("someone.else")).isNotEqualTo(once);
+        assertThat(pseudonyms.of("someone.else")).isNotEqualTo(once);
     }
 
     /**

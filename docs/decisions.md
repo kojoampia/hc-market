@@ -1731,13 +1731,134 @@ the three databases can hash candidates offline, re-identify every `erased-…` 
 `erased_subject` whether a named person was erased. The fix is an HMAC with a per-estate pepper —
 identical across the three services, injected like `JWT_BASE64_SECRET`, never committed. It is cheap
 now and much less so once real erasures exist, because changing the derivation re-keys nothing that
-has already been written.
+has already been written. **Done — D35**, taken while it was still cheap, for exactly that reason.
 
 **Nothing says what happens when an erased person keeps using their account.** Erasure does not touch
 the gateway's user store, so they can log in and book again. Messaging would then pseudonymise the new
 booking's thread while booking and catalog store the real login — the estate disagreeing with itself
 about whether someone exists. Either erasure implies account deactivation as a documented fourth desk
 step, or the register must only apply to events older than `erasedAt`. Both are product decisions.
+
+---
+
+## D35 — An alias anybody could reverse
+
+D34 recorded this against itself rather than fixing it, and named the reason to fix it early: changing
+the derivation re-keys nothing that has already been written. That is now the whole cost of this
+entry, and it is paid once. It gets more expensive every day the estate runs, and it becomes
+impossible the day somebody who cannot be asked twice has been erased.
+
+### What was wrong
+
+The alias was `erased-<first 12 hex of SHA-256(login)>`, computed by three copy-pasted static methods,
+and its javadoc claimed it was "not reversible without already knowing the login". Every word of that
+is true and the conclusion does not follow. The logins in this estate are `ama.mensah` — a first name,
+a dot, a surname — so the candidate space is a phone book, not a key space. Anyone holding a dump of
+booking, catalog or messaging can hash a list of names offline and match the results against the
+stored aliases, and every redacted row is a name again.
+
+Against messaging's `erased_subject` register the same computation answers a worse question. The
+register exists precisely so that no login is stored anywhere (D32), and the whole of that reasoning
+rests on the hash being one-way in practice rather than only in principle. Hash a name, look it up,
+and the register tells you whether that named person exercised a right to erasure — which is a fact
+about them that erasure was asked to remove, sitting in the table built to protect it.
+
+Nothing about this was exotic. It is the reason password storage stopped being a bare digest decades
+ago, arriving in a place nobody was thinking about passwords.
+
+### What it is now
+
+`erased-<first 16 hex of HMAC-SHA256(pepper, login)>`, in `SubjectPseudonym` — one new top-level file,
+**copied verbatim into booking, catalog and messaging**, with CI asserting the three copies are
+byte-identical. The pepper is a per-estate secret injected exactly as `JWT_BASE64_SECRET` is: absent
+from `application-dev.yml` and `application-prod.yml`, required by all three compose files,
+generated and persisted by `quality/startup.sh` beside the signing key, and committed only in
+`src/test/resources`, where the value is a fixture with the words "not a real one" in it. This
+repository is public; a pepper it contains is not a pepper.
+
+The three copies matter more than they look. There is no shared library here — five standalone Maven
+projects, no aggregator pom (D6) — so the derivation is duplicated, and duplicated code that must
+agree, with nothing checking that it does, is what the three static methods already were. If they
+drift, nothing fails: each service goes on redacting its own rows correctly and only a cross-service
+lookup comes back empty, months later, with everything green at the time. So CI diffs the files, and
+`SubjectPseudonymUnitTest` — also byte-identical in the three — pins the alias for a fixed login under
+a fixed pepper against a value computed with `openssl`, so a change made carefully in all three at
+once is still caught.
+
+The alias widened from 12 hex characters to 16 in the same change. The column is already
+`varchar(64)`, so it was free, and doing it separately would have meant paying the migration cost
+below twice.
+
+The advisory-lock key messaging derives for the erasure race (D34) comes off the same MAC, so there is
+one derivation in one file rather than two that could disagree. It is not a secrecy question — the
+number never leaves the transaction — but the alternative was a second copy of a hash.
+
+### The decision that took the longest: what happens with no pepper
+
+Two bad options. A service that refuses to start turns a missing privacy secret into an outage of
+booking, catalog and messaging — the marketplace stops taking bookings, the professional's inbox goes
+dark — over a value that one desk endpoint and one consumer branch read. A service that quietly falls
+back to an unpeppered digest writes a re-identifiable alias into rows in place, against a filed
+receipt saying the person was erased, and there is no way back from that: nothing re-keys an alias
+once it is written.
+
+**The service starts and the derivation refuses.** `SubjectPseudonym.of` throws, the erasure desk
+answers `503` naming the variable, and an unpeppered alias is impossible rather than merely unlikely.
+The failure lands on the one operation that must not proceed, at the moment somebody makes it, instead
+of on everyone. The alternative had a predictable ending too: an operator facing a dead estate puts a
+plausible value in to get it up, and a pepper chosen under that pressure is the committed-default
+failure arriving by a different road.
+
+Startup logs an `ERROR` rather than a warning, because nothing else about an unpeppered service looks
+wrong — it serves, it is healthy, and it stays that way until a data subject request arrives, which
+may be months.
+
+**Messaging has one narrow exception**, and it is the interesting half. It is the only service holding
+a register of who has been erased, and its booking-event consumer asks that register before it writes
+a login. Run it unpeppered and `isErased` answers "no" for everybody — *including people it erased* —
+so the next lagging `booking.requested` writes an erased customer's real login into a fresh
+conversation and a fresh notification. That is byte for byte the failure D32 exists to close, arriving
+through a configuration mistake instead of a race, and it is silent. So `ErasureRegisterGuard` refuses
+to start messaging when the register has rows and no pepper is set. Empty register and no pepper: it
+starts, because nothing can have been erased and there is nothing to get wrong. That is why
+`isErased` and `lockSubject` answer `false` and do nothing rather than throwing — by the time either
+runs unpeppered, the register is provably empty and `false` is the true answer rather than a guess.
+
+### The migration consequence, which is the part to read twice
+
+**Changing the derivation re-keys nothing.** Aliases already written stay in their rows exactly as
+they were, computed under the old rule, and everything recomputed from now on produces a different
+string. So an `erased_subject` lookup for a previously-erased subject misses; a redacted booking in
+booking and a redacted conversation in messaging that used to share an alias no longer do; and
+reconciling either against a payout ledger row for the same person returns nothing. Nothing errors.
+The rows are all still there, still redacted, still correct as redactions — they have simply stopped
+being recognisable as the same person, which is the one property the alias existed to provide.
+
+On the quality box this costs nothing and has already been handled: everything erased there was test
+data created by the erasure ITs and by hand, and it has been cleared. Dev estates are the same —
+`deploy-dev.sh down --clean` is the answer, not a new pepper.
+
+**If real erasures existed, this change could not be made this way.** There would be three options and
+none of them is good. Re-keying is impossible by construction: it would need the original logins, and
+the entire point of the design is that nobody kept them. Carrying both derivations — try the new
+alias, fall back to the old — keeps the lookups working and keeps every old alias exactly as
+reversible as it was, which is the defect. Accepting the break means the estate can no longer connect
+one erased person's rows across services, which is not a data loss but is a permanent loss of the
+ability to answer "show me everything you still hold about this data subject" — a question that only
+gets asked about people who have already asked once.
+
+That is the entire argument for doing it now, and it is worth stating as a rule rather than as a note
+about this one change: **the derivation is effectively immutable from the first real erasure onwards**.
+The same applies to the pepper itself. Rotating it is indistinguishable, from the rows' point of view,
+from removing it — and `ErasureRegisterGuard` catches only the removal, because a wrong pepper looks
+exactly like a right one until something fails to match. So the pepper belongs with the platform's
+long-lived secrets, not in a per-deploy `.env` that `deploy-prod.sh` regenerates, and the compose file
+says so in the comment beside it.
+
+### What is not fixed
+
+The second of D34's two open notes stands untouched: nothing says what happens when an erased person
+keeps using their account. It is a product decision and this was not it.
 
 ---
 

@@ -38,7 +38,7 @@ public class ErasedSubject implements Serializable {
 
     private static final long serialVersionUID = 1L;
 
-    /** {@code erased-<first 12 hex of SHA-256(login)>} — see {@code ErasureWorkflow.pseudonym}. */
+    /** {@code erased-<first 16 hex of HMAC-SHA256(pepper, login)>} — see {@code SubjectPseudonym}. */
     @Id
     @Column(name = "pseudonym", nullable = false, length = 64)
     private String pseudonym;

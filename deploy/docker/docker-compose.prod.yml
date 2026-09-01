@@ -25,6 +25,16 @@ x-service-base: &service-base
     # One signing key across the estate. Never set a per-service override: a local value silently
     # wins and the symptom is a successful login followed by 401s from the services.
     JHIPSTER_SECURITY_AUTHENTICATION_JWT_BASE64_SECRET: ${JWT_BASE64_SECRET:?platform JWT secret is required}
+    # The erasure pepper — decisions.md D35. Keys the HMAC behind an erased customer's alias, and is
+    # required for the same reason the signing key is: a committed default in a public repository is
+    # not a secret, and here it is the only thing standing between a database dump and re-identifying
+    # every erased row from a list of guessable logins.
+    #
+    # One value across booking, catalog and messaging, and it MUST NOT CHANGE once anything has been
+    # erased in production: aliases are written into rows in place, nothing re-keys them, and a new
+    # pepper leaves messaging unable to recognise its own erased subjects. It belongs with the
+    # platform's other long-lived secrets, not in a per-deploy .env that deploy-prod.sh regenerates.
+    HEALTHCONNECT_PRIVACY_PEPPER: ${HC_PRIVACY_PEPPER:?erasure pepper is required — see decisions.md D35}
     # The seed loader is unreachable under prod regardless; this is the second, explicit lock.
     HEALTHCONNECT_SEED_ENABLED: ${HEALTHCONNECT_SEED_ENABLED:-false}
     # --- OpenTelemetry -----------------------------------------------------------------------

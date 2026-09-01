@@ -1297,6 +1297,12 @@ apps_up() {
   export SEED_HOST_PATH
   : "${JWT_BASE64_SECRET:?set JWT_BASE64_SECRET (one key across the estate — see the workspace guide)}"
   export JWT_BASE64_SECRET
+  # The erasure pepper (decisions.md D35). Required, not generated: one value across booking,
+  # catalog and messaging, and nothing re-keys aliases already written, so a value that changes
+  # between runs leaves earlier erasures unreconcilable. Generate one once and keep it in deploy/.env:
+  #     HC_PRIVACY_PEPPER=$(head -c 32 /dev/urandom | base64 -w0)
+  : "${HC_PRIVACY_PEPPER:?set HC_PRIVACY_PEPPER (the erasure pepper — see decisions.md D35)}"
+  export HC_PRIVACY_PEPPER
   local names=(); for s in "${SERVICES[@]}"; do names+=("$(compose_name "$s")"); done
   compose up -d "${names[@]}"
   local failed=0

@@ -78,6 +78,11 @@ x-service: &service
     # One signing key across the estate, as in production. A per-service override silently wins and
     # presents as a successful login followed by 401s from the services — a broken route, seemingly.
     JHIPSTER_SECURITY_AUTHENTICATION_JWT_BASE64_SECRET: ${JWT_BASE64_SECRET:?set by startup.sh}
+    # The erasure pepper — decisions.md D35. Keys the HMAC behind an erased customer's alias; one
+    # value across booking, catalog and messaging or one person acquires three of them. Generated
+    # and persisted by startup.sh alongside the signing key, and required here rather than defaulted
+    # because a value written into a public repository is not a pepper.
+    HEALTHCONNECT_PRIVACY_PEPPER: ${HC_PRIVACY_PEPPER:?set by startup.sh}
     JAVA_OPTS: -Xmx512m -Xms256m
   # The images are built by Jib and contain NO curl and NO wget — a CMD-based HTTP healthcheck fails
   # with "executable file not found" on every attempt and the container never leaves `starting`.

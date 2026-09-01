@@ -1,8 +1,5 @@
 package net.jojoaddison.service;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.util.HexFormat;
 import java.util.List;
 import net.jojoaddison.domain.Favourite;
 import net.jojoaddison.domain.Review;
@@ -32,6 +29,13 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>Favourites are deleted outright rather than pseudonymised. A saved list is purely personal: it
  * says nothing about the professional, nothing aggregates over it, and a tombstoned row would be an
  * orphan nobody can act on. Nothing else in the estate references it.
+ *
+ * <h2>The alias</h2>
+ *
+ * <p>{@link SubjectPseudonym}, identical in booking and messaging, so one person carries one alias
+ * estate-wide. It is an HMAC keyed by a per-estate pepper rather than a bare digest — D34 recorded
+ * that a bare digest over a short, guessable login is re-identifiable by anyone holding a database
+ * dump, and D35 closed it. Without the pepper this refuses rather than writing something weaker.
  */
 @Service
 public class ErasureWorkflow {
@@ -43,20 +47,20 @@ public class ErasureWorkflow {
 
     private final ReviewEraseRepository reviews;
     private final FavouriteQueryRepository favourites;
+    private final SubjectPseudonym pseudonyms;
 
-    public ErasureWorkflow(ReviewEraseRepository reviews, FavouriteQueryRepository favourites) {
+    public ErasureWorkflow(ReviewEraseRepository reviews, FavouriteQueryRepository favourites, SubjectPseudonym pseudonyms) {
         this.reviews = reviews;
         this.favourites = favourites;
+        this.pseudonyms = pseudonyms;
     }
 
-    /** Identical rule to booking's and messaging's, so one person carries one alias estate-wide. */
-    public static String pseudonym(String login) {
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256").digest(login.getBytes(StandardCharsets.UTF_8));
-            return "erased-" + HexFormat.of().formatHex(digest).substring(0, 12);
-        } catch (Exception e) {
-            throw new IllegalStateException("SHA-256 is unavailable, which should not be possible", e);
-        }
+    /**
+     * {@code erased-<16 hex>} — identical rule to booking's and messaging's, so one person carries one
+     * alias estate-wide. An instance method since D35, because the pepper is configuration.
+     */
+    public String pseudonym(String login) {
+        return pseudonyms.of(login);
     }
 
     /** @return how many reviews were de-identified */

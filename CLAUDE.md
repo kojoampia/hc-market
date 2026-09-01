@@ -65,8 +65,11 @@ node deploy/demo/extract-seed.mjs
 # The shared plane FIRST — this repository runs no broker and no Consul of its own (D27)
 (cd ~/webroot/01-healthconnect/hc-infra && ./startup.sh)
 
-# The whole estate (needs Docker; JWT_BASE64_SECRET is required)
-JWT_BASE64_SECRET=$(head -c 64 /dev/urandom | base64 -w0) ./deploy/deploy-dev.sh up
+# The whole estate (needs Docker; both secrets are REQUIRED and neither has a default — D35).
+# Keep them in deploy/.env rather than re-rolling them: a new pepper orphans every alias already
+# written by an erasure, and a new signing key invalidates every token someone is holding.
+JWT_BASE64_SECRET=$(head -c 64 /dev/urandom | base64 -w0) \
+HC_PRIVACY_PEPPER=$(head -c 32 /dev/urandom | base64 -w0) ./deploy/deploy-dev.sh up
 ./deploy/deploy-dev.sh status | logs | down --clean
 ./deploy/deploy-prod.sh --tag 1.4.0 --dry-run          # safe; prints everything, changes nothing
 ```
@@ -167,6 +170,7 @@ regeneration.
 | `contexts: dev` (not `dev, faker`) | each `config/application-dev.yml` | see faker collision below |
 | The `healthconnect` block | each `config/application.yml` **and** `application-prod.yml` | seed never loads |
 | `application.liquibase.async-start: false` | each `config/application.yml` | Liquibase races the seed loader; service comes up **healthy and empty** |
+| The `healthconnect.privacy.pepper` block | booking, catalog, messaging **`src/test/resources/config/application.yml`** | the ITs fail at the erasure endpoint with a 503 — which reads as a broken test, not a lost config block. The test config is generated too, and it *shadows* the main one |
 
 **Per app — generated classes to delete.** Each would otherwise win or tie an ambiguous mapping
 against the hand-written resource that replaced it:
@@ -525,6 +529,20 @@ time.**
   `central-server-config` nothing loads; `application-dev.yml` and `application-prod.yml` carry none,
   and all three compose files require `JWT_BASE64_SECRET`. That is what keeps a published key from
   being a usable one.
+- **There is a second estate-wide secret now: `HC_PRIVACY_PEPPER`** (`decisions.md` D35). It keys the
+  HMAC behind an erased customer's alias, and it is handled exactly like the signing key — required
+  by all three compose files, committed only in `src/test/resources`, generated and persisted by
+  `quality/startup.sh` into the gitignored `quality/.privacy-pepper`. Two rules follow. **The value
+  must be identical in booking, catalog and messaging**, or one person acquires three aliases and
+  messaging's `erased_subject` register stops matching either sibling, silently. And **it must not
+  change once anything has been erased**: nothing re-keys an alias already written, so a rotation is
+  indistinguishable from a removal as far as those rows are concerned. Absent, the three services
+  start and the erasure desk answers 503 — except messaging, which refuses to start if it has already
+  erased somebody, because unpeppered it cannot recognise its own erased subjects.
+- **`SubjectPseudonym.java` and `SubjectPseudonymUnitTest.java` are copied verbatim into booking,
+  catalog and messaging, and CI diffs the three copies.** There is no shared library here, so the
+  derivation is duplicated; edit one and you must edit all three identically, comments included. They
+  are new files, so a regeneration leaves them alone.
 - **The scripts and the spec appendices are the same bytes in two places.** Appendix A is
   `deploy/deploy-dev.sh`, Appendix B is `deploy/deploy-prod.sh`. This is enforced mechanically —
   after editing either script, re-embed; before trusting the spec, check:

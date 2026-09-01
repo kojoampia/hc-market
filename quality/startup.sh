@@ -155,10 +155,14 @@ check_shared_plane() {
   ok "shared plane: $SHARED_CONSUL (leader elected), $SHARED_KAFKA on $SHARED_NETWORK"
 }
 
-# --- The estate's shared signing key ------------------------------------------------------------
+# --- The estate's shared secrets ----------------------------------------------------------------
 #
-# One key across all five services. Persisted beside this script so a restart does not invalidate
-# every token someone is holding, and gitignored because it is a secret even in quality.
+# Two of them, both one value across all five services and both persisted beside this script:
+# gitignored, because they are secrets even in quality, and persisted because regenerating either on
+# every restart has a cost. For the signing key that cost is every token someone is holding. For the
+# pepper it is worse and quieter — it keys the HMAC behind an erased customer's alias (decisions.md
+# D35), nothing re-keys rows that already carry one, and a fresh pepper leaves messaging unable to
+# recognise its own erased subjects. Delete .privacy-pepper only together with the stack's volumes.
 resolve_secret() {
   local f="$HERE/.jwt-secret"
   if [[ -n "${JWT_BASE64_SECRET:-}" ]]; then :
@@ -169,6 +173,16 @@ resolve_secret() {
     log "generated a new signing key at quality/.jwt-secret"
   fi
   export JWT_BASE64_SECRET
+
+  local p="$HERE/.privacy-pepper"
+  if [[ -n "${HC_PRIVACY_PEPPER:-}" ]]; then :
+  elif [[ -s "$p" ]]; then HC_PRIVACY_PEPPER="$(cat "$p")"
+  else
+    HC_PRIVACY_PEPPER="$(head -c 32 /dev/urandom | base64 -w0)"
+    umask 077; printf '%s' "$HC_PRIVACY_PEPPER" > "$p"
+    log "generated a new erasure pepper at quality/.privacy-pepper"
+  fi
+  export HC_PRIVACY_PEPPER
 }
 
 compose() { docker compose -p "$PROJECT" -f "$HERE/compose.yml" "$@"; }
