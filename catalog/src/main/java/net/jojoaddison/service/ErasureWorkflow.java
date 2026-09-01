@@ -7,7 +7,7 @@ import java.util.List;
 import net.jojoaddison.domain.Favourite;
 import net.jojoaddison.domain.Review;
 import net.jojoaddison.repository.FavouriteQueryRepository;
-import net.jojoaddison.repository.ReviewRepository;
+import net.jojoaddison.repository.ReviewEraseRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -41,10 +41,10 @@ public class ErasureWorkflow {
     static final String REDACTED_NAME = "[erased]";
     static final String REDACTED_INITIALS = "··";
 
-    private final ReviewRepository reviews;
+    private final ReviewEraseRepository reviews;
     private final FavouriteQueryRepository favourites;
 
-    public ErasureWorkflow(ReviewRepository reviews, FavouriteQueryRepository favourites) {
+    public ErasureWorkflow(ReviewEraseRepository reviews, FavouriteQueryRepository favourites) {
         this.reviews = reviews;
         this.favourites = favourites;
     }
@@ -64,7 +64,7 @@ public class ErasureWorkflow {
     public int eraseCustomer(String login) {
         String alias = pseudonym(login);
 
-        List<Review> mine = reviews.findAll().stream().filter(r -> login.equals(r.getCustomerLogin())).toList();
+        List<Review> mine = reviews.findByCustomerLogin(login);
         for (Review r : mine) {
             r.setCustomerLogin(alias);
             r.setAuthorName(REDACTED_NAME);

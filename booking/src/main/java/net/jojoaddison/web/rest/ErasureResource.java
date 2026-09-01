@@ -49,13 +49,32 @@ public class ErasureResource {
      */
     @PostMapping("/{login}/erase")
     public ErasureReceipt erase(@PathVariable String login) {
-        int count = erasure.eraseCustomer(login);
-        return new ErasureReceipt(ErasureWorkflow.pseudonym(login), count);
+        ErasureWorkflow.Erased erased = erasure.eraseCustomer(login);
+        return new ErasureReceipt(
+            ErasureWorkflow.pseudonym(login),
+            erased.bookingsErased(),
+            erased.outboxPayloadsRedacted(),
+            erased.disputesRedacted(),
+            erased.historyRowsReKeyed()
+        );
     }
 
     /**
      * @param pseudonym what the rows now carry instead of the login — returned so an operator can
      *     find them again in an audit without keeping the original login written down anywhere
+     * @param bookingsErased rows in {@code booking}
+     * @param outboxPayloadsRedacted published events whose payload carried the login and the display
+     *     name. Reported because it is the count most likely to be non-zero when every other one is
+     *     zero — a customer whose bookings were all erased in an earlier pass still has one of these
+     *     per event ever published about them
+     * @param disputesRedacted rows in {@code dispute}
+     * @param historyRowsReKeyed {@code actor} columns across both status-history tables
      */
-    public record ErasureReceipt(String pseudonym, int bookingsErased) {}
+    public record ErasureReceipt(
+        String pseudonym,
+        int bookingsErased,
+        int outboxPayloadsRedacted,
+        int disputesRedacted,
+        int historyRowsReKeyed
+    ) {}
 }

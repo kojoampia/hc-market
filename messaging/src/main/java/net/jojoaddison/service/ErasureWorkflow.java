@@ -13,6 +13,7 @@ import net.jojoaddison.repository.ErasedSubjectRepository;
 import net.jojoaddison.repository.MessageRepository;
 import net.jojoaddison.repository.MessagingQueryRepository;
 import net.jojoaddison.repository.NotificationEraseRepository;
+import net.jojoaddison.repository.SubjectLockRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -67,17 +68,20 @@ public class ErasureWorkflow {
     private final MessageRepository messages;
     private final NotificationEraseRepository notifications;
     private final ErasedSubjectRepository erased;
+    private final SubjectLockRepository locks;
 
     public ErasureWorkflow(
         MessagingQueryRepository conversations,
         MessageRepository messages,
         NotificationEraseRepository notifications,
-        ErasedSubjectRepository erased
+        ErasedSubjectRepository erased,
+        SubjectLockRepository locks
     ) {
         this.conversations = conversations;
         this.messages = messages;
         this.notifications = notifications;
         this.erased = erased;
+        this.locks = locks;
     }
 
     /** Identical rule to booking's and catalog's, so the same person carries the same alias in all three. */
@@ -88,6 +92,35 @@ public class ErasureWorkflow {
         } catch (Exception e) {
             throw new IllegalStateException("SHA-256 is unavailable, which should not be possible", e);
         }
+    }
+
+    /**
+     * The advisory-lock key for a subject — {@link SubjectLockRepository}.
+     *
+     * <p>The first eight bytes of the same SHA-256 the alias is built from, so the erasure and the
+     * consumer agree on the number without either sending a login to the database as a parameter.
+     */
+    public static long lockKey(String login) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(login.getBytes(StandardCharsets.UTF_8));
+            long key = 0;
+            for (int i = 0; i < 8; i++) {
+                key = (key << 8) | (digest[i] & 0xffL);
+            }
+            return key;
+        } catch (Exception e) {
+            throw new IllegalStateException("SHA-256 is unavailable, which should not be possible", e);
+        }
+    }
+
+    /**
+     * Takes the subject lock for the current transaction — see {@link SubjectLockRepository}.
+     *
+     * <p>Called by the consumer before it decides what login to store, and by the erasure before it
+     * sweeps. Released when the transaction ends, however it ends.
+     */
+    public void lockSubject(String login) {
+        locks.lock(lockKey(login));
     }
 
     /** Whether this login has already been erased. The only question the register can answer. */
@@ -112,9 +145,19 @@ public class ErasureWorkflow {
     public Erased eraseCustomer(String login) {
         String alias = pseudonym(login);
 
-        // Recorded first, so an event that arrives while the rest of this runs is already covered by
-        // the time it commits.
-        erased.save(new ErasedSubject(alias, Instant.now()));
+        /* Serialised against the consumer for the rest of this transaction. Recording the pseudonym
+           first is NOT sufficient on its own: under READ_COMMITTED the register row stays invisible
+           to a concurrent consumer until this commits, so without the lock an event in flight still
+           writes the original login and this sweep cannot see the row it wrote. See
+           SubjectLockRepository. */
+        lockSubject(login);
+
+        /* Written once. A re-run must not move erasedAt — that timestamp is the one fact an audit of
+           an irreversible action will ask for, and save() on an existing primary key would overwrite
+           it with the date of whoever ran the erasure a second time. */
+        if (!erased.existsById(alias)) {
+            erased.save(new ErasedSubject(alias, Instant.now()));
+        }
 
         // professionalRef "" so the query's professional half matches nothing and only this
         // customer's own conversations come back.

@@ -1608,6 +1608,104 @@ and for the register answering about a login it has never stored.
 
 ---
 
+## D34 — Erasure reached one table out of five
+
+A code review of D31/D32 went looking for anywhere a customer's identity could survive an erasure.
+It found four tables in booking, a full-table scan in catalog, a race that D32's own fix does not
+close, and a service with no erasure test at all. Every one was confirmed against the code before
+being acted on.
+
+### The four tables booking never touched
+
+The receipt said `bookingsErased: 1` while the person was still named in:
+
+| Table | Column | What it held |
+|---|---|---|
+| `outbox_event` | `payload`, `actor` | `customerLogin` **and** `customerName`, in one row per event ever published about them |
+| `dispute` | `raisedByLogin`, `reason` | their login, and a thousand characters of what they said went wrong |
+| `booking_status_change` | `actor` | their login on every row they caused — requesting and cancelling are both customer actions |
+| `dispute_status_change` | `actor` | the same |
+| `booking` | `cancellationReason` | 400 characters, usually explaining something personal about why |
+
+**The outbox is the worst of them and deserves naming plainly.** There is no purge of sent rows
+anywhere in booking — `sent_at` is only ever set — so an erasure that reported success left the login
+and the display name sitting in a table nothing reads and nobody looks at, indefinitely. Now rewritten
+in place, *including unsent rows*: an event still waiting to go out should carry the pseudonym to its
+consumer rather than depend on the consumer recognising the login as erased. The payload is parsed and
+re-serialised rather than string-replaced, because a blind substitution corrupts JSON the first time a
+login appears inside another value.
+
+`Dispute.resolution` is **deliberately kept**: it is the brokerage's own record of how a financial
+dispute was settled, it underpins a compensating ledger entry, and it is retained on the same basis
+the ledger is. It may name the customer. That goes to counsel beside the review-body question.
+
+The `note` column on both status-history tables is a system string — `"raised"`, the transition's
+action — not user text, so it is left alone.
+
+### The race D32 narrowed but did not close
+
+D32 recorded the pseudonym at the top of the erasure transaction and said that covered an event in
+flight. Under `READ_COMMITTED` it does not. The register row is invisible to any other transaction
+until the erasure **commits**, so:
+
+1. the consumer begins, reads `isErased` → false;
+2. the erasure runs its sweep — which cannot see the consumer's uncommitted conversation either;
+3. both commit, and the conversation exists under the original login, against a filed receipt.
+
+Byte for byte the failure D32 was written to close, in a smaller window. The comment in the code
+claimed a guarantee the code did not have, which is the part worth being uncomfortable about: the
+mechanism was right and the reasoning about it was one step short.
+
+Closed with a Postgres **advisory transaction lock** keyed on the subject, taken by both the erasure
+and the consumer. The consumer blocks until the erasure commits and then sees the register; the
+erasure blocks until an in-flight consumer commits and then sees its row. The lock releases with the
+transaction, including on the paths that throw. The key is derived in Java from the same SHA-256 the
+alias comes from rather than through Postgres's undocumented `hashtext`, so neither side sends a login
+to the database as a query parameter where it would land in `pg_stat_activity` and the slow-query log.
+
+### Smaller, and all confirmed
+
+- **Catalog loaded every review in the service** to find one customer's — `findAll().stream().filter(...)`
+  — in the same feature where messaging's code carries a comment explaining why that is wrong.
+- **Catalog had no erasure test at all**, while both siblings had one. That is how both the scan and
+  the untested author redaction shipped.
+- **`erasedAt` was overwritten on a re-run.** `save()` on an existing primary key replaced the original
+  timestamp with the date of whoever ran the erasure a second time — and data subject requests get
+  retried, because they arrive by email and get forwarded. That timestamp is the one fact an audit of
+  an irreversible action asks for. Guarded.
+- **Nine columns these sweeps filter by had no index.** `booking.customer_login` also serves "my
+  bookings"; `conversation.customer_login` serves the thread list on every page load;
+  `notification.deep_link` is used only by the erasure and was a sequential scan of the whole table.
+  One hand-written changelog per service, and three more rows in the regeneration-hazard table.
+
+### The test that could not have caught any of it
+
+Booking's `ErasureResourceIT` seeded a booking and nothing else. A fixture that touches one table can
+only ever prove one table is erased, and it passed throughout. It now populates every table the
+workflow is supposed to reach, so a new column holding personal data fails a test rather than shipping.
+
+Every erasure IT also gained a **second customer** whose rows must be untouched. Every test in all
+three services seeded exactly one person, so a regression that widened a sweep — a dropped `where`, a
+query on the wrong column — would have passed all of them while erasing the estate.
+
+### Two things this does not fix, recorded rather than left to be found
+
+**The pseudonym is not a secret, and the javadoc implied it was.** It said "not reversible without
+already knowing the login". Logins here are short and guessable, so anyone with read access to any of
+the three databases can hash candidates offline, re-identify every `erased-…` row, and confirm from
+`erased_subject` whether a named person was erased. The fix is an HMAC with a per-estate pepper —
+identical across the three services, injected like `JWT_BASE64_SECRET`, never committed. It is cheap
+now and much less so once real erasures exist, because changing the derivation re-keys nothing that
+has already been written.
+
+**Nothing says what happens when an erased person keeps using their account.** Erasure does not touch
+the gateway's user store, so they can log in and book again. Messaging would then pseudonymise the new
+booking's thread while booking and catalog store the real login — the estate disagreeing with itself
+about whether someone exists. Either erasure implies account deactivation as a documented fourth desk
+step, or the register must only apply to events older than `erasedAt`. Both are product decisions.
+
+---
+
 ## Still open after this section
 
 Only what engineering cannot settle alone:

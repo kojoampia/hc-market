@@ -78,12 +78,27 @@ public class BookingEventConsumer {
      * menu with holes where a real booking was, to protect an identifier that can simply be replaced.
      */
     private String storable(String login) {
+        if (login == null || login.isBlank()) {
+            return login;
+        }
+        /* Taken before the question is asked, and held for the rest of this transaction. Without it,
+           an erasure running concurrently commits its register row after this read and this event
+           writes the original login anyway — the very failure D32 was written to close. See
+           SubjectLockRepository. */
+        erasure.lockSubject(login);
         return erasure.isErased(login) ? ErasureWorkflow.pseudonym(login) : login;
     }
 
     /** The customer's display name, or nothing anyone can be identified by once they are erased. */
     private String storableName(JsonNode p) {
-        return erasure.isErased(p.path("customerLogin").asText()) ? "A customer" : name(p);
+        String login = p.path("customerLogin").asText();
+        if (login == null || login.isBlank()) {
+            return name(p);
+        }
+        // Same lock as storable(), for the same reason. Advisory locks are counted per transaction,
+        // so taking it again here is a no-op rather than a second wait.
+        erasure.lockSubject(login);
+        return erasure.isErased(login) ? "A customer" : name(p);
     }
 
     @KafkaListener(

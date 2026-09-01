@@ -57,6 +57,9 @@ class ErasureResourceIT {
     @Autowired
     private ErasureWorkflow erasure;
 
+    @Autowired
+    private net.jojoaddison.repository.ErasedSubjectRepository register;
+
     private Conversation thread(String reference) {
         return conversations.saveAndFlush(
             new Conversation()
@@ -201,6 +204,33 @@ class ErasureResourceIT {
         assertThat(erasure.isErased("someone.else")).isFalse();
         assertThat(erasure.isErased(null)).isFalse();
         assertThat(erasure.isErased("")).isFalse();
+    }
+
+
+    /**
+     * A re-run must not move {@code erasedAt}.
+     *
+     * <p>Data subject requests get retried — they arrive by email and get forwarded — and
+     * {@code save()} on an existing primary key would overwrite the original timestamp with the date
+     * of whoever ran it a second time. That timestamp is the one fact an audit of an irreversible
+     * action will ask for.
+     */
+    @Test
+    @Transactional
+    @WithMockUser(username = "desk", authorities = "ROLE_BROKERAGE")
+    @DisplayName("re-running does not move the erasure timestamp")
+    void erasedAtSurvivesARerun() throws Exception {
+        thread("c-twice");
+
+        mockMvc.perform(post(URL, CUSTOMER).with(csrf())).andExpect(status().isOk());
+        Instant first = register.findById(ErasureWorkflow.pseudonym(CUSTOMER)).orElseThrow().getErasedAt();
+
+        mockMvc
+            .perform(post(URL, CUSTOMER).with(csrf()))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.conversationsPseudonymised").value(0));
+
+        assertThat(register.findById(ErasureWorkflow.pseudonym(CUSTOMER)).orElseThrow().getErasedAt()).isEqualTo(first);
     }
 
     @Test

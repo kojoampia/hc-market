@@ -25,4 +25,5 @@
          Regeneration rewrites this file and drops this line. Re-add it, or every accept fails on a
          missing table. -->
     <include file="config/liquibase/changelog/20260824200000_added_outbox_event.xml" relativeToChangelogFile="false"/>
+    <include file="config/liquibase/changelog/20260901120000_added_privacy_indexes.xml" relativeToChangelogFile="false"/>
 </databaseChangeLog>

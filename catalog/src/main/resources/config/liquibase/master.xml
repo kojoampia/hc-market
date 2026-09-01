@@ -46,4 +46,5 @@
     <!-- HAND-WRITTEN: one slot per professional per date and time, which is what makes a
          concurrent double booking collide instead of silently succeeding. Regeneration drops this. -->
     <include file="config/liquibase/changelog/20260825210000_unique_availability_slot.xml" relativeToChangelogFile="false"/>
+    <include file="config/liquibase/changelog/20260901120000_added_privacy_indexes.xml" relativeToChangelogFile="false"/>
 </databaseChangeLog>
