@@ -49,6 +49,9 @@ class VerificationDeskResourceIT {
     @Autowired
     private EntityManager em;
 
+    @Autowired
+    private net.jojoaddison.service.MarketplaceService marketplace;
+
     private Professional professional;
 
     @BeforeEach
@@ -197,5 +200,64 @@ class VerificationDeskResourceIT {
                     .content("{\"decision\":\"%s\"}".formatted(decision))
             )
             .andExpect(status().isCreated());
+    }
+
+    /**
+     * <strong>A date must not outlive the badge it dates</strong> — {@code decisions.md} D33.
+     *
+     * <p>{@code verifiedOn} looked for the most recent {@code VERIFIED} review anywhere in the
+     * history, so it scanned straight past a later suspension and published
+     * {@code verification: SUSPENDED} beside {@code verifiedOn: <the old date>}. A client that renders
+     * "Verified on {date}" from the date being present — the obvious implementation, and the one the
+     * prototype uses — then shows a verification badge for somebody whose verification was taken away.
+     *
+     * <p>Two reviews, in order, because one of any kind cannot catch this.
+     */
+    @Test
+    @Transactional
+    @WithMockUser(username = DESK, authorities = "ROLE_BROKERAGE")
+    @DisplayName("a suspension clears the public verified date")
+    void suspensionClearsTheDate() throws Exception {
+        mockMvc
+            .perform(
+                post(URL, professional.getReference())
+                    .with(csrf())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"decision\":\"VERIFIED\",\"evidenceRef\":\"CID-2026-0041\"}")
+            )
+            .andExpect(status().isCreated());
+        assertThat(marketplace.verifiedOn(professional.getReference())).isNotNull();
+
+        mockMvc
+            .perform(
+                post(URL, professional.getReference())
+                    .with(csrf())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"decision\":\"SUSPENDED\",\"note\":\"clearance withdrawn\"}")
+            )
+            .andExpect(status().isCreated());
+
+        assertThat(marketplace.verifiedOn(professional.getReference())).isNull();
+        // And the history is still there — the date goes, the audit trail does not.
+        assertThat(reviews.findByProfessionalReferenceOrderByReviewedAtDesc(professional.getReference())).hasSize(2);
+    }
+
+    /** Re-verifying after a suspension dates the badge from the review that restored it. */
+    @Test
+    @Transactional
+    @WithMockUser(username = DESK, authorities = "ROLE_BROKERAGE")
+    @DisplayName("re-verifying restores the date")
+    void reVerifyingRestoresTheDate() throws Exception {
+        for (String decision : new String[] { "VERIFIED", "SUSPENDED", "VERIFIED" }) {
+            mockMvc
+                .perform(
+                    post(URL, professional.getReference())
+                        .with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"decision\":\"" + decision + "\"}")
+                )
+                .andExpect(status().isCreated());
+        }
+        assertThat(marketplace.verifiedOn(professional.getReference())).isNotNull();
     }
 }
