@@ -1608,6 +1608,41 @@ and for the register answering about a login it has never stored.
 
 ---
 
+## D33 — A date must not outlive the badge it dates
+
+Found by a code review of D31, and it corrects a claim made in D31 itself: that `verifiedOn` "filters
+to `VERIFIED`, so a professional under review, or one whose verification was withdrawn, has no date —
+the field is absent rather than stale". The first half was true and the second did not follow.
+
+`MarketplaceService.verifiedOn` looked for the most recent `VERIFIED` review **anywhere in the
+history**, which means it scanned straight past a later suspension. A professional with
+`VERIFIED (Jan)` then `SUSPENDED (Mar)` was published as:
+
+```json
+{ "card": { "verification": "SUSPENDED" }, "verifiedOn": "2026-01-14T09:41:07Z" }
+```
+
+Both fields correct in isolation, and together a lie. Any client that renders "Verified on {date}"
+from the date being present — the obvious implementation, and the one the prototype uses — shows a
+verification badge for somebody whose verification was taken away. That is the exact harm D16 exists
+to prevent, arriving through the field D16 added.
+
+**The original reasoning was sound and guarded the wrong direction.** The comment said taking the
+latest review of any kind "would date a badge from the review that removed it", which is true. It
+stopped the badge being dated *from* the removal; it did not stop the date *surviving* the removal.
+
+Now the latest review is taken first and its date returned only if that decision is `VERIFIED`. This
+also makes the date agree with `Professional.verification` by construction — the column the desk
+projects from the very same review — where before the two could contradict each other in one payload.
+
+**The test is the point of this entry.** `suspensionClearsTheDate` posts `VERIFIED` then `SUSPENDED`
+and asserts the date is gone; `reVerifyingRestoresTheDate` covers the way back. Both were confirmed to
+**fail against the old implementation** before being kept, because a regression test that has never
+been seen to fail is a test of nothing. One review of any kind could not have caught this — it needed
+two, in order, which is why nothing existing did.
+
+---
+
 ## D34 — Erasure reached one table out of five
 
 A code review of D31/D32 went looking for anywhere a customer's identity could survive an erasure.
