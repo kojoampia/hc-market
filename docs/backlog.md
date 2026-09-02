@@ -93,6 +93,12 @@ Messaging is the exception and guards startup when its register already holds ro
 unpeppered messaging cannot recognise its own erased subjects and the next lagging event would write a
 real login back in.
 
+A review of that guard then found it fired at the wrong moment — an `ApplicationRunner` runs after the
+context refresh, and the Kafka listener container starts *during* it, so an unpeppered messaging
+service with rows in the register consumed a slice of its backlog and wrote erased customers' real
+logins back before the guard threw, once per restart. It is now a `SmartLifecycle` phased below every
+other lifecycle bean, with a test that fails if the ordering regresses. Same D35 section.
+
 **Loose end for the operator:** `deploy-prod.sh` renders only non-secret values into the host `.env`,
 exactly as it does for `JWT_BASE64_SECRET`, so `HC_PRIVACY_PEPPER` must exist in the production host's
 environment before the next production deploy or the stack refuses to come up.

@@ -1855,6 +1855,74 @@ exactly like a right one until something fails to match. So the pepper belongs w
 long-lived secrets, not in a per-deploy `.env` that `deploy-prod.sh` regenerates, and the compose file
 says so in the comment beside it.
 
+### The guard ran, and it ran too late
+
+A code review of the above found that `ErasureRegisterGuard` was correct about everything except
+*when*, and being late is the whole of it: in the one scenario the guard exists for, the damage it
+was written to prevent had already been committed to the database by the time it threw.
+
+It was an `ApplicationRunner`. Spring starts `SmartLifecycle` beans inside `finishRefresh()`, which
+is part of the context refresh, and `KafkaListenerEndpointRegistry` is one of those beans — starting
+it starts `BookingEventConsumer`'s listener container, whose `autoStartup` resolves true. Boot's
+`ApplicationRunner`s are invoked from `callRunners()`, *after* `refreshContext()` has returned. So on
+an unpeppered messaging service with rows in `erased_subject`, the real sequence was: the context
+refreshes; the container starts and begins draining its backlog; `storable()` runs with no pepper, so
+`lockSubject` is a no-op and `isErased` answers `false` about people this service had itself erased,
+and their real logins go into fresh conversations and fresh notifications, each committing in its own
+transaction; and only then does the guard get its turn and kill the process.
+
+`restart: unless-stopped` in both `quality/compose.yml` and `docker-compose.prod.yml` makes that a
+loop rather than a single incident. Every restart grants the consumer another slice of the backlog
+before the guard objects again, so a deep backlog is processed unpeppered a chunk at a time, at the
+speed of the restart. **And the operator sees exactly what the design intended them to see** — a
+service crash-looping on a missing variable, naming the variable — with nothing anywhere to suggest
+that rows were written on the way past. A guard whose failure mode is indistinguishable from its
+success mode is worse than no guard, because it is trusted.
+
+An `ApplicationRunner` was the wrong hook because it answers "is the application ready to be
+declared started", and the question here is "may anything in this process touch a person's login".
+The second is decided during the refresh, not after it, and there is no ordering relationship between
+`callRunners()` and anything the refresh already did. The javadoc's reasoning — "a failure aborts
+startup and closes the context rather than logging into a service that then serves" — was true and
+answered the wrong question: the consumer is not serving, it is consuming, and it had started.
+
+The guard is now a `SmartLifecycle` at `Integer.MIN_VALUE`, throwing from `start()`. Lifecycle beans
+start in ascending phase order, so nothing else in the context can precede it — including the
+listener registry at `ContainerProperties.DEFAULT_PHASE`, `Integer.MAX_VALUE - 100` — and an
+exception out of `start()` propagates through `finishRefresh()` and aborts the refresh, so the
+context is destroyed exactly as before. Phasing it below *everything* rather than merely below the
+registry's default is deliberate: a container factory can be given a custom phase, and a guard that
+is only conditionally first is not a guard.
+
+The alternative the review put forward — the count in an early bean's `afterPropertiesSet` with
+`@DependsOn("liquibase")` — would also have beaten the container, and was not taken for two reasons.
+It buys the ordering at the price of a hard-coded bean name, and the phase gives the Liquibase
+guarantee for nothing: every singleton, Liquibase's included, is instantiated in
+`finishBeanFactoryInitialization()`, before any lifecycle bean starts. Liquibase is synchronous here
+(`application.liquibase.async-start: false`), so `erased_subject` exists by then — the same ordering
+`SeedDataLoader` depends on, and the same race if it were ever turned back on.
+
+Semantics are unchanged, and that is the point: empty register and no pepper still starts, because
+that is what lets `isErased` answer `false` and `lockSubject` do nothing instead of throwing and
+stalling the consumer over a variable one desk endpoint reads. Only the moment of the decision moved.
+
+`ErasureWorkflow.isErased`'s javadoc claimed that by the time that line runs unpeppered "the register
+is provably empty". That was false for as long as the defect existed — the register was provably
+empty only *after* the runner had run, and `isErased` could and did run first. It now says so, and
+says what makes the claim true.
+
+**The test is the part worth keeping.** `ErasureRegisterGuardUnitTest` passed throughout, because it
+tests the decision and nothing can see the timing from there; a replacement that only re-asserted
+"the guard throws when the register is non-empty" would have passed while the defect was live too.
+`ErasureRegisterGuardOrderingTest` refreshes a plain `GenericApplicationContext` holding the guard and
+a stand-in registered at a real `KafkaListenerEndpointRegistry`'s phase, and asserts the stand-in was
+never started — taking the phase from an actual instance rather than from a copy of the constant, so
+an upstream change cannot leave the test passing against a guard that no longer runs first. It was
+confirmed to **fail against the old implementation** before being kept, and it failed in the
+informative way: under an `ApplicationRunner` the refresh completes without throwing at all. Its
+sibling assertions cover the two states that must still start, so it cannot pass by refusing
+everything.
+
 ### What is not fixed
 
 The second of D34's two open notes stands untouched: nothing says what happens when an erased person

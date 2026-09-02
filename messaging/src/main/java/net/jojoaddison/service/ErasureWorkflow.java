@@ -115,9 +115,18 @@ public class ErasureWorkflow {
      * <p><strong>Answers {@code false} when no pepper is configured</strong>, rather than throwing and
      * taking the booking-event consumer down with it. That is safe here and only here: without a
      * pepper an erasure refuses with 503, so nothing can have been recorded under this configuration,
-     * and {@code ErasureRegisterGuard} refuses to let the service start at all if the register already
-     * holds rows. So by the time this line runs unpeppered, the register is provably empty and
-     * {@code false} is the true answer rather than a guess.
+     * and {@code ErasureRegisterGuard} aborts the context refresh if the register already holds rows.
+     * So by the time this line runs unpeppered, the register is provably empty and {@code false} is
+     * the true answer rather than a guess.
+     *
+     * <p><strong>That last sentence depends entirely on when the guard runs, and it was untrue until
+     * the guard became a {@code SmartLifecycle}.</strong> As an {@code ApplicationRunner} it fired
+     * after the refresh, and the Kafka listener container starts <em>during</em> it — so on an
+     * unpeppered service with rows in the register this method really did run, really did answer
+     * {@code false} about somebody it had erased, and the consumer wrote their login back before the
+     * guard got its turn to object. The guard is now phased below every other lifecycle bean for that
+     * reason; the claim above holds because nothing can consume an event before it has decided. See
+     * {@code ErasureRegisterGuard} and {@code decisions.md} D35.
      */
     @Transactional(readOnly = true)
     public boolean isErased(String login) {
