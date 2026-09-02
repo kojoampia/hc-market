@@ -13,6 +13,7 @@ import net.jojoaddison.IntegrationTest;
 import net.jojoaddison.domain.Booking;
 import net.jojoaddison.domain.BookingStatusChange;
 import net.jojoaddison.domain.Dispute;
+import net.jojoaddison.domain.ErasedSubject;
 import net.jojoaddison.domain.OutboxEvent;
 import net.jojoaddison.domain.enumeration.BookingStatus;
 import net.jojoaddison.domain.enumeration.CancelledBy;
@@ -20,6 +21,8 @@ import net.jojoaddison.domain.enumeration.DisputeStatus;
 import net.jojoaddison.repository.BookingRepository;
 import net.jojoaddison.repository.BookingStatusChangeEraseRepository;
 import net.jojoaddison.repository.DisputeEraseRepository;
+import net.jojoaddison.repository.ErasedSubjectRepository;
+import net.jojoaddison.repository.ErasureRunRepository;
 import net.jojoaddison.repository.OutboxEraseRepository;
 import net.jojoaddison.service.SubjectPseudonym;
 import org.junit.jupiter.api.BeforeEach;
@@ -73,6 +76,14 @@ class ErasureResourceIT {
 
     @Autowired
     private OutboxEraseRepository outbox;
+
+    /** The durable record — decisions.md D39. Pseudonyms and a timestamp; no login anywhere in it. */
+    @Autowired
+    private ErasedSubjectRepository register;
+
+    /** One row per fan-out attempt. A single-service desk call must write none — see below. */
+    @Autowired
+    private ErasureRunRepository runs;
 
     private Booking booking;
 
@@ -207,6 +218,52 @@ class ErasureResourceIT {
             .contains("GHS");
     }
 
+    /**
+     * <strong>The same class of error as messaging's retry count — {@code decisions.md} D39.</strong>
+     *
+     * <p>Rows here are matched by {@code aggregate_ref}, which is the <em>booking's</em> reference and
+     * says nothing about whether the row named anybody. Every event on one of the customer's bookings
+     * was therefore counted, and — worse — had {@code customerName: "[erased]"} written into it whether
+     * or not it had ever carried a name. That is not hypothetical: {@code OutboxRecorder}'s dispute
+     * payload carries {@code disputeRef}, {@code bookingRef}, the money and the resolution, and no
+     * customer fields at all, while being keyed to the booking so that it cannot overtake the booking's
+     * own events. So a customer who raised one dispute got a receipt reading two where one row held
+     * anything of theirs.
+     *
+     * <p>The counter is what an operator files, so it must count rows that stopped naming the person,
+     * not rows the sweep happened to visit.
+     */
+    @Test
+    @Transactional
+    @WithMockUser(username = "desk", authorities = "ROLE_BROKERAGE")
+    @DisplayName("an outbox row that never named the customer is neither counted nor rewritten")
+    void countsOnlyTheOutboxRowsThatNamedTheCustomer() throws Exception {
+        // A dispute event: keyed to the booking so it cannot overtake the booking's own events, and
+        // carrying no customer fields whatsoever. Exactly what OutboxRecorder.record(Dispute) writes.
+        OutboxEvent aboutTheDispute = outbox.saveAndFlush(
+            new OutboxEvent()
+                .eventId("evt-erase-2")
+                .type("healthconnect.dispute.raised")
+                .topic("healthconnect.dispute.raised")
+                .aggregateRef(booking.getReference())
+                .actor("desk.officer")
+                .payload("{\"disputeRef\":\"d-erase-1\",\"bookingRef\":\"" + booking.getReference() + "\",\"refundMinor\":28000}")
+                .occurredAt(Instant.now())
+        );
+
+        mockMvc
+            .perform(post(URL, CUSTOMER).with(csrf()))
+            .andExpect(status().isOk())
+            // One, not two: only the booking event carried the login and the display name.
+            .andExpect(jsonPath("$.outboxPayloadsRedacted").value(1));
+
+        OutboxEvent after = outbox.findById(aboutTheDispute.getId()).orElseThrow();
+        // And it is left exactly as it was. Adding a customerName to a payload that never had one
+        // removes nothing and gives a consumer a field the event was never defined to carry.
+        assertThat(after.getPayload()).doesNotContain("customerName").doesNotContain("[erased]");
+        assertThat(after.getActor()).isEqualTo("desk.officer");
+    }
+
     /** The dispute's free text is the customer's own account of what went wrong. */
     @Test
     @Transactional
@@ -263,6 +320,72 @@ class ErasureResourceIT {
         assertThat(after.getCustomerLogin()).isEqualTo("kwame.stillhere");
         assertThat(after.getCustomerName()).isEqualTo("Kwame Still-Here");
         assertThat(after.getVisitAddress()).isEqualTo("2 Oxford Street");
+    }
+
+    /**
+     * <strong>The erasure outlives the request that ran it — {@code decisions.md} D39, WP-06.</strong>
+     *
+     * <p>Booking recorded an irreversible act in a log line and an HTTP response body, and nothing
+     * else. The register is the durable half: one row per person, holding the alias and the time and
+     * never the login, written inside the sweep's transaction so that a record of an erasure that did
+     * not commit cannot exist.
+     */
+    @Test
+    @Transactional
+    @WithMockUser(username = "desk", authorities = "ROLE_BROKERAGE")
+    @DisplayName("the erasure is recorded, under the alias and never the login")
+    void recordsTheErasure() throws Exception {
+        assertThat(register.findAll()).isEmpty();
+
+        mockMvc.perform(post(URL, CUSTOMER).with(csrf())).andExpect(status().isOk());
+
+        ErasedSubject recorded = register.findById(pseudonyms.of(CUSTOMER)).orElseThrow();
+        assertThat(recorded.getErasedAt()).isNotNull();
+        // The register cannot answer "who has been erased", and must not become able to.
+        assertThat(recorded.getPseudonym()).startsWith("erased-").doesNotContain(CUSTOMER).doesNotContain("ama");
+        assertThat(register.findAll()).hasSize(1);
+        assertThat(register.findById(pseudonyms.of("kwame.stillhere"))).isEmpty();
+    }
+
+    /**
+     * A retry must not move {@code erasedAt}, and must not add a second row.
+     *
+     * <p>Erasure requests get retried — they arrive by email and get forwarded — and {@code save()} on
+     * an existing primary key would replace the original timestamp with the date of the second run.
+     * That is the defect D35 had to fix in messaging's copy of this register, arriving in a new table
+     * would be the whole of what this guard is for.
+     */
+    @Test
+    @Transactional
+    @WithMockUser(username = "desk", authorities = "ROLE_BROKERAGE")
+    @DisplayName("a retry neither moves the record nor duplicates it")
+    void aRetryDoesNotDisturbTheRecord() throws Exception {
+        mockMvc.perform(post(URL, CUSTOMER).with(csrf())).andExpect(status().isOk());
+        Instant first = register.findById(pseudonyms.of(CUSTOMER)).orElseThrow().getErasedAt();
+
+        mockMvc.perform(post(URL, CUSTOMER).with(csrf())).andExpect(status().isOk());
+
+        assertThat(register.findById(pseudonyms.of(CUSTOMER)).orElseThrow().getErasedAt()).isEqualTo(first);
+        assertThat(register.findAll()).hasSize(1);
+    }
+
+    /**
+     * A single-service desk call records the subject and writes no {@code erasure_run}.
+     *
+     * <p>The two tables answer different questions and it matters that they stay separate. "This
+     * service erased this person" is a local standing fact; "a fan-out was attempted and here is what
+     * each leg said" is the account of an orchestration that did not happen here. A desk call that
+     * wrote a run row would put a receipt in the audit trail claiming three legs when one ran.
+     */
+    @Test
+    @Transactional
+    @WithMockUser(username = "desk", authorities = "ROLE_BROKERAGE")
+    @DisplayName("a single-service erasure records the subject and no fan-out")
+    void aSingleServiceErasureIsNotAFanOut() throws Exception {
+        mockMvc.perform(post(URL, CUSTOMER).with(csrf())).andExpect(status().isOk());
+
+        assertThat(register.findById(pseudonyms.of(CUSTOMER))).isPresent();
+        assertThat(runs.findAll()).isEmpty();
     }
 
     /** The same person must carry the same alias in booking, messaging and catalog. */

@@ -167,6 +167,8 @@ regeneration.
 | The `erased_subject` include | messaging `master.xml` | the erasure register is never created; **an erased customer silently comes back** the next time an event mentions them |
 | The three `privacy_indexes` includes | each `master.xml` | nine columns the erasure sweeps and the thread list, bell menu and "my bookings" screens filter by go back to sequential scans, silently |
 | The `privacy_pepper_witness` include | messaging `master.xml` | the guard finds no witness, concludes this is a **first** peppered startup, and records whatever pepper is currently set as the correct one — so a wrong pepper is adopted rather than refused, and every existing alias is orphaned in silence |
+| The `erasure_record` include | booking `master.xml` | two tables in one changelog. **Loud one way, silent the other:** every `erase-everywhere` 500s on a missing `erasure_run`, while the lost `erased_subject` simply stops recording that anybody was erased here at all |
+| The `erased_subject` include | catalog `master.xml` | **silent.** Erasure keeps working and the receipt still reports what it redacted and deleted; the estate just stops keeping any record of an irreversible act, in the one service that *deletes* rather than redacts |
 | The `processed_event` include | payout `master.xml` | consumer idempotency keys gone; replays double-credit |
 | `contexts: dev` (not `dev, faker`) | each `config/application-dev.yml` | see faker collision below |
 | The `healthconnect` block | each `config/application.yml` **and** `application-prod.yml` | seed never loads |
@@ -546,6 +548,15 @@ time.**
   indistinguishable from a removal as far as those rows are concerned. Absent, the three services
   start and the erasure desk answers 503 — except messaging, which refuses to start if it has already
   erased somebody, because unpeppered it cannot recognise its own erased subjects.
+- **An erasure receipt is the deliverable, not a convenience** (`decisions.md` D31, D36, D38, D39). It
+  is what an operator files against a legal request, so a count that is too small reads as "we held
+  nothing about this person" and a count that is too large reads as "data was still exposed". Two
+  rules, each of which has already been broken. **Count rows that changed, never rows that matched** —
+  a counter keyed on the customer's login is self-clearing, because the first pass removes the login;
+  a counter keyed on anything else (`deep_link`, `aggregate_ref`) matches the same rows for ever and
+  has to compare before it counts. And **every row the sweep touches gets a number on the receipt** —
+  catalog deleted favourites and reported nothing about them for a week. The nine counters and which
+  two were wrong are tabulated in D39.
 - **`SubjectPseudonym.java` and `SubjectPseudonymUnitTest.java` are copied verbatim into booking,
   catalog and messaging, and CI diffs the three copies.** There is no shared library here, so the
   derivation is duplicated; edit one and you must edit all three identically, comments included. They

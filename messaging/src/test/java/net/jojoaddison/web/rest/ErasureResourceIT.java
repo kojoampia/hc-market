@@ -633,6 +633,77 @@ class ErasureResourceIT {
     }
 
     /**
+     * <strong>A retry must report what it redacted, not what it re-wrote — {@code decisions.md} D39.</strong>
+     *
+     * <p>Found on the quality box. D38 states that a second {@code erase-everywhere} reports zeroes
+     * from every service, and messaging did not: it answered {@code notificationsRedacted: 2} on every
+     * subsequent call, for ever. The rows are matched by {@code deep_link}, which does not change when
+     * a body is redacted, so the second pass found exactly the same professional-side rows, wrote the
+     * same placeholder over the placeholder that was already there, and counted them again.
+     *
+     * <p>Nothing about the data was wrong — those bodies were already redacted. The <em>receipt</em>
+     * was, and the receipt is the deliverable: an operator retrying after a 502 reads a non-zero count
+     * and reasonably concludes that personal data was still exposed at the moment of the retry. That
+     * is the same shape as every erasure defect this repository has found, with the sign reversed —
+     * previously a count too small, here a count too large, and in both cases a number nobody would
+     * think to question.
+     *
+     * <p>The fan-out path is the one that shows it, because that is the path where the second call
+     * still has a link set: the references are read back under the alias, so a retry hands over the
+     * same list every time (D38), and the desk path's link set is empty on a retry for the unrelated
+     * reason that nothing is keyed to the original login any more.
+     */
+    @Test
+    @Transactional
+    @WithMockUser(username = "desk", authorities = "ROLE_BROKERAGE")
+    @DisplayName("a retried fan-out erasure reports zero redactions, not the rows it re-wrote")
+    void aRetryCountsWhatItRedactedRatherThanWhatItMatched() throws Exception {
+        sharedThread("b-first");
+        notification(CUSTOMER, "Booking confirmed", "Your home visit on 12 Sep at 10:00 is confirmed.", "b-first");
+        Notification theirsFirst = notification(
+            PRO,
+            "Booking requested",
+            "Ama Tobeforgotten asked for a home visit on 12 Sep at 10:00.",
+            "b-first"
+        );
+        Notification theirsPending = notification(
+            PRO,
+            "Booking requested",
+            "Ama Tobeforgotten asked for a strength session on 26 Sep at 09:00.",
+            "b-pending"
+        );
+
+        mockMvc
+            .perform(
+                post(URL, CUSTOMER)
+                    .with(csrf())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"bookingReferences\":[\"b-first\",\"b-pending\"]}")
+            )
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.notificationsRedacted").value(2));
+
+        // The retry the operator is told to make after a 502. The same references, by construction.
+        mockMvc
+            .perform(
+                post(URL, CUSTOMER)
+                    .with(csrf())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"bookingReferences\":[\"b-first\",\"b-pending\"]}")
+            )
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.conversationsPseudonymised").value(0))
+            .andExpect(jsonPath("$.messagesErased").value(0))
+            .andExpect(jsonPath("$.notificationsReKeyed").value(0))
+            .andExpect(jsonPath("$.notificationsRedacted").value(0));
+
+        // Still redacted, of course — the first pass did the work and the second had none to do.
+        for (Notification about : List.of(theirsFirst, theirsPending)) {
+            assertThat(notifications.findById(about.getId()).orElseThrow().getBody()).doesNotContain("Ama").doesNotContain("Tobeforgotten");
+        }
+    }
+
+    /**
      * The pepper witness must not become an answer to "has this service erased anybody" —
      * {@code decisions.md} D35.
      *

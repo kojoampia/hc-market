@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+        Who this service has erased - decisions.md D39. The same table messaging has held since D32
+        and booking gained in the same change, for the reason catalog needs it most: this is the
+        service that DELETES. A saved list is removed outright rather than tombstoned, deliberately,
+        and until D39 the act left a log line and an HTTP response that ended with the request.
+
+        The table holds PSEUDONYMS ONLY. There is deliberately no column for the login: a register of
+        erased people that names them is the thing erasure was asked to remove, and it would have to
+        be kept forever for the check to keep working. Somebody who already holds a login can hash it
+        and ask whether it is here; nothing goes the other way.
+
+        One row per person, written once. erased_at is the fact an audit asks for and a retry must
+        not move it - save() on an existing primary key would replace it with the date of the second
+        run, which is exactly what D35 had to fix. The record of one fan-out ATTEMPT, of which there
+        can be several, is booking's erasure_run table: a leg that fails cannot record its own
+        failure, so that account can only live with the orchestrator.
+
+        Hand-written, not generated from JDL. Regenerating catalog rewrites master.xml and DROPS this
+        include, and the failure is SILENT: erasure goes on working, the receipt still reports what
+        it redacted and deleted, and the estate simply stops keeping any record that it happened.
+    -->
+    <changeSet id="20260902160000-1" author="healthconnect">
+        <createTable tableName="erased_subject">
+            <column name="pseudonym" type="varchar(64)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="erased_at" type="${datetimeType}"><constraints nullable="false"/></column>
+        </createTable>
+    </changeSet>
+</databaseChangeLog>

@@ -15,6 +15,7 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -23,7 +24,10 @@ import java.util.concurrent.Executors;
 import java.util.function.Supplier;
 import net.jojoaddison.IntegrationTest;
 import net.jojoaddison.domain.Booking;
+import net.jojoaddison.domain.ErasureRun;
 import net.jojoaddison.repository.BookingRepository;
+import net.jojoaddison.repository.ErasedSubjectRepository;
+import net.jojoaddison.repository.ErasureRunRepository;
 import net.jojoaddison.security.ErasureFanoutToken;
 import net.jojoaddison.security.MarketplaceAuthorities;
 import net.jojoaddison.security.SecurityUtils;
@@ -174,6 +178,14 @@ class ErasureFanoutIT {
 
     @Autowired
     private FanoutTokenMinter minter;
+
+    /** One row per fan-out attempt, kept — decisions.md D39. */
+    @Autowired
+    private ErasureRunRepository runs;
+
+    /** The standing fact beside it: erased here, once, at this time. */
+    @Autowired
+    private ErasedSubjectRepository register;
 
     private Booking first;
     private Booking repeat;
@@ -473,6 +485,153 @@ class ErasureFanoutIT {
 
         assertThat(bookings.findById(first.getId()).orElseThrow().getCustomerLogin()).isEqualTo(CUSTOMER);
         assertThat(MESSAGING_CALLS).isEmpty();
+    }
+
+    /**
+     * <strong>The receipt survives the request — {@code decisions.md} D39, WP-06.</strong>
+     *
+     * <p>This response is the only account anywhere of which legs ran, and it used to live for the
+     * length of an HTTP response. It is now also a row: the receipt as it was rendered, the alias, the
+     * time, and whether every leg erased.
+     */
+    @Test
+    @Transactional
+    @WithMockUser(username = "desk", authorities = "ROLE_BROKERAGE")
+    @DisplayName("a complete fan-out is written down, receipt and all")
+    void recordsACompleteFanOut() throws Exception {
+        assertThat(runs.findAll()).isEmpty();
+
+        String id = mockMvc
+            .perform(post(URL, CUSTOMER).with(csrf()))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.recorded").value(true))
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+        id = om.readTree(id).path("recordId").asText();
+
+        ErasureRun recorded = runs.findById(id).orElseThrow();
+        assertThat(recorded.isComplete()).isTrue();
+        assertThat(recorded.getPseudonym()).isEqualTo(pseudonyms.of(CUSTOMER));
+        assertThat(recorded.getBookingReferences()).isEqualTo(2);
+        assertThat(recorded.getRanAt()).isNotNull();
+        // The receipt, as rendered: each leg, its status and the counts that service reported under
+        // its own names. Not re-modelled here, so a count that changes downstream cannot be
+        // misreported by a schema in this service that still declares the old one.
+        assertThat(recorded.getReceipt())
+            .contains("\"service\":\"messaging\"")
+            .contains("\"notificationsRedacted\":3")
+            .contains("\"service\":\"catalog\"")
+            .contains("\"reviewsDeidentified\":4");
+
+        // Byte for byte what the operator was handed, its own id included — a stored receipt saying
+        // "recorded: false" in a row whose existence says otherwise would be its own small lie.
+        assertThat(recorded.getReceipt()).contains("\"recorded\":true").contains(id);
+
+        // And the subject register beside it, which is the smaller and different fact.
+        assertThat(register.findById(pseudonyms.of(CUSTOMER))).isPresent();
+        assertThat(runs.findByPseudonymOrderByRanAtAsc(pseudonyms.of(CUSTOMER))).hasSize(1);
+    }
+
+    /**
+     * <strong>The case the record exists for.</strong>
+     *
+     * <p>Two services erased, catalog did not, and the operator has to be able to prove that
+     * afterwards — to an auditor, or to the data subject asking why their reviews still carry their
+     * name. A 502 is precisely the response nobody keeps a copy of.
+     *
+     * <p>It is also why this record cannot be three per-service rows: <em>a leg that fails is a leg
+     * that cannot record its own failure</em>. Catalog writes nothing here, by definition, so the only
+     * place the partial outcome exists is the orchestrator's row.
+     */
+    @Test
+    @Transactional
+    @WithMockUser(username = "desk", authorities = "ROLE_BROKERAGE")
+    @DisplayName("a partial fan-out is written down too, naming the leg that did not run")
+    void recordsAPartialFanOut() throws Exception {
+        catalogAnswer = new Answer(500, "{\"title\":\"Internal Server Error\"}", false);
+
+        mockMvc
+            .perform(post(URL, CUSTOMER).with(csrf()))
+            .andExpect(status().isBadGateway())
+            .andExpect(jsonPath("$.recorded").value(true));
+
+        ErasureRun recorded = runs.findByPseudonymOrderByRanAtAsc(pseudonyms.of(CUSTOMER)).get(0);
+        assertThat(recorded.isComplete()).isFalse();
+        assertThat(recorded.getReceipt()).contains("\"service\":\"catalog\"").contains("FAILED").contains("500");
+        // Messaging's leg is in the same row, with its counts. "Which legs ran" is the question.
+        assertThat(recorded.getReceipt()).contains("\"service\":\"messaging\"").contains("ERASED");
+    }
+
+    /**
+     * <strong>A retry adds an attempt; it does not rewrite the first one.</strong>
+     *
+     * <p>The operator's instruction after a 502 is to call this again, so several rows for one person
+     * is the normal case rather than an anomaly. Keying this table by the subject would have made the
+     * second attempt overwrite the first and destroy the evidence of the partial run — which is D35's
+     * {@code save()}-moves-{@code erasedAt} defect arriving in a new table, and the reason the key is
+     * a UUID.
+     *
+     * <p>The subject register is the other half of the assertion: <em>that</em> is keyed by the
+     * subject, and its timestamp must not move.
+     */
+    @Test
+    @Transactional
+    @WithMockUser(username = "desk", authorities = "ROLE_BROKERAGE")
+    @DisplayName("a retry appends a second attempt and disturbs neither the first nor the register")
+    void aRetryAppendsRatherThanOverwrites() throws Exception {
+        catalogAnswer = new Answer(500, "{\"title\":\"Internal Server Error\"}", false);
+        mockMvc.perform(post(URL, CUSTOMER).with(csrf())).andExpect(status().isBadGateway());
+
+        ErasureRun failed = runs.findByPseudonymOrderByRanAtAsc(pseudonyms.of(CUSTOMER)).get(0);
+        String firstReceipt = failed.getReceipt();
+        Instant erasedAt = register.findById(pseudonyms.of(CUSTOMER)).orElseThrow().getErasedAt();
+
+        catalogAnswer = receipt("{\"pseudonym\":\"" + pseudonyms.of(CUSTOMER) + "\",\"reviewsDeidentified\":0}");
+        messagingAnswer = receipt(messagingReceipt(pseudonyms.of(CUSTOMER), 0, 0, 0, 0));
+        mockMvc.perform(post(URL, CUSTOMER).with(csrf())).andExpect(status().isOk());
+
+        List<ErasureRun> attempts = runs.findByPseudonymOrderByRanAtAsc(pseudonyms.of(CUSTOMER));
+        assertThat(attempts).hasSize(2);
+        // The failed attempt is still exactly as it was. It is the more valuable of the two.
+        assertThat(attempts.get(0).getId()).isEqualTo(failed.getId());
+        assertThat(attempts.get(0).isComplete()).isFalse();
+        assertThat(attempts.get(0).getReceipt()).isEqualTo(firstReceipt);
+        assertThat(attempts.get(1).isComplete()).isTrue();
+        assertThat(attempts.get(1).getId()).isNotEqualTo(failed.getId());
+
+        // And the standing fact did not move: erased once, at the time of the first erasure.
+        assertThat(register.findById(pseudonyms.of(CUSTOMER)).orElseThrow().getErasedAt()).isEqualTo(erasedAt);
+        assertThat(register.findAll()).hasSize(1);
+    }
+
+    /**
+     * <strong>The record must not become the one place the estate names an erased person.</strong>
+     *
+     * <p>A leg that cannot be reached fails with the root cause's message, and the root cause of an
+     * I/O error is thrown against a URL — {@code /api/desk/customers/<login>/erase}. That message goes
+     * into the receipt, and the receipt is now kept for ever. Stored verbatim, the row written
+     * specifically to survive would be the only row in the estate holding the login of somebody who
+     * asked to be forgotten, and it would be sitting in the audit trail of their erasure.
+     *
+     * <p>The unreachable leg is produced as a read timeout for the reason
+     * {@link #anUnreachableLegIsReported} explains — but the assertion here is about the login rather
+     * than about the classification, and it holds whichever way the leg fails.
+     */
+    @Test
+    @Transactional
+    @WithMockUser(username = "desk", authorities = "ROLE_BROKERAGE")
+    @DisplayName("the stored receipt carries the alias and never the login, even in a failure message")
+    void theRecordNeverNamesThePerson() throws Exception {
+        messagingAnswer = hangs();
+
+        mockMvc.perform(post(URL, CUSTOMER).with(csrf())).andExpect(status().isBadGateway());
+
+        ErasureRun recorded = runs.findByPseudonymOrderByRanAtAsc(pseudonyms.of(CUSTOMER)).get(0);
+        assertThat(recorded.getReceipt()).doesNotContain(CUSTOMER).doesNotContain("tobeforgotten").contains(pseudonyms.of(CUSTOMER));
+        assertThat(recorded.getPseudonym()).doesNotContain(CUSTOMER);
+        // The failure is still legible — scrubbing the login must not scrub the diagnosis with it.
+        assertThat(recorded.getReceipt()).contains("SocketTimeoutException").contains("FAILED");
     }
 
     @Test

@@ -88,6 +88,22 @@ import org.springframework.transaction.annotation.Transactional;
  * defect returns with a clean receipt and nothing red. Said again beside the endpoint that would grow
  * such a feature, in {@code MessagingResource}.
  *
+ * <h2>What the counts count — {@code decisions.md} D39</h2>
+ *
+ * <p><strong>Rows that changed, never rows that matched.</strong> The distinction is invisible for
+ * three of the four counts and decides the fourth. Conversations, messages and the customer's own
+ * notifications are all found <em>by the customer's login</em>, which the first pass removes, so a
+ * second pass matches nothing and reports zero without anything having to be careful.
+ * {@code notificationsRedacted} is different in kind: those rows are found by {@code deepLink}, which
+ * is not personal data and does not change when a body is redacted, so the same rows are matched
+ * every time this runs. Counting the matches meant a retried fan-out erasure reported
+ * {@code notificationsRedacted: 2} for ever, over bodies that had held nothing but the placeholder
+ * since the first call.
+ *
+ * <p>The rule generalises, and it is the thing to check when a count is added here: <em>a counter
+ * keyed on the login is self-clearing; a counter keyed on anything else has to compare before it
+ * counts</em>.
+ *
  * <h2>And erasure is now a standing fact, not a moment</h2>
  *
  * <p>See {@link ErasedSubject}. A sweep is only correct if nothing arrives afterwards, and things do
@@ -319,6 +335,17 @@ public class ErasureWorkflow {
                 if (alias.equals(n.getRecipientLogin())) {
                     continue; // already re-keyed AND redacted above; counting it here would double-count it
                 }
+                if (REDACTED_NOTIFICATION.equals(n.getBody())) {
+                    /* An earlier pass already took this body — decisions.md D39. Skipped rather than
+                       re-written, and the count is the reason: these rows are matched by deep_link,
+                       which does not change when the body does, so every later erasure of the same
+                       customer found them again and reported the number it had just re-written. The
+                       operator's instruction after a 502 is to call this again, and a retry answering
+                       "2 notifications redacted" tells them data was still exposed when it was not. A
+                       count on a receipt filed against a legal request has to mean rows that stopped
+                       naming the person, not rows the sweep visited. */
+                    continue;
+                }
                 n.setBody(REDACTED_NOTIFICATION);
                 notifications.save(n);
                 aboutThem++;
@@ -344,6 +371,9 @@ public class ErasureWorkflow {
      *     and with their bodies redacted — one row counts here or in {@code notificationsRedacted},
      *     never in both
      * @param notificationsRedacted notifications in somebody else's list whose body named the customer
+     *     — and whose body this run actually replaced. A row an earlier run already redacted is
+     *     matched again, because the match is on {@code deepLink}, and is deliberately not counted
+     *     again: see the class comment
      */
     public record Erased(int conversationsPseudonymised, int messagesRedacted, int notificationsReKeyed, int notificationsRedacted) {}
 

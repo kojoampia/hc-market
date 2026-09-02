@@ -10,9 +10,11 @@ import jakarta.persistence.EntityManager;
 import java.time.Instant;
 import java.time.LocalDate;
 import net.jojoaddison.IntegrationTest;
+import net.jojoaddison.domain.ErasedSubject;
 import net.jojoaddison.domain.Favourite;
 import net.jojoaddison.domain.Professional;
 import net.jojoaddison.domain.Review;
+import net.jojoaddison.repository.ErasedSubjectRepository;
 import net.jojoaddison.repository.FavouriteQueryRepository;
 import net.jojoaddison.repository.ProfessionalRepository;
 import net.jojoaddison.repository.ReviewEraseRepository;
@@ -65,6 +67,10 @@ class ErasureResourceIT {
 
     @Autowired
     private ProfessionalRepository professionals;
+
+    /** The durable record — decisions.md D39. Pseudonyms and a timestamp; no login anywhere in it. */
+    @Autowired
+    private ErasedSubjectRepository register;
 
     @Autowired
     private EntityManager em;
@@ -131,6 +137,43 @@ class ErasureResourceIT {
     }
 
     /**
+     * <strong>The deletion has to appear on the receipt — {@code decisions.md} D39.</strong>
+     *
+     * <p>Favourites are the only rows this feature <em>deletes</em> anywhere in the estate, and the
+     * receipt said nothing about them: it carried {@code reviewsDeidentified} alone, so a customer with
+     * no reviews and a saved list of twelve professionals produced a receipt of zeroes. On the quality
+     * box it deleted two favourites and reported nothing about them.
+     *
+     * <p>This is precisely the defect D31 found in messaging — a receipt that under-reports what was
+     * done, filed by an operator against a legal request as "catalog held nothing for this person" —
+     * fixed there and never checked here. An irreversible deletion is the last thing that should go
+     * unrecorded.
+     *
+     * <p>The second call is here for the same reason as messaging's retry test: a count of rows
+     * <em>deleted</em> is zero the second time by construction, and asserting it says so is what stops
+     * somebody making this number a count of rows <em>matched</em>.
+     */
+    @Test
+    @Transactional
+    @WithMockUser(username = "desk", authorities = "ROLE_BROKERAGE")
+    @DisplayName("the receipt reports the favourites it deleted, and reports zero on a retry")
+    void reportsTheFavouritesItDeleted() throws Exception {
+        favourites.saveAndFlush(new Favourite().customerLogin(CUSTOMER).professionalRef("p-another").addedAt(Instant.now()));
+
+        mockMvc
+            .perform(post(URL, CUSTOMER).with(csrf()))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.reviewsDeidentified").value(1))
+            .andExpect(jsonPath("$.favouritesDeleted").value(2));
+
+        mockMvc
+            .perform(post(URL, CUSTOMER).with(csrf()))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.reviewsDeidentified").value(0))
+            .andExpect(jsonPath("$.favouritesDeleted").value(0));
+    }
+
+    /**
      * The rating is a view over the review rows, so de-identifying an author must not move a
      * professional's score. That is "derived, never stored" doing its job — but it is worth pinning,
      * because a future implementation that deleted reviews instead would silently change every
@@ -173,6 +216,55 @@ class ErasureResourceIT {
         assertThat(after.getCustomerLogin()).isEqualTo("kwame.stillhere");
         assertThat(after.getAuthorName()).isEqualTo("Kwame Still-Here");
         assertThat(after.getAuthorInitials()).isEqualTo("KS");
+    }
+
+    /**
+     * <strong>The erasure outlives the request that ran it — {@code decisions.md} D39, WP-06.</strong>
+     *
+     * <p>Catalog recorded an irreversible act — a saved list deleted outright — in a log line and an
+     * HTTP response, and nothing else. The register is the durable half: one row per person, holding
+     * the alias and the time, and never the login. It is written inside the sweep's transaction, so a
+     * record of an erasure that did not commit cannot exist.
+     */
+    @Test
+    @Transactional
+    @WithMockUser(username = "desk", authorities = "ROLE_BROKERAGE")
+    @DisplayName("the erasure is recorded, under the alias and never the login")
+    void recordsTheErasure() throws Exception {
+        assertThat(register.findAll()).isEmpty();
+
+        mockMvc.perform(post(URL, CUSTOMER).with(csrf())).andExpect(status().isOk());
+
+        ErasedSubject recorded = register.findById(pseudonyms.of(CUSTOMER)).orElseThrow();
+        assertThat(recorded.getErasedAt()).isNotNull();
+        // The register cannot answer "who has been erased" and must not be able to. Every field of it.
+        assertThat(recorded.getPseudonym()).startsWith("erased-").doesNotContain(CUSTOMER).doesNotContain("ama");
+        assertThat(register.findAll()).hasSize(1);
+        // Somebody who was never erased is not in it — the query the consumer of a register asks.
+        assertThat(register.findById(pseudonyms.of("kwame.stillhere"))).isEmpty();
+    }
+
+    /**
+     * A retry must not move {@code erasedAt}, and must not add a second row.
+     *
+     * <p>Data subject requests arrive by email and get forwarded, so they get run twice, and the
+     * operator's instruction after a failed fan-out leg is to call again. {@code save()} on an
+     * existing primary key would replace the original timestamp with the date of the second run —
+     * exactly the defect D35 had to fix in messaging — and that timestamp is the one fact an audit of
+     * an irreversible action asks for.
+     */
+    @Test
+    @Transactional
+    @WithMockUser(username = "desk", authorities = "ROLE_BROKERAGE")
+    @DisplayName("a retry neither moves the record nor duplicates it")
+    void aRetryDoesNotDisturbTheRecord() throws Exception {
+        mockMvc.perform(post(URL, CUSTOMER).with(csrf())).andExpect(status().isOk());
+        Instant first = register.findById(pseudonyms.of(CUSTOMER)).orElseThrow().getErasedAt();
+
+        mockMvc.perform(post(URL, CUSTOMER).with(csrf())).andExpect(status().isOk());
+
+        assertThat(register.findById(pseudonyms.of(CUSTOMER)).orElseThrow().getErasedAt()).isEqualTo(first);
+        assertThat(register.findAll()).hasSize(1);
     }
 
     @Test

@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+        The durable record of an erasure - decisions.md D39. Two tables, because they hold two
+        different facts with two different lifecycles, and folding them into one would reintroduce
+        the defect D35 fixed:
+
+          erased_subject  one row per person, written once, erased_at NEVER moved. The standing fact.
+          erasure_run     one row per ATTEMPT, append-only. Several per person is normal, because a
+                          data subject request that arrives by email gets forwarded and retried, and
+                          the operator's instruction after a 502 is to call the fan-out again.
+
+        Keyed by alias, a retry would overwrite the first attempt and destroy the evidence of the
+        partial run that is the entire reason the record exists. Hence a UUID and no updates.
+
+        Both hold PSEUDONYMS ONLY. There is deliberately no column for a login anywhere here: a
+        register of erased people that names them is the thing erasure was asked to remove, and it
+        would have to be kept forever. Same rule as messaging's erased_subject, same reasoning.
+
+        Hand-written, not generated from JDL, exactly as outbox_event is. Regenerating booking
+        rewrites master.xml and DROPS these includes, and the failure is loud in one direction and
+        silent in the other: every erase-everywhere then 500s on a missing erasure_run table, while
+        a lost erased_subject would simply stop recording that anybody was erased at all.
+    -->
+    <changeSet id="20260902160000-1" author="healthconnect">
+        <createTable tableName="erased_subject">
+            <column name="pseudonym" type="varchar(64)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="erased_at" type="${datetimeType}"><constraints nullable="false"/></column>
+        </createTable>
+    </changeSet>
+
+    <changeSet id="20260902160000-2" author="healthconnect">
+        <createTable tableName="erasure_run">
+            <column name="id" type="varchar(64)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="pseudonym" type="varchar(64)"><constraints nullable="false"/></column>
+            <column name="ran_at" type="${datetimeType}"><constraints nullable="false"/></column>
+            <column name="complete" type="boolean"><constraints nullable="false"/></column>
+            <column name="booking_references" type="integer"><constraints nullable="false"/></column>
+            <!-- The receipt as it was rendered, scrubbed of the login. clob rather than a column per
+                 count: ErasureFanoutClient copies each leg's counts through under the names that
+                 service gave them, so a count added or removed downstream cannot be misreported, and
+                 a table with a column per count would undo that on the durable side. -->
+            <column name="receipt" type="clob"><constraints nullable="false"/></column>
+        </createTable>
+        <!-- The only question an operator asks of this table: show me every attempt at erasing this
+             person. Unindexed it is a full scan, and the table only grows. -->
+        <createIndex tableName="erasure_run" indexName="idx_erasure_run_pseudonym">
+            <column name="pseudonym"/>
+        </createIndex>
+    </changeSet>
+</databaseChangeLog>
