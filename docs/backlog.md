@@ -26,7 +26,7 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **WP-07** | Erasure: orchestration across the three services | DONE (unmerged) | D38 |
 | **WP-08** | Erasure: what an erased person who keeps their account is | DONE (unmerged) | D37, built as D40 |
 | **WP-09** | Erasure: retention periods and lawful basis | BLOCKED (narrowed) | counsel — the two coded judgements are ratified by D37 |
-| **WP-10** | Payments: the seam can complete a lifecycle | READY | — |
+| **WP-10** | Payments: the seam can complete a lifecycle | DONE (unmerged) | D41 |
 | **WP-11** | Payments: asynchronous confirmation | READY | — |
 | **WP-12** | Payments: the zero-amount booking | READY | — |
 | **WP-13** | Payments: provider choice and Act 987 | READY (large) | D37 — Paystack, Hubtel and MoMo direct, customer chooses. **Depends on WP-11** |
@@ -331,19 +331,45 @@ code has taken and flagged: the **review body** is not erased (public speech abo
 `Dispute.resolution` is kept (the brokerage's record of a financial decision, underpinning a
 compensating ledger entry). Both may name the customer.
 
-## WP-10 — Payments: the seam can complete a lifecycle · READY
+## WP-10 — Payments: the seam can complete a lifecycle · DONE (unmerged)
 
-D15, and the sharpest finding of the payment review. `authorizePayment` uses the outcome's state and
-reason and **discards `providerReference`** — the handle `capture`, `refund` and `status` all require.
-With no payment table by design, and no log line either, the day a real provider returns `AUTHORIZED`
-the money is committed and the platform holds nothing to capture or refund it with.
+D15, and the sharpest finding of the payment review. `authorizePayment` used the outcome's state and
+reason and **discarded `providerReference`** — the handle `capture`, `refund` and `status` all require.
+With no payment table by design, and no log line either, the day a real provider returned `AUTHORIZED`
+the money was committed and the platform held nothing to capture or refund it with.
 
-Also in this package: no compensating action if `creator.create` throws after an authorization (money
-taken, no booking, no reference to void it); no `void`/`cancel` operation on the port, which is a
-distinct call at real providers and is not a settlement-model choice; `refund` carries an amount with
-no currency, against the house rule that money is minor units *plus* an ISO code; `capture` cannot
-express a partial capture; and `PaymentIntent`'s javadoc promises an idempotency key that the call site
-defeats by minting the reference per request.
+Built as D41. **The handle is stored in a `payment_attempt` table in booking, not in a column on
+`Booking`**, and the deciding argument is a sequence rather than a preference: the authorization
+happens *before* the booking row is written (D31, so a provider timeout cannot roll back a booking the
+customer's screen believed in), so at the instant the handle arrives there is no booking row to put it
+on — which is also precisely the case the table exists for. WP-11's webhook needs to find a payment
+*by* the provider's reference and WP-13's second provider needs a second attempt against one booking
+to not overwrite the first; a column could do neither. Storing it at all is a stated exception to
+"derived, never stored", of the same shape as `Professional.verification` (D16) but for a different
+reason: a handle issued by somebody else has no source to be derived from, so the choice is store or
+lose.
+
+A row is written **only when a handle comes back**, so today's off-platform estate writes none; and the
+table holds **no personal data**, so the erasure sweep does not visit it. Both are pinned by tests and
+stated on the entity, because the second stops being true the moment somebody adds a customer column.
+
+The rest of the package: `voidAuthorization` on the port and a **compensating release** when
+`creator.create` throws — void for an authorization, refund for money already captured, and a release
+that itself fails sets `needs_attention` for a person rather than retrying into a provider that has
+just failed; `refund` and `capture` both carry an explicit currency now, and `capture` an amount, so a
+partial capture is expressible; and `PaymentIntent`'s idempotency promise was **corrected rather than
+implemented** — the call site really does mint a reference per request, so two submissions of one
+wizard are two charges, and closing that needs an `Idempotency-Key` contract with the client which the
+payment seam should not invent unilaterally. The gap is named in the javadoc that used to deny it.
+
+Confirmed red first, three ways: the handle test failed with `Expected size: 1 but was: 0` against the
+seam that dropped it; the three compensation tests failed with Mockito's `Wanted but not invoked`
+against a resource with no release wired; and the "off-platform writes nothing" test — which asserts a
+decision rather than a fix, and so cannot be red against the old code — was made red against a variant
+that records every outcome.
+
+**Not done:** no run against the quality box, and no live provider to run against. Every branch is
+exercised through a substituted provider, which is D31's limitation unchanged.
 
 ## WP-11 — Payments: asynchronous confirmation · READY
 

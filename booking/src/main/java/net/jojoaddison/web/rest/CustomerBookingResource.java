@@ -19,9 +19,7 @@ import net.jojoaddison.repository.BookingHistoryRepository;
 import net.jojoaddison.security.SecurityUtils;
 import net.jojoaddison.service.BookingMapper;
 import net.jojoaddison.service.BookingWorkflow;
-import net.jojoaddison.service.payment.PaymentIntent;
-import net.jojoaddison.service.payment.PaymentOutcome;
-import net.jojoaddison.service.payment.PaymentProvider;
+import net.jojoaddison.service.payment.BookingPayments;
 import net.jojoaddison.service.payment.PaymentState;
 import net.jojoaddison.service.BookingCreator;
 import net.jojoaddison.service.BrokerageClient;
@@ -63,7 +61,7 @@ public class CustomerBookingResource {
     private final BookingCreator creator;
     private final BrokerageClient brokerage;
     private final CatalogClient catalog;
-    private final PaymentProvider payments;
+    private final BookingPayments payments;
 
     public CustomerBookingResource(
         BookingWorkflow bookings,
@@ -73,7 +71,7 @@ public class CustomerBookingResource {
         BookingCreator creator,
         BrokerageClient brokerage,
         CatalogClient catalog,
-        PaymentProvider payments
+        BookingPayments payments
     ) {
         this.bookings = bookings;
         this.repository = repository;
@@ -140,10 +138,20 @@ public class CustomerBookingResource {
             .careSummaryShared(Boolean.TRUE.equals(request.careSummaryShared()))
             .raisedAt(Instant.now())
             .reviewed(false);
-        authorizePayment(booking);
-        // Saved through BookingCreator so the row and its booking.requested event share one
-        // transaction — the same guarantee every transition gets.
-        return ResponseEntity.status(HttpStatus.CREATED).body(mapper.toView(creator.create(booking, login)));
+        BookingPayments.Taken taken = authorizePayment(booking);
+        try {
+            // Saved through BookingCreator so the row and its booking.requested event share one
+            // transaction — the same guarantee every transition gets.
+            return ResponseEntity.status(HttpStatus.CREATED).body(mapper.toView(creator.create(booking, login)));
+        } catch (RuntimeException e) {
+            // The money was committed a moment ago and the booking does not exist. Give it back
+            // before the exception leaves this method — nothing further along knows a payment was
+            // taken, and after the response has been written there is nobody left to ask. See
+            // BookingPayments.release: a release that itself fails marks the row for a person rather
+            // than retrying into a provider that has just failed.
+            payments.release(taken, "booking " + booking.getReference() + " could not be created");
+            throw e;
+        }
     }
 
     /** My bookings — the prototype's four tabs are four calls to this one query. */
@@ -338,22 +346,22 @@ public class CustomerBookingResource {
      * <p><strong>402 for a decline, 502 for a provider that fell over.</strong> The client's next
      * move differs: one means try another instrument, the other means try again. Collapsing them into
      * one status would make the customer re-enter details that were never the problem.
+     *
+     * <p><strong>The handle comes back, and it is kept</strong> — {@code decisions.md} D41. This used
+     * to read the outcome's state and drop the rest of it, including the provider's own reference,
+     * which is the only thing {@code capture}, {@code refund}, {@code voidAuthorization} and
+     * {@code status} can be called with. {@link BookingPayments#take} writes it down before returning,
+     * and what it returns is what {@link BookingPayments#release} needs if the booking then fails.
+     * The status codes stay here because they are answers to a client; the money's lifecycle does
+     * not, because it is not a detail of one endpoint.
      */
-    private void authorizePayment(Booking booking) {
-        PaymentOutcome outcome = payments.authorize(
-            new PaymentIntent(
-                booking.getReference(),
-                booking.getCustomerLogin(),
-                booking.getPriceMinor(),
-                booking.getCurrency(),
-                booking.getServiceName()
-            )
-        );
-        if (outcome.state().permitsBooking()) {
-            return;
+    private BookingPayments.Taken authorizePayment(Booking booking) {
+        BookingPayments.Taken taken = payments.take(booking);
+        if (taken.outcome().state().permitsBooking()) {
+            return taken;
         }
-        HttpStatus status = outcome.state() == PaymentState.DECLINED ? HttpStatus.PAYMENT_REQUIRED : HttpStatus.BAD_GATEWAY;
-        throw new ResponseStatusException(status, outcome.reason() == null ? "payment could not be taken" : outcome.reason());
+        HttpStatus status = taken.outcome().state() == PaymentState.DECLINED ? HttpStatus.PAYMENT_REQUIRED : HttpStatus.BAD_GATEWAY;
+        throw new ResponseStatusException(status, taken.outcome().reason() == null ? "payment could not be taken" : taken.outcome().reason());
     }
 
     /**

@@ -37,13 +37,19 @@ public class PaymentConfiguration {
      * professional directly and always has — so returning it lets bookings proceed exactly as they do
      * today while making the arrangement explicit rather than assumed.
      *
-     * <p>{@code capture}, {@code refund} and {@code status} throw instead, and the asymmetry is
-     * deliberate. There is no money to move, nothing to give back and no provider to ask, so any
-     * caller reaching them holds a belief that is false. Returning a polite {@code FAILED} would let
-     * that belief survive: a refund path that quietly reports failure looks like a provider outage
-     * and gets retried, when what actually happened is that somebody wrote code assuming the platform
-     * holds funds it has never held. Failing loudly is how that gets found in a test rather than in a
-     * conversation with a customer who is owed a refund.
+     * <p>{@code capture}, {@code refund}, {@code voidAuthorization} and {@code status} throw instead,
+     * and the asymmetry is deliberate. There is no money to move, nothing to give back and no
+     * provider to ask, so any caller reaching them holds a belief that is false. Returning a polite
+     * {@code FAILED} would let that belief survive: a refund path that quietly reports failure looks
+     * like a provider outage and gets retried, when what actually happened is that somebody wrote
+     * code assuming the platform holds funds it has never held. Failing loudly is how that gets found
+     * in a test rather than in a conversation with a customer who is owed a refund.
+     *
+     * <p>That includes the new one. {@code voidAuthorization} throwing is why
+     * {@link net.jojoaddison.service.payment.BookingPayments#release} checks
+     * {@code PaymentState.holdsMoney()} before calling it: an off-platform booking that fails to be
+     * created has nothing committed, and asking this bean to release nothing would replace the real
+     * failure with an {@code IllegalStateException} about payments.
      */
     static class UnconfiguredPaymentProvider implements PaymentProvider {
 
@@ -64,12 +70,17 @@ public class PaymentConfiguration {
         }
 
         @Override
-        public PaymentOutcome capture(String providerReference) {
+        public PaymentOutcome capture(String providerReference, long amountMinor, String currency) {
             throw new IllegalStateException(NO_PROVIDER);
         }
 
         @Override
-        public PaymentOutcome refund(String providerReference, long amountMinor, String reason) {
+        public PaymentOutcome refund(String providerReference, long amountMinor, String currency, String reason) {
+            throw new IllegalStateException(NO_PROVIDER);
+        }
+
+        @Override
+        public PaymentOutcome voidAuthorization(String providerReference, String reason) {
             throw new IllegalStateException(NO_PROVIDER);
         }
 
