@@ -6,6 +6,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import net.jojoaddison.repository.ErasedSubjectRepository;
+import net.jojoaddison.repository.PepperWitnessRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.SmartLifecycle;
@@ -53,6 +54,14 @@ class ErasureRegisterGuardOrderingTest {
     private final ErasedSubjectRepository register = mock(ErasedSubjectRepository.class);
 
     /**
+     * Answers "no witness recorded yet" for every lookup, which is the first-peppered-startup path:
+     * the guard records one and starts. The witness comparison has its own tests in
+     * {@link ErasureRegisterGuardUnitTest}; what matters here is only that the peppered contexts
+     * below reach the listener phase.
+     */
+    private final PepperWitnessRepository witnesses = mock(PepperWitnessRepository.class);
+
+    /**
      * Stands in for {@code KafkaListenerEndpointRegistry}, at its phase, recording only whether it was
      * ever started. Starting the real registry would need a container factory and a broker; what
      * matters here is that nothing at that phase gets its turn.
@@ -89,7 +98,7 @@ class ErasureRegisterGuardOrderingTest {
 
     private GenericApplicationContext contextWith(SubjectPseudonym pseudonyms, ListenerRegistryStandIn containers) {
         GenericApplicationContext context = new GenericApplicationContext();
-        context.registerBean("erasureRegisterGuard", ErasureRegisterGuard.class, () -> new ErasureRegisterGuard(register, pseudonyms));
+        context.registerBean("erasureRegisterGuard", ErasureRegisterGuard.class, () -> new ErasureRegisterGuard(register, witnesses, pseudonyms));
         context.registerBean("kafkaListenerEndpointRegistry", ListenerRegistryStandIn.class, () -> containers);
         return context;
     }
@@ -145,7 +154,7 @@ class ErasureRegisterGuardOrderingTest {
     @Test
     @DisplayName("the guard's phase is strictly below the listener registry's, whatever that constant becomes")
     void theGuardIsPhasedBelowTheListenerRegistry() {
-        int guard = new ErasureRegisterGuard(register, UNPEPPERED).getPhase();
+        int guard = new ErasureRegisterGuard(register, witnesses, UNPEPPERED).getPhase();
         assertThat(guard).isLessThan(new KafkaListenerEndpointRegistry().getPhase());
         // And below everything else too: a container factory may be given a custom phase, so being
         // below the registry's default is not on its own enough.

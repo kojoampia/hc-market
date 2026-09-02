@@ -1,9 +1,16 @@
 package net.jojoaddison.service;
 
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Optional;
+import net.jojoaddison.domain.PepperWitness;
 import net.jojoaddison.repository.ErasedSubjectRepository;
+import net.jojoaddison.repository.PepperWitnessRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.SmartLifecycle;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Component;
 
 /**
@@ -30,10 +37,28 @@ import org.springframework.stereotype.Component;
  * <strong>Non-empty register and no pepper: refuse.</strong> There is no safe way to run, and the
  * operator is told which variable and why, at the one moment they are watching a deploy.
  *
- * <p>The same refusal catches the other half of D35's migration note — a pepper that has
- * <em>changed</em> is indistinguishable from one that is absent, as far as the existing rows are
- * concerned, and this only detects the absent case. A changed pepper still needs the register cleared
- * deliberately, which is why D35 records it rather than leaving it to be found.
+ * <h2>Two things a missing pepper is not, and which this now also refuses</h2>
+ *
+ * <p>The rule above detects an <em>absent</em> pepper. Two other states are just as unrecoverable and
+ * were detected by nothing, both recorded in D35 as risks rather than as checks:
+ *
+ * <p><strong>A register written by the pre-D35 derivation.</strong> Those aliases are {@code erased-}
+ * plus 12 hex characters where a peppered one is 16, and nothing this service computes will ever
+ * match one again. Counted by length — see
+ * {@link ErasedSubjectRepository#countAliasesNotOfLength(int)} — because the register deliberately
+ * holds nothing that says which rule produced a row.
+ *
+ * <p><strong>A pepper that has changed.</strong> D35: a rotation is indistinguishable, from the rows'
+ * point of view, from a removal, and "a wrong pepper looks exactly like a right one until something
+ * fails to match". So the first startup that has a pepper records what it produces for a fixed
+ * sentinel input — see {@link PepperWitness} — and every later startup recomputes and compares. The
+ * refusal then lands on the deploy that changed the variable, rather than on a data subject request
+ * months later.
+ *
+ * <p>The witness lives in its own table, and that is not tidiness. A sentinel row in
+ * {@code erased_subject} would make {@code count()} non-zero for ever, which would silently retract
+ * the "empty register and no pepper: start" allowance that lets {@code isErased} answer {@code false}
+ * instead of stalling the consumer.
  *
  * <h2>A {@code SmartLifecycle} at the lowest phase there is, and not an {@code ApplicationRunner}</h2>
  *
@@ -72,20 +97,87 @@ import org.springframework.stereotype.Component;
  * service ({@code application.liquibase.async-start: false}) so {@code erased_subject} exists by then
  * — the same ordering {@code SeedDataLoader} depends on, and the same race if it were ever turned
  * back on.
+ *
+ * <h2>It decides once, per process — so every replica must share the pepper, or none may run</h2>
+ *
+ * <p>This is a startup check, and a startup check is a statement about the process that ran it. Two
+ * messaging instances against one database, one of them started without the pepper, is a state this
+ * cannot prevent: the unpeppered one passed its guard while the register was still empty, and it goes
+ * on answering {@code isErased} = false for everything its peppered sibling erases afterwards,
+ * writing real logins into fresh conversations with no restart to re-trigger anything.
+ *
+ * <p><strong>All replicas of messaging share one pepper, or none of them may run.</strong> The same
+ * is true of booking and catalog, less sharply — they hold no register, so the worst case there is
+ * two aliases for one person rather than an erasure that stops applying. It is stated in
+ * {@code docker-compose.prod.yml} beside the variable as well as here, because the person who scales
+ * a service reads the compose file and not this class.
+ *
+ * <p>Deployments here are single-instance, so this is structural rather than active, and it is
+ * narrowed rather than closed: {@link #assertRegisterStillEmpty()} re-asks the register, at most once
+ * every {@value #RECHECK_SECONDS} seconds and <em>only on the unpeppered path</em>, which is the only
+ * configuration that can be wrong this way. A peppered service — every service in a healthy estate —
+ * runs exactly the queries it ran before. The window between a sibling's erasure and this instance
+ * noticing is bounded by that interval instead of by the next restart.
  */
 @Component
 public class ErasureRegisterGuard implements SmartLifecycle {
 
     private static final Logger LOG = LoggerFactory.getLogger(ErasureRegisterGuard.class);
 
+    /**
+     * The single row's primary key. One witness per service, not one per pepper.
+     *
+     * <p>Public because it is also the name an operator deleting the row has to type, and because the
+     * integration test that pins the witness out of {@code erased_subject} lives in another package.
+     */
+    public static final String WITNESS_ID = "subject-alias";
+
+    /**
+     * The input the witness alias is computed from.
+     *
+     * <p>It contains a NUL character, so no login can produce this alias however it is chosen, and
+     * the witness can never be confused with a real subject. Its exact bytes are part of the stored
+     * state: changing this string is indistinguishable, to the check below, from changing the pepper.
+     */
+    private static final String WITNESS_INPUT = "\0hc-market erasure pepper witness";
+
+    /** How often the unpeppered path may re-ask the register. Never reached by a peppered service. */
+    static final int RECHECK_SECONDS = 30;
+
     private final ErasedSubjectRepository register;
+    private final PepperWitnessRepository witnesses;
     private final SubjectPseudonym pseudonyms;
+    private final long recheckNanos;
 
     private volatile boolean running;
 
-    public ErasureRegisterGuard(ErasedSubjectRepository register, SubjectPseudonym pseudonyms) {
+    /**
+     * When the unpeppered path may next ask the register.
+     *
+     * <p>Seeded with the current reading rather than with {@link Long#MIN_VALUE}: {@code nanoTime} has
+     * an arbitrary origin and is routinely negative, so {@code now - Long.MIN_VALUE} overflows and the
+     * comparison below reads as "not due yet" — which suppressed the very first check, and therefore
+     * every check, on some JVMs and not others.
+     */
+    private volatile long nextRecheckAt = System.nanoTime();
+
+    /** {@code @Autowired} because there are two constructors and Spring may not pick for itself. */
+    @Autowired
+    public ErasureRegisterGuard(ErasedSubjectRepository register, PepperWitnessRepository witnesses, SubjectPseudonym pseudonyms) {
+        this(register, witnesses, pseudonyms, Duration.ofSeconds(RECHECK_SECONDS));
+    }
+
+    /** The interval is injected only so a test can exercise the re-check without waiting for it. */
+    ErasureRegisterGuard(
+        ErasedSubjectRepository register,
+        PepperWitnessRepository witnesses,
+        SubjectPseudonym pseudonyms,
+        Duration recheckInterval
+    ) {
         this.register = register;
+        this.witnesses = witnesses;
         this.pseudonyms = pseudonyms;
+        this.recheckNanos = recheckInterval.toNanos();
     }
 
     /**
@@ -115,21 +207,140 @@ public class ErasureRegisterGuard implements SmartLifecycle {
 
     /**
      * The decision itself, kept separate from the lifecycle plumbing so a unit test can make it without
-     * a container. Throws when the register holds rows and no pepper is configured; returns otherwise.
+     * a container. Throws when this process must not be allowed to touch a login; returns otherwise.
      */
     void check() {
-        if (pseudonyms.isConfigured()) {
+        if (!pseudonyms.isConfigured()) {
+            long erased = register.count();
+            if (erased > 0) {
+                throw new IllegalStateException(
+                    ("this service has erased %d subject(s) and healthconnect.privacy.pepper is not set. " +
+                        "Their aliases cannot be recomputed, so every booking event for an erased customer would " +
+                        "store their real login again. Set HEALTHCONNECT_PRIVACY_PEPPER to the estate's value " +
+                        "(decisions.md D35)").formatted(erased)
+                );
+            }
+            LOG.warn("privacy: no pepper is set, and nobody has been erased yet — the erasure desk will answer 503 (decisions.md D35)");
             return;
         }
+
+        /* The current alias for a fixed input, which answers two questions at once: how long an alias
+           is now, and which pepper this process holds. Derived once — the pepper cannot change while
+           the process runs, because SubjectPseudonym takes it in its constructor. */
+        String witness = currentWitnessAlias();
+        refuseLegacyAliases(witness.length());
+        refuseAChangedPepper(witness);
+    }
+
+    /**
+     * The alias this process's pepper produces for the sentinel.
+     *
+     * <p>Package-private rather than private so a test can build the row a correctly-peppered database
+     * would already hold, without restating the derivation and testing this class against itself.
+     */
+    String currentWitnessAlias() {
+        return pseudonyms.of(WITNESS_INPUT);
+    }
+
+    /**
+     * Refuses a register still holding pre-D35 aliases.
+     *
+     * <p>Those are {@code erased-} plus 12 hex characters against today's 16, and nothing derived from
+     * now on can match one. Every one of them is a person this service erased and can no longer
+     * recognise, so the honest outcome is a service that will not start rather than one that answers
+     * {@code isErased} = false and writes their login back into a fresh conversation.
+     *
+     * <p>There is no automatic migration and there cannot be one: re-keying needs the original logins,
+     * and the whole design turns on nobody having kept them. See D35, "The migration consequence".
+     */
+    private void refuseLegacyAliases(int currentLength) {
+        long stale = register.countAliasesNotOfLength(currentLength);
+        if (stale > 0) {
+            throw new IllegalStateException(
+                ("erased_subject holds %d alias(es) that the current derivation cannot produce — they are " +
+                    "not %d characters long, so they were written before the pepper existed (decisions.md D35). " +
+                    "Nothing can re-key them: that would need the logins they came from, and none were kept. " +
+                    "Read D35's migration section and clear the register deliberately, together with this " +
+                    "service's volumes, before starting again").formatted(stale, currentLength)
+            );
+        }
+    }
+
+    /**
+     * Records what this pepper produces the first time there is one, and compares it ever after.
+     *
+     * <p>The comparison is the only thing in the estate that can tell a rotated pepper from a correct
+     * one. Everything else about a re-peppered service is indistinguishable from a healthy one: it
+     * starts, it serves, the desk works, and each new alias is internally consistent — they simply no
+     * longer match the rows already written, so an erasure quietly stops applying to the people it was
+     * performed on.
+     *
+     * <p>Refuses even when the register is empty, deliberately. The pepper is one value across
+     * booking, catalog and messaging (D35) and erasure is three separate desk calls (WP-07), so
+     * "messaging happens to have erased nobody" says nothing about the other two, which hold aliases
+     * and no register to notice with. The escape is to delete the row, which is a deliberate act with
+     * a name.
+     */
+    private void refuseAChangedPepper(String witness) {
+        Optional<PepperWitness> stored = witnesses.findById(WITNESS_ID);
+        if (stored.isEmpty()) {
+            try {
+                witnesses.save(new PepperWitness(WITNESS_ID, witness, Instant.now()));
+                LOG.info("privacy: recorded this estate's pepper witness — a change to it will now refuse startup (decisions.md D35)");
+                return;
+            } catch (DataIntegrityViolationException raced) {
+                /* Two instances starting together. The loser reads what the winner wrote and compares
+                   against it, which is the same check by a different route — and if they disagree,
+                   that IS the defect this method exists for. */
+                LOG.debug("privacy: another instance recorded the pepper witness first", raced);
+                stored = witnesses.findById(WITNESS_ID);
+            }
+        }
+        String recorded = stored.map(PepperWitness::getSubjectAlias).orElse(null);
+        if (recorded != null && !recorded.equals(witness)) {
+            throw new IllegalStateException(
+                "HEALTHCONNECT_PRIVACY_PEPPER is not the value this database was built with. Every alias " +
+                "already written — here, and in booking and catalog, which share the pepper — was derived " +
+                "from the old one, and nothing re-keys an alias once it is in a row (decisions.md D35). " +
+                "Restore the previous pepper. If this rotation is genuinely intended and you accept that " +
+                "every erased subject becomes unrecognisable, delete the '" +
+                WITNESS_ID +
+                "' row from privacy_pepper_witness first"
+            );
+        }
+    }
+
+    /**
+     * The unpeppered path's standing question — see the replica note in the class javadoc.
+     *
+     * <p>Called by {@code ErasureWorkflow.isErased} only when no pepper is configured, which is the
+     * one configuration in which this instance's startup decision can silently stop being true: a
+     * peppered sibling erasing somebody makes the register non-empty without anything happening in
+     * this process. Throttled to one query per {@value #RECHECK_SECONDS} seconds, so the cost on a
+     * misconfigured instance is negligible and on a correct one is nothing at all — a peppered service
+     * never reaches this method.
+     *
+     * <p>It throws, and that is not the case the guard's "do not stall the consumer" rule protects.
+     * That rule is about an empty register, where {@code false} is the true answer; here the register
+     * has rows, so the alternatives are refusing the event or writing an erased person's real login,
+     * and only one of those is recoverable. The event is not acknowledged, nothing is committed, and
+     * the operator sees the same message the startup guard would have given them.
+     */
+    public void assertRegisterStillEmpty() {
+        long now = System.nanoTime();
+        if (now - nextRecheckAt < 0) {
+            return;
+        }
+        nextRecheckAt = now + recheckNanos;
         long erased = register.count();
         if (erased > 0) {
             throw new IllegalStateException(
-                ("this service has erased %d subject(s) and healthconnect.privacy.pepper is not set. " +
-                    "Their aliases cannot be recomputed, so every booking event for an erased customer would " +
-                    "store their real login again. Set HEALTHCONNECT_PRIVACY_PEPPER to the estate's value " +
-                    "(decisions.md D35)").formatted(erased)
+                ("%d subject(s) have been erased against this database while this instance is running " +
+                    "without healthconnect.privacy.pepper — it cannot recognise them and would store their " +
+                    "real logins. Every replica shares the estate's pepper or none may run (decisions.md D35)").formatted(
+                        erased
+                    )
             );
         }
-        LOG.warn("privacy: no pepper is set, and nobody has been erased yet — the erasure desk will answer 503 (decisions.md D35)");
     }
 }

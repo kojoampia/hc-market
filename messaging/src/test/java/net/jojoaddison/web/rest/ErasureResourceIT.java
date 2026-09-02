@@ -13,8 +13,11 @@ import net.jojoaddison.domain.Message;
 import net.jojoaddison.domain.enumeration.Direction;
 import net.jojoaddison.repository.ConversationRepository;
 import net.jojoaddison.domain.Notification;
+import net.jojoaddison.domain.PepperWitness;
 import net.jojoaddison.repository.MessageRepository;
 import net.jojoaddison.repository.NotificationRepository;
+import net.jojoaddison.repository.PepperWitnessRepository;
+import net.jojoaddison.service.ErasureRegisterGuard;
 import net.jojoaddison.service.ErasureWorkflow;
 import net.jojoaddison.service.SubjectPseudonym;
 import org.junit.jupiter.api.DisplayName;
@@ -68,6 +71,9 @@ class ErasureResourceIT {
 
     @Autowired
     private net.jojoaddison.repository.ErasedSubjectRepository register;
+
+    @Autowired
+    private PepperWitnessRepository witnesses;
 
     private Conversation thread(String reference) {
         return conversations.saveAndFlush(
@@ -240,6 +246,31 @@ class ErasureResourceIT {
             .andExpect(jsonPath("$.conversationsPseudonymised").value(0));
 
         assertThat(register.findById(pseudonyms.of(CUSTOMER)).orElseThrow().getErasedAt()).isEqualTo(first);
+    }
+
+    /**
+     * The pepper witness must not become an answer to "has this service erased anybody" —
+     * {@code decisions.md} D35.
+     *
+     * <p>{@code ErasureRegisterGuard} allows an unpeppered service to start while
+     * {@code erased_subject} is empty, and that allowance is what lets {@code isErased} answer
+     * {@code false} and {@code lockSubject} do nothing instead of throwing and stalling the
+     * booking-event consumer. Put the witness row in {@code erased_subject} and {@code count()} is
+     * never zero again, so the allowance disappears with nothing saying so — the symptom would be a
+     * service refusing to start over a person it never erased.
+     *
+     * <p>This context started peppered, so the guard has written a witness by now: the row exists in
+     * its own table and nothing in the register carries its alias.
+     */
+    @Test
+    @Transactional
+    @DisplayName("the witness row is not an erased subject")
+    void theWitnessIsNotAnErasedSubject() {
+        PepperWitness witness = witnesses.findById(ErasureRegisterGuard.WITNESS_ID).orElseThrow();
+
+        assertThat(witness.getSubjectAlias()).startsWith("erased-");
+        assertThat(register.findById(witness.getSubjectAlias())).isEmpty();
+        assertThat(register.findAll()).noneMatch(s -> s.getPseudonym().equals(witness.getSubjectAlias()));
     }
 
     @Test

@@ -67,6 +67,7 @@ public class ErasureWorkflow {
     private final ErasedSubjectRepository erased;
     private final SubjectLockRepository locks;
     private final SubjectPseudonym pseudonyms;
+    private final ErasureRegisterGuard guard;
 
     public ErasureWorkflow(
         MessagingQueryRepository conversations,
@@ -74,7 +75,8 @@ public class ErasureWorkflow {
         NotificationEraseRepository notifications,
         ErasedSubjectRepository erased,
         SubjectLockRepository locks,
-        SubjectPseudonym pseudonyms
+        SubjectPseudonym pseudonyms,
+        ErasureRegisterGuard guard
     ) {
         this.conversations = conversations;
         this.messages = messages;
@@ -82,6 +84,7 @@ public class ErasureWorkflow {
         this.erased = erased;
         this.locks = locks;
         this.pseudonyms = pseudonyms;
+        this.guard = guard;
     }
 
     /**
@@ -127,10 +130,22 @@ public class ErasureWorkflow {
      * guard got its turn to object. The guard is now phased below every other lifecycle bean for that
      * reason; the claim above holds because nothing can consume an event before it has decided. See
      * {@code ErasureRegisterGuard} and {@code decisions.md} D35.
+     *
+     * <p><strong>And it holds for this process only.</strong> The guard decides once, at startup, so
+     * an unpeppered instance sharing a database with a peppered one passed while the register was
+     * empty and would answer {@code false} for ever afterwards, including about everybody the sibling
+     * erased in the meantime. That is why the unpeppered branch below asks the guard rather than
+     * simply returning: {@code assertRegisterStillEmpty} re-reads the register at most once every
+     * thirty seconds, so the claim is re-established periodically instead of being assumed for the
+     * lifetime of the process. A peppered service never reaches that line and runs no extra query.
      */
     @Transactional(readOnly = true)
     public boolean isErased(String login) {
-        if (login == null || login.isBlank() || !pseudonyms.isConfigured()) {
+        if (login == null || login.isBlank()) {
+            return false;
+        }
+        if (!pseudonyms.isConfigured()) {
+            guard.assertRegisterStillEmpty();
             return false;
         }
         return erased.existsById(pseudonym(login));
