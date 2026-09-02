@@ -1834,9 +1834,29 @@ reconciling either against a payout ledger row for the same person returns nothi
 The rows are all still there, still redacted, still correct as redactions — they have simply stopped
 being recognisable as the same person, which is the one property the alias existed to provide.
 
-On the quality box this costs nothing and has already been handled: everything erased there was test
-data created by the erasure ITs and by hand, and it has been cleared. Dev estates are the same —
-`deploy-dev.sh down --clean` is the answer, not a new pepper.
+On the quality box this costs nothing, and the way it was found is worth recording, because the
+sentence that used to sit here said the register "has been cleared" and that was **false**.
+
+What had been cleared was the *conversation* rows — the logins that erasures had pseudonymised. The
+`erased_subject` register was not touched, and could not have been by that work: the register rows
+were what those same erase calls had just written. Six 19-character pre-D35 aliases were still sitting
+there when D35 first deployed to quality.
+
+So the first quality deploy of the pepper had messaging refuse to start, exactly as designed, and
+crash-loop 29 times against `restart: unless-stopped`. That turned into an unplanned field test of the
+ordering fix above, and it passed: the refusal came through `Failed to start bean
+'erasureRegisterGuard'` → *"cancelling refresh attempt"*, **zero** Kafka listener containers started
+across the whole log, and **zero** rows were written to `conversation` or `notification` across all 29
+restarts. Under the old `ApplicationRunner` each of those restarts would have handed the consumer
+another slice of backlog to process unpeppered.
+
+The remedy was the documented one — `./quality/startup.sh --local --clean`, which drops the volumes
+and re-seeds — and quality now runs on the new derivation with an empty register and a witness
+recorded. Dev estates are the same: `deploy-dev.sh down --clean`, not a new pepper.
+
+The lesson is narrower than "check your claims". Clearing *data about* erased people is not the same
+operation as clearing the *register of who was erased*, and the two live in different tables for good
+reasons. A migration note that conflates them reads as done when it is not.
 
 **If real erasures existed, this change could not be made this way.** There would be three options and
 none of them is good. Re-keying is impossible by construction: it would need the original logins, and
