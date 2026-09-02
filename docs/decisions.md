@@ -2906,3 +2906,115 @@ for the fan-out authority, and it was not answered here.
 
 **The pre-D39 erasures on quality are not back-filled.** Same position D35 took: there is no way to
 reconstruct a record of an act nobody kept a record of, and on quality it is test data.
+
+---
+
+## D40 — An erasure is not a permanent verdict on a person
+
+**Built 2026-09-02. Backlog WP-08, and NEW-3 beside it.** D37 answered the question; this is what was
+built against that answer and the one thing the answer had to be read carefully to get right.
+
+### The estate disagreed with itself about whether somebody existed
+
+Erasure never touched the gateway's user store — deliberately, D37: deactivating the account would
+have made "erased" a tidier state at the cost of locking out somebody who has chosen to come back. So
+an erased person can log in and book again, and until now messaging's `erased_subject` register was
+**unconditional**. The consumer saw the login registered as erased and pseudonymised the new booking's
+thread and the professional's bell row, while booking and catalog stored the real login on the same
+booking. One booking, two names for the same customer, and nothing red anywhere.
+
+**The register is now scoped: it applies to what existed when the erasure ran, and to nothing after
+it.** A booking raised before `erasedAt` stays pseudonymised for ever; a booking raised after it is a
+new relationship and is stored under the real login.
+
+### The whole package is which clock decides that, and the obvious one is wrong
+
+D37's first wording said to compare **the event's** timestamp against `erasedAt`. It says something
+nobody intended. A booking that is still open at the moment of an erasure goes on emitting events
+afterwards — accepted, completed, cancelled, reviewed — and every one of those is stamped after
+`erasedAt`. Under an event-timestamp rule each would be written under the customer's real login and
+real name, putting an erased person back into the professional's thread list and bell menu **one
+lifecycle step at a time**, and silently breaking D36's guarantee that its residual does not grow.
+
+So the comparison is against the **booking's** age. D37 offered two ways to get it and preferred the
+explicit one; that is what was built.
+
+**`bookingRaisedAt` on the outbox payload is `Booking.raisedAt`** — when the booking was *created*,
+written once by `CustomerBookingResource` and never moved by any transition, which is exactly what
+makes it a truthful proxy for "this booking existed before the erasure". It is a property of the
+booking rather than of the message carrying it, so every event about one booking reports the same
+instant however late in the lifecycle it is published. The envelope's `occurredAt` is the other fact
+and keeps its own meaning; the two are now visibly different things in the same event rather than one
+thing somebody could mistake for the other.
+
+The alternative D37 allowed — "treat a `bookingRef` messaging already holds rows for as predating the
+erasure" — needs no new field and infers the answer from the absence of a row, which is the same shape
+as the reasoning that produced D36's hidden residual: messaging's rows are deduped by professional and
+do not enumerate a customer's bookings. Stating the fact is cheaper than deducing it and does not
+depend on a second invariant staying true.
+
+### Absent means covered, and that is load-bearing
+
+A null or unparseable `bookingRaisedAt` answers exactly as the unconditional check it replaced. Events
+published before the field existed are still in outboxes and on the broker, and an event that cannot
+say how old its booking is must not be the thing that decides an identifier is safe to store. The
+failure directions are not symmetric: pseudonymising a booking that need not have been costs one
+thread its customer's name, while failing to pseudonymise writes a real login into a row nothing will
+ever revisit. `BookingEventConsumerIT.aLateEventCannotResurrectAnErasedCustomer` — D32's test, which
+sends no such field — is now the pin for this as well.
+
+### It made no new reader of a register, which is the question D39 attached to this package
+
+D39 left booking's and catalog's `erased_subject` write-only and said the first thing WP-08 must do is
+decide whether the service it turns into a reader needs messaging's `ErasureRegisterGuard`, because an
+unpeppered service consulting a register answers "not erased" about people it erased. **The reader is
+still messaging, and messaging has had that guard since D35.** Booking only publishes a column it
+already stores; it reads nothing. So the two new registers stay write-only and stay unguarded, and the
+condition D39 attached is discharged rather than deferred.
+
+### NEW-3 — a privacy test that could not fail, and the leak it was hiding
+
+`ErasureFanout.record` scrubs the login out of a receipt before storing it, because a failed leg's
+message carries the URL it was thrown against and that URL contains the login. The reasoning was right
+and the substitution was there. **`theRecordNeverNamesThePerson` passed with the scrub deleted
+outright** — confirmed twice, once when the defect was reported and once here.
+
+It drove the failure with a **read timeout**, whose message is `Error while extracting response for
+type [java.util.Map<…>] and content type [application/octet-stream]` — no URL, therefore no login,
+therefore nothing to scrub and nothing to catch. It was green because the leak is absent on that path,
+not because the scrub closed it. A privacy test that cannot fail is worse than no test: it is filed as
+evidence.
+
+It now drives a **refused connection** — messaging's stub is stopped for that one test and rebound
+afterwards — which arrives as a `ResourceAccessException` reading `I/O error on POST request for
+"http://…/api/desk/customers/<login>/erase"`. With the scrub removed it fails, quoting the whole
+receipt with `ama.tobeforgotten` sitting in it.
+
+**And driving a real URL settled the hypothesis NEW-3 parked beside itself, which turned out to be a
+real defect.** The scrub was `receipt.replace(login, alias)`, and the string it hunts is inside a URL:
+the gateway's `LOGIN_REGEX` permits `? ^ ` { | }` and `@` in an email-shaped login, and `RestClient`
+strictly encodes a URI variable, so `ama?forgot@example.com` reached the kept row as
+`ama%3Fforgot%40example.com` while the substitution looked for the unencoded spelling and matched
+nothing. Nobody could demonstrate it before, for the same reason the test above could not fail: with a
+read timeout there is no URL in the message at all. One fixture fixed both.
+
+The scrub now matches **every spelling of every character** — each character as itself or as its
+percent-encoding, hex case-insensitively. Deliberately not "call the same encoder the client called":
+`RestClient` and `UriUtils.encodePathSegment` disagree about `@` alone, and pinning a privacy control
+to a library's encoding choice is a second thing to keep in step. What it does not handle is a login
+needing JSON escaping — a quote or a backslash — which `LOGIN_REGEX` does not permit and which is
+written down beside the code rather than left to be rediscovered.
+
+### What this does not do
+
+**Not run against the quality box.** Same sentence D38 and D39 end on. Two things here are worth a
+live run in particular: an erased customer really booking again through the estate, and a receipt
+filed from a leg that is genuinely down rather than one whose socket a test closed.
+
+**Nothing back-fills.** A booking raised before an erasure that has already been consumed under the
+old unconditional rule stays as it is, which is correct — the old rule and the new one agree about
+every booking that predates the erasure, and that is all the rows there are.
+
+**Catalog was not touched and did not need to be.** It runs no Kafka consumer, so it has no path by
+which a stale event can write a login back; its `erased_subject` remains the write-only record D39
+made it.

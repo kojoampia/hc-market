@@ -176,6 +176,11 @@ public class ErasureWorkflow {
     /**
      * Whether this login has already been erased. The only question the register can answer.
      *
+     * <p><strong>Not the question the consumer asks — {@link #covers(String, Instant)} is.</strong>
+     * Since D37 an erasure is scoped to what existed when it ran, so "has this person ever been
+     * erased" no longer decides what may be stored about them; it is kept because it is the honest
+     * unscoped question and because the desk's tests ask it.
+     *
      * <p><strong>Answers {@code false} when no pepper is configured</strong>, rather than throwing and
      * taking the booking-event consumer down with it. That is safe here and only here: without a
      * pepper an erasure refuses with 503, so nothing can have been recorded under this configuration,
@@ -210,6 +215,68 @@ public class ErasureWorkflow {
             return false;
         }
         return erased.existsById(pseudonym(login));
+    }
+
+    /**
+     * Whether an erasure of this person covers a booking raised at this instant — {@code decisions.md}
+     * D37, backlog WP-08.
+     *
+     * <h2>The register is not a permanent verdict on a person</h2>
+     *
+     * <p>Erasure does not touch the gateway's user store, so an erased customer can log in and book
+     * again, and D37 says what that is: <em>a booking made after the erasure is stored under the real
+     * login, and everything that existed before it stays pseudonymised.</em> They have chosen a new
+     * relationship, and the erasure covered what existed when it ran. Without this, messaging
+     * pseudonymised the new booking's thread while booking and catalog stored the real login — the
+     * estate disagreeing with itself about whether somebody exists.
+     *
+     * <h2>The comparison is against the BOOKING's age, never the event's</h2>
+     *
+     * <p>{@code bookingRaisedAt} is {@code Booking.raisedAt}, put on the outbox payload by booking's
+     * {@code OutboxRecorder} — when the booking was <em>created</em>, written once and never moved by a
+     * transition. The envelope's {@code occurredAt} is a different fact and would give a different and
+     * wrong answer: a booking that was still open when the erasure ran keeps emitting events afterwards
+     * — accepted, completed, cancelled — every one of them stamped after {@code erasedAt}, so comparing
+     * the event's own timestamp would write the customer's real login and name back onto an erased
+     * booking one lifecycle step at a time. It would also break D36's guarantee that its residual does
+     * not grow, which rests on exactly those later events staying pseudonymised.
+     *
+     * <h2>Absent, blank or unreadable means covered</h2>
+     *
+     * <p>A null {@code bookingRaisedAt} answers the same as the unconditional check this replaced.
+     * That matters twice over. Events published before this field existed are still in outboxes and on
+     * the broker, and the events this consumer handles that are not about one booking's creation carry
+     * whatever booking sent; in both cases the safe direction is the erasure, because failing to
+     * pseudonymise puts a real login into a row that nothing will ever revisit, while pseudonymising a
+     * booking that need not have been costs one thread its customer's name.
+     *
+     * <p>Equality counts as covered for the same reason — a booking raised in the same instant as the
+     * erasure is not somebody choosing to come back.
+     *
+     * <h2>This makes no new reader of a register, which is what WP-08 had to check</h2>
+     *
+     * <p>D39 left booking's and catalog's {@code erased_subject} registers written and never read, and
+     * noted that whichever service WP-08 turned into a reader would have to decide whether it needed
+     * messaging's {@code ErasureRegisterGuard} — an unpeppered service consulting a register answers
+     * "not erased" about people it erased, which is the failure D35 exists to prevent. It is still
+     * messaging, and messaging has had that guard since D35: booking only publishes a column it already
+     * stores and reads nothing. So the two write-only registers stay write-only and stay unguarded.
+     */
+    @Transactional(readOnly = true)
+    public boolean covers(String login, Instant bookingRaisedAt) {
+        if (login == null || login.isBlank()) {
+            return false;
+        }
+        if (!pseudonyms.isConfigured()) {
+            // Same reasoning as isErased: unpeppered, the register is provably empty, and the guard
+            // re-establishes that rather than assuming it for the life of the process.
+            guard.assertRegisterStillEmpty();
+            return false;
+        }
+        return erased
+            .findById(pseudonym(login))
+            .filter(subject -> bookingRaisedAt == null || !bookingRaisedAt.isAfter(subject.getErasedAt()))
+            .isPresent();
     }
 
     /**

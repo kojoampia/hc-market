@@ -109,10 +109,37 @@ public class OutboxRecorder {
      * <p>Carries what a consumer needs to act without calling back — the notification messaging
      * writes needs the names and the time, and a callback would make the consumer depend on booking
      * being up at exactly the moment it is catching up after booking was down.
+     *
+     * <h2>{@code bookingRaisedAt}, and why it is the booking's age rather than the event's</h2>
+     *
+     * <p><strong>{@code decisions.md} D37 / WP-08.</strong> An erased customer is not locked out, so
+     * they can log in and book again — and a booking made <em>after</em> their erasure is a new
+     * relationship that belongs under their real login, while everything that existed before it stays
+     * pseudonymised. Messaging is the service that has to decide that, one event at a time, and the
+     * only clock it can decide with is the one this payload gives it.
+     *
+     * <p>So the field is {@link Booking#getRaisedAt()} — <em>when the booking was created</em>, written
+     * once by {@code CustomerBookingResource} and never touched again by any transition. That is what
+     * makes it a truthful proxy for "this booking existed before the erasure": it is a property of the
+     * booking rather than of the message carrying it, so every event about one booking reports the same
+     * instant however late in the lifecycle it is published.
+     *
+     * <p>The envelope's {@code occurredAt} is <strong>not</strong> that, and putting it here under this
+     * name would be the defect D37's first wording described: a booking still open when the erasure ran
+     * goes on emitting events — accepted, completed, cancelled — every one of them stamped after
+     * {@code erasedAt}, so an event-timestamp rule would restore the customer's real login and name one
+     * lifecycle step at a time, and would silently break D36's guarantee that its residual does not
+     * grow. Send the booking's age; the event's age is already on the envelope and means something
+     * else.
+     *
+     * <p>Written as an ISO-8601 string rather than left to Jackson, for {@code scheduledTime}'s reason
+     * one line down: the wire format of this payload should not depend on how a consumer's mapper is
+     * configured to render an {@code Instant}. {@code Instant.parse} reads it back.
      */
     private String payload(Booking b) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("bookingRef", b.getReference());
+        payload.put("bookingRaisedAt", b.getRaisedAt() == null ? null : b.getRaisedAt().toString());
         payload.put("professionalRef", b.getProfessionalRef());
         payload.put("professionalLogin", b.getProfessionalLogin());
         payload.put("customerLogin", b.getCustomerLogin());

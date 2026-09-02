@@ -24,7 +24,7 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **WP-05** | Erasure: the notifications a repeat booking hides | DONE (unmerged) | D36 |
 | **WP-06** | Erasure: a durable record in booking and catalog | DONE (unmerged) | D39 |
 | **WP-07** | Erasure: orchestration across the three services | DONE (unmerged) | D38 |
-| **WP-08** | Erasure: what an erased person who keeps their account is | READY | unblocked by D37; substrate built by D39 — scope by the **booking's** age against `erasedAt` |
+| **WP-08** | Erasure: what an erased person who keeps their account is | DONE (unmerged) | D37, built as D40 |
 | **WP-09** | Erasure: retention periods and lawful basis | BLOCKED (narrowed) | counsel — the two coded judgements are ratified by D37 |
 | **WP-10** | Payments: the seam can complete a lifecycle | READY | — |
 | **WP-11** | Payments: asynchronous confirmation | READY | — |
@@ -37,6 +37,7 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **WP-18** | Production `infranet` alias check | CLOSED | D37 — the rename made it moot |
 | **NEW-1** | A retry reported rows re-written, not rows that held data | DONE (unmerged) | D39 |
 | **NEW-2** | Catalog's receipt omitted what it deleted | DONE (unmerged) | D39 |
+| **NEW-3** | A privacy test that could not fail, over a leak that was real | DONE (unmerged) | D40 |
 
 ---
 
@@ -288,32 +289,40 @@ This is the defect D31 fixed in messaging's empty conversation, in a service nob
 lesson recorded against it is not about counting: a defect found in one of three copy-pasted services
 is a defect reported against all three until each has been looked at.
 
-## WP-08 — Erasure: the still-active account · READY (answered by D37)
+## WP-08 — Erasure: the still-active account · DONE (unmerged)
 
-Erasure does not touch the gateway's user store, so an erased person can log in and book again.
-Messaging would pseudonymise the new booking's thread while booking and catalog store the real login —
-the estate disagreeing with itself about whether someone exists.
+D37, built as D40. Erasure does not touch the gateway's user store, so an erased person can log in and
+book again. Messaging pseudonymised the new booking's thread while booking and catalog stored the real
+login — the estate disagreeing with itself about whether someone exists.
 
-**Answered: a booking made after the erasure is stored under the real login; everything that existed
+**Built: a booking made after the erasure is stored under the real login; everything that existed
 before it stays pseudonymised.** Someone who books again has chosen a new relationship, and the
 erasure covered what existed when it ran. Account deactivation was the alternative and was not taken:
 it would have made "erased" a tidier state at the cost of locking out somebody who came back.
 
-**The substrate exists as of D39.** Booking and catalog now hold an `erased_subject` register with an
-`erasedAt`, matching messaging's, so the comparison this package needs — the booking's own `raisedAt`
-against the time of the erasure — can be made in the service that holds both. D39 also states the
-condition attached to it: those two registers are written and never read today, which is why neither
-has messaging's `ErasureRegisterGuard`. **The first thing WP-08 does is decide whether the service it
-makes into a reader needs that guard**, because an unpeppered service that consults a register answers
-"not erased" about people it erased, which is the failure D35 exists to prevent.
-
-**Scope it by the BOOKING's age, not the event's** — D37's first wording said to compare the event's
+**Scoped by the BOOKING's age, not the event's** — D37's first wording said to compare the event's
 timestamp against `erasedAt`, and a review caught that this means something nobody intended. Every
 later event on a booking already open when the erasure ran is timestamped after `erasedAt`, so an
 event-timestamp rule puts the customer's real login and name back one lifecycle step at a time, and
-breaks D36's guarantee that its residual does not grow. Either carry the booking's `raisedAt` in the
-outbox payload and compare that, or treat a `bookingRef` messaging already holds rows for as
-predating the erasure. The first states the fact rather than deducing it.
+breaks D36's guarantee that its residual does not grow. Of D37's two permitted implementations the
+explicit one was taken: booking's `OutboxRecorder` now puts `bookingRaisedAt` — `Booking.raisedAt`,
+written once at creation and never moved by a transition — on every booking event's payload, and
+messaging's `ErasureWorkflow.covers(login, bookingRaisedAt)` compares it to the register's `erasedAt`.
+An absent or unreadable value counts as covered, so every event published before the field existed
+behaves exactly as it did.
+
+**The condition D39 attached is discharged rather than deferred.** D39 said the first thing this
+package does is decide whether the service it turns into a register *reader* needs messaging's
+`ErasureRegisterGuard`. It turns none: the reader is still messaging, which has had that guard since
+D35, and booking merely publishes a column it already stores. Booking's and catalog's `erased_subject`
+stay write-only and stay unguarded.
+
+Confirmed red first, four ways: the returning customer's thread came back as `erased-…` instead of the
+login against the old code, and the pre-existing-booking case came back as the login instead of
+`erased-…` when the comparison was switched to the event's own timestamp.
+
+**Not done:** no run against the quality box — an erased customer really booking again through a live
+estate is the thing no test here can stand in for.
 
 ## WP-09 — Erasure: retention and lawful basis · BLOCKED
 
@@ -400,7 +409,7 @@ from a workstation. Largely defused — the production compose services were ren
 explicit container names, so a collision is impossible whatever else is on that network — but the
 question itself is still unanswered on the host.
 
-## NEW-3 — the receipt scrub is real, but its test cannot fail · READY
+## NEW-3 — the receipt scrub is real, but its test cannot fail · DONE (unmerged)
 
 `ErasureFanout.record` replaces the login with the alias before storing the receipt, because a failed
 leg's message can name the URL it was thrown from — `/api/desk/customers/<login>/erase` — and that row
@@ -417,15 +426,22 @@ for type [java.util.Map<java.lang.String, java.lang.Object>] and content type [a
 — no URL, so no login, so nothing for the scrub to remove and nothing for the assertion to catch. The
 test passes because the leak is absent on that path, not because the scrub closed it.
 
-The fix is to drive a failure whose message does carry the URL — a connection-level
-`ResourceAccessException` reads `I/O error on POST request for "http://…/customers/<login>/erase"` —
-and confirm the test fails with the scrub removed before keeping it. Until then, whether the scrub
-works on the path that motivated it is untested in either direction.
+**Fixed as D40.** The test now drives a **refused** connection — messaging's stub is stopped for that
+one test and rebound afterwards — which arrives as a `ResourceAccessException` reading `I/O error on
+POST request for "http://…/customers/<login>/erase"`. Confirmed both ways before being kept: with the
+scrub deleted the new fixture fails, quoting the whole stored receipt with `ama.tobeforgotten` in it,
+and with the scrub deleted the *old* read-timeout fixture still passes — which is the defect, restated
+as a measurement.
 
-A related question worth settling at the same time: the gateway's `LOGIN_REGEX` permits `? ^ ` { | }`,
-which a URI path segment percent-encodes, so a message quoting the encoded URL would defeat a raw
-substitution. I could not demonstrate that either — the same absent-URL problem — so it is a
-hypothesis, not a finding, and it should be settled by the same test rather than by a speculative fix.
+**And the related question was settled by that same test, and it was a real defect rather than a
+hypothesis.** The gateway's `LOGIN_REGEX` permits `? ^ ` { | }` and `@`, and `RestClient` strictly
+encodes a URI variable, so `ama?forgot@example.com` reached the kept row as
+`ama%3Fforgot%40example.com` while `receipt.replace(login, alias)` looked for the unencoded spelling
+and matched nothing. Red first with `not to contain: "ama%3Fforgot"`. The scrub now matches every
+character as itself or as its percent-encoding, hex case-insensitively, rather than calling whichever
+encoder the client happened to use — `RestClient` and `UriUtils.encodePathSegment` already disagree
+about `@`. A login needing JSON escaping is still not handled; `LOGIN_REGEX` permits none, and the
+limit is written beside the code.
 
 ---
 
