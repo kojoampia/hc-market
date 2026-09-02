@@ -303,8 +303,14 @@ services:
       # POST /api/reviews verifies the booking before accepting a review. The CONTAINER name, not
       # `booking` — that short name belongs to the quality stack on hcnet as well as to this one.
       HEALTHCONNECT_BOOKING_BASE_URL: http://hc-market-dev-booking:8080
+    # Long form — see the note in quality/compose.yml. The short syntax is split on colons and
+    # an uninterpolated ${VAR:-default} source carries two of its own, so the file fails to
+    # parse under `docker compose config --no-interpolate` on the CI runner's compose.
     volumes:
-      - ${SEED_HOST_PATH:-../demo}:/app/seed:ro
+      - type: bind
+        source: ${SEED_HOST_PATH:-../demo}
+        target: /app/seed
+        read_only: true
     depends_on:
       catalog-db: { condition: service_healthy }
 
@@ -334,8 +340,14 @@ services:
       HEALTHCONNECT_SEED_ENABLED: 'true'
       HEALTHCONNECT_SEED_FILE: /app/seed/seed-data.json
       HEALTHCONNECT_SEED_ANCHOR_DATES: ${HEALTHCONNECT_SEED_ANCHOR_DATES:-false}
+    # Long form — see the note in quality/compose.yml. The short syntax is split on colons and
+    # an uninterpolated ${VAR:-default} source carries two of its own, so the file fails to
+    # parse under `docker compose config --no-interpolate` on the CI runner's compose.
     volumes:
-      - ${SEED_HOST_PATH:-../demo}:/app/seed:ro
+      - type: bind
+        source: ${SEED_HOST_PATH:-../demo}
+        target: /app/seed
+        read_only: true
     depends_on:
       booking-db: { condition: service_healthy }
 
@@ -357,8 +369,14 @@ services:
       HEALTHCONNECT_SEED_ENABLED: 'true'
       HEALTHCONNECT_SEED_FILE: /app/seed/seed-data.json
       HEALTHCONNECT_SEED_ANCHOR_DATES: ${HEALTHCONNECT_SEED_ANCHOR_DATES:-false}
+    # Long form — see the note in quality/compose.yml. The short syntax is split on colons and
+    # an uninterpolated ${VAR:-default} source carries two of its own, so the file fails to
+    # parse under `docker compose config --no-interpolate` on the CI runner's compose.
     volumes:
-      - ${SEED_HOST_PATH:-../demo}:/app/seed:ro
+      - type: bind
+        source: ${SEED_HOST_PATH:-../demo}
+        target: /app/seed
+        read_only: true
     depends_on:
       messaging-db: { condition: service_healthy }
 
@@ -383,8 +401,14 @@ services:
       HEALTHCONNECT_SEED_ENABLED: 'true'
       HEALTHCONNECT_SEED_FILE: /app/seed/seed-data.json
       HEALTHCONNECT_SEED_ANCHOR_DATES: ${HEALTHCONNECT_SEED_ANCHOR_DATES:-false}
+    # Long form — see the note in quality/compose.yml. The short syntax is split on colons and
+    # an uninterpolated ${VAR:-default} source carries two of its own, so the file fails to
+    # parse under `docker compose config --no-interpolate` on the CI runner's compose.
     volumes:
-      - ${SEED_HOST_PATH:-../demo}:/app/seed:ro
+      - type: bind
+        source: ${SEED_HOST_PATH:-../demo}
+        target: /app/seed
+        read_only: true
     depends_on:
       payout-db: { condition: service_healthy }
 
