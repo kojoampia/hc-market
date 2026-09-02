@@ -187,6 +187,10 @@ services:
       # nothing noticed: the ITs mock CatalogClient, and no health check exercises a write.
       HEALTHCONNECT_CATALOG_BASE_URL: http://${HC_CATALOG_HOST:-hc-market-catalog}:8080
       HEALTHCONNECT_PAYOUT_BASE_URL: http://${HC_PAYOUT_HOST:-hc-market-payout}:8080
+      # The erasure fan-out — decisions.md D38. Booking calls messaging's and catalog's desk endpoints
+      # with a token it mints from the estate signing key, so a complete erasure is one operator
+      # action rather than three that each look successful on their own.
+      HEALTHCONNECT_MESSAGING_BASE_URL: http://${HC_MESSAGING_HOST:-hc-market-messaging}:8080
       SPRING_DATASOURCE_URL: ${HC_BOOKING_DB_URL:?booking datasource url is required}
       SPRING_DATASOURCE_USERNAME: ${HC_BOOKING_DB_USER:-healthconnectBooking}
       SPRING_DATASOURCE_PASSWORD: ${HC_BOOKING_DB_PASSWORD:?booking datasource password is required}

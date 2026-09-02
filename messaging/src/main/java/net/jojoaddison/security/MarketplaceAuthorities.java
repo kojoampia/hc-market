@@ -17,5 +17,20 @@ public final class MarketplaceAuthorities {
      */
     public static final String BROKERAGE = "ROLE_BROKERAGE";
 
+    /**
+     * Erase one named customer, and nothing else — decisions.md D37, D38.
+     *
+     * <p>Held by no person and granted by no login. It arrives on one credential only: the
+     * short-lived token booking mints when an operator asks for a complete erasure. See
+     * {@link ErasureFanoutToken}.
+     *
+     * <p>It reaches {@code ErasureResource} and nothing else here. That matters more in this service
+     * than in the other two, because the fan-out call carries a payload — the customer's booking
+     * references, which booking is authoritative for — and a payload is a thing a caller supplies.
+     * The references decide which notifications get redacted, so a wider authority on this endpoint
+     * would be a way to redact rows by naming somebody else's bookings.
+     */
+    public static final String CUSTOMER_ERASURE = "ROLE_CUSTOMER_ERASURE";
+
     private MarketplaceAuthorities() {}
 }

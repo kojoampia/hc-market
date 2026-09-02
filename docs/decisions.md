@@ -2327,6 +2327,15 @@ pending at the instant of erasure, and it closes for everything that happens aft
 properly needs messaging to know about bookings it has no thread for, which is a schema change and
 belongs with WP-06's durable record rather than here.
 
+**Corrected by D38, and not in the way this section predicted.** It did not need a schema change: the
+fan-out hands messaging the customer's booking references, which booking has been authoritative for
+all along, so `/bookings/<ref>` for the pending booking enters the link set without messaging learning
+anything durable. And the residual did not disappear — it acquired a boundary. The references arrive
+in a *payload*, and a direct desk call sends none, so `POST .../erase` still cannot reach that row
+while `POST .../erase-everywhere` can. The paragraph above is therefore true of the single-service
+endpoint and false of the fan-out, which is a much more useful thing to be able to say than "one row
+somewhere". See D38.
+
 ### The receipt
 
 `notificationsRedacted` means exactly what it meant before — notifications in somebody else's list
@@ -2362,6 +2371,16 @@ regression test. The day WP-06/WP-07 gives messaging the booking references it h
 that test goes red, and going red is the point: it forces this section to be corrected in the same
 commit rather than being left describing an estate that has moved on. The null-`deepLink` branch of
 the filter is pinned beside it, for rows that demonstrably exist.
+
+**WP-07 arrived and that test stayed green, which is worth being uncomfortable about for a moment
+before accepting it.** The prediction assumed the references would reach messaging by some route this
+test would travel; they reach it in a request body, and this test sends none. So the mechanism it was
+built to catch did change and it correctly did not fire, because the behaviour it pins is still the
+behaviour of the endpoint it calls. It now has a partner —
+`theResidualIsClosedWhenTheFanOutSuppliesTheReferences`, the same fixture with the references
+supplied, confirmed red beforehand with the same `expected:<2> but was:<1>` this section opens with —
+and the pair is what states the boundary. A test that pins a gap has to name the path it pins it on;
+this one did not, and that is the general lesson rather than anything about erasure.
 
 **The union's completeness rests on two invariants nothing enforced.** The first is that every
 notification about a person carries `/bookings/<ref>`. The column is nullable and `MessagingSeeder`
@@ -2415,7 +2434,9 @@ on something no test in this repository guards.
 
 ### The WP-07 fan-out should carry the booking references
 
-Stated here as a design note rather than built, because WP-07 is a package of its own.
+Stated here as a design note rather than built, because WP-07 is a package of its own. **Built as
+written, on 2026-09-02 — see D38.** The note did its job: the payload carries the references from the
+first version rather than being a login that somebody widens later.
 
 Closing the pending residual properly is described above as a WP-06 schema change — messaging learning
 about bookings it holds no thread for. Once WP-07's service-token fan-out exists, there is a cheaper
@@ -2429,3 +2450,240 @@ residual disappears rather than being narrowed.
 The reason to write this down before WP-07 is built rather than after: the payload's shape is decided
 once, and a fan-out that carries only a login will be extended later by whoever discovers this section
 a third time. This union has already been declared complete twice.
+
+---
+
+## D38 — Erasure fans out, on a key this estate already shares
+
+Built 2026-09-02, from D37's answer to WP-07 and D36's design note about the payload.
+
+### The defect, which is not that erasure was hard
+
+A complete erasure has always been three calls — booking for the visit address and the notes,
+messaging for the message bodies and the bell menus, catalog for the review authorship and the saved
+list. D24 recorded plainly that there was no orchestrator and that calling one without the others
+leaves a partially erased customer. Recording it is not the same as preventing it, and the reason
+this particular gap is worse than an ordinary missing feature is that **each of the three receipts
+looks exactly like a complete erasure**. They carry a pseudonym and plausible non-zero counts, they
+return 200, and there is no artefact anywhere in the estate whose absence would tell anybody that the
+third call was never made. An operator who erased two services out of three and filed the receipt
+would have done everything the system asked of them and would be wrong.
+
+That is the same shape as every erasure defect this repository has found: the estate is green, the
+endpoint does what it says, and the only thing wrong is a number nobody would think to question.
+
+### Why it could not be built until now, and the premise that was wrong
+
+D28 states it in as many words: there is no service-to-service authentication in this estate, every
+service only validates tokens, and booking holds none of its own. That is why catalog's
+`/internal/professionals/{ref}/login` is protected by a gateway route predicate rather than by a
+credential, and why D28's "rejected" list has a service-to-service token on it as correct in
+principle and not worth inventing for one field.
+
+The question put to the architect proposed sequencing the erasure from the `hc-admin` desk, on the
+stated grounds that the admin console already holds a staff token all three services accept.
+**That was false, and D37 says so.** The platform-wide signing secret in
+`~/webroot/01-healthconnect/.env` is shared by hc-admin, hc-patient and hc-professional — that
+sharing is the entire mechanism behind cross-stack routing between those three — and hc-market is not
+in that set. It carries its own `JWT_BASE64_SECRET`, generated per estate, persisted at
+`quality/.jwt-secret` on the quality box and required independently by all three of its compose
+files. An hc-admin token presented here fails signature validation. The recommendation was built on a
+misreading of the workspace's own key arrangement, which is worth leaving written down: the fix was
+not to build the recommended thing more carefully, it was to notice that it could not have worked.
+
+What hc-market does have is a key its own five services already share with each other. So one of them
+mints a token and the others accept it exactly as they accept a user's.
+
+### Booking orchestrates, and it is not an arbitrary choice
+
+`POST /api/desk/customers/{login}/erase-everywhere` lives in booking because booking is the only
+service that holds the fact the other two need. D36 established that messaging cannot find a
+notification about a booking it has no thread for, and that booking holds the authoritative list of a
+customer's bookings with `booking.customer_login` indexed for exactly that question since D34. Putting
+the orchestrator anywhere else would have meant asking booking for the list and then passing it on,
+which is the same call with an extra hop in it. Booking also already reaches catalog over
+`HEALTHCONNECT_CATALOG_BASE_URL`, so two of the three legs were already addressable.
+
+Booking erases itself first, in its own transaction, and then makes the two HTTP calls outside it.
+First because that leg cannot fail for a network reason and because it holds the home address, so a
+fan-out that dies half way has already removed the worst of it; outside the transaction because
+holding a database transaction open across two remote services would trade this problem for a worse
+one.
+
+### `ROLE_CUSTOMER_ERASURE`, named for what it permits
+
+D37 was explicit that the minted token must carry a narrow, named authority used by nothing else, and
+the reasoning behind that instruction is worth restating because it is easy to misread as security
+theatre. Any service holding the estate key can already mint a token for any subject with any
+authority, `ROLE_BROKERAGE` included. That was true before this was built and it is true after; a
+shared symmetric key has always been an estate-wide capability rather than a per-service one. What
+changes when a fan-out is built is not the blast radius, it is whether that capability becomes an
+*interface*. A fan-out that routinely presented `ROLE_BROKERAGE` would turn "a compromised service
+could mint anything" into "every service is expected to mint anything", and the difference between
+those two sentences is most of what a security review is about.
+
+So the authority is `ROLE_CUSTOMER_ERASURE`, and it is named for the permission rather than for the
+mechanism. "Fan-out" would have described how the call arrives; whoever next meets the constant on an
+endpoint needs to know what it lets through. It appears on exactly one endpoint per service — the
+erasure desk in messaging and in catalog — and on nothing else. In particular it does **not** appear
+on booking's own erasure endpoints: the authority permits being a *leg*, booking is never one, and
+granting it there would let a fan-out token trigger a fan-out.
+
+Three narrowings, and each is enforced by the side that receives the token rather than promised by the
+side that issues it, because a promise made by the minting service is worth exactly as much as the
+minting service:
+
+**One named customer.** The token carries an `erasure_subject` claim, and a caller holding only the
+fan-out authority may erase that login and no other. Without it the authority would mean "erase
+anybody", which is `ROLE_BROKERAGE` with a different name and no audit trail. With it, a copy of a
+token taken off the wire buys an erasure of the person it was already being used to erase.
+
+**Thirty seconds.** The receiving side compares `iat` against `exp` rather than trusting the issuer to
+have been careful. This stops nothing an attacker would do — anyone holding the key mints their own —
+and that is not what it is for. It stops the ordinary decay: a later caller, another service, or a
+rewritten minter reusing a user token's twenty-four hours for a fan-out, which would be accepted
+estate-wide for a day and would look exactly like the real thing.
+
+**A subject that is not a person.** `sub` is `system:erasure-fanout` rather than the operator's login.
+This one is easy to get wrong in the direction that feels more helpful: putting the operator's login
+in the subject would improve the audit trail in the downstream logs, and would also make a leaked
+fan-out token a bearer credential for a real person on every `/api/**` path in the estate that merely
+asks to be authenticated — which is most of them. The audit trail lives in booking's log instead,
+where the orchestration actually happened, and the token is worth nothing anywhere it is presented
+except the one endpoint that reads its claims.
+
+`ErasureFanoutToken` states that contract in a file copied **byte-identically into all three
+services**, the same treatment `SubjectPseudonym` gets and for the same reason: there is no shared
+library here, and a claim name that drifts by one character between the minting service and the
+accepting one turns every fan-out into a 403 that reads as a permissions problem in the service doing
+the refusing rather than as a typo in the service doing the asking. CI now diffs it alongside the
+alias derivation. Booking's copy uses only the constants and its check method is unreachable there,
+which is deliberate — the three files can then be compared as bytes rather than as behaviour.
+
+### Partial failure: report, do not retry, do not refuse
+
+Three options, and only one of them is honest.
+
+**Refusing** — rolling back booking's own erasure when a remote leg fails, so that the whole thing is
+all-or-nothing — sounds like the safe answer and is not. It delays a redaction the data subject has
+already asked for on the strength of an outage somewhere else, and it cannot deliver what it promises
+anyway: if catalog is the leg that fails, messaging has already erased and there is no un-erasing it.
+
+**Retrying** in process would make the endpoint's latency unbounded and would hide a genuine outage
+behind a slow success, which is the failure shape this repository keeps finding by other means.
+
+**Reporting** leaves the decision with the person who already owns it. So every leg is attempted
+whatever the earlier ones did — refusing to try catalog because messaging was unreachable would leave
+*more* of the customer's data in place, not less — and the receipt names each service, its status and
+its counts. A leg that failed reports no counts at all rather than zeroes, because a zero and an
+unknown must not read the same on the sheet that gets filed against a data subject request.
+
+**The status code is 200 only when every leg erased, and 502 with the same receipt otherwise.** 207
+Multi-Status describes the situation more precisely and was rejected on a failure-mode argument rather
+than a semantic one. The whole defect being fixed is that a partial erasure looks like a success, so
+the cost of the two mistakes is not symmetric: a caller that reads only the status and mis-reads a 502
+retries an idempotent operation, and a caller that mis-reads a 207 files a partial erasure as a
+complete one. The operator's instruction on a 502 is to call it again, and to escalate if the same leg
+fails twice.
+
+The failure messages carry the root cause's type, and that detail came out of getting it wrong first.
+The client originally distinguished "could not be reached" from "answered something unreadable" by
+catching `ResourceAccessException` for the first — which is wrong, because a **read timeout**, the
+single most likely real failure here, comes back from the message converter as a plain
+`RestClientException`. The confident branch would have told an operator that messaging had answered
+when it had not said a word. The two are now one branch with the root cause's class name in the
+message, so `SocketTimeoutException`, `ConnectException` and a Jackson exception are distinguishable
+without this service pretending to a classification it gets wrong.
+
+### Idempotent, and the part of that which is not obvious
+
+Erasure requests arrive by email and get forwarded, so they get retried; after a 502 the operator is
+told to call again. The second run reports zeroes from every service and that is the honest answer.
+
+The part worth stating is where the booking references come from. They are read back **under the
+alias, after the local erasure**, not collected from the rows on the way past. Collecting them during
+the sweep reads better and breaks the retry: a second run finds nothing under the original login, so
+the list would be empty, and the retry that exists precisely because messaging failed the first time
+would call messaging with no references at all — quietly reopening D36's residual on the one path most
+likely to hit it, with a receipt reporting a clean second pass. Reading by alias returns the same list
+every time.
+
+### D36's residual: closed on one path, and now bounded rather than vague
+
+D36 ends with a design note asking that the fan-out carry the customer's booking references, on the
+grounds that the payload's shape is decided once and a fan-out carrying only a login would be extended
+later by whoever rediscovered the section a third time. It does carry them, and messaging folds
+`/bookings/<ref>` for each into the same link set it already builds from the customer's conversations
+and the customer's own notifications.
+
+**But the residual did not disappear; it acquired a boundary, and that is a better outcome than the
+one D36 predicted.** D36 expected `ErasureResourceIT.theResidualIsOneRowForAPendingBooking` to go red
+the day messaging was handed the references. It did not, because the references arrive in a *payload*
+and a direct desk call sends none — so `POST .../erase` still cannot reach a notification about a
+booking it has no thread for, and `POST .../erase-everywhere` can. The residual is now exactly the gap
+between those two endpoints, which is a far more useful thing to know than "one row somewhere", and
+the two tests are only meaningful as a pair: the old one pins the desk path, and
+`theResidualIsClosedWhenTheFanOutSuppliesTheReferences` pins the fan-out path with the same fixture.
+The second was confirmed red before the change with `notificationsRedacted expected:<2> but was:<1>`,
+which is byte for byte the signature D36 recorded when it found the defect in the first place.
+
+The references are supplied by a caller, so it is worth being precise about what they can do. They
+only ever cause a notification body to be replaced — never a row to be read back, never a row to be
+created, never a login disclosed — so the worst a wrong reference achieves is blanking a message that
+should have kept its text. That is why the authority carrying them is scoped to one named customer:
+not because a disclosure is possible, but because a redaction of somebody else's row would be.
+
+### A defect found by building this, which nothing else could have found
+
+D35 requires `HEALTHCONNECT_PRIVACY_PEPPER` to be identical in booking, catalog and messaging, and
+injects it three times from three compose entries. Nothing verified it. If the three ever diverge,
+all three services keep working perfectly, every erasure succeeds, every receipt is plausible — and
+one person acquires three aliases whose rows can never be reconciled again, with no way back, because
+a pseudonym does not invert. It is the same class of silent divergence D35's own CI check was written
+to prevent for the derivation, with the value left unguarded.
+
+The fan-out is the first thing in this estate that ever sees two services' aliases for one person in
+the same place, so it compares them. A leg that erased under a different alias is reported as
+`ALIAS_MISMATCH` rather than folded into `FAILED`, because the two need different things from an
+operator: a failure wants a retry, and a mismatch wants the deployment corrected and then every row
+already written under the wrong alias reconciled by hand. The counts are kept on a mismatched leg,
+since the rows really were redacted.
+
+### Deployment, and the variable that has to be in three places
+
+Booking now reaches messaging, so `HEALTHCONNECT_MESSAGING_BASE_URL` is set in
+`docker-compose.dev.yml`, `docker-compose.prod.yml` and `quality/compose.yml`, and CI's
+cross-service base URL check has been widened to demand it in all three. That check exists because
+`HEALTHCONNECT_CATALOG_BASE_URL` was unset in every environment for a week while `POST /api/bookings`
+503'd, in silence, with nothing red. This one would fail more loudly — an unset base URL makes every
+fan-out report messaging as unreachable, in the receipt, which is the entire purpose of the receipt —
+but the check costs nothing and the class of mistake is identical.
+
+The quality entry uses the **container name** `hc-market-quality-messaging` rather than the short
+service name its two neighbours use. `hcnet` is shared with three sibling products and hc-market's dev
+stack, compose publishes a service name as a DNS alias on every network it joins, and a duplicate does
+not error — Docker answers with whichever it likes. The two neighbouring lines predate that rule and
+changing them is a separate change with its own risk; a new line has no reason to be written the risky
+way.
+
+### What this does not do, stated rather than left to be found
+
+**No test in this repository proves the handshake across two services.** Booking's suite stands
+messaging and catalog up as loopback stubs and reads the token off the wire, which proves what booking
+sends; messaging's and catalog's suites mint the same token with their own encoder and prove what they
+will accept. Those two halves meeting is a property of a shared secret and of five standalone Maven
+projects that cannot be assembled in one test context. D28 recorded the same limitation and reached
+the same conclusion, which is that the wire is checked against a running estate. **This has not yet
+been run against the quality box**, and until it has, the claim that a real booking container can
+reach a real messaging container with a token it minted is reasoned rather than measured.
+
+**The receipt still evaporates.** WP-06 asks for a durable record of an erasure in booking and catalog,
+and D36's design note suggested WP-07 might make it unnecessary. It does not — it makes the case
+stronger. What used to evaporate was three HTTP responses; what evaporates now is one HTTP response
+that is the only account of which legs ran, for an irreversible action with legal significance, in
+precisely the case (a partial fan-out) where an operator most needs to be able to prove what happened.
+The half of WP-06 that the fan-out did retire is its justification-by-residual; the durable record is
+untouched and is now the whole of that package.
+
+**Nothing here touches the gateway's user store.** An erased person can still log in and book again,
+which is WP-08 and is unaffected by this in either direction.

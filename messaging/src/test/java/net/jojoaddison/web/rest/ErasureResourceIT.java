@@ -25,6 +25,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
@@ -314,10 +315,18 @@ class ErasureResourceIT {
      * and no customer-keyed notification points at it and the union cannot reach it.
      *
      * <p>It is here because three READY packages touch this mechanism and a residual nobody asserts
-     * is indistinguishable from a residual nobody knows about. When WP-06/WP-07 gives messaging the
-     * booking references it holds no thread for, this test goes red — and that is the intended
-     * signal: delete the assertion, and correct D36's "the one row this still cannot reach" in the
-     * same commit rather than leaving the prose describing an estate that has moved on.
+     * is indistinguishable from a residual nobody knows about.
+     *
+     * <p><strong>WP-07 closed it, and this test did not go red — which is the part worth reading.</strong>
+     * D36 predicted that the day messaging was given the booking references it holds no thread for,
+     * this assertion would fail and force the prose to be corrected in the same commit. What actually
+     * happened is that the references arrive in a <em>payload</em>, and this test sends none: it is a
+     * direct desk call, and a direct desk call still cannot reach the pending row because nothing has
+     * told it the booking exists. So the residual did not disappear, it acquired a boundary — it is
+     * now exactly the gap between {@code POST .../erase} and {@code POST .../erase-everywhere}, which
+     * is a much more useful thing to know than "one row somewhere". The other side of that boundary is
+     * {@link #theResidualIsClosedWhenTheFanOutSuppliesTheReferences}, and the two tests are only
+     * meaningful as a pair.
      */
     @Test
     @Transactional
@@ -354,6 +363,108 @@ class ErasureResourceIT {
 
         // The residual, stated as an assertion so it cannot drift out of the documentation quietly.
         assertThat(notifications.findById(theirsPending.getId()).orElseThrow().getBody()).contains("Ama Tobeforgotten");
+    }
+
+    /**
+     * <strong>The other half of the residual — {@code decisions.md} D36's design note, built as D38.</strong>
+     *
+     * <p>Exactly the fixture above, with the one thing this service could never have: the customer's
+     * booking references, as booking knows them. Booking is authoritative for the list —
+     * {@code booking.customer_login} has been indexed for the question since D34 — and the erasure
+     * fan-out hands it over, so {@code /bookings/b-pending} enters the link set even though no
+     * conversation and no customer-keyed notification in this service points at it.
+     *
+     * <p>Confirmed red before the change, against the resource that took no body:
+     * {@code notificationsRedacted expected:<2> but was:<1>}, with the pending row still reading
+     * "Ama Tobeforgotten asked for a strength session".
+     *
+     * <p>The bystander is here for the reason every erasure fixture has carried one since D34, and it
+     * matters more in this test than in any of the others: the references are <em>supplied by the
+     * caller</em>, so this is the one path where a wrong reference could redact somebody else's row.
+     * {@code b-other} is not in the payload and must not be touched.
+     */
+    @Test
+    @Transactional
+    @WithMockUser(username = "desk", authorities = "ROLE_BROKERAGE")
+    @DisplayName("the pending booking's row is reached when the fan-out supplies the references")
+    void theResidualIsClosedWhenTheFanOutSuppliesTheReferences() throws Exception {
+        sharedThread("b-first");
+
+        Notification mineFirst = notification(CUSTOMER, "Booking confirmed", "Your home visit on 12 Sep at 10:00 is confirmed.", "b-first");
+        Notification theirsFirst = notification(
+            PRO,
+            "Booking requested",
+            "Ama Tobeforgotten asked for a home visit on 12 Sep at 10:00.",
+            "b-first"
+        );
+        Notification theirsPending = notification(
+            PRO,
+            "Booking requested",
+            "Ama Tobeforgotten asked for a strength session on 26 Sep at 09:00.",
+            "b-pending"
+        );
+        Notification aboutSomeoneElse = notification(
+            PRO,
+            "Booking requested",
+            "Kojo Stillhere asked for a home visit on 30 Sep at 14:00.",
+            "b-other"
+        );
+
+        mockMvc
+            .perform(
+                post(URL, CUSTOMER)
+                    .with(csrf())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"bookingReferences\":[\"b-first\",\"b-pending\"]}")
+            )
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.notificationsReKeyed").value(1))
+            // Two, where the desk call above reaches one.
+            .andExpect(jsonPath("$.notificationsRedacted").value(2));
+
+        assertThat(notifications.findById(mineFirst.getId()).orElseThrow().getRecipientLogin()).isEqualTo(pseudonyms.of(CUSTOMER));
+        for (Notification about : List.of(theirsFirst, theirsPending)) {
+            Notification after = notifications.findById(about.getId()).orElseThrow();
+            assertThat(after.getBody()).doesNotContain("Ama").doesNotContain("Tobeforgotten");
+            // The row survives; it is a real event in the professional's history.
+            assertThat(after.getRecipientLogin()).isEqualTo(PRO);
+        }
+
+        assertThat(notifications.findById(aboutSomeoneElse.getId()).orElseThrow().getBody()).contains("Kojo Stillhere");
+    }
+
+    /**
+     * A reference for a booking this service has never heard of is a deep link that matches no row.
+     *
+     * <p>Worth pinning because the payload is the first thing in this feature that a caller supplies,
+     * and "unknown reference" is the ordinary case rather than an attack: booking holds bookings that
+     * never produced a notification here at all. It must be a no-op, not an error and not a widened
+     * sweep.
+     */
+    @Test
+    @Transactional
+    @WithMockUser(username = "desk", authorities = "ROLE_BROKERAGE")
+    @DisplayName("a booking reference this service holds nothing for changes nothing")
+    void anUnknownReferenceIsANoOp() throws Exception {
+        sharedThread("b-first");
+        Notification aboutSomeoneElse = notification(
+            PRO,
+            "Booking requested",
+            "Kojo Stillhere asked for a home visit on 30 Sep at 14:00.",
+            "b-other"
+        );
+
+        mockMvc
+            .perform(
+                post(URL, CUSTOMER)
+                    .with(csrf())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"bookingReferences\":[\"b-nothing-here\",\"\",\"   \"]}")
+            )
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.notificationsRedacted").value(0));
+
+        assertThat(notifications.findById(aboutSomeoneElse.getId()).orElseThrow().getBody()).contains("Kojo Stillhere");
     }
 
     /**

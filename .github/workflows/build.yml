@@ -270,7 +270,8 @@ jobs:
         run: |
           fail=0
           for f in quality/compose.yml deploy/docker/docker-compose.dev.yml deploy/docker/docker-compose.prod.yml; do
-            for v in HEALTHCONNECT_CATALOG_BASE_URL HEALTHCONNECT_PAYOUT_BASE_URL HEALTHCONNECT_BOOKING_BASE_URL; do
+            for v in HEALTHCONNECT_CATALOG_BASE_URL HEALTHCONNECT_PAYOUT_BASE_URL HEALTHCONNECT_BOOKING_BASE_URL \
+                     HEALTHCONNECT_MESSAGING_BASE_URL; do
               if ! grep -q "$v" "$f"; then
                 echo "::error file=$f::$v is not set — the service falls back to a hostname that resolves nowhere, and the call fails closed at run time with nothing red in CI."
                 fail=1
@@ -293,13 +294,23 @@ jobs:
       # Byte-identical, not merely equivalent: the file carries the reasoning as well as the code, and
       # a comment that is true in one service and stale in another is its own defect. The known-answer
       # test is checked the same way and pins the derivation itself — see SubjectPseudonymUnitTest.
-      - name: The three copies of the subject-alias derivation must be identical
+      #
+      # ErasureFanoutToken is here for the same reason and a different failure — decisions.md D38. It
+      # states the contract of the token booking mints so that one operator action erases a customer
+      # in all three: the claim naming the customer, the subject, and the thirty-second lifetime.
+      # Booking writes those claims and catalog and messaging check them, so a claim name that drifts
+      # by one character turns every fan-out into a 403 that reads as a permissions problem in the
+      # service that is refusing rather than as a typo in the service that is asking. Booking's copy
+      # uses only the constants and its check method is unreachable there on purpose, so that all
+      # three files can be compared as bytes rather than as behaviour.
+      - name: The shared erasure files must be identical in all three services
         run: |
           fail=0
           for f in src/main/java/net/jojoaddison/service/SubjectPseudonym.java \
-                   src/test/java/net/jojoaddison/service/SubjectPseudonymUnitTest.java; do
+                   src/test/java/net/jojoaddison/service/SubjectPseudonymUnitTest.java \
+                   src/main/java/net/jojoaddison/security/ErasureFanoutToken.java; do
             if ! diff -u "booking/$f" "catalog/$f" || ! diff -u "booking/$f" "messaging/$f"; then
-              echo "::error::$f differs between services — booking, catalog and messaging must derive the same alias. See decisions.md D35."
+              echo "::error::$f differs between services — booking, catalog and messaging must agree. See decisions.md D35 and D38."
               fail=1
             else
               echo "ok   $f — identical in all three"

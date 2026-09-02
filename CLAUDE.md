@@ -451,9 +451,15 @@ the same as no broker — four disjoint logs, every cross-product event path con
 exercised, every stack green while it was wrong.
 
 **Gateway routes match `/services/<service>/api/**`, not `/**`, and that is a security control.**
-Catalog's `/internal/professionals/{ref}/login` answers an unauthenticated caller — booking holds no
-credential of its own, because this estate has no service-to-service authentication — so the only
-thing keeping it off the internet is that no route matches it (`decisions.md` D28). Widen those four
+Catalog's `/internal/professionals/{ref}/login` answers an unauthenticated caller, so the only thing
+keeping it off the internet is that no route matches it (`decisions.md` D28).
+
+This used to read "booking holds no credential of its own, because this estate has no
+service-to-service authentication". **That stopped being true with D38**: booking mints a short-lived
+token signed with the estate key to fan an erasure out to messaging and catalog. It changes nothing
+about `/internal/**` — that endpoint still authenticates nobody, and the route predicates are still
+the only thing keeping it private — but the reason is now "it was never given one" rather than "no
+such thing exists here". Widen those four
 predicates in any of the three compose files and the endpoint is public. Nothing is lost by the
 narrowing: every consumer in the repository already goes through `/api/**`.
 
