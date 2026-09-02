@@ -154,14 +154,15 @@ jobs:
       # on the quality box rather than here is the whole thing the quality box exists to avoid.
       - name: Compose files must be valid
         run: |
-          JWT_BASE64_SECRET=ci-placeholder \
+          JWT_BASE64_SECRET=ci-placeholder HC_PRIVACY_PEPPER=ci-placeholder \
             docker compose -f deploy/docker/docker-compose.dev.yml config >/dev/null
           # TAG is normally supplied by quality/startup.sh, which is the only supported entry
           # point. It is required rather than defaulted on purpose — an image tag that silently
           # falls back to `latest` is how a quality box ends up running something nobody chose.
-          JWT_BASE64_SECRET=ci-placeholder TAG=ci \
+          JWT_BASE64_SECRET=ci-placeholder HC_PRIVACY_PEPPER=ci-placeholder TAG=ci \
             docker compose -f quality/compose.yml config >/dev/null
           env HC_IMAGE_PREFIX=example HC_IMAGE_SEP=/ HC_TAG=ci JWT_BASE64_SECRET=ci-placeholder \
+              HC_PRIVACY_PEPPER=ci-placeholder \
               HC_GATEWAY_MONGODB_URI=mongodb://x/y \
               HC_CATALOG_DB_URL=jdbc:x HC_CATALOG_DB_PASSWORD=x \
               HC_BOOKING_DB_URL=jdbc:x HC_BOOKING_DB_PASSWORD=x \
@@ -174,7 +175,8 @@ jobs:
       - name: Shell scripts must parse
         run: |
           for s in deploy/deploy-dev.sh deploy/deploy-prod.sh deploy/sync-appendices.sh \
-                   deploy/verify-cycle.sh deploy/verify-outbox-recovery.sh quality/startup.sh; do
+                   deploy/verify-cycle.sh deploy/verify-outbox-recovery.sh quality/startup.sh \
+                   .github/checks/*.sh; do
             bash -n "$s" && echo "ok   $s"
           done
 
@@ -277,6 +279,60 @@ jobs:
             [ "$fail" = 0 ] && echo "ok   $f"
           done
           exit "$fail"
+
+      # The erased-subject alias is derived by THREE copies of the same file, one per service, because
+      # there is no shared library here — five standalone Maven projects with no aggregator pom.
+      #
+      # All three must produce the same alias for the same person: messaging's erased_subject register
+      # is keyed by it, and reconciling a redacted booking against a payout ledger row depends on
+      # booking and messaging agreeing on the string. Three copy-pasted implementations drifting apart
+      # is silent in the worst way — each service keeps working, each redacts its own rows correctly,
+      # and only a cross-service lookup comes back empty, months later, with nothing having failed at
+      # the time. That is exactly how the three static methods this replaced were living.
+      #
+      # Byte-identical, not merely equivalent: the file carries the reasoning as well as the code, and
+      # a comment that is true in one service and stale in another is its own defect. The known-answer
+      # test is checked the same way and pins the derivation itself — see SubjectPseudonymUnitTest.
+      - name: The three copies of the subject-alias derivation must be identical
+        run: |
+          fail=0
+          for f in src/main/java/net/jojoaddison/service/SubjectPseudonym.java \
+                   src/test/java/net/jojoaddison/service/SubjectPseudonymUnitTest.java; do
+            if ! diff -u "booking/$f" "catalog/$f" || ! diff -u "booking/$f" "messaging/$f"; then
+              echo "::error::$f differs between services — booking, catalog and messaging must derive the same alias. See decisions.md D35."
+              fail=1
+            else
+              echo "ok   $f — identical in all three"
+            fi
+          done
+          exit "$fail"
+
+      # And the pepper that keys it must be injected everywhere the three services run, and committed
+      # nowhere a real deployment reads. Same shape as the JWT signing key, same reason: this
+      # repository is public, so a default that works is a secret that does not.
+      #
+      # Absent, erasure answers 503 rather than writing a re-identifiable alias — so the failure this
+      # guards is not a crash, it is a desk that has quietly stopped being able to do the one thing it
+      # exists for, on a stack that is green everywhere else.
+      # Both halves of this were two greps here until 2026-09-02, and both could pass on a broken
+      # state. The first was per FILE — it matched the string anywhere, so moving messaging off the
+      # shared YAML anchor (which is how the per-service DISCOVERY_HOSTNAME overrides already work)
+      # left it unpeppered while the other four kept the check green. The second matched only the
+      # nested `    pepper: v` spelling, and Spring reads the flat `healthconnect.privacy.pepper: v`
+      # just as happily — a line beginning with `h`, which the leading-whitespace anchor could not
+      # see. Now a script, so it can be run and watched to fail; the test beside it builds both bad
+      # states and asserts the old greps passed on them.
+      - name: The erasure pepper must be required per service and committed in no runtime profile
+        run: ./.github/checks/pepper-wiring.sh
+
+      - name: …and that check must fail on the states its predecessors passed
+        run: ./.github/checks/pepper-wiring-test.sh
+
+      # quality/startup.sh took an environment-provided pepper without ever writing it down, so the
+      # next run without the variable generated a fresh one against databases keyed to the old.
+      # ErasureRegisterGuard cannot see that: it detects an absent pepper, not a changed one.
+      - name: quality/startup.sh must not be able to mint a second pepper
+        run: ./.github/checks/quality-pepper-persistence-test.sh
 
       # The image name is written in THREE places: image_for() in deploy-prod.sh, that script's own
       # header, and spec §12's channel table. They disagreed for weeks — header and spec said

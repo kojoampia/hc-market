@@ -1731,13 +1731,312 @@ the three databases can hash candidates offline, re-identify every `erased-…` 
 `erased_subject` whether a named person was erased. The fix is an HMAC with a per-estate pepper —
 identical across the three services, injected like `JWT_BASE64_SECRET`, never committed. It is cheap
 now and much less so once real erasures exist, because changing the derivation re-keys nothing that
-has already been written.
+has already been written. **Done — D35**, taken while it was still cheap, for exactly that reason.
 
 **Nothing says what happens when an erased person keeps using their account.** Erasure does not touch
 the gateway's user store, so they can log in and book again. Messaging would then pseudonymise the new
 booking's thread while booking and catalog store the real login — the estate disagreeing with itself
 about whether someone exists. Either erasure implies account deactivation as a documented fourth desk
 step, or the register must only apply to events older than `erasedAt`. Both are product decisions.
+
+---
+
+## D35 — An alias anybody could reverse
+
+D34 recorded this against itself rather than fixing it, and named the reason to fix it early: changing
+the derivation re-keys nothing that has already been written. That is now the whole cost of this
+entry, and it is paid once. It gets more expensive every day the estate runs, and it becomes
+impossible the day somebody who cannot be asked twice has been erased.
+
+### What was wrong
+
+The alias was `erased-<first 12 hex of SHA-256(login)>`, computed by three copy-pasted static methods,
+and its javadoc claimed it was "not reversible without already knowing the login". Every word of that
+is true and the conclusion does not follow. The logins in this estate are `ama.mensah` — a first name,
+a dot, a surname — so the candidate space is a phone book, not a key space. Anyone holding a dump of
+booking, catalog or messaging can hash a list of names offline and match the results against the
+stored aliases, and every redacted row is a name again.
+
+Against messaging's `erased_subject` register the same computation answers a worse question. The
+register exists precisely so that no login is stored anywhere (D32), and the whole of that reasoning
+rests on the hash being one-way in practice rather than only in principle. Hash a name, look it up,
+and the register tells you whether that named person exercised a right to erasure — which is a fact
+about them that erasure was asked to remove, sitting in the table built to protect it.
+
+Nothing about this was exotic. It is the reason password storage stopped being a bare digest decades
+ago, arriving in a place nobody was thinking about passwords.
+
+### What it is now
+
+`erased-<first 16 hex of HMAC-SHA256(pepper, login)>`, in `SubjectPseudonym` — one new top-level file,
+**copied verbatim into booking, catalog and messaging**, with CI asserting the three copies are
+byte-identical. The pepper is a per-estate secret injected exactly as `JWT_BASE64_SECRET` is: absent
+from `application-dev.yml` and `application-prod.yml`, required by all three compose files,
+generated and persisted by `quality/startup.sh` beside the signing key, and committed only in
+`src/test/resources`, where the value is a fixture with the words "not a real one" in it. This
+repository is public; a pepper it contains is not a pepper.
+
+The three copies matter more than they look. There is no shared library here — five standalone Maven
+projects, no aggregator pom (D6) — so the derivation is duplicated, and duplicated code that must
+agree, with nothing checking that it does, is what the three static methods already were. If they
+drift, nothing fails: each service goes on redacting its own rows correctly and only a cross-service
+lookup comes back empty, months later, with everything green at the time. So CI diffs the files, and
+`SubjectPseudonymUnitTest` — also byte-identical in the three — pins the alias for a fixed login under
+a fixed pepper against a value computed with `openssl`, so a change made carefully in all three at
+once is still caught.
+
+The alias widened from 12 hex characters to 16 in the same change. The column is already
+`varchar(64)`, so it was free, and doing it separately would have meant paying the migration cost
+below twice.
+
+The advisory-lock key messaging derives for the erasure race (D34) comes off the same MAC, so there is
+one derivation in one file rather than two that could disagree. It is not a secrecy question — the
+number never leaves the transaction — but the alternative was a second copy of a hash.
+
+### The decision that took the longest: what happens with no pepper
+
+Two bad options. A service that refuses to start turns a missing privacy secret into an outage of
+booking, catalog and messaging — the marketplace stops taking bookings, the professional's inbox goes
+dark — over a value that one desk endpoint and one consumer branch read. A service that quietly falls
+back to an unpeppered digest writes a re-identifiable alias into rows in place, against a filed
+receipt saying the person was erased, and there is no way back from that: nothing re-keys an alias
+once it is written.
+
+**The service starts and the derivation refuses.** `SubjectPseudonym.of` throws, the erasure desk
+answers `503` naming the variable, and an unpeppered alias is impossible rather than merely unlikely.
+The failure lands on the one operation that must not proceed, at the moment somebody makes it, instead
+of on everyone. The alternative had a predictable ending too: an operator facing a dead estate puts a
+plausible value in to get it up, and a pepper chosen under that pressure is the committed-default
+failure arriving by a different road.
+
+Startup logs an `ERROR` rather than a warning, because nothing else about an unpeppered service looks
+wrong — it serves, it is healthy, and it stays that way until a data subject request arrives, which
+may be months.
+
+**Messaging has one narrow exception**, and it is the interesting half. It is the only service holding
+a register of who has been erased, and its booking-event consumer asks that register before it writes
+a login. Run it unpeppered and `isErased` answers "no" for everybody — *including people it erased* —
+so the next lagging `booking.requested` writes an erased customer's real login into a fresh
+conversation and a fresh notification. That is byte for byte the failure D32 exists to close, arriving
+through a configuration mistake instead of a race, and it is silent. So `ErasureRegisterGuard` refuses
+to start messaging when the register has rows and no pepper is set. Empty register and no pepper: it
+starts, because nothing can have been erased and there is nothing to get wrong. That is why
+`isErased` and `lockSubject` answer `false` and do nothing rather than throwing — by the time either
+runs unpeppered, the register is provably empty and `false` is the true answer rather than a guess.
+
+### The migration consequence, which is the part to read twice
+
+**Changing the derivation re-keys nothing.** Aliases already written stay in their rows exactly as
+they were, computed under the old rule, and everything recomputed from now on produces a different
+string. So an `erased_subject` lookup for a previously-erased subject misses; a redacted booking in
+booking and a redacted conversation in messaging that used to share an alias no longer do; and
+reconciling either against a payout ledger row for the same person returns nothing. Nothing errors.
+The rows are all still there, still redacted, still correct as redactions — they have simply stopped
+being recognisable as the same person, which is the one property the alias existed to provide.
+
+On the quality box this costs nothing and has already been handled: everything erased there was test
+data created by the erasure ITs and by hand, and it has been cleared. Dev estates are the same —
+`deploy-dev.sh down --clean` is the answer, not a new pepper.
+
+**If real erasures existed, this change could not be made this way.** There would be three options and
+none of them is good. Re-keying is impossible by construction: it would need the original logins, and
+the entire point of the design is that nobody kept them. Carrying both derivations — try the new
+alias, fall back to the old — keeps the lookups working and keeps every old alias exactly as
+reversible as it was, which is the defect. Accepting the break means the estate can no longer connect
+one erased person's rows across services, which is not a data loss but is a permanent loss of the
+ability to answer "show me everything you still hold about this data subject" — a question that only
+gets asked about people who have already asked once.
+
+That is the entire argument for doing it now, and it is worth stating as a rule rather than as a note
+about this one change: **the derivation is effectively immutable from the first real erasure onwards**.
+The same applies to the pepper itself. Rotating it is indistinguishable, from the rows' point of view,
+from removing it — and `ErasureRegisterGuard` catches only the removal, because a wrong pepper looks
+exactly like a right one until something fails to match. So the pepper belongs with the platform's
+long-lived secrets, not in a per-deploy `.env` that `deploy-prod.sh` regenerates, and the compose file
+says so in the comment beside it.
+
+### The guard ran, and it ran too late
+
+A code review of the above found that `ErasureRegisterGuard` was correct about everything except
+*when*, and being late is the whole of it: in the one scenario the guard exists for, the damage it
+was written to prevent had already been committed to the database by the time it threw.
+
+It was an `ApplicationRunner`. Spring starts `SmartLifecycle` beans inside `finishRefresh()`, which
+is part of the context refresh, and `KafkaListenerEndpointRegistry` is one of those beans — starting
+it starts `BookingEventConsumer`'s listener container, whose `autoStartup` resolves true. Boot's
+`ApplicationRunner`s are invoked from `callRunners()`, *after* `refreshContext()` has returned. So on
+an unpeppered messaging service with rows in `erased_subject`, the real sequence was: the context
+refreshes; the container starts and begins draining its backlog; `storable()` runs with no pepper, so
+`lockSubject` is a no-op and `isErased` answers `false` about people this service had itself erased,
+and their real logins go into fresh conversations and fresh notifications, each committing in its own
+transaction; and only then does the guard get its turn and kill the process.
+
+`restart: unless-stopped` in both `quality/compose.yml` and `docker-compose.prod.yml` makes that a
+loop rather than a single incident. Every restart grants the consumer another slice of the backlog
+before the guard objects again, so a deep backlog is processed unpeppered a chunk at a time, at the
+speed of the restart. **And the operator sees exactly what the design intended them to see** — a
+service crash-looping on a missing variable, naming the variable — with nothing anywhere to suggest
+that rows were written on the way past. A guard whose failure mode is indistinguishable from its
+success mode is worse than no guard, because it is trusted.
+
+An `ApplicationRunner` was the wrong hook because it answers "is the application ready to be
+declared started", and the question here is "may anything in this process touch a person's login".
+The second is decided during the refresh, not after it, and there is no ordering relationship between
+`callRunners()` and anything the refresh already did. The javadoc's reasoning — "a failure aborts
+startup and closes the context rather than logging into a service that then serves" — was true and
+answered the wrong question: the consumer is not serving, it is consuming, and it had started.
+
+The guard is now a `SmartLifecycle` at `Integer.MIN_VALUE`, throwing from `start()`. Lifecycle beans
+start in ascending phase order, so nothing else in the context can precede it — including the
+listener registry at `ContainerProperties.DEFAULT_PHASE`, `Integer.MAX_VALUE - 100` — and an
+exception out of `start()` propagates through `finishRefresh()` and aborts the refresh, so the
+context is destroyed exactly as before. Phasing it below *everything* rather than merely below the
+registry's default is deliberate: a container factory can be given a custom phase, and a guard that
+is only conditionally first is not a guard.
+
+The alternative the review put forward — the count in an early bean's `afterPropertiesSet` with
+`@DependsOn("liquibase")` — would also have beaten the container, and was not taken for two reasons.
+It buys the ordering at the price of a hard-coded bean name, and the phase gives the Liquibase
+guarantee for nothing: every singleton, Liquibase's included, is instantiated in
+`finishBeanFactoryInitialization()`, before any lifecycle bean starts. Liquibase is synchronous here
+(`application.liquibase.async-start: false`), so `erased_subject` exists by then — the same ordering
+`SeedDataLoader` depends on, and the same race if it were ever turned back on.
+
+Semantics are unchanged, and that is the point: empty register and no pepper still starts, because
+that is what lets `isErased` answer `false` and `lockSubject` do nothing instead of throwing and
+stalling the consumer over a variable one desk endpoint reads. Only the moment of the decision moved.
+
+`ErasureWorkflow.isErased`'s javadoc claimed that by the time that line runs unpeppered "the register
+is provably empty". That was false for as long as the defect existed — the register was provably
+empty only *after* the runner had run, and `isErased` could and did run first. It now says so, and
+says what makes the claim true.
+
+**The test is the part worth keeping.** `ErasureRegisterGuardUnitTest` passed throughout, because it
+tests the decision and nothing can see the timing from there; a replacement that only re-asserted
+"the guard throws when the register is non-empty" would have passed while the defect was live too.
+`ErasureRegisterGuardOrderingTest` refreshes a plain `GenericApplicationContext` holding the guard and
+a stand-in registered at a real `KafkaListenerEndpointRegistry`'s phase, and asserts the stand-in was
+never started — taking the phase from an actual instance rather than from a copy of the constant, so
+an upstream change cannot leave the test passing against a guard that no longer runs first. It was
+confirmed to **fail against the old implementation** before being kept, and it failed in the
+informative way: under an `ApplicationRunner` the refresh completes without throwing at all. Its
+sibling assertions cover the two states that must still start, so it cannot pass by refusing
+everything.
+
+### Six more, from a code review of the guard fix
+
+The same review that found the guard's ordering found six other things, and they have one shape in
+common with it: every one is a mechanism that reads as though it works. Five are in the deployment
+path, where nothing is exercised until somebody deploys, and the sixth is in the CI checks written to
+protect the pepper — checks that would have passed on the broken state they exist to catch.
+
+**A production deploy could never have satisfied its own compose file.** `docker-compose.prod.yml`
+requires `JWT_BASE64_SECRET` and `HEALTHCONNECT_PRIVACY_PEPPER` with `:?`, and `render_env` in
+`deploy-prod.sh` emitted neither, having never emitted the signing key either. The script then
+overwrote `$REMOTE_PATH/.env` with that output and ran `docker compose up` over ssh with no
+environment, so every production deploy would have died at `up` on "platform JWT secret is required"
+— after the compose file had been uploaded and `.env` rotated, with the old stack already disturbed.
+The pepper half was added by D35 on top of a defect that had simply never been exercised, because
+production deploys are halted. Worse than the failure was the instruction: the generated file's
+header said *do not edit on the host*, so an operator who added the value by hand to get the stack up
+would have it silently deleted by the next deploy, while `--rollback` restored `.env.previous`
+wholesale and therefore *kept* it. The two paths disagreed about what the file contained.
+
+The compose file's own comment described the answer — the pepper "belongs with the platform's
+long-lived secrets, not in a per-deploy `.env` that `deploy-prod.sh` regenerates" — and nothing
+implemented it, which is how the sentence survived being read. There is now a `secrets.env` beside
+the generated `.env`, created once by hand, rewritten by no deploy and no rollback, and passed to
+every remote compose invocation as a second `--env-file`. Every invocation, not just `up`:
+interpolation happens on `pull`, on `exec` and on the health gate too, and a `:?` fires the same way
+in all of them. Preflight checks both keys are present before the stack is touched, which is the
+whole point of moving the check there — the failure now lands while the running estate is still
+untouched. The script never reads the values, so `--dry-run` cannot print what it never fetched;
+that was verified on both channels with sentinel values exported into the deployer's environment.
+
+**`quality/startup.sh` could mint a second pepper, and nothing would say so.** Its precedence was
+environment, then file, then generate, and an environment-provided value was never written down. Run
+it once with `HC_PRIVACY_PEPPER` exported and again without, and the second run finds no file and
+generates a fresh random pepper for a stack whose `erased_subject` rows were written under the first.
+That is the failure this very section warns about — "a wrong pepper looks exactly like a right one
+until something fails to match" — arriving through the script that was written to prevent it. An
+environment value is now persisted the first time it is seen, and a conflict between a non-empty
+variable and a non-empty file is fatal: one of the two matches the aliases in the volumes and the
+script cannot tell which, so choosing is not its decision to take. Deleting the file, with the
+volumes, is how the operator says which — deliberately, which is what the comment above it already
+asked for. A teardown is exempt, because dropping the volumes is the remedy and refusing it would
+refuse the fix along with the mistake.
+
+**Two states as unrecoverable as a missing pepper, and nothing detected either.** Both were recorded
+above as risks and left there. A register holding *pre-D35 aliases* — `erased-` plus 12 hex where a
+peppered one is 16 — can never match anything the service computes again, so `isErased` answers false
+about people it erased and the next lagging event writes their login back. It is counted by length,
+because the register deliberately holds nothing that says which rule produced a row, and startup now
+refuses on it and points at the migration section rather than letting the service run. A *changed*
+pepper is the other, and it needed something to compare against: the first startup that has a pepper
+records what it produces for a fixed sentinel input, and every later startup recomputes and compares,
+so a rotation is refused at the deploy that caused it instead of surfacing months later as a lookup
+that quietly misses. The refusal stands even when the register is empty, because the pepper is one
+value across three services and erasure is three separate desk calls — messaging having erased nobody
+says nothing about booking and catalog, which hold aliases and have no register to notice with.
+
+The sentinel lives in its own table, `privacy_pepper_witness`, and that is the interesting part of it.
+The obvious home was a row in `erased_subject`, and it would have been a defect: the guard asks that
+table exactly one question — has this service erased anybody — and its "no pepper, empty register,
+start anyway" answer is what lets `isErased` return `false` and `lockSubject` do nothing instead of
+throwing and stalling the consumer. A sentinel row there makes `count()` non-zero for ever, the
+allowance disappears with nothing saying so, and the failure presents as a service refusing to start
+over a person it never erased. `ErasureResourceIT.theWitnessIsNotAnErasedSubject` pins the
+separation. The sentinel input contains a NUL so no login can collide with it; the row does give
+anyone with database access a known input/output pair for the pepper, which cannot re-identify
+anybody but does let a guessed pepper be confirmed — so the pepper must stay 32 random bytes, as
+every script here generates, and never a memorable phrase.
+
+**A startup check is a statement about the process that ran it.** Two messaging instances against one
+database, one started without the pepper, is a state the guard cannot prevent: the unpeppered one
+passed while the register was empty and then answers `isErased` = false for ever, including about
+everybody its peppered sibling erases afterwards, with no restart to re-trigger anything. Deployments
+here are single-instance, so this is structural rather than active. It is stated plainly — all
+replicas share one pepper or none may run — in the guard's javadoc and beside the variable in the
+production compose file, where the person scaling a service will actually read it. And it is narrowed
+rather than left: the unpeppered path re-asks the register at most once every thirty seconds, so the
+window is bounded by that interval instead of by the next restart. Only the unpeppered path, which is
+the only configuration that can be wrong this way — a healthy estate runs no extra query at all, and
+the hot path is untouched. It throws when it finds rows, which is not the case the "do not stall the
+consumer" rule protects: that rule is about an empty register, where `false` is the true answer,
+where here the alternatives are refusing the event or writing an erased person's real login, and only
+one of those can be taken back.
+
+**Both CI checks could pass on a broken state.** The compose check grepped per *file*, so it was
+satisfied by the string appearing anywhere — and it passes today only because all five services share
+one YAML anchor. Moving messaging onto its own environment block, which is exactly how the
+per-service `DISCOVERY_HOSTNAME` overrides beside it already work, would leave it unpeppered while
+the other four kept the check green. The committed-value check matched only the nested `pepper:`
+spelling, and Spring reads the flat `healthconnect.privacy.pepper:` just as happily — a line
+beginning with `h`, which a leading-whitespace anchor cannot see. Both are now a script rather than a
+grep, asking compose itself for each service's merged environment (`config --no-interpolate` resolves
+the anchors and leaves the `${...}` intact) and judging a committed pepper by its *value* rather than
+by its indentation. The test beside it builds both broken states and asserts that the old greps
+passed on them, because a check nobody has watched fail is a check of nothing.
+
+**And `deploy-dev.sh` pointed at a file nothing read.** It told the operator to keep the pepper in
+`deploy/.env`, never sourced it, and compose auto-loads `.env` from the *project* directory — which
+for `-f deploy/docker/docker-compose.dev.yml` is `deploy/docker/`, not `deploy/`. So an operator who
+did exactly as they were told still hit the `:?` and concluded the script was broken. The file is now
+sourced, before the defaults, so a value in it can also override the published ports.
+
+### What is not fixed
+
+The second of D34's two open notes stands untouched: nothing says what happens when an erased person
+keeps using their account. It is a product decision and this was not it.
+
+Two smaller ones, recorded rather than left to be found. `messaging/config/liquibase/master.xml` now
+carries a third hand-written include, `privacy_pepper_witness`, and losing it to a regeneration is
+silent in a new way: the guard finds no witness, concludes this is a first peppered startup, and
+records a new one under whatever pepper is currently set. It belongs in `CLAUDE.md`'s
+regeneration-hazard table beside the `erased_subject` and `processed_event` rows. And the witness
+proves only that the pepper has not changed *since this database first saw one* — a service brought
+up wrong on its very first peppered start records the wrong value as correct, which no check inside
+the service can distinguish from the right one.
 
 ---
 

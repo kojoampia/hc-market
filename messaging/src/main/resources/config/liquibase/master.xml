@@ -23,4 +23,5 @@
     <include file="config/liquibase/changelog/20260824210000_added_processed_event.xml" relativeToChangelogFile="false"/>
     <include file="config/liquibase/changelog/20260901090000_added_erased_subject.xml" relativeToChangelogFile="false"/>
     <include file="config/liquibase/changelog/20260901120000_added_privacy_indexes.xml" relativeToChangelogFile="false"/>
+    <include file="config/liquibase/changelog/20260902090000_added_privacy_pepper_witness.xml" relativeToChangelogFile="false"/>
 </databaseChangeLog>

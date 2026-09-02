@@ -3,9 +3,6 @@ package net.jojoaddison.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.util.HexFormat;
 import java.util.List;
 import net.jojoaddison.domain.Booking;
 import net.jojoaddison.domain.BookingStatusChange;
@@ -76,15 +73,14 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <h2>The pseudonym is deterministic, and that is deliberate</h2>
  *
- * <p>{@code erased-<first 12 hex of SHA-256(login)>}. Same input, same output, so one person's rows
- * stay grouped for accounting and audit without naming them — and a fresh random value per row would
- * have made the booking history of a single erased customer impossible to reconcile against a
- * payout.
+ * <p>{@link SubjectPseudonym} derives it, and the reasoning lives there: same input, same output, so
+ * one person's rows stay grouped for accounting and audit without naming them, and it is an HMAC
+ * keyed by a per-estate pepper rather than a bare digest so the aliases cannot be matched back to a
+ * candidate list of logins by anyone holding a database dump. D34 recorded that gap; D35 closed it.
  *
- * <p><strong>It is not a secret, and the doc used to imply otherwise.</strong> Logins are short and
- * guessable, so anyone with read access to a database here can hash candidate logins offline and
- * match them against the stored aliases. That is a known limitation, recorded rather than glossed;
- * see D34's note on peppering it.
+ * <p><strong>Erasure refuses without the pepper.</strong> {@code SubjectPseudonym.of} throws and
+ * {@code ErasureResource} turns that into a 503 before anything is written, because an alias goes
+ * into rows in place and a wrong one cannot be taken back.
  *
  * <h2>What this does NOT do</h2>
  *
@@ -107,6 +103,7 @@ public class ErasureWorkflow {
     private final DisputeStatusChangeEraseRepository disputeHistory;
     private final OutboxEraseRepository outbox;
     private final ObjectMapper mapper;
+    private final SubjectPseudonym pseudonyms;
 
     public ErasureWorkflow(
         BookingQueryRepository bookings,
@@ -114,7 +111,8 @@ public class ErasureWorkflow {
         BookingStatusChangeEraseRepository bookingHistory,
         DisputeStatusChangeEraseRepository disputeHistory,
         OutboxEraseRepository outbox,
-        ObjectMapper mapper
+        ObjectMapper mapper,
+        SubjectPseudonym pseudonyms
     ) {
         this.bookings = bookings;
         this.disputes = disputes;
@@ -122,16 +120,19 @@ public class ErasureWorkflow {
         this.disputeHistory = disputeHistory;
         this.outbox = outbox;
         this.mapper = mapper;
+        this.pseudonyms = pseudonyms;
     }
 
-    /** {@code erased-<12 hex>} — see the class comment for why it is deterministic. */
-    public static String pseudonym(String login) {
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256").digest(login.getBytes(StandardCharsets.UTF_8));
-            return "erased-" + HexFormat.of().formatHex(digest).substring(0, 12);
-        } catch (Exception e) {
-            throw new IllegalStateException("SHA-256 is unavailable, which should not be possible", e);
-        }
+    /**
+     * {@code erased-<16 hex>} — see {@link SubjectPseudonym} for the derivation and for what happens
+     * when no pepper is configured.
+     *
+     * <p>An instance method, where this was static until D35. The pepper is configuration, so the
+     * derivation has a bean behind it now, and the callers that reached for the static form —
+     * {@code ErasureResource}, the integration tests — inject that bean instead.
+     */
+    public String pseudonym(String login) {
+        return pseudonyms.of(login);
     }
 
     /**

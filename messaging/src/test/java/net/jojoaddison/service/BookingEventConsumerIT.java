@@ -32,6 +32,14 @@ class BookingEventConsumerIT {
     private static final String PRO_LOGIN = "akosua.mensah";
     private static final String PRO_REF = "p1";
 
+    /**
+     * The alias derivation, injected rather than called statically — decisions.md D35. It is peppered
+     * from src/test/resources/config/application.yml, and SubjectPseudonymUnitTest pins what it
+     * produces; here it is used only so the assertions ask for the same string the service wrote.
+     */
+    @Autowired
+    private SubjectPseudonym pseudonyms;
+
     @Autowired
     private BookingEventConsumer consumer;
 
@@ -95,7 +103,7 @@ class BookingEventConsumerIT {
         consumer.onBookingEvent(requested("b-late", CUSTOMER));
 
         Conversation raised = threadFor("b-late");
-        assertThat(raised.getCustomerLogin()).isEqualTo(ErasureWorkflow.pseudonym(CUSTOMER)).isNotEqualTo(CUSTOMER);
+        assertThat(raised.getCustomerLogin()).isEqualTo(pseudonyms.of(CUSTOMER)).isNotEqualTo(CUSTOMER);
         // The thread is still raised. Skipping it would leave the professional's list with a hole
         // where a real booking is, to protect an identifier that can simply be replaced.
         assertThat(raised.getProfessionalRef()).isEqualTo(PRO_REF);

@@ -25,10 +25,10 @@ import org.springframework.stereotype.Repository;
  * to remember to unlock, including on the paths that throw.
  *
  * <p><strong>Keyed on the pseudonym's own bytes</strong>, not on the login and not through Postgres's
- * undocumented {@code hashtext}: the key is derived in Java from the same SHA-256 the alias comes
- * from, so the erasure and the consumer compute the same number without either sending a login to the
- * database as a query parameter, where it would land in {@code pg_stat_activity} and the slow-query
- * log.
+ * undocumented {@code hashtext}: the key is derived in Java from the same HMAC the alias comes from
+ * (D35 peppered both together), so the erasure and the consumer compute the same number without
+ * either sending a login to the database as a query parameter, where it would land in
+ * {@code pg_stat_activity} and the slow-query log.
  *
  * <p>Contention is per-subject, so two erasures of different people never wait on each other, and the
  * consumer's cost is one round trip on events that carry a customer.

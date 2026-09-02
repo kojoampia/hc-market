@@ -13,9 +13,13 @@ import net.jojoaddison.domain.Message;
 import net.jojoaddison.domain.enumeration.Direction;
 import net.jojoaddison.repository.ConversationRepository;
 import net.jojoaddison.domain.Notification;
+import net.jojoaddison.domain.PepperWitness;
 import net.jojoaddison.repository.MessageRepository;
 import net.jojoaddison.repository.NotificationRepository;
+import net.jojoaddison.repository.PepperWitnessRepository;
+import net.jojoaddison.service.ErasureRegisterGuard;
 import net.jojoaddison.service.ErasureWorkflow;
+import net.jojoaddison.service.SubjectPseudonym;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -42,6 +46,14 @@ class ErasureResourceIT {
     private static final String CUSTOMER = "ama.tobeforgotten";
     private static final String PRO = "akosua.mensah";
 
+    /**
+     * The alias derivation, injected rather than called statically — decisions.md D35. It is peppered
+     * from src/test/resources/config/application.yml, and SubjectPseudonymUnitTest pins what it
+     * produces; here it is used only so the assertions ask for the same string the service wrote.
+     */
+    @Autowired
+    private SubjectPseudonym pseudonyms;
+
     @Autowired
     private MockMvc mockMvc;
 
@@ -59,6 +71,9 @@ class ErasureResourceIT {
 
     @Autowired
     private net.jojoaddison.repository.ErasedSubjectRepository register;
+
+    @Autowired
+    private PepperWitnessRepository witnesses;
 
     private Conversation thread(String reference) {
         return conversations.saveAndFlush(
@@ -87,10 +102,10 @@ class ErasureResourceIT {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.conversationsPseudonymised").value(1))
             .andExpect(jsonPath("$.messagesErased").value(0))
-            .andExpect(jsonPath("$.pseudonym").value(ErasureWorkflow.pseudonym(CUSTOMER)));
+            .andExpect(jsonPath("$.pseudonym").value(pseudonyms.of(CUSTOMER)));
 
         assertThat(conversations.findById(empty.getId()).orElseThrow().getCustomerLogin()).isEqualTo(
-            ErasureWorkflow.pseudonym(CUSTOMER)
+            pseudonyms.of(CUSTOMER)
         );
     }
 
@@ -174,7 +189,7 @@ class ErasureResourceIT {
             .andExpect(jsonPath("$.notificationsRedacted").value(1));
 
         assertThat(notifications.findById(mine.getId()).orElseThrow().getRecipientLogin()).isEqualTo(
-            ErasureWorkflow.pseudonym(CUSTOMER)
+            pseudonyms.of(CUSTOMER)
         );
         Notification after = notifications.findById(theirs.getId()).orElseThrow();
         assertThat(after.getBody()).doesNotContain("Ama").doesNotContain("Tobeforgotten");
@@ -223,14 +238,39 @@ class ErasureResourceIT {
         thread("c-twice");
 
         mockMvc.perform(post(URL, CUSTOMER).with(csrf())).andExpect(status().isOk());
-        Instant first = register.findById(ErasureWorkflow.pseudonym(CUSTOMER)).orElseThrow().getErasedAt();
+        Instant first = register.findById(pseudonyms.of(CUSTOMER)).orElseThrow().getErasedAt();
 
         mockMvc
             .perform(post(URL, CUSTOMER).with(csrf()))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.conversationsPseudonymised").value(0));
 
-        assertThat(register.findById(ErasureWorkflow.pseudonym(CUSTOMER)).orElseThrow().getErasedAt()).isEqualTo(first);
+        assertThat(register.findById(pseudonyms.of(CUSTOMER)).orElseThrow().getErasedAt()).isEqualTo(first);
+    }
+
+    /**
+     * The pepper witness must not become an answer to "has this service erased anybody" —
+     * {@code decisions.md} D35.
+     *
+     * <p>{@code ErasureRegisterGuard} allows an unpeppered service to start while
+     * {@code erased_subject} is empty, and that allowance is what lets {@code isErased} answer
+     * {@code false} and {@code lockSubject} do nothing instead of throwing and stalling the
+     * booking-event consumer. Put the witness row in {@code erased_subject} and {@code count()} is
+     * never zero again, so the allowance disappears with nothing saying so — the symptom would be a
+     * service refusing to start over a person it never erased.
+     *
+     * <p>This context started peppered, so the guard has written a witness by now: the row exists in
+     * its own table and nothing in the register carries its alias.
+     */
+    @Test
+    @Transactional
+    @DisplayName("the witness row is not an erased subject")
+    void theWitnessIsNotAnErasedSubject() {
+        PepperWitness witness = witnesses.findById(ErasureRegisterGuard.WITNESS_ID).orElseThrow();
+
+        assertThat(witness.getSubjectAlias()).startsWith("erased-");
+        assertThat(register.findById(witness.getSubjectAlias())).isEmpty();
+        assertThat(register.findAll()).noneMatch(s -> s.getPseudonym().equals(witness.getSubjectAlias()));
     }
 
     @Test

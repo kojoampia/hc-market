@@ -86,7 +86,7 @@ public class BookingEventConsumer {
            writes the original login anyway — the very failure D32 was written to close. See
            SubjectLockRepository. */
         erasure.lockSubject(login);
-        return erasure.isErased(login) ? ErasureWorkflow.pseudonym(login) : login;
+        return erasure.isErased(login) ? erasure.pseudonym(login) : login;
     }
 
     /** The customer's display name, or nothing anyone can be identified by once they are erased. */

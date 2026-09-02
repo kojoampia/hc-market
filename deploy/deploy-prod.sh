@@ -36,14 +36,42 @@
 #     --dry-run          Print every command instead of running it
 #     --yes              Skip the confirmation prompt (for CI)
 #
-#  Required environment:
+#  Required environment (on the machine you run this from):
 #     HC_PROD_HOST       e.g. deploy@app-01.jojoaddison.net
 #     HC_REGISTRY_USER / HC_REGISTRY_TOKEN     for docker.jojoaddison.net
 #     GHCR_OWNER / GHCR_TOKEN                  for the github channel
+#
+#  Required ON THE HOST, in $REMOTE_PATH/secrets.env, and NOT here:
+#     JWT_BASE64_SECRET  the platform signing key   (one value across the estate)
+#     HC_PRIVACY_PEPPER  the erasure pepper          (decisions.md D35)
+#
+#  Those two are the stack's long-lived secrets and this script never sees them. It generates .env
+#  on every deploy and overwrites what was there, so anything kept in .env survives exactly until
+#  the next deploy — which is why docker-compose.prod.yml's two `:?` variables lived in a file that
+#  could not hold them, and why every production `up` would have died on
+#  "JWT_BASE64_SECRET: platform JWT secret is required" the first time anyone ran one. The compose
+#  file's own comment beside HEALTHCONNECT_PRIVACY_PEPPER said the pepper "belongs with the
+#  platform's long-lived secrets, not in a per-deploy .env that deploy-prod.sh regenerates"; this
+#  is the file that makes that sentence true.
+#
+#  secrets.env is created once, out of band, and never written by this script:
+#
+#      ssh $HC_PROD_HOST 'mkdir -p /srv/healthconnect && umask 077 && cat > /srv/healthconnect/secrets.env' <<'EOF'
+#      JWT_BASE64_SECRET=<the platform key, from ~/webroot/01-healthconnect/.env>
+#      HC_PRIVACY_PEPPER=<the estate pepper — see decisions.md D35 before ever changing it>
+#      EOF
+#
+#  Both files are passed to compose explicitly (--env-file .env --env-file secrets.env), because
+#  naming any --env-file stops compose auto-loading .env, and because the `:?` checks are evaluated
+#  at INTERPOLATION time — so pull, up, exec and rollback all need both or none of them work.
 # ==============================================================================
 set -Eeuo pipefail
 
 DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Absolute, because this script cd's into DEPLOY_DIR below: a relative $0 stops resolving after that,
+# and --help then fails with a sed error rather than printing the header an operator needs before a
+# first deploy — which now includes how to create secrets.env.
+SELF="$DEPLOY_DIR/$(basename "${BASH_SOURCE[0]}")"
 ROOT_DIR="$(cd "$DEPLOY_DIR/.." && pwd)"       # holds gateway/ catalog/ booking/ messaging/ payout/
 cd "$DEPLOY_DIR"
 # Java 25 needs a JDK with a compiler. java-25-openjdk-amd64 is a JRE and fails silently on an
@@ -71,6 +99,15 @@ DRY_RUN=0
 ASSUME_YES=0
 COMPOSE_TEMPLATE="$DEPLOY_DIR/docker/docker-compose.prod.yml"
 HEALTH_TIMEOUT=240
+# The host's long-lived secrets, beside the generated .env and deliberately not part of it. See the
+# header. Never read, written or printed by this script — its whole contribution is to insist the
+# file is there and to hand its name to compose.
+SECRETS_FILE="secrets.env"
+SECRET_KEYS=(JWT_BASE64_SECRET HC_PRIVACY_PEPPER)
+# Every remote compose invocation goes through this. Two --env-file arguments, in this order: the
+# later file wins, and the generated .env must never be able to override a secret. Naming any
+# --env-file disables compose's automatic .env loading, so both have to be listed.
+REMOTE_COMPOSE="docker compose --env-file .env --env-file $SECRETS_FILE"
 
 c_reset=$'\033[0m'; c_b=$'\033[1m'; c_dim=$'\033[2m'
 c_ok=$'\033[32m'; c_warn=$'\033[33m'; c_err=$'\033[31m'; c_info=$'\033[36m'
@@ -101,7 +138,10 @@ while [[ $# -gt 0 ]]; do
     --rollback)  DO_ROLLBACK=1; shift ;;
     --dry-run)   DRY_RUN=1; shift ;;
     --yes|-y)    ASSUME_YES=1; shift ;;
-    -h|--help)   sed -n '2,40p' "$0"; exit 0 ;;
+    # 2,66: the whole header block, up to but not including its closing rule. It ran to line 40
+    # until the host-secrets section was added below it, at which point --help stopped printing the
+    # one thing a first-time deployer has to do before deploying at all.
+    -h|--help)   sed -n '2,66p' "$SELF"; exit 0 ;;
     *)           die "unknown option: $1 (try --help)" ;;
   esac
 done
@@ -156,6 +196,18 @@ compose_names() { local out=() n; for n in "${SERVICES[@]}"; do out+=("$(compose
 
 # ------------------------------------------------------------------ preflight --
 require() { command -v "$1" >/dev/null 2>&1 || die "$1 is required but not on PATH"; }
+# What to tell an operator who is missing one of them. The pepper's advice is not the signing key's:
+# a wrong signing key signs everybody out and can be corrected, while a wrong pepper is written into
+# rows in place and nothing re-keys them (decisions.md D35).
+secret_hint() {
+  case "$1" in
+    JWT_BASE64_SECRET)
+      printf 'One key across the whole platform — take it from ~/webroot/01-healthconnect/.env on the host, never generate a fresh one here: a token issued by any of the three sibling stacks is accepted by the others only while it matches.' ;;
+    HC_PRIVACY_PEPPER)
+      printf 'The erasure pepper (decisions.md D35). If this host has never been deployed, generate one once with `head -c 32 /dev/urandom | base64 -w0` and keep it forever; if it HAS, the old value is the only correct one — a new pepper leaves every erased subject unrecognisable and nothing reports it.' ;;
+    *) printf 'See the header.' ;;
+  esac
+}
 java_major() {                       # robust: ignores "Picked up JAVA_TOOL_OPTIONS" noise
   local out major
   out="$("$JAVA_HOME/bin/java" -version 2>&1 || true)"
@@ -218,6 +270,28 @@ preflight() {
     ssh -o BatchMode=yes -o ConnectTimeout=8 "$HOST" 'docker compose version >/dev/null' \
       || die "cannot reach $HOST over ssh, or docker compose v2 is missing there"
     ok "host reachable"
+  fi
+
+  # The two secrets docker-compose.prod.yml requires with `:?`. Checked HERE, before the stack is
+  # touched, because the alternative is where this used to land: `docker compose up` on the host,
+  # after .env has already been overwritten and .env.previous rotated, dying on
+  # "platform JWT secret is required" — a stack half-rolled over a variable nothing in the pipeline
+  # ever supplied. render_env has never emitted either of them and never will; they live in
+  # secrets.env, which this script does not generate.
+  #
+  # Presence and non-emptiness only. The values stay on the host: nothing here reads them, so
+  # nothing here can print them, and --dry-run cannot leak what it never fetched.
+  log "checking $REMOTE_PATH/$SECRETS_FILE on $HOST"
+  if (( DRY_RUN )); then
+    skipped "would confirm $REMOTE_PATH/$SECRETS_FILE holds ${SECRET_KEYS[*]} — NOT contacted"
+  else
+    ssh -o BatchMode=yes "$HOST" "test -s '$REMOTE_PATH/$SECRETS_FILE'" \
+      || die "$HOST:$REMOTE_PATH/$SECRETS_FILE is missing or empty. It holds the estate's long-lived secrets (${SECRET_KEYS[*]}), it is created once by hand, and this script deliberately never writes it — see the header for the exact command. Without it every service refuses to start on the compose file's own :? checks."
+    for v in "${SECRET_KEYS[@]}"; do
+      ssh -o BatchMode=yes "$HOST" "grep -qE '^[[:space:]]*$v=.' '$REMOTE_PATH/$SECRETS_FILE'" \
+        || die "$v is not set in $HOST:$REMOTE_PATH/$SECRETS_FILE. $(secret_hint "$v")"
+      ok "$v present"
+    done
   fi
 
   # Both networks are declared `external: true`, so compose will not create them and `up` fails
@@ -316,9 +390,19 @@ verify_published() {
 }
 
 # -------------------------------------------------------------------- deploy --
+#
+# NON-SECRET VALUES ONLY, and the header says where the rest are rather than merely forbidding an
+# edit. The old header — "do not edit on the host" — was an instruction an operator could not follow
+# and a defect at the same time: the compose file demands JWT_BASE64_SECRET and HC_PRIVACY_PEPPER,
+# neither was ever emitted here, and a value added by hand to make the stack start was silently
+# deleted by the next deploy while the file told them not to touch it. Rollback restored
+# .env.previous wholesale, so a hand-added secret survived a rollback and not a deploy, and the two
+# paths disagreed about what this file even contained.
 render_env() {
   cat <<EOF
-# generated by deploy-prod.sh — do not edit on the host
+# generated by deploy-prod.sh — do not edit on the host.
+# Secrets are NOT here and never will be: JWT_BASE64_SECRET and HC_PRIVACY_PEPPER live in
+# $SECRETS_FILE beside this file, which no deploy rewrites. Compose reads both.
 HC_TAG=$TAG
 HC_GIT_SHA=$GIT_SHA
 HC_CHANNEL=$CHANNEL
@@ -349,11 +433,11 @@ remote_deploy() {
     (( DRY_RUN )) || printf '%s' "$REGISTRY_TOKEN" \
       | ssh "$HOST" "docker login '$REGISTRY_HOST' -u '$REGISTRY_USER' --password-stdin >/dev/null"
     log "pulling $TAG"
-    run ssh "$HOST" "cd '$REMOTE_PATH' && docker compose pull $(compose_names)"
+    run ssh "$HOST" "cd '$REMOTE_PATH' && $REMOTE_COMPOSE pull $(compose_names)"
   fi
 
   log "rolling services"
-  run ssh "$HOST" "cd '$REMOTE_PATH' && docker compose up -d --remove-orphans $(compose_names)"
+  run ssh "$HOST" "cd '$REMOTE_PATH' && $REMOTE_COMPOSE up -d --remove-orphans $(compose_names)"
 }
 
 health_gate() {
@@ -365,7 +449,9 @@ health_gate() {
     for s in "${SERVICES[@]}"; do
       # `docker compose exec ... curl` cannot work: the Jib images ship no curl and no wget.
       # bash IS present, so readiness is probed over bash's /dev/tcp instead.
-      ssh "$HOST" "cd '$REMOTE_PATH' && docker compose exec -T $(compose_name "$s") bash -c \
+      # $REMOTE_COMPOSE, not a bare `docker compose`: interpolation happens on every subcommand,
+      # so an `exec` without the secrets file dies on the same `:?` an `up` would.
+      ssh "$HOST" "cd '$REMOTE_PATH' && $REMOTE_COMPOSE exec -T $(compose_name "$s") bash -c \
         'exec 3<>/dev/tcp/localhost/8080 && printf \"GET /management/health/readiness HTTP/1.0\\r\\n\\r\\n\" >&3 && grep -q UP <&3'" \
         >/dev/null 2>&1 || bad+=" $s"
     done
@@ -405,7 +491,11 @@ rollback() {
   prev="$(ssh "$HOST" "cd '$REMOTE_PATH' && grep -m1 '^HC_TAG=' .env.previous 2>/dev/null | cut -d= -f2" || true)"
   [[ -n "$prev" ]] || die "no previous deployment recorded on $HOST — nothing to roll back to"
   warn "rolling back to $prev"
-  run ssh "$HOST" "cd '$REMOTE_PATH' && cp .env.previous .env && docker compose pull $(compose_names) && docker compose up -d $(compose_names)"
+  # .env.previous holds the previous deploy's non-secret values and nothing else, so restoring it
+  # cannot take a secret back to an older value — secrets.env is not deploy state and is not rotated
+  # here. Before the split, a secret hand-added to .env survived a rollback but not a deploy, which
+  # meant the two paths disagreed about what the stack would come up with.
+  run ssh "$HOST" "cd '$REMOTE_PATH' && cp .env.previous .env && $REMOTE_COMPOSE pull $(compose_names) && $REMOTE_COMPOSE up -d $(compose_names)"
   TAG="$prev"
   health_gate && ok "rolled back to $prev" || die "rollback to $prev is also unhealthy — manual intervention required"
 }

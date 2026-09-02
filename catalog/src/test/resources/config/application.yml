@@ -100,3 +100,21 @@ management:
   health:
     mail:
       enabled: false
+
+# ===================================================================
+# HealthConnect Marketplace — test-only privacy configuration.
+#
+# NOTE: `jhipster jdl --force` rewrites this file and drops this block. The ITs then fail at the
+# erasure endpoint with a 503, which reads as a broken test rather than as a lost config block.
+#
+# This pepper is a TEST FIXTURE, not a secret. It is committed on purpose and must never be used by
+# a real deployment: it keys the HMAC behind the erased-subject alias, and the same literal appears
+# in booking, catalog and messaging so SubjectPseudonymUnitTest's known answer is one value across
+# the three — which is what proves the three copies of SubjectPseudonym have not drifted apart.
+#
+# A real deployment injects HEALTHCONNECT_PRIVACY_PEPPER; nothing that runs outside a test carries a
+# default. See decisions.md D35.
+# ===================================================================
+healthconnect:
+  privacy:
+    pepper: hc-market-test-pepper-not-a-real-one

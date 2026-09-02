@@ -274,6 +274,17 @@ healthconnect:
     file: demo/seed-data.json
     anchor-dates: false
 
+  # Privacy -- decisions.md D35. `pepper` keys the HMAC that turns an erased customer's login into
+  # the alias their rows carry, and it is DELIBERATELY ABSENT here, exactly as the JWT signing key
+  # is: this repository is public, so a committed pepper is not a pepper. All three compose files
+  # require HEALTHCONNECT_PRIVACY_PEPPER and refuse to start the stack without it; the value must be
+  # the SAME in booking, catalog and messaging or one person acquires three aliases.
+  #
+  # Absent, this service still starts -- unless it has already erased somebody, in which case
+  # ErasureRegisterGuard stops it, because an unpeppered messaging cannot recognise its own erased
+  # subjects and would write their logins back into new rows.
+  privacy: {}
+
 # Liquibase must finish BEFORE the seed loader runs — JHipster's async start otherwise races the
 # schema and the service comes up healthy and empty. See CLAUDE.md.
 application:

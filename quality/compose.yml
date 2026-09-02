@@ -78,6 +78,11 @@ x-service: &service
     # One signing key across the estate, as in production. A per-service override silently wins and
     # presents as a successful login followed by 401s from the services — a broken route, seemingly.
     JHIPSTER_SECURITY_AUTHENTICATION_JWT_BASE64_SECRET: ${JWT_BASE64_SECRET:?set by startup.sh}
+    # The erasure pepper — decisions.md D35. Keys the HMAC behind an erased customer's alias; one
+    # value across booking, catalog and messaging or one person acquires three of them. Generated
+    # and persisted by startup.sh alongside the signing key, and required here rather than defaulted
+    # because a value written into a public repository is not a pepper.
+    HEALTHCONNECT_PRIVACY_PEPPER: ${HC_PRIVACY_PEPPER:?set by startup.sh}
     JAVA_OPTS: -Xmx512m -Xms256m
   # The images are built by Jib and contain NO curl and NO wget — a CMD-based HTTP healthcheck fails
   # with "executable file not found" on every attempt and the container never leaves `starting`.
@@ -263,7 +268,17 @@ services:
       # place whose purpose is catching drift.
       HEALTHCONNECT_SEED_ANCHOR_DATES: "true"
       HEALTHCONNECT_BOOKING_BASE_URL: http://booking:8080
-    volumes: ["${SEED_DIR:-./seed}:/app/seed:ro"]
+    # Long form, not "${SEED_DIR:-./seed}:/app/seed:ro". The short syntax is split on colons,
+    # and an uninterpolated ${VAR:-default} source carries two of its own — so
+    # `docker compose config --no-interpolate`, which .github/checks/pepper-wiring.sh needs in
+    # order to read each service's merged environment without evaluating the `:?` guards it is
+    # checking for, fails the whole file with "too many colons". Newer compose tolerates it;
+    # the CI runner's does not. Long form has nothing to split.
+    volumes:
+      - type: bind
+        source: ${SEED_DIR:-./seed}
+        target: /app/seed
+        read_only: true
     depends_on:
       catalog-db: { condition: service_healthy }
 
@@ -299,7 +314,17 @@ services:
       HEALTHCONNECT_SEED_ENABLED: "true"
       HEALTHCONNECT_SEED_FILE: /app/seed/seed-data.json
       HEALTHCONNECT_SEED_ANCHOR_DATES: "true"
-    volumes: ["${SEED_DIR:-./seed}:/app/seed:ro"]
+    # Long form, not "${SEED_DIR:-./seed}:/app/seed:ro". The short syntax is split on colons,
+    # and an uninterpolated ${VAR:-default} source carries two of its own — so
+    # `docker compose config --no-interpolate`, which .github/checks/pepper-wiring.sh needs in
+    # order to read each service's merged environment without evaluating the `:?` guards it is
+    # checking for, fails the whole file with "too many colons". Newer compose tolerates it;
+    # the CI runner's does not. Long form has nothing to split.
+    volumes:
+      - type: bind
+        source: ${SEED_DIR:-./seed}
+        target: /app/seed
+        read_only: true
     depends_on:
       booking-db: { condition: service_healthy }
 
@@ -327,7 +352,17 @@ services:
       HEALTHCONNECT_SEED_ENABLED: "true"
       HEALTHCONNECT_SEED_FILE: /app/seed/seed-data.json
       HEALTHCONNECT_SEED_ANCHOR_DATES: "true"
-    volumes: ["${SEED_DIR:-./seed}:/app/seed:ro"]
+    # Long form, not "${SEED_DIR:-./seed}:/app/seed:ro". The short syntax is split on colons,
+    # and an uninterpolated ${VAR:-default} source carries two of its own — so
+    # `docker compose config --no-interpolate`, which .github/checks/pepper-wiring.sh needs in
+    # order to read each service's merged environment without evaluating the `:?` guards it is
+    # checking for, fails the whole file with "too many colons". Newer compose tolerates it;
+    # the CI runner's does not. Long form has nothing to split.
+    volumes:
+      - type: bind
+        source: ${SEED_DIR:-./seed}
+        target: /app/seed
+        read_only: true
     depends_on:
       messaging-db: { condition: service_healthy }
 
@@ -357,7 +392,17 @@ services:
       HEALTHCONNECT_SEED_ENABLED: "true"
       HEALTHCONNECT_SEED_FILE: /app/seed/seed-data.json
       HEALTHCONNECT_SEED_ANCHOR_DATES: "true"
-    volumes: ["${SEED_DIR:-./seed}:/app/seed:ro"]
+    # Long form, not "${SEED_DIR:-./seed}:/app/seed:ro". The short syntax is split on colons,
+    # and an uninterpolated ${VAR:-default} source carries two of its own — so
+    # `docker compose config --no-interpolate`, which .github/checks/pepper-wiring.sh needs in
+    # order to read each service's merged environment without evaluating the `:?` guards it is
+    # checking for, fails the whole file with "too many colons". Newer compose tolerates it;
+    # the CI runner's does not. Long form has nothing to split.
+    volumes:
+      - type: bind
+        source: ${SEED_DIR:-./seed}
+        target: /app/seed
+        read_only: true
     depends_on:
       payout-db: { condition: service_healthy }
 

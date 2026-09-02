@@ -16,7 +16,7 @@ import net.jojoaddison.domain.Review;
 import net.jojoaddison.repository.FavouriteQueryRepository;
 import net.jojoaddison.repository.ProfessionalRepository;
 import net.jojoaddison.repository.ReviewEraseRepository;
-import net.jojoaddison.service.ErasureWorkflow;
+import net.jojoaddison.service.SubjectPseudonym;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -45,6 +45,14 @@ class ErasureResourceIT {
     private static final String URL = "/api/desk/customers/{login}/erase";
     private static final String CUSTOMER = "ama.tobeforgotten";
     private static final String BODY = "She rebuilt my whole week of meals around what I can actually buy in Madina market.";
+
+    /**
+     * The alias derivation, injected rather than called statically — decisions.md D35. It is peppered
+     * from src/test/resources/config/application.yml, and SubjectPseudonymUnitTest pins what it
+     * produces; here it is used only so the assertions ask for the same string the service wrote.
+     */
+    @Autowired
+    private SubjectPseudonym pseudonyms;
 
     @Autowired
     private MockMvc mockMvc;
@@ -91,10 +99,10 @@ class ErasureResourceIT {
             .perform(post(URL, CUSTOMER).with(csrf()))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.reviewsDeidentified").value(1))
-            .andExpect(jsonPath("$.pseudonym").value(ErasureWorkflow.pseudonym(CUSTOMER)));
+            .andExpect(jsonPath("$.pseudonym").value(pseudonyms.of(CUSTOMER)));
 
         Review after = reviews.findById(review.getId()).orElseThrow();
-        assertThat(after.getCustomerLogin()).isEqualTo(ErasureWorkflow.pseudonym(CUSTOMER));
+        assertThat(after.getCustomerLogin()).isEqualTo(pseudonyms.of(CUSTOMER));
         assertThat(after.getAuthorName()).doesNotContain("Ama").doesNotContain("Forgotten");
         assertThat(after.getAuthorInitials()).doesNotContain("AT");
 
@@ -119,7 +127,7 @@ class ErasureResourceIT {
         mockMvc.perform(post(URL, CUSTOMER).with(csrf())).andExpect(status().isOk());
 
         assertThat(favourites.findByCustomerLoginOrderByAddedAtDesc(CUSTOMER)).isEmpty();
-        assertThat(favourites.findByCustomerLoginOrderByAddedAtDesc(ErasureWorkflow.pseudonym(CUSTOMER))).isEmpty();
+        assertThat(favourites.findByCustomerLoginOrderByAddedAtDesc(pseudonyms.of(CUSTOMER))).isEmpty();
     }
 
     /**
@@ -137,7 +145,7 @@ class ErasureResourceIT {
 
         assertThat(reviews.findById(review.getId())).isPresent();
         assertThat(reviews.findByCustomerLogin(CUSTOMER)).isEmpty();
-        assertThat(reviews.findByCustomerLogin(ErasureWorkflow.pseudonym(CUSTOMER))).hasSize(1);
+        assertThat(reviews.findByCustomerLogin(pseudonyms.of(CUSTOMER))).hasSize(1);
     }
 
     /** Nobody else's rows move — a regression that widened the sweep would pass every test above. */

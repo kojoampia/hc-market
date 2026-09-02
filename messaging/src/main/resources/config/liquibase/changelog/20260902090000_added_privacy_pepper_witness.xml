@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+        One row, recording what this estate's pepper produced for a fixed sentinel input the first
+        time this service started with a pepper at all - decisions.md D35. Compared on every later
+        startup, so a rotated or mistyped HEALTHCONNECT_PRIVACY_PEPPER is refused at deploy time
+        instead of being discovered months later as an isErased that quietly answers false.
+
+        Hand-written, not generated from JDL, exactly as erased_subject and processed_event are:
+        regenerating messaging rewrites master.xml and drops this include, and the failure that
+        follows is silent - the guard finds no witness, decides this is a first configured startup,
+        and writes a new one under whatever pepper is currently set.
+
+        DELIBERATELY NOT A ROW IN erased_subject. The guard asks that table one question - has this
+        service erased anybody - and its "no pepper, empty register, start anyway" answer is what
+        keeps the booking-event consumer running instead of stalling. A sentinel row there would make
+        count() non-zero forever and take that allowance away without anything saying so.
+    -->
+    <changeSet id="20260902090000-1" author="healthconnect">
+        <createTable tableName="privacy_pepper_witness">
+            <column name="id" type="varchar(32)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="subject_alias" type="varchar(64)"><constraints nullable="false"/></column>
+            <column name="first_seen" type="${datetimeType}"><constraints nullable="false"/></column>
+        </createTable>
+    </changeSet>
+</databaseChangeLog>

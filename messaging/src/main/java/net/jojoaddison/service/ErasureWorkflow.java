@@ -1,9 +1,6 @@
 package net.jojoaddison.service;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.time.Instant;
-import java.util.HexFormat;
 import java.util.List;
 import net.jojoaddison.domain.Conversation;
 import net.jojoaddison.domain.ErasedSubject;
@@ -32,8 +29,8 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>The conversation survives with its reference and its {@code professionalRef}, so the
  * professional's own thread list does not develop holes, and the customer identity is replaced by
- * the same deterministic pseudonym the booking service uses — {@code erased-<12 hex of SHA-256>} —
- * so one person's rows stay reconcilable across services without naming them.
+ * the same deterministic pseudonym the booking service uses — see {@link SubjectPseudonym} — so one
+ * person's rows stay reconcilable across services without naming them.
  *
  * <p>Both directions are redacted, not just the customer's own messages. A professional's reply
  * quotes what it is replying to often enough that leaving one side intact would leave the other
@@ -69,48 +66,33 @@ public class ErasureWorkflow {
     private final NotificationEraseRepository notifications;
     private final ErasedSubjectRepository erased;
     private final SubjectLockRepository locks;
+    private final SubjectPseudonym pseudonyms;
+    private final ErasureRegisterGuard guard;
 
     public ErasureWorkflow(
         MessagingQueryRepository conversations,
         MessageRepository messages,
         NotificationEraseRepository notifications,
         ErasedSubjectRepository erased,
-        SubjectLockRepository locks
+        SubjectLockRepository locks,
+        SubjectPseudonym pseudonyms,
+        ErasureRegisterGuard guard
     ) {
         this.conversations = conversations;
         this.messages = messages;
         this.notifications = notifications;
         this.erased = erased;
         this.locks = locks;
-    }
-
-    /** Identical rule to booking's and catalog's, so the same person carries the same alias in all three. */
-    public static String pseudonym(String login) {
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256").digest(login.getBytes(StandardCharsets.UTF_8));
-            return "erased-" + HexFormat.of().formatHex(digest).substring(0, 12);
-        } catch (Exception e) {
-            throw new IllegalStateException("SHA-256 is unavailable, which should not be possible", e);
-        }
+        this.pseudonyms = pseudonyms;
+        this.guard = guard;
     }
 
     /**
-     * The advisory-lock key for a subject — {@link SubjectLockRepository}.
-     *
-     * <p>The first eight bytes of the same SHA-256 the alias is built from, so the erasure and the
-     * consumer agree on the number without either sending a login to the database as a parameter.
+     * {@code erased-<16 hex>} — identical rule to booking's and catalog's, so the same person carries
+     * the same alias in all three. An instance method since D35, because the pepper is configuration.
      */
-    public static long lockKey(String login) {
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256").digest(login.getBytes(StandardCharsets.UTF_8));
-            long key = 0;
-            for (int i = 0; i < 8; i++) {
-                key = (key << 8) | (digest[i] & 0xffL);
-            }
-            return key;
-        } catch (Exception e) {
-            throw new IllegalStateException("SHA-256 is unavailable, which should not be possible", e);
-        }
+    public String pseudonym(String login) {
+        return pseudonyms.of(login);
     }
 
     /**
@@ -118,15 +100,55 @@ public class ErasureWorkflow {
      *
      * <p>Called by the consumer before it decides what login to store, and by the erasure before it
      * sweeps. Released when the transaction ends, however it ends.
+     *
+     * <p>A no-op without a pepper, for the reason {@link #isErased(String)} gives: no erasure can be
+     * running to serialise against, so there is nothing to wait for. Throwing here instead would stop
+     * the consumer processing every event that carries a customer — a broker backlog and a dark
+     * notifications bell — over a variable that affects one desk endpoint.
      */
     public void lockSubject(String login) {
-        locks.lock(lockKey(login));
+        if (pseudonyms.isConfigured()) {
+            locks.lock(pseudonyms.lockKey(login));
+        }
     }
 
-    /** Whether this login has already been erased. The only question the register can answer. */
+    /**
+     * Whether this login has already been erased. The only question the register can answer.
+     *
+     * <p><strong>Answers {@code false} when no pepper is configured</strong>, rather than throwing and
+     * taking the booking-event consumer down with it. That is safe here and only here: without a
+     * pepper an erasure refuses with 503, so nothing can have been recorded under this configuration,
+     * and {@code ErasureRegisterGuard} aborts the context refresh if the register already holds rows.
+     * So by the time this line runs unpeppered, the register is provably empty and {@code false} is
+     * the true answer rather than a guess.
+     *
+     * <p><strong>That last sentence depends entirely on when the guard runs, and it was untrue until
+     * the guard became a {@code SmartLifecycle}.</strong> As an {@code ApplicationRunner} it fired
+     * after the refresh, and the Kafka listener container starts <em>during</em> it — so on an
+     * unpeppered service with rows in the register this method really did run, really did answer
+     * {@code false} about somebody it had erased, and the consumer wrote their login back before the
+     * guard got its turn to object. The guard is now phased below every other lifecycle bean for that
+     * reason; the claim above holds because nothing can consume an event before it has decided. See
+     * {@code ErasureRegisterGuard} and {@code decisions.md} D35.
+     *
+     * <p><strong>And it holds for this process only.</strong> The guard decides once, at startup, so
+     * an unpeppered instance sharing a database with a peppered one passed while the register was
+     * empty and would answer {@code false} for ever afterwards, including about everybody the sibling
+     * erased in the meantime. That is why the unpeppered branch below asks the guard rather than
+     * simply returning: {@code assertRegisterStillEmpty} re-reads the register at most once every
+     * thirty seconds, so the claim is re-established periodically instead of being assumed for the
+     * lifetime of the process. A peppered service never reaches that line and runs no extra query.
+     */
     @Transactional(readOnly = true)
     public boolean isErased(String login) {
-        return login != null && !login.isBlank() && erased.existsById(pseudonym(login));
+        if (login == null || login.isBlank()) {
+            return false;
+        }
+        if (!pseudonyms.isConfigured()) {
+            guard.assertRegisterStillEmpty();
+            return false;
+        }
+        return erased.existsById(pseudonym(login));
     }
 
     /**
