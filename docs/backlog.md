@@ -400,6 +400,33 @@ from a workstation. Largely defused — the production compose services were ren
 explicit container names, so a collision is impossible whatever else is on that network — but the
 question itself is still unanswered on the host.
 
+## NEW-3 — the receipt scrub is real, but its test cannot fail · READY
+
+`ErasureFanout.record` replaces the login with the alias before storing the receipt, because a failed
+leg's message can name the URL it was thrown from — `/api/desk/customers/<login>/erase` — and that row
+is kept for ever. Good reasoning, and the substitution is correct.
+
+**`theRecordNeverNamesThePerson` does not prove it.** Verified by deleting the scrub outright and
+re-running: the test still passes. The failure mode it drives is a read timeout, and that message is
+
+```
+messaging gave no usable answer (SocketTimeoutException): Error while extracting response
+for type [java.util.Map<java.lang.String, java.lang.Object>] and content type [application/octet-stream]
+```
+
+— no URL, so no login, so nothing for the scrub to remove and nothing for the assertion to catch. The
+test passes because the leak is absent on that path, not because the scrub closed it.
+
+The fix is to drive a failure whose message does carry the URL — a connection-level
+`ResourceAccessException` reads `I/O error on POST request for "http://…/customers/<login>/erase"` —
+and confirm the test fails with the scrub removed before keeping it. Until then, whether the scrub
+works on the path that motivated it is untested in either direction.
+
+A related question worth settling at the same time: the gateway's `LOGIN_REGEX` permits `? ^ ` { | }`,
+which a URI path segment percent-encodes, so a message quoting the encoded URL would defeat a raw
+substitution. I could not demonstrate that either — the same absent-URL problem — so it is a
+hypothesis, not a finding, and it should be settled by the same test rather than by a speculative fix.
+
 ---
 
 ## Not a package: standing constraints
