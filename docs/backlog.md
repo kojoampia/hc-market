@@ -99,9 +99,24 @@ service with rows in the register consumed a slice of its backlog and wrote eras
 logins back before the guard threw, once per restart. It is now a `SmartLifecycle` phased below every
 other lifecycle bean, with a test that fails if the ordering regresses. Same D35 section.
 
-**Loose end for the operator:** `deploy-prod.sh` renders only non-secret values into the host `.env`,
-exactly as it does for `JWT_BASE64_SECRET`, so `HC_PRIVACY_PEPPER` must exist in the production host's
-environment before the next production deploy or the stack refuses to come up.
+A second review, of that fix, found six more — all of them in the paths nothing exercises until
+somebody deploys. `deploy-prod.sh` supplied *neither* secret to the compose file that requires both,
+so every production deploy would have died at `up` while telling the operator not to edit the file
+that would have fixed it; the two now live in a `secrets.env` on the host that no deploy rewrites,
+checked in preflight before the running stack is touched. `quality/startup.sh` never persisted an
+environment-provided pepper, so the next run without the variable minted a fresh one against
+databases keyed to the old. Messaging refuses to start on a pre-D35 register or a changed pepper,
+the second by comparing a sentinel alias recorded in its own table — not in `erased_subject`, whose
+emptiness is load-bearing. The two CI greps became a script that fails on the states they passed on.
+And `deploy-dev.sh` now sources the `deploy/.env` it had always told operators to write. Same D35
+section.
+
+**Loose end for the operator:** the production host needs `/srv/healthconnect/secrets.env` holding
+`JWT_BASE64_SECRET` and `HC_PRIVACY_PEPPER` before the next production deploy. `deploy-prod.sh --help`
+prints the exact command; preflight refuses early and by name if it is missing.
+
+**Loose end for this repository:** `CLAUDE.md`'s regeneration-hazard table has no row for messaging's
+`privacy_pepper_witness` include, which a regeneration would drop as silently as the others.
 
 ## WP-05 — Erasure: the notifications a repeat booking hides · READY
 

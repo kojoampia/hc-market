@@ -1923,10 +1923,120 @@ informative way: under an `ApplicationRunner` the refresh completes without thro
 sibling assertions cover the two states that must still start, so it cannot pass by refusing
 everything.
 
+### Six more, from a code review of the guard fix
+
+The same review that found the guard's ordering found six other things, and they have one shape in
+common with it: every one is a mechanism that reads as though it works. Five are in the deployment
+path, where nothing is exercised until somebody deploys, and the sixth is in the CI checks written to
+protect the pepper — checks that would have passed on the broken state they exist to catch.
+
+**A production deploy could never have satisfied its own compose file.** `docker-compose.prod.yml`
+requires `JWT_BASE64_SECRET` and `HEALTHCONNECT_PRIVACY_PEPPER` with `:?`, and `render_env` in
+`deploy-prod.sh` emitted neither, having never emitted the signing key either. The script then
+overwrote `$REMOTE_PATH/.env` with that output and ran `docker compose up` over ssh with no
+environment, so every production deploy would have died at `up` on "platform JWT secret is required"
+— after the compose file had been uploaded and `.env` rotated, with the old stack already disturbed.
+The pepper half was added by D35 on top of a defect that had simply never been exercised, because
+production deploys are halted. Worse than the failure was the instruction: the generated file's
+header said *do not edit on the host*, so an operator who added the value by hand to get the stack up
+would have it silently deleted by the next deploy, while `--rollback` restored `.env.previous`
+wholesale and therefore *kept* it. The two paths disagreed about what the file contained.
+
+The compose file's own comment described the answer — the pepper "belongs with the platform's
+long-lived secrets, not in a per-deploy `.env` that `deploy-prod.sh` regenerates" — and nothing
+implemented it, which is how the sentence survived being read. There is now a `secrets.env` beside
+the generated `.env`, created once by hand, rewritten by no deploy and no rollback, and passed to
+every remote compose invocation as a second `--env-file`. Every invocation, not just `up`:
+interpolation happens on `pull`, on `exec` and on the health gate too, and a `:?` fires the same way
+in all of them. Preflight checks both keys are present before the stack is touched, which is the
+whole point of moving the check there — the failure now lands while the running estate is still
+untouched. The script never reads the values, so `--dry-run` cannot print what it never fetched;
+that was verified on both channels with sentinel values exported into the deployer's environment.
+
+**`quality/startup.sh` could mint a second pepper, and nothing would say so.** Its precedence was
+environment, then file, then generate, and an environment-provided value was never written down. Run
+it once with `HC_PRIVACY_PEPPER` exported and again without, and the second run finds no file and
+generates a fresh random pepper for a stack whose `erased_subject` rows were written under the first.
+That is the failure this very section warns about — "a wrong pepper looks exactly like a right one
+until something fails to match" — arriving through the script that was written to prevent it. An
+environment value is now persisted the first time it is seen, and a conflict between a non-empty
+variable and a non-empty file is fatal: one of the two matches the aliases in the volumes and the
+script cannot tell which, so choosing is not its decision to take. Deleting the file, with the
+volumes, is how the operator says which — deliberately, which is what the comment above it already
+asked for. A teardown is exempt, because dropping the volumes is the remedy and refusing it would
+refuse the fix along with the mistake.
+
+**Two states as unrecoverable as a missing pepper, and nothing detected either.** Both were recorded
+above as risks and left there. A register holding *pre-D35 aliases* — `erased-` plus 12 hex where a
+peppered one is 16 — can never match anything the service computes again, so `isErased` answers false
+about people it erased and the next lagging event writes their login back. It is counted by length,
+because the register deliberately holds nothing that says which rule produced a row, and startup now
+refuses on it and points at the migration section rather than letting the service run. A *changed*
+pepper is the other, and it needed something to compare against: the first startup that has a pepper
+records what it produces for a fixed sentinel input, and every later startup recomputes and compares,
+so a rotation is refused at the deploy that caused it instead of surfacing months later as a lookup
+that quietly misses. The refusal stands even when the register is empty, because the pepper is one
+value across three services and erasure is three separate desk calls — messaging having erased nobody
+says nothing about booking and catalog, which hold aliases and have no register to notice with.
+
+The sentinel lives in its own table, `privacy_pepper_witness`, and that is the interesting part of it.
+The obvious home was a row in `erased_subject`, and it would have been a defect: the guard asks that
+table exactly one question — has this service erased anybody — and its "no pepper, empty register,
+start anyway" answer is what lets `isErased` return `false` and `lockSubject` do nothing instead of
+throwing and stalling the consumer. A sentinel row there makes `count()` non-zero for ever, the
+allowance disappears with nothing saying so, and the failure presents as a service refusing to start
+over a person it never erased. `ErasureResourceIT.theWitnessIsNotAnErasedSubject` pins the
+separation. The sentinel input contains a NUL so no login can collide with it; the row does give
+anyone with database access a known input/output pair for the pepper, which cannot re-identify
+anybody but does let a guessed pepper be confirmed — so the pepper must stay 32 random bytes, as
+every script here generates, and never a memorable phrase.
+
+**A startup check is a statement about the process that ran it.** Two messaging instances against one
+database, one started without the pepper, is a state the guard cannot prevent: the unpeppered one
+passed while the register was empty and then answers `isErased` = false for ever, including about
+everybody its peppered sibling erases afterwards, with no restart to re-trigger anything. Deployments
+here are single-instance, so this is structural rather than active. It is stated plainly — all
+replicas share one pepper or none may run — in the guard's javadoc and beside the variable in the
+production compose file, where the person scaling a service will actually read it. And it is narrowed
+rather than left: the unpeppered path re-asks the register at most once every thirty seconds, so the
+window is bounded by that interval instead of by the next restart. Only the unpeppered path, which is
+the only configuration that can be wrong this way — a healthy estate runs no extra query at all, and
+the hot path is untouched. It throws when it finds rows, which is not the case the "do not stall the
+consumer" rule protects: that rule is about an empty register, where `false` is the true answer,
+where here the alternatives are refusing the event or writing an erased person's real login, and only
+one of those can be taken back.
+
+**Both CI checks could pass on a broken state.** The compose check grepped per *file*, so it was
+satisfied by the string appearing anywhere — and it passes today only because all five services share
+one YAML anchor. Moving messaging onto its own environment block, which is exactly how the
+per-service `DISCOVERY_HOSTNAME` overrides beside it already work, would leave it unpeppered while
+the other four kept the check green. The committed-value check matched only the nested `pepper:`
+spelling, and Spring reads the flat `healthconnect.privacy.pepper:` just as happily — a line
+beginning with `h`, which a leading-whitespace anchor cannot see. Both are now a script rather than a
+grep, asking compose itself for each service's merged environment (`config --no-interpolate` resolves
+the anchors and leaves the `${...}` intact) and judging a committed pepper by its *value* rather than
+by its indentation. The test beside it builds both broken states and asserts that the old greps
+passed on them, because a check nobody has watched fail is a check of nothing.
+
+**And `deploy-dev.sh` pointed at a file nothing read.** It told the operator to keep the pepper in
+`deploy/.env`, never sourced it, and compose auto-loads `.env` from the *project* directory — which
+for `-f deploy/docker/docker-compose.dev.yml` is `deploy/docker/`, not `deploy/`. So an operator who
+did exactly as they were told still hit the `:?` and concluded the script was broken. The file is now
+sourced, before the defaults, so a value in it can also override the published ports.
+
 ### What is not fixed
 
 The second of D34's two open notes stands untouched: nothing says what happens when an erased person
 keeps using their account. It is a product decision and this was not it.
+
+Two smaller ones, recorded rather than left to be found. `messaging/config/liquibase/master.xml` now
+carries a third hand-written include, `privacy_pepper_witness`, and losing it to a regeneration is
+silent in a new way: the guard finds no witness, concludes this is a first peppered startup, and
+records a new one under whatever pepper is currently set. It belongs in `CLAUDE.md`'s
+regeneration-hazard table beside the `erased_subject` and `processed_event` rows. And the witness
+proves only that the pepper has not changed *since this database first saw one* — a service brought
+up wrong on its very first peppered start records the wrong value as correct, which no check inside
+the service can distinguish from the right one.
 
 ---
 
