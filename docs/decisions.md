@@ -2097,8 +2097,24 @@ compromised service cannot quietly widen its own reach.
 **Answered: scope the register by `erasedAt`.**
 
 An erased person who logs in and books again is doing something new, and the erasure covered what
-existed when it ran. So the consumer compares the event's own timestamp against
-`ErasedSubject.erasedAt`: older events are pseudonymised, newer ones are stored under the real login.
+existed when it ran. So a booking made **after** the erasure is stored under the real login, and
+everything that existed before it stays pseudonymised.
+
+**Scope this by the BOOKING's age, not the event's** — the first wording of this decision said "the
+consumer compares the event's own timestamp against `ErasedSubject.erasedAt`", and a review caught
+that it says something nobody intended. Every later event on a booking that was already open when the
+erasure ran — its acceptance, its completion, its cancellation — is timestamped *after* `erasedAt`.
+Under an event-timestamp rule those would each be written under the real login and the real name,
+putting an erased customer's identity back into the professional's bell menu one lifecycle step at a
+time. It would also silently break D36's guarantee that its residual "does not grow", which rests on
+exactly those later events being pseudonymised.
+
+The intent is about a person choosing to come back, which means a *new booking*. Two ways to
+implement it, and the choice belongs with whoever builds WP-08: carry the booking's own `raisedAt`
+in the outbox payload and compare that to `erasedAt`, which is explicit and needs one field added in
+booking; or treat a `bookingRef` messaging already holds rows for as predating the erasure, which
+needs no new field but infers the answer. The first is preferable — it states the fact rather than
+deducing it — but either satisfies the decision, and an event-timestamp comparison satisfies neither.
 The estate stops disagreeing with itself — no more conversation keyed to an alias for a booking that
 booking and catalog hold under a real name — and the historical rows stay erased.
 
