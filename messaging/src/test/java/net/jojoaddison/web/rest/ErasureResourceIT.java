@@ -7,6 +7,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.time.Instant;
+import java.util.List;
 import net.jojoaddison.IntegrationTest;
 import net.jojoaddison.domain.Conversation;
 import net.jojoaddison.domain.Message;
@@ -74,6 +75,13 @@ class ErasureResourceIT {
 
     @Autowired
     private PepperWitnessRepository witnesses;
+
+    /** One bell-menu row. {@code deepLink} is {@code /bookings/<ref>} for everything this service raises. */
+    private Notification notification(String recipient, String kind, String body, String bookingRef) {
+        return notifications.saveAndFlush(
+            new Notification().recipientLogin(recipient).kind(kind).body(body).raisedAt(Instant.now()).deepLink("/bookings/" + bookingRef)
+        );
+    }
 
     private Conversation thread(String reference) {
         return conversations.saveAndFlush(
@@ -196,6 +204,82 @@ class ErasureResourceIT {
         // Still the professional's row, still in their history.
         assertThat(after.getRecipientLogin()).isEqualTo(PRO);
         assertThat(after.getDeepLink()).isEqualTo("/bookings/" + c.getBookingReference());
+    }
+
+    /**
+     * <strong>The second booking with the same professional — {@code decisions.md} D36.</strong>
+     *
+     * <p>{@code BookingEventConsumer.openThreadIfNone} dedupes threads <em>by professional</em>, so a
+     * customer who books the same person twice has one conversation and it carries the <em>first</em>
+     * booking's reference. Deriving the deep links from conversations alone therefore never produced
+     * {@code /bookings/b-repeat}, and the professional's "Ama Tobeforgotten asked for a strength
+     * session" sat in their bell menu after a receipt had reported a clean erasure. Repeat bookings
+     * with one professional are not an exotic case; they are the product working.
+     *
+     * <p>The customer's own copy of the second booking's event carries the same {@code deepLink}, and
+     * that is what now bridges the gap.
+     */
+    @Test
+    @Transactional
+    @WithMockUser(username = "desk", authorities = "ROLE_BROKERAGE")
+    @DisplayName("a repeat booking shares the thread, and its notification is still found")
+    void findsNotificationsForARepeatBookingSharingOneThread() throws Exception {
+        // One thread for two bookings, bearing the FIRST booking's reference — what the consumer writes.
+        conversations.saveAndFlush(
+            new Conversation()
+                .reference("t-b-first")
+                .customerLogin(CUSTOMER)
+                .professionalRef(PRO)
+                .bookingReference("b-first")
+                .lastMessageAt(Instant.now())
+        );
+
+        Notification mineFirst = notification(CUSTOMER, "Booking confirmed", "Your home visit on 12 Sep at 10:00 is confirmed.", "b-first");
+        Notification theirsFirst = notification(
+            PRO,
+            "Booking requested",
+            "Ama Tobeforgotten asked for a home visit on 12 Sep at 10:00.",
+            "b-first"
+        );
+        Notification mineRepeat = notification(
+            CUSTOMER,
+            "Booking confirmed",
+            "Your strength session on 26 Sep at 09:00 is confirmed.",
+            "b-repeat"
+        );
+        Notification theirsRepeat = notification(
+            PRO,
+            "Booking requested",
+            "Ama Tobeforgotten asked for a strength session on 26 Sep at 09:00.",
+            "b-repeat"
+        );
+        // Somebody else's booking with the same professional. A widened sweep would take this too.
+        Notification aboutSomeoneElse = notification(
+            PRO,
+            "Booking requested",
+            "Kojo Stillhere asked for a home visit on 30 Sep at 14:00.",
+            "b-other"
+        );
+
+        mockMvc
+            .perform(post(URL, CUSTOMER).with(csrf()))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.conversationsPseudonymised").value(1))
+            .andExpect(jsonPath("$.notificationsReKeyed").value(2))
+            .andExpect(jsonPath("$.notificationsRedacted").value(2));
+
+        assertThat(notifications.findById(mineFirst.getId()).orElseThrow().getRecipientLogin()).isEqualTo(pseudonyms.of(CUSTOMER));
+        assertThat(notifications.findById(mineRepeat.getId()).orElseThrow().getRecipientLogin()).isEqualTo(pseudonyms.of(CUSTOMER));
+
+        for (Notification about : List.of(theirsFirst, theirsRepeat)) {
+            Notification after = notifications.findById(about.getId()).orElseThrow();
+            assertThat(after.getBody()).doesNotContain("Ama").doesNotContain("Tobeforgotten");
+            assertThat(after.getRecipientLogin()).isEqualTo(PRO);
+        }
+
+        Notification untouched = notifications.findById(aboutSomeoneElse.getId()).orElseThrow();
+        assertThat(untouched.getBody()).contains("Kojo Stillhere");
+        assertThat(untouched.getRecipientLogin()).isEqualTo(PRO);
     }
 
     /**

@@ -21,7 +21,7 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **WP-02** | Erasure: reach every table | DONE | — |
 | **WP-03** | Erasure: survive in-flight events | DONE | — |
 | **WP-04** | Erasure: pepper the pseudonym | DONE (unmerged) | — |
-| **WP-05** | Erasure: the notifications a repeat booking hides | READY | — |
+| **WP-05** | Erasure: the notifications a repeat booking hides | DONE | — |
 | **WP-06** | Erasure: a durable record in booking and catalog | READY | — |
 | **WP-07** | Erasure: orchestration across the three services | BLOCKED | architect — needs service-to-service auth or the hc-admin desk |
 | **WP-08** | Erasure: what an erased person who keeps their account is | BLOCKED | product |
@@ -118,18 +118,28 @@ prints the exact command; preflight refuses early and by name if it is missing.
 **Loose end for this repository:** `CLAUDE.md`'s regeneration-hazard table has no row for messaging's
 `privacy_pepper_witness` include, which a regeneration would drop as silently as the others.
 
-## WP-05 — Erasure: the notifications a repeat booking hides · READY
+## WP-05 — Erasure: the notifications a repeat booking hides · DONE
 
-Confirmed by the code review and **not yet fixed**. Notifications *about* an erased customer that sit
-in the professional's bell menu are found through the customer's own conversations' `bookingReference`.
-But `openThreadIfNone` dedupes by professional, so a customer's **second** booking with the same
+D36. Notifications *about* an erased customer that sit in the professional's bell menu are found
+through `deepLink`, and the link set was derived from the customer's conversations alone. But
+`openThreadIfNone` dedupes by professional, so a customer's **second** booking with the same
 professional never appears as any conversation's `bookingReference` — and that booking's "Ama Mensah
-asked for…" notification is therefore missed. Repeat bookings with one professional are not an exotic
-case; they are the product working.
+asked for…" notification was therefore missed, against a receipt reporting a clean erasure with
+plausible non-zero counts. Repeat bookings with one professional are not an exotic case; they are the
+product working.
 
-Fix: union the deep links from the customer's *own* notifications (collected before they are re-keyed)
-with the conversation-derived set. Test: two bookings, one professional, one thread — assert both
-professional-side notifications are redacted. It fails today.
+The link set is now the **union** of the conversation references and the `deepLink` of the customer's
+*own* notifications, collected in the loop that re-keys them: the customer's copy and the
+professional's copy of one booking event share a deep link, so finding either finds the other. Still
+one indexed `deep_link in (…)` query, no full-table scan. Confirmed red before the fix —
+`notificationsRedacted expected:<2> but was:<1>` — with a test seeding two bookings, one professional,
+one thread, and a second customer whose rows must not move.
+
+`notificationsRedacted` keeps its meaning and now counts all of them rather than a subset. The
+residual D36 records: a booking still *pending* at the instant of erasure leaves one professional-side
+row nothing keyed to the customer points at. It does not grow — every later event on that booking goes
+through the consumer, which already writes the pseudonym and "A customer" — and closing it needs
+messaging to know about bookings it has no thread for, which belongs with WP-06.
 
 ## WP-06 — Erasure: a durable record in booking and catalog · READY
 

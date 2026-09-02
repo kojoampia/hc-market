@@ -1,7 +1,9 @@
 package net.jojoaddison.service;
 
 import java.time.Instant;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import net.jojoaddison.domain.Conversation;
 import net.jojoaddison.domain.ErasedSubject;
 import net.jojoaddison.domain.Message;
@@ -45,6 +47,21 @@ import org.springframework.transaction.annotation.Transactional;
  * by recipient returns those, which is exactly why they survived the first implementation. They are
  * found through {@code deepLink}, and their bodies are redacted while the row stays, so the
  * professional's timeline keeps its shape.
+ *
+ * <p><strong>And the deep links come from two places, not one — {@code decisions.md} D36.</strong>
+ * Deriving them from the customer's conversations alone was wrong, because
+ * {@code BookingEventConsumer.openThreadIfNone} dedupes threads <em>by professional</em>: a second
+ * booking with the same person reuses the existing thread, so that booking's reference is never any
+ * conversation's {@code bookingReference} and its professional-side notification was never found. The
+ * customer's own notifications supply the rest — the customer's copy and the professional's copy of
+ * one booking event carry the same {@code deepLink} — and the two sets are unioned before the lookup.
+ *
+ * <p>What that union cannot reach is stated rather than left to be discovered: a booking still
+ * <em>pending</em> when the erasure runs has raised a notification to the professional and none to the
+ * customer, and shares its thread with an earlier booking, so nothing keyed to the customer points at
+ * it. That row is the residual, and it is the only one — every later event on that booking is written
+ * by a consumer that already consults the register, so it arrives pseudonymised and with
+ * "A customer" in place of the name.
  *
  * <h2>And erasure is now a standing fact, not a moment</h2>
  *
@@ -198,8 +215,25 @@ public class ErasureWorkflow {
             conversations.save(c);
         }
 
+        /* Deep links, collected from BOTH sides — decisions.md D36. A conversation names only the
+           booking that opened it, so the customer's own notifications are the other half; the
+           customer's copy and the professional's copy of one booking event share a deepLink, which
+           is what makes this bridge work. Collected here, in the re-keying loop, because these rows
+           are being visited anyway and one pass is cheaper than a second query. Re-keying does not
+           touch deepLink, so reading it before or after the setter is the same value. */
+        Set<String> links = new LinkedHashSet<>();
+        for (Conversation c : mine) {
+            addLink(links, c.getBookingReference());
+        }
+
         int reKeyed = 0;
         for (Notification n : notifications.addressedTo(login)) {
+            String link = n.getDeepLink();
+            // Null and blank are dropped rather than passed on: a blank in the IN clause would match
+            // every notification that has no deep link, which is somebody else's row by definition.
+            if (link != null && !link.isBlank()) {
+                links.add(link);
+            }
             n.setRecipientLogin(alias);
             notifications.save(n);
             reKeyed++;
@@ -209,14 +243,8 @@ public class ErasureWorkflow {
            professional, and deleting it would take a real event out of their history to remove a
            name that can be removed on its own. */
         int aboutThem = 0;
-        List<String> links = mine
-            .stream()
-            .map(Conversation::getBookingReference)
-            .filter(ref -> ref != null && !ref.isBlank())
-            .map(ref -> "/bookings/" + ref)
-            .toList();
         if (!links.isEmpty()) {
-            for (Notification n : notifications.linkedToAny(links)) {
+            for (Notification n : notifications.linkedToAny(List.copyOf(links))) {
                 if (alias.equals(n.getRecipientLogin())) {
                     continue; // already re-keyed above, and its body names nobody
                 }
@@ -245,4 +273,11 @@ public class ErasureWorkflow {
      * @param notificationsRedacted notifications in somebody else's list whose body named the customer
      */
     public record Erased(int conversationsPseudonymised, int messagesRedacted, int notificationsReKeyed, int notificationsRedacted) {}
+
+    /** {@code /bookings/<ref>} — the shape every deep link this service raises has. */
+    private static void addLink(Set<String> links, String bookingReference) {
+        if (bookingReference != null && !bookingReference.isBlank()) {
+            links.add("/bookings/" + bookingReference);
+        }
+    }
 }

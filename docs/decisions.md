@@ -2121,3 +2121,83 @@ prose.
 Which is the same failure this table exists to prevent, arriving from the other direction: an open-items
 list that keeps closed items is read as current, and someone re-fixes what is already fixed. Check a
 row against the code before acting on it.
+
+---
+
+## D36 — The notification a repeat booking hid
+
+Found by a code review of D34/D35, and confirmed against the code before anything was written: a test
+that seeds the shape the review described fails on the old implementation with
+`notificationsRedacted expected:<2> but was:<1>`, on a receipt that reports 200 OK and looks complete.
+
+D32 established that there are two kinds of notification an erasure has to reach, and that the second
+is the awkward one. Notifications *to* the customer are re-keyed to the pseudonym. Notifications
+*about* the customer sit in the **professional's** bell menu — "Ama Mensah asked for a home visit on
+12 Sep" — keyed to somebody else's login, so no query by recipient will ever return them. They are
+found through `deepLink`, which is `/bookings/<ref>` for everything this service raises, and their
+bodies are redacted while the row stays, because the row is a real event in the professional's
+history and the name can be removed without removing the event.
+
+The mechanism was right. The set of deep links it was given was not.
+
+### Why the dedupe made it invisible
+
+The links came from the customer's own conversations, via `Conversation.bookingReference`. That
+reads as complete, and it is complete only if every booking has a thread of its own. It does not:
+`BookingEventConsumer.openThreadIfNone` deliberately dedupes threads **by professional**, so a
+customer's second booking with the same person reuses the conversation the first one opened, and the
+conversation keeps the *first* booking's reference. The second booking's reference is therefore not
+on any conversation anywhere in the service, its `/bookings/<ref>` was never in the link set, and the
+professional's "Ama Mensah asked for…" for that booking was never looked at.
+
+The result is the worst shape a privacy defect can take: the erasure succeeds, the receipt is clean,
+the counts are all non-zero and plausible, and the customer's name is still sitting in another user's
+bell menu. Nothing is red anywhere, and the number an operator files against the data subject request
+is simply too small by however many repeat bookings that person made.
+
+Two things kept it hidden for as long as they did. The dedupe is correct — one thread per
+professional is the right conversation model, and the whole point of a marketplace is that people book
+the same trainer again — so nothing about it looks like a bug to read past. And every test seeded one
+booking per customer, which is the same fixture failure D34 named in booking: a fixture that exercises
+one of something can only ever prove the code handles one of them. Repeat bookings with one
+professional are not an edge case; they are the product working as intended.
+
+### What now guarantees the link set is complete
+
+The deep links are the **union** of two sources: the references on the customer's conversations, as
+before, and the `deepLink` of the customer's **own** notifications, collected in the loop that
+re-keys them. The bridge is that the customer's copy and the professional's copy of one booking event
+carry the same deep link — booking's outbox raises both from the same event, so "Your strength session
+on 26 Sep is confirmed" in the customer's bell and "Ama Mensah asked for a strength session on 26 Sep"
+in the professional's both point at `/bookings/b-repeat`. Finding either one finds the other.
+
+Collecting them in the re-keying loop rather than in a second query is deliberate — those rows are
+being visited and saved anyway, and `addressedTo` is one indexed lookup that already runs. Re-keying
+sets `recipientLogin` and does not touch `deepLink`, so reading the link on either side of the setter
+is the same string; it is read first only so the code says plainly that it does not depend on the
+order. The set is a `LinkedHashSet`, so the two sources overlapping costs nothing and the single
+`deepLink in (…)` query stays a single query against the `idx_notification_deep_link` D34 added. This
+is emphatically not a `findAll().stream().filter(...)`, which is what catalog was doing in this same
+feature and what the comment in this same method warns against.
+
+### The one row this still cannot reach, stated rather than left to be found
+
+A booking that is still **pending** at the moment the erasure runs has raised a notification to the
+professional and none to the customer, and — if it is a repeat with that professional — shares its
+thread with an earlier booking. Nothing keyed to the customer points at it, so no query the union can
+make will return it. That row is the residual, and it is the only one: messaging holds no other record
+of a booking's existence, and the alternative of redacting by professional would take other customers'
+notifications with it, which trades a disclosure for a larger one.
+
+It does not grow. Every subsequent event on that booking — accepted, declined, cancelled, completed —
+is written by `BookingEventConsumer`, which consults the register D32 built and writes the pseudonym
+and "A customer" instead of the login and the name. So the window is one row per booking that was
+pending at the instant of erasure, and it closes for everything that happens afterwards. Closing it
+properly needs messaging to know about bookings it has no thread for, which is a schema change and
+belongs with WP-06's durable record rather than here.
+
+### The receipt
+
+`notificationsRedacted` means exactly what it meant before — notifications in somebody else's list
+whose body named the customer — and now counts all of them rather than a subset. No operator reading
+an old receipt should reinterpret it; they should assume it was too low.

@@ -27,6 +27,12 @@ public interface NotificationEraseRepository extends JpaRepository<Notification,
      * name, sitting in a row keyed to a different person's login, which no query by recipient will
      * ever return. The link back is {@code deepLink}, which is {@code /bookings/<ref>} for every
      * notification this service raises.
+     *
+     * <p>The caller builds that link set from the customer's conversations <em>and</em> from the
+     * customer's own notifications — {@code decisions.md} D36. Conversations alone are not enough:
+     * threads are deduped by professional, so a repeat booking's reference appears on no conversation
+     * at all. Both columns this feature filters by, {@code deep_link} and {@code recipient_login}, are
+     * indexed by the {@code privacy_indexes} changelog; neither of these is a scan.
      */
     @Query("select n from Notification n where n.deepLink in :deepLinks")
     List<Notification> linkedToAny(@Param("deepLinks") List<String> deepLinks);
