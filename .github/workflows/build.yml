@@ -175,7 +175,8 @@ jobs:
       - name: Shell scripts must parse
         run: |
           for s in deploy/deploy-dev.sh deploy/deploy-prod.sh deploy/sync-appendices.sh \
-                   deploy/verify-cycle.sh deploy/verify-outbox-recovery.sh quality/startup.sh; do
+                   deploy/verify-cycle.sh deploy/verify-outbox-recovery.sh quality/startup.sh \
+                   .github/checks/*.sh; do
             bash -n "$s" && echo "ok   $s"
           done
 
@@ -313,28 +314,25 @@ jobs:
       # Absent, erasure answers 503 rather than writing a re-identifiable alias — so the failure this
       # guards is not a crash, it is a desk that has quietly stopped being able to do the one thing it
       # exists for, on a stack that is green everywhere else.
-      - name: The erasure pepper must be required by every compose file and defaulted in none
-        run: |
-          fail=0
-          for f in quality/compose.yml deploy/docker/docker-compose.dev.yml deploy/docker/docker-compose.prod.yml; do
-            if ! grep -qE 'HEALTHCONNECT_PRIVACY_PEPPER: \$\{HC_PRIVACY_PEPPER:\?' "$f"; then
-              echo "::error file=$f::HEALTHCONNECT_PRIVACY_PEPPER is not required here — the services would start unpeppered and the erasure desk would answer 503 with nothing else red. See decisions.md D35."
-              fail=1
-            fi
-          done
-          # src/test/resources carries a committed test pepper on purpose; src/main/resources must not.
-          for s in booking catalog messaging; do
-            for y in application.yml application-dev.yml application-prod.yml; do
-              p="$s/src/main/resources/config/$y"
-              [ -f "$p" ] || continue
-              if grep -qE '^\s+pepper:\s*\S' "$p"; then
-                echo "::error file=$p::a pepper value is committed in a profile a real deployment loads. This repository is public."
-                fail=1
-              fi
-            done
-          done
-          [ "$fail" = 0 ] && echo "ok   required in all three compose files, committed in none of the runtime profiles"
-          exit "$fail"
+      # Both halves of this were two greps here until 2026-09-02, and both could pass on a broken
+      # state. The first was per FILE — it matched the string anywhere, so moving messaging off the
+      # shared YAML anchor (which is how the per-service DISCOVERY_HOSTNAME overrides already work)
+      # left it unpeppered while the other four kept the check green. The second matched only the
+      # nested `    pepper: v` spelling, and Spring reads the flat `healthconnect.privacy.pepper: v`
+      # just as happily — a line beginning with `h`, which the leading-whitespace anchor could not
+      # see. Now a script, so it can be run and watched to fail; the test beside it builds both bad
+      # states and asserts the old greps passed on them.
+      - name: The erasure pepper must be required per service and committed in no runtime profile
+        run: ./.github/checks/pepper-wiring.sh
+
+      - name: …and that check must fail on the states its predecessors passed
+        run: ./.github/checks/pepper-wiring-test.sh
+
+      # quality/startup.sh took an environment-provided pepper without ever writing it down, so the
+      # next run without the variable generated a fresh one against databases keyed to the old.
+      # ErasureRegisterGuard cannot see that: it detects an absent pepper, not a changed one.
+      - name: quality/startup.sh must not be able to mint a second pepper
+        run: ./.github/checks/quality-pepper-persistence-test.sh
 
       # The image name is written in THREE places: image_for() in deploy-prod.sh, that script's own
       # header, and spec §12's channel table. They disagreed for weeks — header and spec said

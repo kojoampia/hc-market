@@ -174,9 +174,43 @@ resolve_secret() {
   fi
   export JWT_BASE64_SECRET
 
+  # --- The pepper does NOT follow the signing key's precedence, and that gap minted new ones ------
+  #
+  # env > file > generate, with an environment value never written down, is right for the signing
+  # key: the worst case is that everyone signs in again. For the pepper it produced a silent data
+  # defect. Run this once with HC_PRIVACY_PEPPER exported — the branch above takes it, nothing is
+  # persisted — and run it again without it, and the `-s "$p"` test misses, so a BRAND NEW random
+  # pepper is generated and handed to a stack whose erased_subject rows were written under the old
+  # one. Messaging starts perfectly happily: ErasureRegisterGuard detects a MISSING pepper, and D35
+  # says plainly that a changed pepper "looks exactly like a right one until something fails to
+  # match". Every alias in the register is orphaned from that moment, permanently.
+  #
+  # So an environment value is persisted the first time it is seen, and a conflict is fatal. Choosing
+  # between two candidate peppers is not a decision a startup script can take: one of them matches
+  # the rows in the volumes and the other does not, and this script cannot tell which. Deleting the
+  # file is how the operator says which — deliberately, and together with the volumes, exactly as the
+  # comment above says.
   local p="$HERE/.privacy-pepper"
-  if [[ -n "${HC_PRIVACY_PEPPER:-}" ]]; then :
-  elif [[ -s "$p" ]]; then HC_PRIVACY_PEPPER="$(cat "$p")"
+  local on_disk=""
+  [[ -s "$p" ]] && on_disk="$(cat "$p")"
+  if [[ -n "${HC_PRIVACY_PEPPER:-}" ]]; then
+    if [[ -n "$on_disk" && "$on_disk" != "$HC_PRIVACY_PEPPER" ]]; then
+      # A teardown writes no alias, and dropping the volumes is precisely how an operator resolves
+      # this — so refusing here would refuse the remedy along with the mistake. The stored value is
+      # used: `down` and `clean` need something for compose to interpolate and nothing more.
+      if [[ "$ACTION" == "down" || "$ACTION" == "clean" ]]; then
+        warn "HC_PRIVACY_PEPPER differs from quality/.privacy-pepper; using the stored one for this teardown"
+        HC_PRIVACY_PEPPER="$on_disk"
+      else
+        die "HC_PRIVACY_PEPPER in the environment differs from quality/.privacy-pepper. Aliases already in this stack's databases were derived from one of them and nothing re-keys them (decisions.md D35), so the stack must not start until you say which is correct: unset the variable to keep the stored pepper, or drop the volumes and the file together ('./startup.sh --local --clean' then 'rm quality/.privacy-pepper') to adopt the new one."
+      fi
+    fi
+    if [[ -z "$on_disk" ]]; then
+      umask 077; printf '%s' "$HC_PRIVACY_PEPPER" > "$p"
+      log "persisted the erasure pepper from the environment to quality/.privacy-pepper"
+    fi
+  elif [[ -n "$on_disk" ]]; then
+    HC_PRIVACY_PEPPER="$on_disk"
   else
     HC_PRIVACY_PEPPER="$(head -c 32 /dev/urandom | base64 -w0)"
     umask 077; printf '%s' "$HC_PRIVACY_PEPPER" > "$p"
