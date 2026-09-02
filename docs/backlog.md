@@ -183,13 +183,24 @@ no schema change, and no third pass over a union that has already been declared 
 fan-out carrying only a login will be extended later by whoever rediscovers that section, so the shape
 is worth getting right the first time.
 
-## WP-08 — Erasure: the still-active account · BLOCKED
+## WP-08 — Erasure: the still-active account · READY (answered by D37)
 
 Erasure does not touch the gateway's user store, so an erased person can log in and book again.
 Messaging would pseudonymise the new booking's thread while booking and catalog store the real login —
-the estate disagreeing with itself about whether someone exists. Either erasure implies account
-deactivation as a documented fourth desk step, or the register applies only to events older than
-`erasedAt`. Both are product decisions, and neither is implemented.
+the estate disagreeing with itself about whether someone exists.
+
+**Answered: a booking made after the erasure is stored under the real login; everything that existed
+before it stays pseudonymised.** Someone who books again has chosen a new relationship, and the
+erasure covered what existed when it ran. Account deactivation was the alternative and was not taken:
+it would have made "erased" a tidier state at the cost of locking out somebody who came back.
+
+**Scope it by the BOOKING's age, not the event's** — D37's first wording said to compare the event's
+timestamp against `erasedAt`, and a review caught that this means something nobody intended. Every
+later event on a booking already open when the erasure ran is timestamped after `erasedAt`, so an
+event-timestamp rule puts the customer's real login and name back one lifecycle step at a time, and
+breaks D36's guarantee that its residual does not grow. Either carry the booking's `raisedAt` in the
+outbox payload and compare that, or treat a `bookingRef` messaging already holds rows for as
+predating the erasure. The first states the fact rather than deducing it.
 
 ## WP-09 — Erasure: retention and lawful basis · BLOCKED
 
