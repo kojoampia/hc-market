@@ -2342,6 +2342,12 @@ somewhere". See D38.
 whose body named the customer — and now counts all of them rather than a subset. No operator reading
 an old receipt should reinterpret it; they should assume it was too low.
 
+**And, from D39, no longer too high on a second run.** The count widened here without anybody noticing
+that widening it also made it repeat: the rows are matched on `deepLink`, which does not change when a
+body is redacted, so every later erasure of the same customer found them again and reported the number
+it had just re-written. The definition in this paragraph is unchanged; what changed is that it now
+counts bodies this run replaced rather than bodies it matched.
+
 A re-keyed notification is counted in `notificationsReKeyed` and never also in `notificationsRedacted`,
 even though its body is now redacted along with the re-key for the reason four paragraphs below. One
 row appearing in two counts would inflate a figure that gets filed against a data subject request, and
@@ -2600,6 +2606,13 @@ without this service pretending to a classification it gets wrong.
 Erasure requests arrive by email and get forwarded, so they get retried; after a 502 the operator is
 told to call again. The second run reports zeroes from every service and that is the honest answer.
 
+> **Corrected by D39 — this was false when it was written.** Messaging reported
+> `notificationsRedacted: 2` on every subsequent fan-out, indefinitely, because those rows are matched
+> by `deep_link` and the count was of rows re-written rather than of rows that still held anything.
+> The sentence above is true of booking and catalog, was true of three of messaging's four counts, and
+> was wrong about the fourth — the one an operator retrying after a 502 would read as "data was still
+> exposed at the moment of the retry". It is true as written now. See D39.
+
 The part worth stating is where the booking references come from. They are read back **under the
 alias, after the local erasure**, not collected from the rows on the way past. Collecting them during
 the sweep reads better and breaks the retry: a second run finds nothing under the original login, so
@@ -2683,7 +2696,213 @@ stronger. What used to evaporate was three HTTP responses; what evaporates now i
 that is the only account of which legs ran, for an irreversible action with legal significance, in
 precisely the case (a partial fan-out) where an operator most needs to be able to prove what happened.
 The half of WP-06 that the fan-out did retire is its justification-by-residual; the durable record is
-untouched and is now the whole of that package.
+untouched and is now the whole of that package. **Built as D39.**
 
 **Nothing here touches the gateway's user store.** An erased person can still log in and book again,
 which is WP-08 and is unaffected by this in either direction.
+
+---
+
+## D39 — An erasure's record should be true, and should outlive the request
+
+Built 2026-09-02, from WP-06 and two findings on the quality box. Three items in three places, and
+they are one concern: **erasure is the feature where the receipt is the deliverable.** Everywhere else
+in this estate a number on a response is a convenience; here it is the artefact an operator files
+against a legal request, and it has now been wrong or ephemeral three separate times. Doing them as
+one pass rather than a third patch is the point of this entry.
+
+### The count that could not go down
+
+D38 states, and `docs/backlog.md` restated, that a second `erase-everywhere` reports zeroes from every
+service. **Messaging did not.** It answered `notificationsRedacted: 2` on the second call, and on the
+third, and on every call after that, for ever.
+
+Nothing was wrong with the data. Those bodies had held the placeholder since the first call. What was
+wrong is the thing that gets filed: an operator retrying after a 502 — which is exactly what they are
+told to do — reads a non-zero redaction count on the retry and reasonably concludes that personal data
+was still exposed at the moment they retried. The receipt is the only account they have, and it was
+telling them something that had not happened.
+
+The cause is one line and it generalises into a rule worth keeping:
+
+> **A counter keyed on the customer's login is self-clearing. A counter keyed on anything else has to
+> compare before it counts.**
+
+Conversations, messages and the customer's own notifications are found *by the login*, which the first
+pass replaces, so a second pass matches nothing and reports zero without anyone having to be careful.
+`notificationsRedacted` is different in kind: those rows sit in the **professional's** bell menu, are
+keyed to somebody else, and are found through `deepLink` — which is not personal data and does not
+change when a body is redacted. The same rows matched every time, were re-written with the placeholder
+that was already in them, and were counted again. The workflow now skips a row whose body is already
+the placeholder: no write, no count. It shows on the fan-out path rather than the desk path, because
+the fan-out reads the booking references back under the alias and therefore still has a link set on a
+retry (D38), where a desk call's link set is empty for the unrelated reason that nothing is keyed to
+the original login any more.
+
+Confirmed red first, as this repository requires: `JSON path "$.notificationsRedacted" expected:<0> but
+was:<2>`, on a 200 OK whose body read
+`{"pseudonym":"erased-…","conversationsPseudonymised":0,"messagesErased":0,"notificationsReKeyed":0,"notificationsRedacted":2}`
+— every other count honestly zero beside the one that was not.
+
+### And the same error in booking, which nobody had gone looking for
+
+The instruction to check the other counters found a second instance, in booking's
+`outboxPayloadsRedacted`. Rows there are matched by `aggregate_ref`, which is the **booking's**
+reference and says nothing about whether the row ever named anybody — and the sweep then wrote
+`customerName: "[erased]"` into every one of them unconditionally.
+
+That is not hypothetical. `OutboxRecorder.record(String, Dispute, String)` keys a dispute event to the
+booking, deliberately, so that a reversal cannot overtake the booking events it concerns; its payload
+carries `disputeRef`, `bookingRef`, the money and the resolution, and **no customer fields at all**. So
+a customer who raised one dispute got a receipt reading two where one row held anything of theirs, and
+an event that was never defined to carry a customer name acquired one. Both halves are now conditional
+on there being something to remove — `hasNonNull`, so an event without a name does not gain one, and
+the actor re-key counts too. Red first: `JSON path "$.outboxPayloadsRedacted" expected:<1> but was:<2>`.
+
+The audit of all nine counters across the three services, since the useful output of this is the table
+rather than the two fixes:
+
+| Service | Count | Matched on | Could over-count? |
+|---|---|---|---|
+| booking | `bookingsErased` | `customer_login` | No — self-clearing |
+| booking | `outboxPayloadsRedacted` | `aggregate_ref` | **Yes, and did** — fixed |
+| booking | `disputesRedacted` | `raised_by_login` | No — self-clearing |
+| booking | `historyRowsReKeyed` | `actor` | No — self-clearing |
+| catalog | `reviewsDeidentified` | `customer_login` | No — self-clearing |
+| catalog | `favouritesDeleted` | `customer_login`, then deleted | No |
+| messaging | `conversationsPseudonymised` | `customer_login` | No — self-clearing |
+| messaging | `messagesErased` | the customer's conversations | No — reachable only under the login |
+| messaging | `notificationsReKeyed` | `recipient_login` | No — self-clearing |
+| messaging | `notificationsRedacted` | `deep_link` | **Yes, and did** — fixed |
+
+Every one that can over-count is one that had to reach rows held *by somebody else about* the customer,
+which is the same shape as the two hardest defects in D34 and D36. That is not a coincidence: the rows
+this feature has most trouble finding are the rows it has most trouble counting, for the same reason —
+nothing in them is keyed to the person.
+
+### Catalog's receipt omitted the one thing it deletes
+
+`catalog`'s workflow deletes the customer's favourites outright — deliberately, since a saved list is
+purely personal and a tombstoned row would be an orphan (D24) — logs it, and reported only
+`reviewsDeidentified`. On the quality box it deleted two favourites and said nothing about them. A
+customer with no reviews and a saved list of twelve produced a receipt of zeroes, which an operator
+files as "catalog held nothing for this person".
+
+This is the defect D31 found in messaging, where a booking raises a thread before anybody writes in it
+so an empty conversation was re-keyed and reported as nothing. It was fixed there, the lesson was
+written down, and **nobody checked whether the other two services had the same shape**. They did.
+Catalog's is the worse instance of it: the omitted count is of the only rows this feature *deletes*
+anywhere in the estate. Red first: `No value at JSON path "$.favouritesDeleted"`, against a body
+reading `{"pseudonym":"erased-…","reviewsDeidentified":1}`.
+
+The general lesson is not about counting. It is that a defect found in one of three copy-pasted
+services is a defect **reported against all three until each has been looked at**, and this repository
+now has two instances of failing to do that — this one, and D38's discovery that nothing verified the
+three services run the same pepper.
+
+### The durable record — WP-06
+
+Messaging has recorded erasures since D32 in `erased_subject`. Booking and catalog recorded one in a
+log line and an HTTP response body that ends with the request. For an irreversible act with legal
+significance that is thin, and WP-07 sharpened rather than retired the argument: what evaporates now is
+a **single** `erase-everywhere` receipt that is the only account of which legs ran, and the case where
+an operator most needs it is precisely the 502.
+
+**Two tables, because there are two facts.** This is the whole of the design decision and it is worth
+stating as such, because the obvious version — one row per person, updated on each attempt — is wrong
+in a way this repository has already been bitten by.
+
+- **`erased_subject`, one row per person, written once, in booking and in catalog.** "This service
+  erased this person, at this time." A *local* fact: only the service that ran a sweep can attest to
+  it, and a central register would say "booking believes catalog erased X" — which is a different
+  claim, and is exactly the claim that turned out to be false the day catalog was never called.
+  `erasedAt` never moves; D35 had to fix precisely that in messaging's copy, where `save()` on an
+  existing key replaced the original timestamp with the date of the retry.
+- **`erasure_run`, one row per fan-out attempt, in booking only.** "A fan-out was attempted, and here
+  is what each leg said." This one cannot be distributed at all, and the reason is the argument for
+  choosing booking rather than a per-service copy: **a leg that fails is a leg that cannot record its
+  own failure.** The service that could not be reached writes nothing, by definition. The only place a
+  partial outcome can exist is the orchestrator, and booking is already the orchestrator because it
+  holds the booking references the other legs need (D38).
+
+So the answer to "three per-service registers or one record of the fan-out" is **both, and they are not
+alternatives** — they answer different questions with different lifecycles. Folding them together would
+mean either a retry overwriting the first attempt (destroying the evidence of the partial run that is
+the entire reason to keep any of this) or `erasedAt` moving. Hence a UUID key and no updates on
+`erasure_run`, and a subject key with a write-once guard on `erased_subject`.
+
+**Pseudonyms only, and it needed enforcing rather than merely intending.** The principle is copied from
+`ErasedSubject`'s javadoc in messaging: a register of erased people *that names them* is precisely the
+thing erasure was asked to remove, and unlike the rows being redacted it would have to be kept for
+ever. Both new tables hold the alias and never a login.
+
+That is easy to say and there was one route by which it would have been false. `erasure_run` stores the
+receipt as it was rendered, and a failed leg's message carries the root cause — and the root cause of
+an unreachable leg is an I/O error naming the URL it was thrown against,
+`/api/desk/customers/<login>/erase`. Stored verbatim, the one row written specifically to be kept for
+ever would have been the only row in the estate naming a person who asked to be forgotten, sitting in
+the audit trail of their own erasure. The login is substituted for the alias before the row is written,
+and a test asserts the stored receipt carries neither the login nor a fragment of it while still
+carrying `SocketTimeoutException` — scrubbing the identity must not scrub the diagnosis. The HTTP
+response is *not* scrubbed and does not need to be: the operator typed that login into the path, and
+the response ends with the request.
+
+**The receipt is stored as a blob rather than modelled into columns**, which is the same discipline
+`ErasureFanoutClient` already applies: it copies each leg's counts through under the names that service
+gave them, precisely so that a count added or removed downstream cannot be misreported by a record in
+this service that still declares the old one. A column per count would undo that on the durable side,
+and an audit asks for the answer that was given rather than for a reconstruction of it.
+
+**A failure to record does not fail the erasure, and does not go quiet.** The redactions have already
+happened and are not coming back, so throwing would replace a receipt naming three legs with a 500
+naming none — reintroducing the invisibility this whole package exists to remove, from the other side.
+The receipt carries `recorded` and `recordId` instead; `recorded: false` is a thing an operator can act
+on before closing the tab, and the log line is an ERROR because nothing else about the response would
+look wrong.
+
+**Neither new register gates anything, and that is why neither needs a guard.** D35's
+`ErasureRegisterGuard` exists in messaging because messaging *consults* its register: run it unpeppered
+and `isErased` answers "no" about people it erased, so the next lagging `booking.requested` writes a
+real login back. Booking and catalog only write, and an unpeppered service refuses to erase at all
+(503), so no row in either can carry an alias its service cannot reproduce. The trap was worth naming
+in the other direction too: **nothing was added to messaging's `erased_subject`.** Its emptiness is
+load-bearing — it is what lets `isErased` answer `false` and `lockSubject` do nothing rather than
+throwing and stalling the consumer — and D35 already had to move the pepper witness into its own table
+for exactly that reason. A row for a fan-out attempt would have made `count()` non-zero for ever and
+taken the allowance away with nothing saying so.
+
+**This is also the substrate WP-08 will read**, which is why the shape matters more than a log line
+would. WP-08 scopes the register by the **booking's** age rather than the event's, so that somebody who
+books again after being erased is stored under their real login while everything that existed before
+stays pseudonymised. That comparison needs `erasedAt` next to the service that holds the booking's
+`raisedAt`, which is booking, which now has it. The day something *reads* one of these registers to
+decide what to write, that service needs the guard messaging has — said in both javadocs, beside a
+repository deliberately left with no query methods so that adding one is the moment somebody meets the
+sentence.
+
+### Two hazards added to the regeneration table
+
+`booking/config/liquibase/master.xml` gains one include and `catalog/config/liquibase/master.xml`
+gains one, and losing them fails in opposite ways. Booking's is **loud** — every `erase-everywhere`
+500s on a missing `erasure_run` table. Catalog's is **silent**: erasure keeps working, the receipt still
+reports what it redacted and deleted, and the estate simply stops keeping any record that an
+irreversible act happened, in the one service that deletes rather than redacts. Both are in
+`CLAUDE.md`'s table, which is the only reason any of the nine rows above it have survived three
+regenerations.
+
+### What this does not do
+
+**None of it has been run against the quality box.** D38 ends on the same sentence about the fan-out
+handshake and it is still true; this adds two tables and a scrub that no test in this repository can
+prove behave the same against a real Postgres as against a Testcontainers one — the Liquibase
+changelogs are exercised by every integration test, so the schema is proved, but a live erasure filing
+a live receipt is not the same event.
+
+**Nothing reads `erasure_run` yet.** There is no desk endpoint for "show me every attempt at erasing
+this person"; the repository method exists and the index behind it exists, and an operator today gets
+the row by asking the database. Adding the endpoint means deciding who may read an audit trail of
+erasures, which is a `ROLE_BROKERAGE`-versus-something-narrower question of the same kind D38 answered
+for the fan-out authority, and it was not answered here.
+
+**The pre-D39 erasures on quality are not back-filled.** Same position D35 took: there is no way to
+reconstruct a record of an act nobody kept a record of, and on quality it is test data.

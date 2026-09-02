@@ -1,12 +1,17 @@
 package net.jojoaddison.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.function.Supplier;
 import net.jojoaddison.domain.Booking;
+import net.jojoaddison.domain.ErasureRun;
 import net.jojoaddison.repository.BookingQueryRepository;
+import net.jojoaddison.repository.ErasureRunRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -58,6 +63,16 @@ import org.springframework.stereotype.Component;
  * request, is holding the receipt, and re-running the whole fan-out is safe — the second pass finds
  * nothing under the original login and says so, in zeroes.
  *
+ * <h2>And the receipt is kept — {@code decisions.md} D39</h2>
+ *
+ * <p>What this returns is the only account anywhere of which legs ran, and until D39 it lived for the
+ * length of an HTTP response. That is fine while everything succeeds and useless in the case this
+ * class exists for: a 502 where two services erased and the third did not, and an operator who has to
+ * prove afterwards what did and did not happen. Every attempt is now written to
+ * {@link ErasureRun} — one row per attempt, never updated, holding the receipt as it was rendered and
+ * the alias rather than the login. {@link net.jojoaddison.domain.ErasedSubject} beside it is the
+ * different and smaller fact that this service erased this person, recorded by the sweep itself.
+ *
  * <h2>Idempotent, including the references</h2>
  *
  * <p>The booking references are read back <strong>under the alias, after the local erasure</strong>,
@@ -95,17 +110,23 @@ public class ErasureFanout {
     private final BookingQueryRepository bookings;
     private final ErasureFanoutClient legs;
     private final FanoutTokenMinter tokens;
+    private final ErasureRunRepository runs;
+    private final ObjectMapper mapper;
 
     public ErasureFanout(
         ErasureWorkflow erasure,
         BookingQueryRepository bookings,
         ErasureFanoutClient legs,
-        FanoutTokenMinter tokens
+        FanoutTokenMinter tokens,
+        ErasureRunRepository runs,
+        ObjectMapper mapper
     ) {
         this.erasure = erasure;
         this.bookings = bookings;
         this.legs = legs;
         this.tokens = tokens;
+        this.runs = runs;
+        this.mapper = mapper;
     }
 
     /**
@@ -131,7 +152,51 @@ public class ErasureFanout {
 
         boolean complete = outcome.stream().allMatch(leg -> ERASED.equals(leg.status()));
         LOG.info("erasure fan-out for {} — complete={} references={} legs={}", alias, complete, references.size(), outcome);
-        return new Receipt(alias, complete, references.size(), outcome);
+
+        String recordId = record(login, alias, complete, references.size(), outcome);
+        return new Receipt(alias, complete, recordId != null, recordId, references.size(), outcome);
+    }
+
+    /**
+     * Keeps the receipt — {@code decisions.md} D39. See {@link ErasureRun} for why this is one row in
+     * booking rather than three rows in three services.
+     *
+     * <p><strong>Scrubbed of the login before it is written.</strong> A leg's failure message carries
+     * the root cause, and an unreachable leg's root cause is an I/O error naming the URL it was thrown
+     * from — {@code /api/desk/customers/<login>/erase}. Stored verbatim, the row written specifically
+     * to be kept for ever would be the one row in the estate naming an erased person. So every
+     * occurrence of the login is replaced by the alias, which is a blind substitution on purpose: the
+     * message is prose from a library, there is no structure to parse, and replacing more than
+     * necessary costs nothing because the alias is what everything else here already says. The
+     * response the operator sees is not scrubbed and does not need to be — they typed the login into
+     * the path, and it ends with the request.
+     *
+     * <p><strong>A failure to record does not fail the erasure, and does not go quiet either.</strong>
+     * The redactions have already happened and are not coming back, so throwing here would replace a
+     * receipt naming three legs with a 500 naming none — reintroducing exactly the invisibility this
+     * package exists to remove, from the other side. The receipt says {@code recorded: false} instead,
+     * which is a thing an operator can act on, and the log line is an ERROR because nothing else about
+     * the response would look wrong.
+     *
+     * @return the id an operator can quote, or null if it could not be written
+     */
+    private String record(String login, String alias, boolean complete, int references, List<Leg> outcome) {
+        String id = UUID.randomUUID().toString();
+        try {
+            /* Byte for byte what the caller is about to be handed, id and all — the id is minted
+               first so that the two cannot differ. Storing a receipt that said `recorded: false` in a
+               row whose existence proves otherwise would be its own small lie in an audit trail. */
+            String receipt = mapper.writeValueAsString(new Receipt(alias, complete, true, id, references, outcome));
+            runs.save(new ErasureRun(id, alias, Instant.now(), complete, references, receipt.replace(login, alias)));
+            return id;
+        } catch (Exception couldNotRecord) {
+            LOG.error(
+                "erasure fan-out for {} completed but could not be recorded — the receipt is the only account of it",
+                alias,
+                couldNotRecord
+            );
+            return null;
+        }
     }
 
     /**
@@ -202,10 +267,23 @@ public class ErasureFanout {
      * @param pseudonym the alias every service should now be carrying for this person
      * @param complete every leg erased. <strong>The field an operator reads first</strong>, and false
      *     is the answer this whole package exists to be able to give
+     * @param recorded this receipt survives the request — {@code decisions.md} D39. False means the
+     *     erasure happened and the only account of it is the response being read right now, which is
+     *     worth knowing before closing the tab
+     * @param recordId the row in {@code erasure_run} holding it, or null when {@code recorded} is
+     *     false. Quoted against the data subject request; the attempts for one person are found again
+     *     by hashing their login through {@code SubjectPseudonym} and asking for that alias
      * @param bookingReferences how many of the customer's booking references were handed to messaging.
      *     Reported because it is the input to a redaction rather than a count of one, and a fan-out
      *     that suddenly hands over none has a bug in booking rather than in messaging
      * @param services one entry per leg, in the order they were attempted
      */
-    public record Receipt(String pseudonym, boolean complete, int bookingReferences, List<Leg> services) {}
+    public record Receipt(
+        String pseudonym,
+        boolean complete,
+        boolean recorded,
+        String recordId,
+        int bookingReferences,
+        List<Leg> services
+    ) {}
 }

@@ -47,4 +47,8 @@
          concurrent double booking collide instead of silently succeeding. Regeneration drops this. -->
     <include file="config/liquibase/changelog/20260825210000_unique_availability_slot.xml" relativeToChangelogFile="false"/>
     <include file="config/liquibase/changelog/20260901120000_added_privacy_indexes.xml" relativeToChangelogFile="false"/>
+    <!-- HAND-WRITTEN: the register of who this service has erased, decisions.md D39. Regeneration
+         drops this line and the failure is silent - erasure keeps working and simply stops being
+         recorded, in the one service that deletes rather than redacts. -->
+    <include file="config/liquibase/changelog/20260902160000_added_erased_subject.xml" relativeToChangelogFile="false"/>
 </databaseChangeLog>

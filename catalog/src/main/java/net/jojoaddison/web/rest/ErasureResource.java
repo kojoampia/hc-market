@@ -63,8 +63,19 @@ public class ErasureResource {
                 "erasure is unavailable: healthconnect.privacy.pepper is not set on this deployment (decisions.md D35)"
             );
         }
-        return new ErasureReceipt(erasure.pseudonym(login), erasure.eraseCustomer(login));
+        ErasureWorkflow.Erased erased = erasure.eraseCustomer(login);
+        return new ErasureReceipt(erasure.pseudonym(login), erased.reviewsDeidentified(), erased.favouritesDeleted());
     }
 
-    public record ErasureReceipt(String pseudonym, int reviewsDeidentified) {}
+    /**
+     * @param pseudonym what the rows now carry instead of the login
+     * @param reviewsDeidentified reviews whose author is now the alias. The body stays — D24
+     * @param favouritesDeleted rows removed from the saved list — {@code decisions.md} D39. Reported
+     *     because this is the only place in the estate where an erasure <strong>deletes</strong>
+     *     anything, and it was the only thing this receipt did not mention: a customer with no reviews
+     *     and a saved list of twelve produced a receipt of zeroes, filed against a legal request as
+     *     "catalog held nothing for this person". The same defect D31 found in messaging's empty
+     *     thread, in the service where the consequence is irreversible
+     */
+    public record ErasureReceipt(String pseudonym, int reviewsDeidentified, int favouritesDeleted) {}
 }

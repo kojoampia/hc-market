@@ -26,4 +26,10 @@
          missing table. -->
     <include file="config/liquibase/changelog/20260824200000_added_outbox_event.xml" relativeToChangelogFile="false"/>
     <include file="config/liquibase/changelog/20260901120000_added_privacy_indexes.xml" relativeToChangelogFile="false"/>
+    <!-- HAND-WRITTEN: the durable record of an erasure, decisions.md D39. erased_subject is the
+         standing fact that a person was erased here; erasure_run is one row per fan-out attempt,
+         which is the only account of a partial erasure anywhere in the estate. Regeneration drops
+         this line: every erase-everywhere then 500s on a missing table, and nothing keeps a record
+         of an irreversible act. -->
+    <include file="config/liquibase/changelog/20260902160000_added_erasure_record.xml" relativeToChangelogFile="false"/>
 </databaseChangeLog>

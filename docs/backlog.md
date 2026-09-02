@@ -1,6 +1,6 @@
 # Backlog — hc-market
 
-Every open item in this repository, folded into work packages. Sources: `docs/decisions.md` D1–D38,
+Every open item in this repository, folded into work packages. Sources: `docs/decisions.md` D1–D39,
 the two code reviews of 2026-09-01, and the verification runs against the quality box.
 
 **This is a derived document.** `decisions.md` holds the reasoning and stays the record; this holds
@@ -22,9 +22,9 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **WP-03** | Erasure: survive in-flight events | DONE | — |
 | **WP-04** | Erasure: pepper the pseudonym | DONE | merged `b4d0138`, released, quality rebuilt clean |
 | **WP-05** | Erasure: the notifications a repeat booking hides | DONE (unmerged) | D36 |
-| **WP-06** | Erasure: a durable record in booking and catalog | READY (re-assessed, narrowed) | — |
+| **WP-06** | Erasure: a durable record in booking and catalog | DONE (unmerged) | D39 |
 | **WP-07** | Erasure: orchestration across the three services | DONE (unmerged) | D38 |
-| **WP-08** | Erasure: what an erased person who keeps their account is | READY | unblocked by D37 — register scoped by `erasedAt` |
+| **WP-08** | Erasure: what an erased person who keeps their account is | READY | unblocked by D37; substrate built by D39 — scope by the **booking's** age against `erasedAt` |
 | **WP-09** | Erasure: retention periods and lawful basis | BLOCKED (narrowed) | counsel — the two coded judgements are ratified by D37 |
 | **WP-10** | Payments: the seam can complete a lifecycle | READY | — |
 | **WP-11** | Payments: asynchronous confirmation | READY | — |
@@ -35,6 +35,8 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **WP-16** | Search performance | WON'T (measured) | — |
 | **WP-17** | Video and WhatsApp providers | READY (spec only) | D37 — cost both, build neither |
 | **WP-18** | Production `infranet` alias check | CLOSED | D37 — the rename made it moot |
+| **NEW-1** | A retry reported rows re-written, not rows that held data | DONE (unmerged) | D39 |
+| **NEW-2** | Catalog's receipt omitted what it deleted | DONE (unmerged) | D39 |
 
 ---
 
@@ -115,8 +117,9 @@ section.
 `JWT_BASE64_SECRET` and `HC_PRIVACY_PEPPER` before the next production deploy. `deploy-prod.sh --help`
 prints the exact command; preflight refuses early and by name if it is missing.
 
-**Loose end for this repository:** `CLAUDE.md`'s regeneration-hazard table has no row for messaging's
-`privacy_pepper_witness` include, which a regeneration would drop as silently as the others.
+**~~Loose end for this repository:~~ closed.** `CLAUDE.md`'s regeneration-hazard table was said here to
+have no row for messaging's `privacy_pepper_witness` include. It has one, and had one when this was
+written — checked while D39 added two more rows to the same table.
 
 ## WP-05 — Erasure: the notifications a repeat booking hides · DONE
 
@@ -159,24 +162,41 @@ rather than one booking. And re-keying a customer's own notification left its bo
 the erasure correct only for as long as no template greets anybody by name; the body is redacted with
 the re-key now.
 
-## WP-06 — Erasure: a durable record in booking and catalog · READY (re-assessed, narrowed)
+## WP-06 — Erasure: a durable record in booking and catalog · DONE
 
-Messaging records `erased_subject` with an `erasedAt`; booking and catalog record the act only in a log
-line and an HTTP response body that evaporates with the request. For an irreversible action with legal
-significance, that is thin. The same register would also give those two services the protection
-`erased_subject` gives messaging, if either ever consumes an event that writes a customer login.
+D39. Messaging recorded `erased_subject` with an `erasedAt`; booking and catalog recorded the act only
+in a log line and an HTTP response body that evaporated with the request. For an irreversible action
+with legal significance, that was thin.
 
-**Re-assessed after WP-07, and it survives with a stronger case rather than a weaker one.** D36's
+**Re-assessed after WP-07, and it survived with a stronger case rather than a weaker one.** D36's
 design note suggested the fan-out might make this package unnecessary, and it retired exactly one of
-its two justifications: closing the pending-booking residual turned out to need no schema change at
-all, because booking already holds the reference list and can simply hand it over. That half is done.
+its two justifications: closing the pending-booking residual needed no schema change at all, because
+booking already holds the reference list and can simply hand it over. What used to evaporate was three
+HTTP responses that each described one service; what evaporated after WP-07 was **one** response that
+is the only account of which legs ran — and the case where an operator most needs to prove what
+happened is precisely a 502 where two services erased and the third did not.
 
-The durable record is untouched, and WP-07 sharpened the argument for it. What used to evaporate was
-three HTTP responses that each described one service; what evaporates now is **one** response that is
-the only account of which legs ran — and the case where an operator most needs to prove what happened
-is precisely the new one, a 502 where two services erased and the third did not. A log line in booking
-is not a record an audit can be shown. Scope is therefore just the register and its `erasedAt` in
-booking and catalog, plus whatever the fan-out receipt should persist beside it.
+**Built as two tables, because there are two facts.** `erased_subject` in booking and in catalog is one
+row per person, written once, `erasedAt` never moved — a *local* standing fact, since only the service
+that ran a sweep can attest to it and a central register would say "booking believes catalog erased X",
+which is the claim that was false the day catalog was never called. `erasure_run` in booking is one row
+per fan-out **attempt**, append-only, holding the receipt as it was rendered. That one cannot be
+distributed at all: **a leg that fails is a leg that cannot record its own failure**, so the partial
+outcome exists only at the orchestrator. Keying either by the subject alone would have had a retry
+overwrite the first attempt — D35's `save()`-moves-`erasedAt` defect arriving in a new table.
+
+Pseudonyms only, in both. The route by which that would have been false is worth knowing: a failed
+leg's message carries the root cause, and an unreachable leg's root cause names the URL it was thrown
+against, which contains the login. The stored receipt is scrubbed; the response is not, and does not
+need to be.
+
+Nothing was added to messaging's `erased_subject`, whose emptiness is load-bearing (D35). Neither new
+register gates anything, so neither needs `ErasureRegisterGuard`; both javadocs say what changes the
+day one is read rather than written, and **WP-08 is that day** — booking's `erasedAt` beside the
+booking's own `raisedAt` is exactly the comparison WP-08 needs.
+
+**Not done here:** no desk endpoint reads `erasure_run` back. Who may read an audit trail of erasures
+is a question of the same kind D38 answered for the fan-out authority, and it was not answered.
 
 ## WP-07 — Erasure: orchestration · DONE (unmerged)
 
@@ -207,6 +227,10 @@ an idempotent call, a mis-read 207 costs a partial erasure filed as a complete o
 reports no counts rather than zeroes. The operator's next move is to call it again and to escalate if
 the same leg fails twice.
 
+**A retry now really does report zeroes from every service.** This entry claimed it before it was
+true — messaging reported `notificationsRedacted: 2` on every subsequent call, for ever. See NEW-1
+below and D39; the claim stands as written only from that fix onwards.
+
 **The payload carries the booking references, as D36 asked.** They are read back under the alias
 *after* the local erasure, so a retry — which by definition finds nothing under the original login —
 still hands over the full list instead of quietly reopening the residual on the path most likely to
@@ -232,6 +256,38 @@ recorded — so the handshake is reasoned rather than measured until the estate 
 Related and unchanged: there is no back-sweep for anyone erased before `erased_subject` existed. On
 quality that was test data only, and it has been cleared.
 
+## NEW-1 — A retry reported rows re-written, not rows that held data · DONE
+
+D39. Found on the quality box. D38 and this document both stated that a second `erase-everywhere`
+reports zeroes from every service; messaging reported `notificationsRedacted: 2` on every subsequent
+call, indefinitely, because those rows are matched by `deep_link` — which is not personal data and does
+not change when a body is redacted — and the workflow counted rows it had **re-written** rather than
+rows that still held anything. Harmless to the data and not to the receipt: an operator retrying after
+a 502 reads a non-zero count and reasonably concludes data was still exposed at the moment of the
+retry. Confirmed red first with `notificationsRedacted expected:<0> but was:<2>`.
+
+The rule that came out of it, and the reason the other counters were audited: **a counter keyed on the
+customer's login is self-clearing; a counter keyed on anything else has to compare before it counts.**
+That audit found one more, in booking — `outboxPayloadsRedacted` matched on the booking's
+`aggregate_ref` and counted every event under it, including the dispute events whose payload carries no
+customer fields at all, while writing `customerName: "[erased]"` into them. Fixed in the same pass, red
+first with `expected:<1> but was:<2>`. The full nine-counter table is in D39; the two that could
+over-count are the two that had to reach rows held *by somebody else about* the customer, which is the
+same shape as D34's and D36's hardest defects.
+
+## NEW-2 — Catalog's receipt omitted what it deleted · DONE
+
+D39. Catalog deletes the customer's favourites outright — deliberately (D24) — logs it, and reported
+only `reviewsDeidentified`. On quality it deleted two favourites and said nothing about them; a
+customer with no reviews and a saved list of twelve produced a receipt of zeroes, which an operator
+files as "catalog held nothing for this person". The receipt now carries `favouritesDeleted`, which is
+the only count in the estate of rows an erasure **deletes**. Confirmed red first with
+`No value at JSON path "$.favouritesDeleted"`.
+
+This is the defect D31 fixed in messaging's empty conversation, in a service nobody then checked. The
+lesson recorded against it is not about counting: a defect found in one of three copy-pasted services
+is a defect reported against all three until each has been looked at.
+
 ## WP-08 — Erasure: the still-active account · READY (answered by D37)
 
 Erasure does not touch the gateway's user store, so an erased person can log in and book again.
@@ -242,6 +298,14 @@ the estate disagreeing with itself about whether someone exists.
 before it stays pseudonymised.** Someone who books again has chosen a new relationship, and the
 erasure covered what existed when it ran. Account deactivation was the alternative and was not taken:
 it would have made "erased" a tidier state at the cost of locking out somebody who came back.
+
+**The substrate exists as of D39.** Booking and catalog now hold an `erased_subject` register with an
+`erasedAt`, matching messaging's, so the comparison this package needs — the booking's own `raisedAt`
+against the time of the erasure — can be made in the service that holds both. D39 also states the
+condition attached to it: those two registers are written and never read today, which is why neither
+has messaging's `ErasureRegisterGuard`. **The first thing WP-08 does is decide whether the service it
+makes into a reader needs that guard**, because an unpeppered service that consults a register answers
+"not erased" about people it erased, which is the failure D35 exists to prevent.
 
 **Scope it by the BOOKING's age, not the event's** — D37's first wording said to compare the event's
 timestamp against `erasedAt`, and a review caught that this means something nobody intended. Every
