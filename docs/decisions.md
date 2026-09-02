@@ -2332,3 +2332,100 @@ belongs with WP-06's durable record rather than here.
 `notificationsRedacted` means exactly what it meant before — notifications in somebody else's list
 whose body named the customer — and now counts all of them rather than a subset. No operator reading
 an old receipt should reinterpret it; they should assume it was too low.
+
+A re-keyed notification is counted in `notificationsReKeyed` and never also in `notificationsRedacted`,
+even though its body is now redacted along with the re-key for the reason four paragraphs below. One
+row appearing in two counts would inflate a figure that gets filed against a data subject request, and
+the two numbers answer different questions: how many rows stopped being addressed to this person, and
+how many rows in *other* people's lists stopped naming them.
+
+### A review of the fix, and the four things it found
+
+A code review of the above went back through the mechanism and found nothing wrong with the union
+itself, which is worth stating before the rest of this. What it found were four ways the same defect
+gets back in — three of them through work already scheduled, and none of them visible as a failing
+test. A fifth belonged to D37 rather than here and was corrected there: the first wording of WP-08
+scoped the register by the *event's* timestamp instead of the *booking's* age, which would have put an
+erased customer's name back into the professional's bell menu one lifecycle step at a time and
+silently falsified the "it does not grow" claim this section rests on.
+
+**The residual was prose and nothing else.** It is stated above, and restated in `ErasureWorkflow`'s
+javadoc, and nothing executable asserted it — while WP-06, WP-07 and WP-08 all touch this mechanism.
+This repository's own rule is that a regression test nobody has watched fail is a test of nothing, and
+a documented gap nobody asserts is the same thing from the other side: there is no way to tell whether
+the residual is still one row, has grown, or was closed by accident. `ErasureResourceIT
+.theResidualIsOneRowForAPendingBooking` now seeds exactly that shape — a professional-side "Booking
+requested" row for `b-pending`, no customer-keyed row pointing at it, and the thread keyed to `b-first`
+— and asserts that the row is neither redacted nor counted. **It pins current behaviour deliberately
+and was never seen to fail**, which its javadoc says in those words so that nobody reads it as a
+regression test. The day WP-06/WP-07 gives messaging the booking references it holds no thread for,
+that test goes red, and going red is the point: it forces this section to be corrected in the same
+commit rather than being left describing an estate that has moved on. The null-`deepLink` branch of
+the filter is pinned beside it, for rows that demonstrably exist.
+
+**The union's completeness rests on two invariants nothing enforced.** The first is that every
+notification about a person carries `/bookings/<ref>`. The column is nullable and `MessagingSeeder`
+already writes notifications with no deep link at all, so this was true only of the rows `raise()`
+happens to produce, stated in a javadoc, and about to be tested by the next person to add a case. That
+person is predictable: the `default` branch of `BookingEventConsumer`'s switch currently swallows the
+`notification.raised` fan-in that `BookingWorkflow` already publishes for reschedule proposals and
+no-shows — **and marks it processed, so a case added later can never replay what was swallowed**.
+Whoever adds those cases and builds the row inline rather than through `raise()` creates rows that
+erasure can never reach, with nothing red anywhere. `raise()` now refuses a blank booking reference the
+way it already refuses a blank recipient, logs it and skips, and its javadoc states the invariant as an
+erasure property rather than as a display convenience. One bell row is a much cheaper loss than a
+permanent hole in what an erasure can find.
+
+**The second invariant is that notification rows are append-only.** `MessagingResource` exposes no
+delete today, only `readAt`, and a "clear notifications" button is an entirely ordinary feature to be
+asked for. The day it deletes rows, the bridge this fix is built on dies: the customer's own copy of a
+booking event is the only thing pointing at the professional's copy of it, so deleting the customer's
+copies leaves the professional holding a row that names an erased person, against a clean receipt, with
+nothing failing. That is the defect this section just fixed, arriving from a feature nobody would think
+to connect to erasure. It is now said beside the endpoint that would grow such a feature and in
+`ErasureWorkflow`'s javadoc: a clear-bell feature sets `readAt` and deletes nothing.
+
+**A malformed link matched everybody's rows rather than nobody's.** `raise()` built
+`"/bookings/" + bookingRef` without looking at the reference, so a blank one produced the literal
+`/bookings/` — non-null and non-blank, therefore surviving the filter into the `IN` set, where it
+matched every *other* row built the same way regardless of whose booking it was and overwrote their
+bodies. The receipt would have reported a larger and entirely plausible count. The blank-reference
+refusal above closes the source; the filter also rejects a link that is nothing but the prefix, because
+rows written before it refused are still in the table and no migration goes looking for them.
+
+**And the re-key skipped the body, which coupled correctness to the wording of the templates.** A
+notification addressed to the customer was re-keyed to the alias and its body left alone, commented
+"its body names nobody" — true of every template the estate has today, and false the first day one
+greets by name. "Hi Ama, your strength session on 26 Sep is confirmed" re-keyed to an alias keeps the
+name in the row for ever, and no existing test notices, because every customer-side fixture in them
+happens not to name the customer. The body is now redacted along with the re-key. Nothing is lost:
+the recipient of those rows no longer exists, so there is nothing on the other side of the scale, and
+the correctness of an erasure should not depend on a copywriting decision made in another sprint. The
+new test uses a fixture body that does name them.
+
+### What must stay true
+
+Three things, and each of them is one line of code away from being false. **Every notification is
+raised through `BookingEventConsumer.raise` and carries `/bookings/<ref>`** — a row built inline, or
+with no deep link, is invisible to erasure permanently and silently. **Notification rows are
+append-only** — a clear-bell feature sets `readAt`; a delete removes the bridge between the two copies
+of one booking event. **Nothing decides what to redact from the wording of a body** — the sweep keys on
+recipient and deep link, and the day it starts depending on what a template says, it starts depending
+on something no test in this repository guards.
+
+### The WP-07 fan-out should carry the booking references
+
+Stated here as a design note rather than built, because WP-07 is a package of its own.
+
+Closing the pending residual properly is described above as a WP-06 schema change — messaging learning
+about bookings it holds no thread for. Once WP-07's service-token fan-out exists, there is a cheaper
+route that needs no schema change at all: booking holds the authoritative list of a customer's booking
+references, `booking.customer_login` is indexed for exactly this kind of question since D34, and the
+fan-out is already going to call messaging with a subject. If that call carries the customer's booking
+references, messaging's link set becomes complete by construction — conversations, the customer's own
+notifications, *and* every booking booking knows about, including the ones still pending — and the
+residual disappears rather than being narrowed.
+
+The reason to write this down before WP-07 is built rather than after: the payload's shape is decided
+once, and a fan-out that carries only a login will be extended later by whoever discovers this section
+a third time. This union has already been declared complete twice.

@@ -141,6 +141,18 @@ row nothing keyed to the customer points at. It does not grow — every later ev
 through the consumer, which already writes the pseudonym and "A customer" — and closing it needs
 messaging to know about bookings it has no thread for, which belongs with WP-06.
 
+**A review of that fix found four more, all now closed in the same D36 section.** The residual was
+prose and nothing else, so it is now pinned by a test that says in its own javadoc that it asserts
+current behaviour deliberately and will go red when WP-06/WP-07 closes the hole. The union's
+completeness rested on two invariants nothing enforced — every notification about a person carries
+`/bookings/<ref>`, and notification rows are append-only — so `raise()` now refuses a blank booking
+reference, and both invariants are stated where the next writer will meet them: the `default` branch of
+the consumer's switch already swallows the `notification.raised` fan-in booking publishes, and marks it
+processed. A blank reference produced the literal `/bookings/`, which matched every other malformed row
+rather than one booking. And re-keying a customer's own notification left its body alone, which made
+the erasure correct only for as long as no template greets anybody by name; the body is redacted with
+the re-key now.
+
 ## WP-06 — Erasure: a durable record in booking and catalog · READY
 
 Messaging records `erased_subject` with an `erasedAt`; booking and catalog record the act only in a log
@@ -163,6 +175,13 @@ The token must carry a narrow, named authority used by nothing else. Any service
 key can already mint anything — that is a property of the shared key, not something this introduces —
 but the fan-out must not become a general "any service may call anything" credential. Related: there is no back-sweep for anyone erased before `erased_subject` existed — on
 quality that was test data only, and it has been cleared.
+
+**Design the payload to carry the customer's booking references — D36.** Booking holds the
+authoritative list of them and `booking.customer_login` has been indexed for that question since D34,
+so a fan-out that hands messaging the full list closes D36's pending-booking residual by construction —
+no schema change, and no third pass over a union that has already been declared complete twice. A
+fan-out carrying only a login will be extended later by whoever rediscovers that section, so the shape
+is worth getting right the first time.
 
 ## WP-08 — Erasure: the still-active account · BLOCKED
 

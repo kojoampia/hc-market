@@ -41,7 +41,9 @@ import org.springframework.transaction.annotation.Transactional;
  * <h2>Notifications, including the ones addressed to somebody else</h2>
  *
  * <p>Two kinds, and the second is the one that was missed. Notifications <strong>to</strong> the
- * customer are re-keyed to the pseudonym. Notifications <strong>about</strong> the customer sit in
+ * customer are re-keyed to the pseudonym, and their bodies are redacted along with them — not because
+ * the current templates name the customer, but so that this method stops depending on the fact that
+ * they do not. Notifications <strong>about</strong> the customer sit in
  * the <em>professional's</em> bell menu — {@code booking.requested} raises "Ama Mensah asked for a
  * home visit on 12 Sep", the customer's name in a row keyed to a different person's login. No query
  * by recipient returns those, which is exactly why they survived the first implementation. They are
@@ -61,7 +63,22 @@ import org.springframework.transaction.annotation.Transactional;
  * customer, and shares its thread with an earlier booking, so nothing keyed to the customer points at
  * it. That row is the residual, and it is the only one — every later event on that booking is written
  * by a consumer that already consults the register, so it arrives pseudonymised and with
- * "A customer" in place of the name.
+ * "A customer" in place of the name. {@code ErasureResourceIT.theResidualIsOneRowForAPendingBooking}
+ * pins that shape deliberately, so the day WP-06/WP-07 closes it the test goes red and this paragraph
+ * gets corrected instead of quietly outliving the code.
+ *
+ * <h2>Two invariants the completeness of that union rests on</h2>
+ *
+ * <p><strong>Every notification about a person carries {@code /bookings/<ref>}</strong>, which is why
+ * {@code BookingEventConsumer.raise} refuses to write a row without one and why every notification
+ * must be raised through that method. The column is nullable and rows with no link exist — the seeder
+ * writes them — so a row built inline, without a link, is invisible here for good.
+ *
+ * <p><strong>Notification rows are append-only.</strong> A "clear notifications" feature must set
+ * {@code readAt} and never delete: the customer's own rows are one of the union's two sources, so
+ * deleting them removes the only thing pointing at the professional's copy of the same event, and the
+ * defect returns with a clean receipt and nothing red. Said again beside the endpoint that would grow
+ * such a feature, in {@code MessagingResource}.
  *
  * <h2>And erasure is now a standing fact, not a moment</h2>
  *
@@ -77,6 +94,9 @@ public class ErasureWorkflow {
 
     static final String REDACTED_BODY = "[message erased at the customer's request]";
     static final String REDACTED_NOTIFICATION = "[details erased at the customer's request]";
+
+    /** The prefix every deep link this service raises carries — see {@code BookingEventConsumer.raise}. */
+    static final String BOOKING_LINK_PREFIX = "/bookings/";
 
     private final MessagingQueryRepository conversations;
     private final MessageRepository messages;
@@ -229,12 +249,20 @@ public class ErasureWorkflow {
         int reKeyed = 0;
         for (Notification n : notifications.addressedTo(login)) {
             String link = n.getDeepLink();
-            // Null and blank are dropped rather than passed on: a blank in the IN clause would match
-            // every notification that has no deep link, which is somebody else's row by definition.
-            if (link != null && !link.isBlank()) {
+            if (identifiesOneBooking(link)) {
                 links.add(link);
             }
             n.setRecipientLogin(alias);
+            /* The body goes too, and that is a decoupling rather than an extra precaution —
+               decisions.md D36. Leaving it made this method's correctness depend on every
+               customer-facing template happening not to name the customer: "Your strength session on
+               26 Sep is confirmed" does not, "Hi Ama, your strength session…" does, and the day one
+               greets by name the erasure would re-key the row and leave the name sitting in it under
+               an alias, for ever, with every test still green. Nothing reads these rows — the
+               recipient no longer exists — so there is nothing on the other side of the scale.
+               Counted as re-keyed rather than as redacted: notificationsRedacted keeps its meaning
+               of "in somebody else's list", and one row must not appear in two counts. */
+            n.setBody(REDACTED_NOTIFICATION);
             notifications.save(n);
             reKeyed++;
         }
@@ -246,7 +274,7 @@ public class ErasureWorkflow {
         if (!links.isEmpty()) {
             for (Notification n : notifications.linkedToAny(List.copyOf(links))) {
                 if (alias.equals(n.getRecipientLogin())) {
-                    continue; // already re-keyed above, and its body names nobody
+                    continue; // already re-keyed AND redacted above; counting it here would double-count it
                 }
                 n.setBody(REDACTED_NOTIFICATION);
                 notifications.save(n);
@@ -270,6 +298,8 @@ public class ErasureWorkflow {
      *     {@code messagesRedacted} is zero, which is exactly the case that made this record necessary
      * @param messagesRedacted message bodies replaced
      * @param notificationsReKeyed notifications addressed to the customer, now addressed to the alias
+     *     and with their bodies redacted — one row counts here or in {@code notificationsRedacted},
+     *     never in both
      * @param notificationsRedacted notifications in somebody else's list whose body named the customer
      */
     public record Erased(int conversationsPseudonymised, int messagesRedacted, int notificationsReKeyed, int notificationsRedacted) {}
@@ -277,7 +307,27 @@ public class ErasureWorkflow {
     /** {@code /bookings/<ref>} — the shape every deep link this service raises has. */
     private static void addLink(Set<String> links, String bookingReference) {
         if (bookingReference != null && !bookingReference.isBlank()) {
-            links.add("/bookings/" + bookingReference);
+            links.add(BOOKING_LINK_PREFIX + bookingReference);
         }
+    }
+
+    /**
+     * Whether a deep link identifies <em>one</em> booking, and may therefore go into the {@code IN}
+     * set — {@code decisions.md} D36.
+     *
+     * <p>Null and blank are the obvious exclusions: a blank would match every notification that has
+     * no deep link at all, and rows with no deep link exist — {@code MessagingSeeder} writes them.
+     * The bare {@code /bookings/} is the exclusion worth explaining. It is what
+     * {@code "/bookings/" + bookingRef} produces from a blank reference, it is neither null nor
+     * blank so it survives every simple check, and in the {@code IN} clause it matches every
+     * <em>other</em> malformed row in the table irrespective of whose booking it was — overwriting
+     * strangers' bodies while the receipt reports a larger, entirely plausible count.
+     *
+     * <p>{@code BookingEventConsumer.raise} now refuses to write one, which closes the source. This
+     * is the other half, because a row written before it refused is still in the table and no
+     * migration goes looking for it.
+     */
+    private static boolean identifiesOneBooking(String deepLink) {
+        return deepLink != null && !deepLink.isBlank() && !BOOKING_LINK_PREFIX.equals(deepLink.strip());
     }
 }

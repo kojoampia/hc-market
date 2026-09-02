@@ -78,8 +78,29 @@ class ErasureResourceIT {
 
     /** One bell-menu row. {@code deepLink} is {@code /bookings/<ref>} for everything this service raises. */
     private Notification notification(String recipient, String kind, String body, String bookingRef) {
+        return notificationLinkedTo(recipient, kind, body, "/bookings/" + bookingRef);
+    }
+
+    /**
+     * The same, with the deep link given literally — for the rows the invariant does not hold for.
+     * {@code null} is one such row and it is not hypothetical: {@code MessagingSeeder} writes
+     * notifications with no deep link at all.
+     */
+    private Notification notificationLinkedTo(String recipient, String kind, String body, String deepLink) {
         return notifications.saveAndFlush(
-            new Notification().recipientLogin(recipient).kind(kind).body(body).raisedAt(Instant.now()).deepLink("/bookings/" + bookingRef)
+            new Notification().recipientLogin(recipient).kind(kind).body(body).raisedAt(Instant.now()).deepLink(deepLink)
+        );
+    }
+
+    /** The thread a repeat booking shares — keyed to the FIRST booking, which is what the consumer writes. */
+    private Conversation sharedThread(String bookingReference) {
+        return conversations.saveAndFlush(
+            new Conversation()
+                .reference("t-" + bookingReference)
+                .customerLogin(CUSTOMER)
+                .professionalRef(PRO)
+                .bookingReference(bookingReference)
+                .lastMessageAt(Instant.now())
         );
     }
 
@@ -280,6 +301,174 @@ class ErasureResourceIT {
         Notification untouched = notifications.findById(aboutSomeoneElse.getId()).orElseThrow();
         assertThat(untouched.getBody()).contains("Kojo Stillhere");
         assertThat(untouched.getRecipientLogin()).isEqualTo(PRO);
+    }
+
+    /**
+     * <strong>The residual D36 records, pinned — {@code decisions.md} D36.</strong>
+     *
+     * <p><em>This test asserts what the code does today on purpose. It is not a regression test and
+     * it was never seen to fail</em>, because the behaviour it describes is a documented gap rather
+     * than a defect that was fixed. A booking still <strong>pending</strong> at the instant of the
+     * erasure has raised a notification to the professional and none to the customer, and — being a
+     * repeat with that professional — shares its thread with an earlier booking, so no conversation
+     * and no customer-keyed notification points at it and the union cannot reach it.
+     *
+     * <p>It is here because three READY packages touch this mechanism and a residual nobody asserts
+     * is indistinguishable from a residual nobody knows about. When WP-06/WP-07 gives messaging the
+     * booking references it holds no thread for, this test goes red — and that is the intended
+     * signal: delete the assertion, and correct D36's "the one row this still cannot reach" in the
+     * same commit rather than leaving the prose describing an estate that has moved on.
+     */
+    @Test
+    @Transactional
+    @WithMockUser(username = "desk", authorities = "ROLE_BROKERAGE")
+    @DisplayName("a booking still pending at the instant of erasure is the documented residual, and is not reached")
+    void theResidualIsOneRowForAPendingBooking() throws Exception {
+        sharedThread("b-first");
+
+        Notification mineFirst = notification(CUSTOMER, "Booking confirmed", "Your home visit on 12 Sep at 10:00 is confirmed.", "b-first");
+        Notification theirsFirst = notification(
+            PRO,
+            "Booking requested",
+            "Ama Tobeforgotten asked for a home visit on 12 Sep at 10:00.",
+            "b-first"
+        );
+        // The pending one: requested, not yet accepted, so the customer has no copy of any event
+        // about it and it reuses the thread b-first opened.
+        Notification theirsPending = notification(
+            PRO,
+            "Booking requested",
+            "Ama Tobeforgotten asked for a strength session on 26 Sep at 09:00.",
+            "b-pending"
+        );
+
+        mockMvc
+            .perform(post(URL, CUSTOMER).with(csrf()))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.notificationsReKeyed").value(1))
+            // One, not two: the pending booking's row is neither found nor counted.
+            .andExpect(jsonPath("$.notificationsRedacted").value(1));
+
+        assertThat(notifications.findById(mineFirst.getId()).orElseThrow().getRecipientLogin()).isEqualTo(pseudonyms.of(CUSTOMER));
+        assertThat(notifications.findById(theirsFirst.getId()).orElseThrow().getBody()).doesNotContain("Tobeforgotten");
+
+        // The residual, stated as an assertion so it cannot drift out of the documentation quietly.
+        assertThat(notifications.findById(theirsPending.getId()).orElseThrow().getBody()).contains("Ama Tobeforgotten");
+    }
+
+    /**
+     * The rows with no deep link at all, which the filter in {@code ErasureWorkflow} has always had a
+     * branch for and nothing exercised.
+     *
+     * <p>They exist: {@code MessagingSeeder} writes every seeded notification without one. A null
+     * link must be dropped rather than passed into the {@code IN} set — SQL would not match it, but
+     * the point is that the customer's own row is still re-keyed on its way past, and somebody else's
+     * linkless row is not touched by an erasure that has nothing pointing at it.
+     *
+     * <p>Like the residual above, this pins behaviour rather than a fix.
+     */
+    @Test
+    @Transactional
+    @WithMockUser(username = "desk", authorities = "ROLE_BROKERAGE")
+    @DisplayName("a notification with no deep link is re-keyed, and reaches nobody else")
+    void notificationsWithNoDeepLinkAreHandled() throws Exception {
+        sharedThread("b-first");
+
+        Notification mineLinkless = notificationLinkedTo(CUSTOMER, "Welcome", "Welcome to BridgeCare.", null);
+        Notification theirsLinkless = notificationLinkedTo(
+            PRO,
+            "Booking requested",
+            "Kojo Stillhere asked for a home visit on 30 Sep at 14:00.",
+            null
+        );
+
+        mockMvc
+            .perform(post(URL, CUSTOMER).with(csrf()))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.notificationsReKeyed").value(1))
+            .andExpect(jsonPath("$.notificationsRedacted").value(0));
+
+        Notification mine = notifications.findById(mineLinkless.getId()).orElseThrow();
+        assertThat(mine.getRecipientLogin()).isEqualTo(pseudonyms.of(CUSTOMER));
+        assertThat(mine.getDeepLink()).isNull();
+
+        Notification untouched = notifications.findById(theirsLinkless.getId()).orElseThrow();
+        assertThat(untouched.getBody()).contains("Kojo Stillhere");
+        assertThat(untouched.getRecipientLogin()).isEqualTo(PRO);
+    }
+
+    /**
+     * <strong>A malformed link must not match every other malformed row — {@code decisions.md} D36.</strong>
+     *
+     * <p>{@code "/bookings/" + bookingRef} with a blank reference is the literal {@code /bookings/}:
+     * non-null and non-blank, so it passed the filter into the {@code IN} set, where it matched every
+     * other row built the same way — regardless of whose booking it was — and overwrote their bodies
+     * against a receipt reporting a larger and entirely plausible count.
+     *
+     * <p>The source is closed in {@code BookingEventConsumer.raise}, which now refuses to write a row
+     * without a booking reference. This is the other half, for the rows written before it did.
+     */
+    @Test
+    @Transactional
+    @WithMockUser(username = "desk", authorities = "ROLE_BROKERAGE")
+    @DisplayName("a bare /bookings/ link reaches only its own row, not everybody else's")
+    void aMalformedDeepLinkDoesNotOverMatch() throws Exception {
+        Notification mineMalformed = notificationLinkedTo(
+            CUSTOMER,
+            "Booking confirmed",
+            "Your strength session on 26 Sep at 09:00 is confirmed.",
+            "/bookings/"
+        );
+        Notification strangerMalformed = notificationLinkedTo(
+            PRO,
+            "Booking requested",
+            "Kojo Stillhere asked for a home visit on 30 Sep at 14:00.",
+            "/bookings/"
+        );
+
+        mockMvc
+            .perform(post(URL, CUSTOMER).with(csrf()))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.notificationsReKeyed").value(1))
+            .andExpect(jsonPath("$.notificationsRedacted").value(0));
+
+        assertThat(notifications.findById(mineMalformed.getId()).orElseThrow().getRecipientLogin()).isEqualTo(pseudonyms.of(CUSTOMER));
+
+        Notification stranger = notifications.findById(strangerMalformed.getId()).orElseThrow();
+        assertThat(stranger.getBody()).contains("Kojo Stillhere");
+        assertThat(stranger.getRecipientLogin()).isEqualTo(PRO);
+    }
+
+    /**
+     * <strong>A customer-facing body that names the customer — {@code decisions.md} D36.</strong>
+     *
+     * <p>Re-keying a notification to the alias moves who it is addressed to and nothing else, and for
+     * as long as no customer-facing template greeted anybody by name that was enough. It coupled the
+     * correctness of the erasure to the wording of the templates: the day one says "Hi Ama, your…",
+     * the row is re-keyed to an alias with the name still sitting in it, permanently, and every
+     * existing test stays green because none of their customer-side fixtures name the customer.
+     *
+     * <p>This one does. The body is now redacted along with the re-key, so the coupling is gone
+     * rather than merely unlikely.
+     */
+    @Test
+    @Transactional
+    @WithMockUser(username = "desk", authorities = "ROLE_BROKERAGE")
+    @DisplayName("a customer's own notification that greets them by name loses the name too")
+    void aCustomerFacingBodyNamingThemIsRedacted() throws Exception {
+        sharedThread("b-first");
+        Notification greeting = notification(
+            CUSTOMER,
+            "Booking confirmed",
+            "Hi Ama Tobeforgotten, your strength session on 26 Sep at 09:00 is confirmed.",
+            "b-first"
+        );
+
+        mockMvc.perform(post(URL, CUSTOMER).with(csrf())).andExpect(status().isOk()).andExpect(jsonPath("$.notificationsReKeyed").value(1));
+
+        Notification after = notifications.findById(greeting.getId()).orElseThrow();
+        assertThat(after.getRecipientLogin()).isEqualTo(pseudonyms.of(CUSTOMER));
+        assertThat(after.getBody()).doesNotContain("Ama").doesNotContain("Tobeforgotten");
     }
 
     /**
