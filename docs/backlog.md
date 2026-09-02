@@ -20,21 +20,21 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **WP-01** | Erasure: the mechanism | DONE | — |
 | **WP-02** | Erasure: reach every table | DONE | — |
 | **WP-03** | Erasure: survive in-flight events | DONE | — |
-| **WP-04** | Erasure: pepper the pseudonym | DONE (unmerged) | — |
-| **WP-05** | Erasure: the notifications a repeat booking hides | READY | — |
+| **WP-04** | Erasure: pepper the pseudonym | DONE | merged `b4d0138`, released, quality rebuilt clean |
+| **WP-05** | Erasure: the notifications a repeat booking hides | DONE (unmerged) | D36 |
 | **WP-06** | Erasure: a durable record in booking and catalog | READY | — |
-| **WP-07** | Erasure: orchestration across the three services | BLOCKED | architect — needs service-to-service auth or the hc-admin desk |
-| **WP-08** | Erasure: what an erased person who keeps their account is | BLOCKED | product |
-| **WP-09** | Erasure: retention periods and lawful basis | BLOCKED | counsel |
+| **WP-07** | Erasure: orchestration across the three services | READY | unblocked by D37 — hc-market mints its own service token |
+| **WP-08** | Erasure: what an erased person who keeps their account is | READY | unblocked by D37 — register scoped by `erasedAt` |
+| **WP-09** | Erasure: retention periods and lawful basis | BLOCKED (narrowed) | counsel — the two coded judgements are ratified by D37 |
 | **WP-10** | Payments: the seam can complete a lifecycle | READY | — |
 | **WP-11** | Payments: asynchronous confirmation | READY | — |
 | **WP-12** | Payments: the zero-amount booking | READY | — |
-| **WP-13** | Payments: provider choice and Act 987 | BLOCKED | counsel + architect |
+| **WP-13** | Payments: provider choice and Act 987 | READY (large) | D37 — Paystack, Hubtel and MoMo direct, customer chooses. **Depends on WP-11** |
 | **WP-14** | Verification badge | DONE | — |
 | **WP-15** | Badge: date-only on the wire | READY | — |
 | **WP-16** | Search performance | WON'T (measured) | — |
-| **WP-17** | Video and WhatsApp providers | BLOCKED | architect — budget |
-| **WP-18** | Production `infranet` alias check | BLOCKED | architect, on the host |
+| **WP-17** | Video and WhatsApp providers | READY (spec only) | D37 — cost both, build neither |
+| **WP-18** | Production `infranet` alias check | CLOSED | D37 — the rename made it moot |
 
 ---
 
@@ -118,18 +118,40 @@ prints the exact command; preflight refuses early and by name if it is missing.
 **Loose end for this repository:** `CLAUDE.md`'s regeneration-hazard table has no row for messaging's
 `privacy_pepper_witness` include, which a regeneration would drop as silently as the others.
 
-## WP-05 — Erasure: the notifications a repeat booking hides · READY
+## WP-05 — Erasure: the notifications a repeat booking hides · DONE
 
-Confirmed by the code review and **not yet fixed**. Notifications *about* an erased customer that sit
-in the professional's bell menu are found through the customer's own conversations' `bookingReference`.
-But `openThreadIfNone` dedupes by professional, so a customer's **second** booking with the same
+D36. Notifications *about* an erased customer that sit in the professional's bell menu are found
+through `deepLink`, and the link set was derived from the customer's conversations alone. But
+`openThreadIfNone` dedupes by professional, so a customer's **second** booking with the same
 professional never appears as any conversation's `bookingReference` — and that booking's "Ama Mensah
-asked for…" notification is therefore missed. Repeat bookings with one professional are not an exotic
-case; they are the product working.
+asked for…" notification was therefore missed, against a receipt reporting a clean erasure with
+plausible non-zero counts. Repeat bookings with one professional are not an exotic case; they are the
+product working.
 
-Fix: union the deep links from the customer's *own* notifications (collected before they are re-keyed)
-with the conversation-derived set. Test: two bookings, one professional, one thread — assert both
-professional-side notifications are redacted. It fails today.
+The link set is now the **union** of the conversation references and the `deepLink` of the customer's
+*own* notifications, collected in the loop that re-keys them: the customer's copy and the
+professional's copy of one booking event share a deep link, so finding either finds the other. Still
+one indexed `deep_link in (…)` query, no full-table scan. Confirmed red before the fix —
+`notificationsRedacted expected:<2> but was:<1>` — with a test seeding two bookings, one professional,
+one thread, and a second customer whose rows must not move.
+
+`notificationsRedacted` keeps its meaning and now counts all of them rather than a subset. The
+residual D36 records: a booking still *pending* at the instant of erasure leaves one professional-side
+row nothing keyed to the customer points at. It does not grow — every later event on that booking goes
+through the consumer, which already writes the pseudonym and "A customer" — and closing it needs
+messaging to know about bookings it has no thread for, which belongs with WP-06.
+
+**A review of that fix found four more, all now closed in the same D36 section.** The residual was
+prose and nothing else, so it is now pinned by a test that says in its own javadoc that it asserts
+current behaviour deliberately and will go red when WP-06/WP-07 closes the hole. The union's
+completeness rested on two invariants nothing enforced — every notification about a person carries
+`/bookings/<ref>`, and notification rows are append-only — so `raise()` now refuses a blank booking
+reference, and both invariants are stated where the next writer will meet them: the `default` branch of
+the consumer's switch already swallows the `notification.raised` fan-in booking publishes, and marks it
+processed. A blank reference produced the literal `/bookings/`, which matched every other malformed row
+rather than one booking. And re-keying a customer's own notification left its body alone, which made
+the erasure correct only for as long as no template greets anybody by name; the body is redacted with
+the re-key now.
 
 ## WP-06 — Erasure: a durable record in booking and catalog · READY
 
@@ -138,21 +160,47 @@ line and an HTTP response body that evaporates with the request. For an irrevers
 significance, that is thin. The same register would also give those two services the protection
 `erased_subject` gives messaging, if either ever consumes an event that writes a customer login.
 
-## WP-07 — Erasure: orchestration · BLOCKED
+## WP-07 — Erasure: orchestration · READY (unblocked by D37)
 
 A complete erasure is three separate desk calls, and calling one without the others leaves a partially
-erased customer. There is no orchestrator because this estate has no service-to-service authentication,
-so an endpoint that fanned out would need a mechanism that does not exist. Sequencing belongs in the
-`hc-admin` desk. Related: there is no back-sweep for anyone erased before `erased_subject` existed — on
+erased customer.
+
+**D37 answered this, and corrected the question.** Sequencing does *not* belong in the `hc-admin` desk:
+that product shares a signing key with hc-patient and hc-professional, and hc-market is not in that
+set — it carries its own `JWT_BASE64_SECRET`, so an hc-admin token fails signature validation here.
+The mechanism to use is the key hc-market's own five services already share: one service mints a token
+signed with the estate key and the others accept it.
+
+The token must carry a narrow, named authority used by nothing else. Any service holding the estate
+key can already mint anything — that is a property of the shared key, not something this introduces —
+but the fan-out must not become a general "any service may call anything" credential. Related: there is no back-sweep for anyone erased before `erased_subject` existed — on
 quality that was test data only, and it has been cleared.
 
-## WP-08 — Erasure: the still-active account · BLOCKED
+**Design the payload to carry the customer's booking references — D36.** Booking holds the
+authoritative list of them and `booking.customer_login` has been indexed for that question since D34,
+so a fan-out that hands messaging the full list closes D36's pending-booking residual by construction —
+no schema change, and no third pass over a union that has already been declared complete twice. A
+fan-out carrying only a login will be extended later by whoever rediscovers that section, so the shape
+is worth getting right the first time.
+
+## WP-08 — Erasure: the still-active account · READY (answered by D37)
 
 Erasure does not touch the gateway's user store, so an erased person can log in and book again.
 Messaging would pseudonymise the new booking's thread while booking and catalog store the real login —
-the estate disagreeing with itself about whether someone exists. Either erasure implies account
-deactivation as a documented fourth desk step, or the register applies only to events older than
-`erasedAt`. Both are product decisions, and neither is implemented.
+the estate disagreeing with itself about whether someone exists.
+
+**Answered: a booking made after the erasure is stored under the real login; everything that existed
+before it stays pseudonymised.** Someone who books again has chosen a new relationship, and the
+erasure covered what existed when it ran. Account deactivation was the alternative and was not taken:
+it would have made "erased" a tidier state at the cost of locking out somebody who came back.
+
+**Scope it by the BOOKING's age, not the event's** — D37's first wording said to compare the event's
+timestamp against `erasedAt`, and a review caught that this means something nobody intended. Every
+later event on a booking already open when the erasure ran is timestamped after `erasedAt`, so an
+event-timestamp rule puts the customer's real login and name back one lifecycle step at a time, and
+breaks D36's guarantee that its residual does not grow. Either carry the booking's `raisedAt` in the
+outbox payload and compare that, or treat a `bookingRef` messaging already holds rows for as
+predating the erasure. The first states the fact rather than deducing it.
 
 ## WP-09 — Erasure: retention and lawful basis · BLOCKED
 

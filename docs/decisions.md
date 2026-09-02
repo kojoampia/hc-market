@@ -2060,6 +2060,137 @@ the service can distinguish from the right one.
 
 ---
 
+## D37 — The six blocked items, answered 2026-09-02
+
+Every item in `docs/backlog.md` that was waiting on a person rather than on engineering was put to the
+architect. All six came back. Two of them corrected a premise in the question itself, which is
+recorded here rather than quietly fixed.
+
+### WP-07 — hc-market gets its own service-to-service key, and my question was wrong
+
+**Answered: create a shared JWT key for the services here, because hc-market is unrelated to hc-admin
+in any shape or form.**
+
+The question offered "sequence it in the hc-admin desk" as the recommended option, on the stated
+grounds that the admin console "already holds a staff token that all three services accept". That is
+false. The platform-wide signing secret in `~/webroot/01-healthconnect/.env` is shared by **hc-admin,
+hc-patient and hc-professional** — that is what makes cross-stack routing work between those three.
+hc-market is not in that set: it carries its own `JWT_BASE64_SECRET`, generated per estate, persisted
+at `quality/.jwt-secret` on the quality box and required independently by all three of its compose
+files. An hc-admin token presented to hc-market's gateway fails signature validation.
+
+So the recommendation was built on a misreading of the workspace's own key arrangement, and the answer
+is the correct route: the five hc-market services already share one key with each other, and that is
+the mechanism to use. A service mints a token signed with the estate key, carrying a service identity,
+and the other services accept it exactly as they accept a user's.
+
+**The consequence worth stating before it is built.** Any service holding the estate key can mint a
+token for any subject with any authority, including `ROLE_BROKERAGE`. That is already true today — all
+five validate against the same secret, so the key has always been an estate-wide capability rather
+than a per-service one. Making it a *deliberate* mechanism does not widen the blast radius, but it
+does mean the erasure fan-out must not become a general-purpose "any service may call anything"
+credential: the minted token should carry a narrow, named authority used by nothing else, so a
+compromised service cannot quietly widen its own reach.
+
+### WP-08 — the register applies only to events older than the erasure
+
+**Answered: scope the register by `erasedAt`.**
+
+An erased person who logs in and books again is doing something new, and the erasure covered what
+existed when it ran. So a booking made **after** the erasure is stored under the real login, and
+everything that existed before it stays pseudonymised.
+
+**Scope this by the BOOKING's age, not the event's** — the first wording of this decision said "the
+consumer compares the event's own timestamp against `ErasedSubject.erasedAt`", and a review caught
+that it says something nobody intended. Every later event on a booking that was already open when the
+erasure ran — its acceptance, its completion, its cancellation — is timestamped *after* `erasedAt`.
+Under an event-timestamp rule those would each be written under the real login and the real name,
+putting an erased customer's identity back into the professional's bell menu one lifecycle step at a
+time. It would also silently break D36's guarantee that its residual "does not grow", which rests on
+exactly those later events being pseudonymised.
+
+The intent is about a person choosing to come back, which means a *new booking*. Two ways to
+implement it, and the choice belongs with whoever builds WP-08: carry the booking's own `raisedAt`
+in the outbox payload and compare that to `erasedAt`, which is explicit and needs one field added in
+booking; or treat a `bookingRef` messaging already holds rows for as predating the erasure, which
+needs no new field but infers the answer. The first is preferable — it states the fact rather than
+deducing it — but either satisfies the decision, and an event-timestamp comparison satisfies neither.
+The estate stops disagreeing with itself — no more conversation keyed to an alias for a booking that
+booking and catalog hold under a real name — and the historical rows stay erased.
+
+This is the smaller of the two options and the more accurate one. The alternative, deactivating the
+account as a fourth desk step, would have made "erased" a tidier state at the cost of locking out
+somebody who has chosen to come back.
+
+### WP-09 — both coded judgements stand, pending counsel
+
+**Answered: keep both as built.**
+
+The review **body** is not erased — it is public speech about a professional, relied on by other
+customers and already answered in public. `Dispute.resolution` is kept — the brokerage's own record of
+how a financial dispute was settled, underpinning a compensating ledger entry, retained on the basis
+the ledger is.
+
+Both remain flagged for counsel. Neither is expensive to reverse: each is one method, and the rating
+stays correct either way because it is derived from the rows rather than stored.
+
+The rest of WP-09 — retention periods, lawful basis, controller registration, data residency — is
+untouched by this and stays with counsel. `healthconnect.privacy.retention-days` keeps its absent
+default.
+
+### WP-13 — all three payment providers, with the customer choosing
+
+**Answered: implement Paystack, Hubtel and MoMo direct so customers can choose. Settlement is arranged
+separately with each provider.**
+
+This is a larger answer than the question anticipated and it changes the shape of work already built,
+so the consequences are worth setting down plainly rather than discovering them in the implementation.
+
+**The settlement seam survives, and that is the good news.** "Settlement arranged separately with each
+provider" is exactly the property `PaymentProvider` was designed for: nothing on it pays the
+professional, because split-at-capture and reconcile-afterwards settle that leg differently. Three
+providers with three settlement arrangements is the case that omission exists to accommodate.
+
+**Three things now have to change.**
+
+First, **the single-bean wiring goes.** `PaymentConfiguration` supplies one `PaymentProvider` via
+`@ConditionalOnMissingBean`; offering a choice needs a registry keyed by provider name, with the
+unconfigured off-platform implementation as the fallback rather than the only entry.
+
+Second, **the customer's choice has to reach the seam**, which means a provider identifier on the
+booking request and on `PaymentIntent` — and by D22's rule, a client-supplied field that something
+downstream trusts must be validated against something the server knows, not taken on faith.
+
+Third, and most consequentially, **WP-11 stops being optional**. All three of these providers confirm
+asynchronously — Paystack by redirect, Hubtel and MoMo by a prompt on the customer's phone and a
+webhook — so none can truthfully return `AUTHORIZED` or `DECLINED` from the synchronous `authorize`
+the seam has today. The pending state, the next-action field and the webhook contract are now a
+prerequisite of WP-13 rather than an improvement to it. That also forces the question WP-11 flagged
+and nobody has answered: **may a booking exist while its payment is pending?**
+
+Act 987 remains a counsel question. It is no longer blocking construction of the seam, but it governs
+whether the platform may hold customer funds at all, and that determines which settlement arrangement
+each provider contract can take.
+
+### WP-17 — both, costed before either is built
+
+**Answered: both — get costs first.**
+
+So the deliverable is a specification rather than an integration: for a video provider and a WhatsApp
+BSP, what each would need, what it would touch, and what it would cost to run. Neither gets built
+against a guess at the requirement.
+
+### WP-18 — closed
+
+**Answered: the rename made it moot.**
+
+D30 chose to make a collision impossible rather than investigate whether one exists — the production
+compose services are `hc-market-*` with explicit container names — which is the same conclusion D27
+reached on `hcnet`. The original question no longer changes any decision, so it stops being an open
+item.
+
+---
+
 ## Still open after this section
 
 Only what engineering cannot settle alone:
@@ -2121,3 +2252,180 @@ prose.
 Which is the same failure this table exists to prevent, arriving from the other direction: an open-items
 list that keeps closed items is read as current, and someone re-fixes what is already fixed. Check a
 row against the code before acting on it.
+
+---
+
+## D36 — The notification a repeat booking hid
+
+Found by a code review of D34/D35, and confirmed against the code before anything was written: a test
+that seeds the shape the review described fails on the old implementation with
+`notificationsRedacted expected:<2> but was:<1>`, on a receipt that reports 200 OK and looks complete.
+
+D32 established that there are two kinds of notification an erasure has to reach, and that the second
+is the awkward one. Notifications *to* the customer are re-keyed to the pseudonym. Notifications
+*about* the customer sit in the **professional's** bell menu — "Ama Mensah asked for a home visit on
+12 Sep" — keyed to somebody else's login, so no query by recipient will ever return them. They are
+found through `deepLink`, which is `/bookings/<ref>` for everything this service raises, and their
+bodies are redacted while the row stays, because the row is a real event in the professional's
+history and the name can be removed without removing the event.
+
+The mechanism was right. The set of deep links it was given was not.
+
+### Why the dedupe made it invisible
+
+The links came from the customer's own conversations, via `Conversation.bookingReference`. That
+reads as complete, and it is complete only if every booking has a thread of its own. It does not:
+`BookingEventConsumer.openThreadIfNone` deliberately dedupes threads **by professional**, so a
+customer's second booking with the same person reuses the conversation the first one opened, and the
+conversation keeps the *first* booking's reference. The second booking's reference is therefore not
+on any conversation anywhere in the service, its `/bookings/<ref>` was never in the link set, and the
+professional's "Ama Mensah asked for…" for that booking was never looked at.
+
+The result is the worst shape a privacy defect can take: the erasure succeeds, the receipt is clean,
+the counts are all non-zero and plausible, and the customer's name is still sitting in another user's
+bell menu. Nothing is red anywhere, and the number an operator files against the data subject request
+is simply too small by however many repeat bookings that person made.
+
+Two things kept it hidden for as long as they did. The dedupe is correct — one thread per
+professional is the right conversation model, and the whole point of a marketplace is that people book
+the same trainer again — so nothing about it looks like a bug to read past. And every test seeded one
+booking per customer, which is the same fixture failure D34 named in booking: a fixture that exercises
+one of something can only ever prove the code handles one of them. Repeat bookings with one
+professional are not an edge case; they are the product working as intended.
+
+### What now guarantees the link set is complete
+
+The deep links are the **union** of two sources: the references on the customer's conversations, as
+before, and the `deepLink` of the customer's **own** notifications, collected in the loop that
+re-keys them. The bridge is that the customer's copy and the professional's copy of one booking event
+carry the same deep link — booking's outbox raises both from the same event, so "Your strength session
+on 26 Sep is confirmed" in the customer's bell and "Ama Mensah asked for a strength session on 26 Sep"
+in the professional's both point at `/bookings/b-repeat`. Finding either one finds the other.
+
+Collecting them in the re-keying loop rather than in a second query is deliberate — those rows are
+being visited and saved anyway, and `addressedTo` is one indexed lookup that already runs. Re-keying
+sets `recipientLogin` and does not touch `deepLink`, so reading the link on either side of the setter
+is the same string; it is read first only so the code says plainly that it does not depend on the
+order. The set is a `LinkedHashSet`, so the two sources overlapping costs nothing and the single
+`deepLink in (…)` query stays a single query against the `idx_notification_deep_link` D34 added. This
+is emphatically not a `findAll().stream().filter(...)`, which is what catalog was doing in this same
+feature and what the comment in this same method warns against.
+
+### The one row this still cannot reach, stated rather than left to be found
+
+A booking that is still **pending** at the moment the erasure runs has raised a notification to the
+professional and none to the customer, and — if it is a repeat with that professional — shares its
+thread with an earlier booking. Nothing keyed to the customer points at it, so no query the union can
+make will return it. That row is the residual, and it is the only one: messaging holds no other record
+of a booking's existence, and the alternative of redacting by professional would take other customers'
+notifications with it, which trades a disclosure for a larger one.
+
+It does not grow. Every subsequent event on that booking — accepted, declined, cancelled, completed —
+is written by `BookingEventConsumer`, which consults the register D32 built and writes the pseudonym
+and "A customer" instead of the login and the name. So the window is one row per booking that was
+pending at the instant of erasure, and it closes for everything that happens afterwards. Closing it
+properly needs messaging to know about bookings it has no thread for, which is a schema change and
+belongs with WP-06's durable record rather than here.
+
+### The receipt
+
+`notificationsRedacted` means exactly what it meant before — notifications in somebody else's list
+whose body named the customer — and now counts all of them rather than a subset. No operator reading
+an old receipt should reinterpret it; they should assume it was too low.
+
+A re-keyed notification is counted in `notificationsReKeyed` and never also in `notificationsRedacted`,
+even though its body is now redacted along with the re-key for the reason four paragraphs below. One
+row appearing in two counts would inflate a figure that gets filed against a data subject request, and
+the two numbers answer different questions: how many rows stopped being addressed to this person, and
+how many rows in *other* people's lists stopped naming them.
+
+### A review of the fix, and the four things it found
+
+A code review of the above went back through the mechanism and found nothing wrong with the union
+itself, which is worth stating before the rest of this. What it found were four ways the same defect
+gets back in — three of them through work already scheduled, and none of them visible as a failing
+test. A fifth belonged to D37 rather than here and was corrected there: the first wording of WP-08
+scoped the register by the *event's* timestamp instead of the *booking's* age, which would have put an
+erased customer's name back into the professional's bell menu one lifecycle step at a time and
+silently falsified the "it does not grow" claim this section rests on.
+
+**The residual was prose and nothing else.** It is stated above, and restated in `ErasureWorkflow`'s
+javadoc, and nothing executable asserted it — while WP-06, WP-07 and WP-08 all touch this mechanism.
+This repository's own rule is that a regression test nobody has watched fail is a test of nothing, and
+a documented gap nobody asserts is the same thing from the other side: there is no way to tell whether
+the residual is still one row, has grown, or was closed by accident. `ErasureResourceIT
+.theResidualIsOneRowForAPendingBooking` now seeds exactly that shape — a professional-side "Booking
+requested" row for `b-pending`, no customer-keyed row pointing at it, and the thread keyed to `b-first`
+— and asserts that the row is neither redacted nor counted. **It pins current behaviour deliberately
+and was never seen to fail**, which its javadoc says in those words so that nobody reads it as a
+regression test. The day WP-06/WP-07 gives messaging the booking references it holds no thread for,
+that test goes red, and going red is the point: it forces this section to be corrected in the same
+commit rather than being left describing an estate that has moved on. The null-`deepLink` branch of
+the filter is pinned beside it, for rows that demonstrably exist.
+
+**The union's completeness rests on two invariants nothing enforced.** The first is that every
+notification about a person carries `/bookings/<ref>`. The column is nullable and `MessagingSeeder`
+already writes notifications with no deep link at all, so this was true only of the rows `raise()`
+happens to produce, stated in a javadoc, and about to be tested by the next person to add a case. That
+person is predictable: the `default` branch of `BookingEventConsumer`'s switch currently swallows the
+`notification.raised` fan-in that `BookingWorkflow` already publishes for reschedule proposals and
+no-shows — **and marks it processed, so a case added later can never replay what was swallowed**.
+Whoever adds those cases and builds the row inline rather than through `raise()` creates rows that
+erasure can never reach, with nothing red anywhere. `raise()` now refuses a blank booking reference the
+way it already refuses a blank recipient, logs it and skips, and its javadoc states the invariant as an
+erasure property rather than as a display convenience. One bell row is a much cheaper loss than a
+permanent hole in what an erasure can find.
+
+**The second invariant is that notification rows are append-only.** `MessagingResource` exposes no
+delete today, only `readAt`, and a "clear notifications" button is an entirely ordinary feature to be
+asked for. The day it deletes rows, the bridge this fix is built on dies: the customer's own copy of a
+booking event is the only thing pointing at the professional's copy of it, so deleting the customer's
+copies leaves the professional holding a row that names an erased person, against a clean receipt, with
+nothing failing. That is the defect this section just fixed, arriving from a feature nobody would think
+to connect to erasure. It is now said beside the endpoint that would grow such a feature and in
+`ErasureWorkflow`'s javadoc: a clear-bell feature sets `readAt` and deletes nothing.
+
+**A malformed link matched everybody's rows rather than nobody's.** `raise()` built
+`"/bookings/" + bookingRef` without looking at the reference, so a blank one produced the literal
+`/bookings/` — non-null and non-blank, therefore surviving the filter into the `IN` set, where it
+matched every *other* row built the same way regardless of whose booking it was and overwrote their
+bodies. The receipt would have reported a larger and entirely plausible count. The blank-reference
+refusal above closes the source; the filter also rejects a link that is nothing but the prefix, because
+rows written before it refused are still in the table and no migration goes looking for them.
+
+**And the re-key skipped the body, which coupled correctness to the wording of the templates.** A
+notification addressed to the customer was re-keyed to the alias and its body left alone, commented
+"its body names nobody" — true of every template the estate has today, and false the first day one
+greets by name. "Hi Ama, your strength session on 26 Sep is confirmed" re-keyed to an alias keeps the
+name in the row for ever, and no existing test notices, because every customer-side fixture in them
+happens not to name the customer. The body is now redacted along with the re-key. Nothing is lost:
+the recipient of those rows no longer exists, so there is nothing on the other side of the scale, and
+the correctness of an erasure should not depend on a copywriting decision made in another sprint. The
+new test uses a fixture body that does name them.
+
+### What must stay true
+
+Three things, and each of them is one line of code away from being false. **Every notification is
+raised through `BookingEventConsumer.raise` and carries `/bookings/<ref>`** — a row built inline, or
+with no deep link, is invisible to erasure permanently and silently. **Notification rows are
+append-only** — a clear-bell feature sets `readAt`; a delete removes the bridge between the two copies
+of one booking event. **Nothing decides what to redact from the wording of a body** — the sweep keys on
+recipient and deep link, and the day it starts depending on what a template says, it starts depending
+on something no test in this repository guards.
+
+### The WP-07 fan-out should carry the booking references
+
+Stated here as a design note rather than built, because WP-07 is a package of its own.
+
+Closing the pending residual properly is described above as a WP-06 schema change — messaging learning
+about bookings it holds no thread for. Once WP-07's service-token fan-out exists, there is a cheaper
+route that needs no schema change at all: booking holds the authoritative list of a customer's booking
+references, `booking.customer_login` is indexed for exactly this kind of question since D34, and the
+fan-out is already going to call messaging with a subject. If that call carries the customer's booking
+references, messaging's link set becomes complete by construction — conversations, the customer's own
+notifications, *and* every booking booking knows about, including the ones still pending — and the
+residual disappears rather than being narrowed.
+
+The reason to write this down before WP-07 is built rather than after: the payload's shape is decided
+once, and a fan-out that carries only a login will be extended later by whoever discovers this section
+a third time. This union has already been declared complete twice.

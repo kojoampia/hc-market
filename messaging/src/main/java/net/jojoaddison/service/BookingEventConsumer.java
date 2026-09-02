@@ -190,9 +190,36 @@ public class BookingEventConsumer {
         );
     }
 
+    /**
+     * Writes one row into somebody's bell menu.
+     *
+     * <p><strong>Every notification this service raises carries {@code /bookings/<ref>}, and that is
+     * an erasure invariant rather than a display convenience — {@code decisions.md} D24/D36.</strong>
+     * A notification <em>about</em> a customer sits in a different person's bell menu, keyed to a
+     * different person's login, so no query by recipient can ever return it; the deep link is the
+     * only handle the erasure has on it. A row written without one is invisible to erasure for good,
+     * and nothing anywhere goes red — the receipt reports a clean erasure with plausible counts,
+     * which is precisely the shape of the defect D36 was written to fix.
+     *
+     * <p>So raise notifications through here and never by constructing a {@link Notification} inline.
+     * The {@code default} branch of the switch above is going to grow cases — booking already
+     * publishes {@code notification.raised} for reschedule proposals and no-shows, and this consumer
+     * swallows them <em>and marks them processed</em> — and whoever adds those cases inherits this
+     * rule only if the code they copy already obeys it.
+     *
+     * <p>A blank recipient and a blank booking reference are both logged and skipped. Skipping costs
+     * one bell row; writing the row would cost a permanent hole in what erasure can reach, and a
+     * blank reference is the worse of the two, because {@code "/bookings/" + ""} is the literal
+     * {@code /bookings/} — non-null, non-blank, and therefore matching every other malformed row in
+     * the table rather than one booking.
+     */
     private void raise(String recipient, String kind, String body, String bookingRef) {
         if (recipient == null || recipient.isBlank()) {
             LOG.warn("no recipient for a {} notification about {}", kind, bookingRef);
+            return;
+        }
+        if (bookingRef == null || bookingRef.isBlank()) {
+            LOG.warn("no booking reference on a {} notification for {} — not raising it, since erasure could never find it", kind, recipient);
             return;
         }
         notifications.save(

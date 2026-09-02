@@ -87,6 +87,28 @@ class BookingEventConsumerIT {
     }
 
     /**
+     * <strong>Every notification must carry {@code /bookings/<ref>} — {@code decisions.md} D36.</strong>
+     *
+     * <p>The deep link is the only handle erasure has on a notification that names a customer in
+     * somebody <em>else's</em> bell menu, because no query by recipient can return it. A row raised
+     * without one is invisible to erasure for good, and a row raised with a <em>blank</em> reference
+     * is worse than invisible: {@code "/bookings/" + ""} is the literal {@code /bookings/}, which is
+     * neither null nor blank, so it survives the filter and then matches every other row built the
+     * same way — strangers' bodies overwritten, on a receipt that reads as a larger clean erasure.
+     *
+     * <p>So the notification is not raised at all. One bell row is a cheaper loss than a permanent
+     * hole in what erasure can reach.
+     */
+    @Test
+    @Transactional
+    @DisplayName("an event with no booking reference raises no notification at all")
+    void anEventWithoutABookingReferenceRaisesNothing() {
+        consumer.onBookingEvent(requested("", CUSTOMER));
+
+        assertThat(notifications.findAll()).noneMatch(n -> "/bookings/".equals(n.getDeepLink()));
+    }
+
+    /**
      * <strong>The race this table exists for.</strong>
      *
      * <p>The desk erases; a {@code booking.requested} still in flight lands a moment later. Before

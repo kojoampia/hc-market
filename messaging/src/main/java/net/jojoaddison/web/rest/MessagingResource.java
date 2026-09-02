@@ -107,7 +107,19 @@ public class MessagingResource {
             .toList();
     }
 
-    /** Marks everything read. The bell menu has no per-item control, so neither does this. */
+    /**
+     * Marks everything read. The bell menu has no per-item control, so neither does this.
+     *
+     * <p><strong>Notification rows are append-only — {@code decisions.md} D36.</strong> A "clear
+     * notifications" button is an ordinary feature and the obvious way to build it is a delete; here
+     * it must set {@code readAt}, as this endpoint does, and delete nothing. Erasure finds the
+     * notifications that name an erased customer in <em>somebody else's</em> bell menu by unioning
+     * their conversations' booking references with the deep links of the customer's <em>own</em>
+     * notifications, because the two copies of one booking event share a link. Delete the customer's
+     * copies and that bridge goes with them: the professional keeps a row naming a person who has
+     * been erased, the receipt still reports a clean erasure with plausible counts, and nothing is
+     * red — the exact defect D36 fixed, arriving from a feature nobody would think to connect to it.
+     */
     @PostMapping("/api/notifications/read")
     @Transactional
     public ResponseEntity<Void> markRead() {
