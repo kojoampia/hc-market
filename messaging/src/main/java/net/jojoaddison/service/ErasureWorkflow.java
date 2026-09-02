@@ -58,14 +58,22 @@ import org.springframework.transaction.annotation.Transactional;
  * customer's own notifications supply the rest — the customer's copy and the professional's copy of
  * one booking event carry the same {@code deepLink} — and the two sets are unioned before the lookup.
  *
- * <p>What that union cannot reach is stated rather than left to be discovered: a booking still
- * <em>pending</em> when the erasure runs has raised a notification to the professional and none to the
- * customer, and shares its thread with an earlier booking, so nothing keyed to the customer points at
- * it. That row is the residual, and it is the only one — every later event on that booking is written
- * by a consumer that already consults the register, so it arrives pseudonymised and with
- * "A customer" in place of the name. {@code ErasureResourceIT.theResidualIsOneRowForAPendingBooking}
- * pins that shape deliberately, so the day WP-06/WP-07 closes it the test goes red and this paragraph
- * gets corrected instead of quietly outliving the code.
+ * <p><strong>And, since D38, from a third source when the caller supplies one.</strong> A booking
+ * still <em>pending</em> when the erasure runs has raised a notification to the professional and none
+ * to the customer, and — being a repeat with that professional — shares its thread with an earlier
+ * booking, so nothing this service holds points at it. That was D36's residual, and this service
+ * could not close it alone: it needs to know about a booking it has no thread for, which is a fact
+ * only booking has. The erasure fan-out hands it over. {@link #eraseCustomer(String, java.util.List)}
+ * takes the customer's booking references and folds {@code /bookings/<ref>} for each of them into the
+ * same link set, so a fan-out erasure reaches the pending row and a single-service desk call still
+ * does not. Both behaviours are pinned by tests, because the difference between them is now the
+ * difference between a complete erasure and a nearly complete one.
+ *
+ * <p>The references decide which rows are redacted, so they are worth being precise about what they
+ * can and cannot do. They only ever cause a body to be replaced — never a row to be read back, never
+ * a row to be created, never a login to be disclosed — so the worst a wrong reference achieves is
+ * blanking a notification that should have kept its text. The authority that carries them is narrowed
+ * to one named customer for that reason rather than because a disclosure is possible.
  *
  * <h2>Two invariants the completeness of that union rests on</h2>
  *
@@ -199,9 +207,38 @@ public class ErasureWorkflow {
      * conclude messaging held nothing for that person, when it held a row keyed to their login. A
      * receipt that under-reports what was done is worse than a verbose one, because it is the thing
      * somebody files.
+     *
+     * <p>The form that is told nothing about bookings this service holds no thread for, so it leaves
+     * D36's residual exactly where D36 left it. Behaviourally identical to what a direct desk call
+     * gets: the resource always calls the overload below and supplies an empty list when no fan-out
+     * payload arrived, rather than branching between two methods over the same distinction.
      */
     @Transactional
     public Erased eraseCustomer(String login) {
+        return eraseCustomer(login, List.of());
+    }
+
+    /**
+     * The same, told which bookings the customer has — {@code decisions.md} D38.
+     *
+     * <p>Booking is authoritative for that list and {@code booking.customer_login} has been indexed
+     * for the question since D34, so the erasure fan-out can hand it over for the cost of one query
+     * it was going to run anyway. What it buys is the row D36 could not reach: a booking that was
+     * still pending when the erasure ran has a professional-side notification and nothing keyed to the
+     * customer pointing at it, and no query this service can write will find it.
+     *
+     * <p>These references are <em>added</em> to the two sources the union already had rather than
+     * replacing them. That is not belt-and-braces. Booking's list is authoritative for bookings, and
+     * messaging raises notifications for things that are not bookings — the fan-in {@code
+     * notification.raised} events that D36 warns the consumer's {@code default} branch currently
+     * swallows are the obvious future case — so a link set built from the references alone would be a
+     * new hole the day somebody adds one.
+     *
+     * @param bookingReferences every booking reference the customer has, or empty when the caller has
+     *     no way to know. Never null.
+     */
+    @Transactional
+    public Erased eraseCustomer(String login, List<String> bookingReferences) {
         String alias = pseudonym(login);
 
         /* Serialised against the consumer for the rest of this transaction. Recording the pseudonym
@@ -244,6 +281,12 @@ public class ErasureWorkflow {
         Set<String> links = new LinkedHashSet<>();
         for (Conversation c : mine) {
             addLink(links, c.getBookingReference());
+        }
+        /* The third source — decisions.md D38. Every booking the customer has, as booking knows them,
+           including the ones that never opened a thread of their own. Empty for a direct desk call,
+           which is why the residual is still pinned by a test for that path. */
+        for (String reference : bookingReferences) {
+            addLink(links, reference);
         }
 
         int reKeyed = 0;

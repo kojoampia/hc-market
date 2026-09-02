@@ -258,6 +258,20 @@ healthconnect:
   payout:
     base-url: http://healthconnectpayout
     timeout-ms: 3000
+  # The erasure fan-out -- decisions.md D38. `POST /api/desk/customers/{login}/erase-everywhere`
+  # redacts here and then calls messaging's and catalog's desk endpoints with a token minted from the
+  # estate signing key. `healthconnect.catalog.base-url` above serves both this and the pricing call;
+  # messaging is addressed only from here, and the hostname below resolves in no environment on
+  # purpose -- all three compose files set HEALTHCONNECT_MESSAGING_BASE_URL, and CI checks they do.
+  #
+  # A longer timeout than the pricing calls, and deliberately: those guard a customer waiting on a
+  # booking screen, this guards a redaction sweep across several tables. Giving up early would report
+  # a leg as failed while it went on succeeding, which is the one wrong answer this receipt must not
+  # give.
+  messaging:
+    base-url: http://healthconnectmessaging
+  erasure:
+    timeout-ms: 10000
   # Retention -- decisions.md D24. Deliberately absent rather than set to a plausible number: a
   # default here would be a legal position taken by whoever typed it. Counsel supplies the number,
   # this supplies the mechanism. Nothing sweeps on it yet -- there is no scheduler in this estate.

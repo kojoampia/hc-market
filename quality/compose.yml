@@ -310,6 +310,15 @@ services:
       HEALTHCONNECT_CATALOG_BASE_URL: http://catalog:8080
       # The receipt modal asks payout for the brokerage split. Fails closed by design.
       HEALTHCONNECT_PAYOUT_BASE_URL: http://payout:8080
+      # The erasure fan-out — decisions.md D38. Booking calls messaging's desk endpoint with a token
+      # it mints from the estate signing key, so a complete erasure is one operator action.
+      #
+      # The CONTAINER name, not the short service name the two lines above use. `hcnet` is shared
+      # with three sibling products and hc-market's dev stack, compose publishes a service name as a
+      # DNS alias on every network it joins, and a duplicate does not error — Docker answers with
+      # whichever it likes. The two above predate that rule and are load-bearing enough that changing
+      # them belongs in its own change; a new one has no reason to be written the risky way.
+      HEALTHCONNECT_MESSAGING_BASE_URL: http://hc-market-quality-messaging:8080
       SPRING_LIQUIBASE_CONTEXTS: dev
       HEALTHCONNECT_SEED_ENABLED: "true"
       HEALTHCONNECT_SEED_FILE: /app/seed/seed-data.json

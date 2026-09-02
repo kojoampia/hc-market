@@ -1,6 +1,6 @@
 # Backlog — hc-market
 
-Every open item in this repository, folded into work packages. Sources: `docs/decisions.md` D1–D34,
+Every open item in this repository, folded into work packages. Sources: `docs/decisions.md` D1–D38,
 the two code reviews of 2026-09-01, and the verification runs against the quality box.
 
 **This is a derived document.** `decisions.md` holds the reasoning and stays the record; this holds
@@ -22,8 +22,8 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **WP-03** | Erasure: survive in-flight events | DONE | — |
 | **WP-04** | Erasure: pepper the pseudonym | DONE | merged `b4d0138`, released, quality rebuilt clean |
 | **WP-05** | Erasure: the notifications a repeat booking hides | DONE (unmerged) | D36 |
-| **WP-06** | Erasure: a durable record in booking and catalog | READY | — |
-| **WP-07** | Erasure: orchestration across the three services | READY | unblocked by D37 — hc-market mints its own service token |
+| **WP-06** | Erasure: a durable record in booking and catalog | READY (re-assessed, narrowed) | — |
+| **WP-07** | Erasure: orchestration across the three services | DONE (unmerged) | D38 |
 | **WP-08** | Erasure: what an erased person who keeps their account is | READY | unblocked by D37 — register scoped by `erasedAt` |
 | **WP-09** | Erasure: retention periods and lawful basis | BLOCKED (narrowed) | counsel — the two coded judgements are ratified by D37 |
 | **WP-10** | Payments: the seam can complete a lifecycle | READY | — |
@@ -138,12 +138,18 @@ one thread, and a second customer whose rows must not move.
 `notificationsRedacted` keeps its meaning and now counts all of them rather than a subset. The
 residual D36 records: a booking still *pending* at the instant of erasure leaves one professional-side
 row nothing keyed to the customer points at. It does not grow — every later event on that booking goes
-through the consumer, which already writes the pseudonym and "A customer" — and closing it needs
-messaging to know about bookings it has no thread for, which belongs with WP-06.
+through the consumer, which already writes the pseudonym and "A customer".
+
+**Closed by WP-07 on the fan-out path, and it needed no schema change.** Booking holds the reference
+list and hands it over, so the residual is now the stated difference between `POST .../erase` and
+`POST .../erase-everywhere` rather than an unbounded gap. The single-service endpoint still cannot
+reach that row, deliberately, because nothing has told it the booking exists. See D38.
 
 **A review of that fix found four more, all now closed in the same D36 section.** The residual was
 prose and nothing else, so it is now pinned by a test that says in its own javadoc that it asserts
-current behaviour deliberately and will go red when WP-06/WP-07 closes the hole. The union's
+current behaviour deliberately and will go red when WP-06/WP-07 closes the hole. (It did not: WP-07's
+references arrive in a payload that a desk call does not send, so the test acquired a partner covering
+the fan-out path instead, and the pair states the boundary. D38.) The union's
 completeness rested on two invariants nothing enforced — every notification about a person carries
 `/bookings/<ref>`, and notification rows are append-only — so `raise()` now refuses a blank booking
 reference, and both invariants are stated where the next writer will meet them: the `default` branch of
@@ -153,35 +159,78 @@ rather than one booking. And re-keying a customer's own notification left its bo
 the erasure correct only for as long as no template greets anybody by name; the body is redacted with
 the re-key now.
 
-## WP-06 — Erasure: a durable record in booking and catalog · READY
+## WP-06 — Erasure: a durable record in booking and catalog · READY (re-assessed, narrowed)
 
 Messaging records `erased_subject` with an `erasedAt`; booking and catalog record the act only in a log
 line and an HTTP response body that evaporates with the request. For an irreversible action with legal
 significance, that is thin. The same register would also give those two services the protection
 `erased_subject` gives messaging, if either ever consumes an event that writes a customer login.
 
-## WP-07 — Erasure: orchestration · READY (unblocked by D37)
+**Re-assessed after WP-07, and it survives with a stronger case rather than a weaker one.** D36's
+design note suggested the fan-out might make this package unnecessary, and it retired exactly one of
+its two justifications: closing the pending-booking residual turned out to need no schema change at
+all, because booking already holds the reference list and can simply hand it over. That half is done.
 
-A complete erasure is three separate desk calls, and calling one without the others leaves a partially
-erased customer.
+The durable record is untouched, and WP-07 sharpened the argument for it. What used to evaporate was
+three HTTP responses that each described one service; what evaporates now is **one** response that is
+the only account of which legs ran — and the case where an operator most needs to prove what happened
+is precisely the new one, a 502 where two services erased and the third did not. A log line in booking
+is not a record an audit can be shown. Scope is therefore just the register and its `erasedAt` in
+booking and catalog, plus whatever the fan-out receipt should persist beside it.
 
-**D37 answered this, and corrected the question.** Sequencing does *not* belong in the `hc-admin` desk:
+## WP-07 — Erasure: orchestration · DONE (unmerged)
+
+D38. `POST /api/desk/customers/{login}/erase-everywhere` on booking erases here, then calls messaging's
+and catalog's existing desk endpoints, and returns one receipt naming each leg, its status and its
+counts. It replaces three calls whose individual receipts were indistinguishable from a complete
+erasure — which is the defect, rather than the inconvenience of making three calls.
+
+**D37 answered this and corrected the question.** Sequencing does *not* belong in the `hc-admin` desk:
 that product shares a signing key with hc-patient and hc-professional, and hc-market is not in that
 set — it carries its own `JWT_BASE64_SECRET`, so an hc-admin token fails signature validation here.
-The mechanism to use is the key hc-market's own five services already share: one service mints a token
-signed with the estate key and the others accept it.
+The mechanism used is the key hc-market's own five services already share.
 
-The token must carry a narrow, named authority used by nothing else. Any service holding the estate
-key can already mint anything — that is a property of the shared key, not something this introduces —
-but the fan-out must not become a general "any service may call anything" credential. Related: there is no back-sweep for anyone erased before `erased_subject` existed — on
+**The authority is `ROLE_CUSTOMER_ERASURE`**, named for what it permits rather than for the mechanism
+that carries it, and it appears on one endpoint per service and nowhere else — not on booking's own
+erasure endpoints, since it permits being a *leg* and booking is never one. Three narrowings, each
+enforced by the receiving side rather than promised by the minting one: the token names the single
+customer it authorises, it lives thirty seconds, and its subject is `system:erasure-fanout` rather than
+the operator, so a leaked copy is not a bearer credential for a real person on every `/api/**` path in
+the estate. The shared key already let any service mint anything; what this avoids is turning that
+capability into an interface.
+
+**Partial failure is reported, never retried and never refused.** Every leg is attempted whatever the
+earlier ones did — refusing to try catalog because messaging was down leaves *more* data in place, not
+less — and the response is **200 only when all three erased, 502 with the same receipt otherwise**. 207
+Multi-Status is more precise and was rejected on cost of mis-reading: a mis-read 502 costs a retry of
+an idempotent call, a mis-read 207 costs a partial erasure filed as a complete one. A failed leg
+reports no counts rather than zeroes. The operator's next move is to call it again and to escalate if
+the same leg fails twice.
+
+**The payload carries the booking references, as D36 asked.** They are read back under the alias
+*after* the local erasure, so a retry — which by definition finds nothing under the original login —
+still hands over the full list instead of quietly reopening the residual on the path most likely to
+hit it.
+
+**D36's residual is closed on the fan-out path and deliberately not on the desk path**, so it is now a
+stated boundary between two endpoints rather than "one row somewhere". Both sides are pinned by tests;
+the new one was confirmed red beforehand with `notificationsRedacted expected:<2> but was:<1>`.
+
+Found while building it: **nothing verified that the three services run the same privacy pepper**,
+which D35 requires and injects three times. A divergence is completely silent — every service keeps
+working and one person acquires three irreconcilable aliases. The fan-out compares the aliases it gets
+back and reports `ALIAS_MISMATCH`, which needs a deployment fixed rather than a retry.
+
+`HEALTHCONNECT_MESSAGING_BASE_URL` is new and set in all three compose files, with CI's cross-service
+base URL check widened to demand it. `ErasureFanoutToken` is copied byte-identically into all three
+services and CI diffs it beside `SubjectPseudonym`.
+
+**Not yet done:** run it against the quality box. No test in this repository can prove one service's
+token is accepted by another — the two halves are proved separately, which is the limitation D28
+recorded — so the handshake is reasoned rather than measured until the estate is up.
+
+Related and unchanged: there is no back-sweep for anyone erased before `erased_subject` existed. On
 quality that was test data only, and it has been cleared.
-
-**Design the payload to carry the customer's booking references — D36.** Booking holds the
-authoritative list of them and `booking.customer_login` has been indexed for that question since D34,
-so a fan-out that hands messaging the full list closes D36's pending-booking residual by construction —
-no schema change, and no third pass over a union that has already been declared complete twice. A
-fan-out carrying only a login will be extended later by whoever rediscovers that section, so the shape
-is worth getting right the first time.
 
 ## WP-08 — Erasure: the still-active account · READY (answered by D37)
 

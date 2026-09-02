@@ -1,9 +1,11 @@
 package net.jojoaddison.web.rest;
 
 import net.jojoaddison.security.MarketplaceAuthorities;
+import net.jojoaddison.service.ErasureFanout;
 import net.jojoaddison.service.ErasureWorkflow;
 import net.jojoaddison.service.SubjectPseudonym;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -25,13 +27,18 @@ import org.springframework.web.server.ResponseStatusException;
  * borrowed a session destroy that person's booking history. The check happens off-system, by a
  * person, and this is what they call afterwards.
  *
- * <p><strong>This is one of three.</strong> Booking holds the address and the notes; messaging holds
- * the message bodies; catalog holds the review authorship and the saved list. A complete erasure
- * calls all three, and there is no orchestrator here to do it in one shot — this estate has no
- * service-to-service authentication, so an endpoint that fanned out would need a mechanism that does
- * not exist. The desk in {@code hc-admin} is where that sequencing belongs. Until it does, the gap
- * is real and is recorded rather than hidden: calling one and not the others leaves a partially
- * erased customer.
+ * <p><strong>Two endpoints, and the second is the one to use.</strong> Booking holds the address and
+ * the notes; messaging holds the message bodies and the bell menus; catalog holds the review
+ * authorship and the saved list. {@code /erase} does this service only, which is what a complete
+ * erasure used to be three of — and the reason that was a defect rather than an inconvenience is that
+ * each of the three receipts looks like a success on its own, so a forgotten call leaves a partially
+ * erased customer and no artefact anywhere says so.
+ *
+ * <p>{@code /erase-everywhere} does all three behind one action — {@code decisions.md} D38. It became
+ * possible when D37 answered the question this class's comment used to end on: the estate's five
+ * services share a signing key, so booking can mint a token catalog and messaging accept. The
+ * single-service form stays, because a leg that failed is worth being able to re-run on its own and
+ * because the fan-out is built out of it.
  */
 @RestController
 @RequestMapping("/api/desk/customers")
@@ -39,10 +46,12 @@ import org.springframework.web.server.ResponseStatusException;
 public class ErasureResource {
 
     private final ErasureWorkflow erasure;
+    private final ErasureFanout fanout;
     private final SubjectPseudonym pseudonyms;
 
-    public ErasureResource(ErasureWorkflow erasure, SubjectPseudonym pseudonyms) {
+    public ErasureResource(ErasureWorkflow erasure, ErasureFanout fanout, SubjectPseudonym pseudonyms) {
         this.erasure = erasure;
+        this.fanout = fanout;
         this.pseudonyms = pseudonyms;
     }
 
@@ -74,6 +83,37 @@ public class ErasureResource {
             erased.disputesRedacted(),
             erased.historyRowsReKeyed()
         );
+    }
+
+    /**
+     * The whole erasure: this service, then messaging, then catalog — {@code decisions.md} D38.
+     *
+     * <p><strong>200 only when every leg erased; 502 with the same receipt otherwise.</strong> The
+     * body is the authority either way and it names each service and what it did, but the status code
+     * has to disagree with a caller that reads nothing else, because "a partial erasure looks like a
+     * success" is the defect being fixed and a 2xx would reintroduce it through the front door. 207
+     * Multi-Status describes the situation more precisely and was rejected for exactly that reason:
+     * mis-reading a 502 costs a retry of an idempotent operation, and mis-reading a 207 costs a
+     * receipt filed against a data subject request that was never completed.
+     *
+     * <p>Safe to call again, and honest about it: the second run reports zeroes from every service
+     * because there is nothing left under the original login. So the operator's instruction on a 502
+     * is simply to call it again, and to escalate if the same leg fails twice.
+     *
+     * <p>{@code ROLE_BROKERAGE} from the class, and nothing else — in particular <em>not</em> the
+     * fan-out authority this endpoint mints. That authority permits being a leg, and booking is never
+     * one; granting it here would let a fan-out token trigger a fan-out.
+     */
+    @PostMapping("/{login}/erase-everywhere")
+    public ResponseEntity<ErasureFanout.Receipt> eraseEverywhere(@PathVariable String login) {
+        if (!pseudonyms.isConfigured()) {
+            throw new ResponseStatusException(
+                HttpStatus.SERVICE_UNAVAILABLE,
+                "erasure is unavailable: healthconnect.privacy.pepper is not set on this deployment (decisions.md D35)"
+            );
+        }
+        ErasureFanout.Receipt receipt = fanout.eraseEverywhere(login);
+        return ResponseEntity.status(receipt.complete() ? HttpStatus.OK : HttpStatus.BAD_GATEWAY).body(receipt);
     }
 
     /**

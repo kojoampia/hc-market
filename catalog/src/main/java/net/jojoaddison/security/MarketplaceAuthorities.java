@@ -22,5 +22,21 @@ public final class MarketplaceAuthorities {
      */
     public static final String BROKERAGE = "ROLE_BROKERAGE";
 
+    /**
+     * Erase one named customer, and nothing else — decisions.md D37, D38.
+     *
+     * <p>Held by no person and granted by no login. It arrives on one credential only: the
+     * short-lived token booking mints when an operator asks for a complete erasure, so that the
+     * reviews and favourites this service holds are redacted in the same action as the bookings and
+     * the message bodies. See {@link ErasureFanoutToken}.
+     *
+     * <p>It reaches {@code ErasureResource} and nothing else here — in particular not
+     * {@code /api/desk/professionals/**}, where {@code ROLE_BROKERAGE} decides who wears the
+     * verification badge shown publicly beside a person's name. Naming the authority for what it
+     * permits rather than for the mechanism that carries it is what makes that boundary readable on
+     * the endpoint.
+     */
+    public static final String CUSTOMER_ERASURE = "ROLE_CUSTOMER_ERASURE";
+
     private MarketplaceAuthorities() {}
 }
