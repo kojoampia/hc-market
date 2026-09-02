@@ -2060,6 +2060,121 @@ the service can distinguish from the right one.
 
 ---
 
+## D37 — The six blocked items, answered 2026-09-02
+
+Every item in `docs/backlog.md` that was waiting on a person rather than on engineering was put to the
+architect. All six came back. Two of them corrected a premise in the question itself, which is
+recorded here rather than quietly fixed.
+
+### WP-07 — hc-market gets its own service-to-service key, and my question was wrong
+
+**Answered: create a shared JWT key for the services here, because hc-market is unrelated to hc-admin
+in any shape or form.**
+
+The question offered "sequence it in the hc-admin desk" as the recommended option, on the stated
+grounds that the admin console "already holds a staff token that all three services accept". That is
+false. The platform-wide signing secret in `~/webroot/01-healthconnect/.env` is shared by **hc-admin,
+hc-patient and hc-professional** — that is what makes cross-stack routing work between those three.
+hc-market is not in that set: it carries its own `JWT_BASE64_SECRET`, generated per estate, persisted
+at `quality/.jwt-secret` on the quality box and required independently by all three of its compose
+files. An hc-admin token presented to hc-market's gateway fails signature validation.
+
+So the recommendation was built on a misreading of the workspace's own key arrangement, and the answer
+is the correct route: the five hc-market services already share one key with each other, and that is
+the mechanism to use. A service mints a token signed with the estate key, carrying a service identity,
+and the other services accept it exactly as they accept a user's.
+
+**The consequence worth stating before it is built.** Any service holding the estate key can mint a
+token for any subject with any authority, including `ROLE_BROKERAGE`. That is already true today — all
+five validate against the same secret, so the key has always been an estate-wide capability rather
+than a per-service one. Making it a *deliberate* mechanism does not widen the blast radius, but it
+does mean the erasure fan-out must not become a general-purpose "any service may call anything"
+credential: the minted token should carry a narrow, named authority used by nothing else, so a
+compromised service cannot quietly widen its own reach.
+
+### WP-08 — the register applies only to events older than the erasure
+
+**Answered: scope the register by `erasedAt`.**
+
+An erased person who logs in and books again is doing something new, and the erasure covered what
+existed when it ran. So the consumer compares the event's own timestamp against
+`ErasedSubject.erasedAt`: older events are pseudonymised, newer ones are stored under the real login.
+The estate stops disagreeing with itself — no more conversation keyed to an alias for a booking that
+booking and catalog hold under a real name — and the historical rows stay erased.
+
+This is the smaller of the two options and the more accurate one. The alternative, deactivating the
+account as a fourth desk step, would have made "erased" a tidier state at the cost of locking out
+somebody who has chosen to come back.
+
+### WP-09 — both coded judgements stand, pending counsel
+
+**Answered: keep both as built.**
+
+The review **body** is not erased — it is public speech about a professional, relied on by other
+customers and already answered in public. `Dispute.resolution` is kept — the brokerage's own record of
+how a financial dispute was settled, underpinning a compensating ledger entry, retained on the basis
+the ledger is.
+
+Both remain flagged for counsel. Neither is expensive to reverse: each is one method, and the rating
+stays correct either way because it is derived from the rows rather than stored.
+
+The rest of WP-09 — retention periods, lawful basis, controller registration, data residency — is
+untouched by this and stays with counsel. `healthconnect.privacy.retention-days` keeps its absent
+default.
+
+### WP-13 — all three payment providers, with the customer choosing
+
+**Answered: implement Paystack, Hubtel and MoMo direct so customers can choose. Settlement is arranged
+separately with each provider.**
+
+This is a larger answer than the question anticipated and it changes the shape of work already built,
+so the consequences are worth setting down plainly rather than discovering them in the implementation.
+
+**The settlement seam survives, and that is the good news.** "Settlement arranged separately with each
+provider" is exactly the property `PaymentProvider` was designed for: nothing on it pays the
+professional, because split-at-capture and reconcile-afterwards settle that leg differently. Three
+providers with three settlement arrangements is the case that omission exists to accommodate.
+
+**Three things now have to change.**
+
+First, **the single-bean wiring goes.** `PaymentConfiguration` supplies one `PaymentProvider` via
+`@ConditionalOnMissingBean`; offering a choice needs a registry keyed by provider name, with the
+unconfigured off-platform implementation as the fallback rather than the only entry.
+
+Second, **the customer's choice has to reach the seam**, which means a provider identifier on the
+booking request and on `PaymentIntent` — and by D22's rule, a client-supplied field that something
+downstream trusts must be validated against something the server knows, not taken on faith.
+
+Third, and most consequentially, **WP-11 stops being optional**. All three of these providers confirm
+asynchronously — Paystack by redirect, Hubtel and MoMo by a prompt on the customer's phone and a
+webhook — so none can truthfully return `AUTHORIZED` or `DECLINED` from the synchronous `authorize`
+the seam has today. The pending state, the next-action field and the webhook contract are now a
+prerequisite of WP-13 rather than an improvement to it. That also forces the question WP-11 flagged
+and nobody has answered: **may a booking exist while its payment is pending?**
+
+Act 987 remains a counsel question. It is no longer blocking construction of the seam, but it governs
+whether the platform may hold customer funds at all, and that determines which settlement arrangement
+each provider contract can take.
+
+### WP-17 — both, costed before either is built
+
+**Answered: both — get costs first.**
+
+So the deliverable is a specification rather than an integration: for a video provider and a WhatsApp
+BSP, what each would need, what it would touch, and what it would cost to run. Neither gets built
+against a guess at the requirement.
+
+### WP-18 — closed
+
+**Answered: the rename made it moot.**
+
+D30 chose to make a collision impossible rather than investigate whether one exists — the production
+compose services are `hc-market-*` with explicit container names — which is the same conclusion D27
+reached on `hcnet`. The original question no longer changes any decision, so it stops being an open
+item.
+
+---
+
 ## Still open after this section
 
 Only what engineering cannot settle alone:

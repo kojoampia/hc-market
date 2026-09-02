@@ -20,21 +20,21 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **WP-01** | Erasure: the mechanism | DONE | — |
 | **WP-02** | Erasure: reach every table | DONE | — |
 | **WP-03** | Erasure: survive in-flight events | DONE | — |
-| **WP-04** | Erasure: pepper the pseudonym | DONE (unmerged) | — |
-| **WP-05** | Erasure: the notifications a repeat booking hides | DONE | — |
+| **WP-04** | Erasure: pepper the pseudonym | DONE | merged `b4d0138`, released, quality rebuilt clean |
+| **WP-05** | Erasure: the notifications a repeat booking hides | DONE (unmerged) | D36 |
 | **WP-06** | Erasure: a durable record in booking and catalog | READY | — |
-| **WP-07** | Erasure: orchestration across the three services | BLOCKED | architect — needs service-to-service auth or the hc-admin desk |
-| **WP-08** | Erasure: what an erased person who keeps their account is | BLOCKED | product |
-| **WP-09** | Erasure: retention periods and lawful basis | BLOCKED | counsel |
+| **WP-07** | Erasure: orchestration across the three services | READY | unblocked by D37 — hc-market mints its own service token |
+| **WP-08** | Erasure: what an erased person who keeps their account is | READY | unblocked by D37 — register scoped by `erasedAt` |
+| **WP-09** | Erasure: retention periods and lawful basis | BLOCKED (narrowed) | counsel — the two coded judgements are ratified by D37 |
 | **WP-10** | Payments: the seam can complete a lifecycle | READY | — |
 | **WP-11** | Payments: asynchronous confirmation | READY | — |
 | **WP-12** | Payments: the zero-amount booking | READY | — |
-| **WP-13** | Payments: provider choice and Act 987 | BLOCKED | counsel + architect |
+| **WP-13** | Payments: provider choice and Act 987 | READY (large) | D37 — Paystack, Hubtel and MoMo direct, customer chooses. **Depends on WP-11** |
 | **WP-14** | Verification badge | DONE | — |
 | **WP-15** | Badge: date-only on the wire | READY | — |
 | **WP-16** | Search performance | WON'T (measured) | — |
-| **WP-17** | Video and WhatsApp providers | BLOCKED | architect — budget |
-| **WP-18** | Production `infranet` alias check | BLOCKED | architect, on the host |
+| **WP-17** | Video and WhatsApp providers | READY (spec only) | D37 — cost both, build neither |
+| **WP-18** | Production `infranet` alias check | CLOSED | D37 — the rename made it moot |
 
 ---
 
@@ -148,12 +148,20 @@ line and an HTTP response body that evaporates with the request. For an irrevers
 significance, that is thin. The same register would also give those two services the protection
 `erased_subject` gives messaging, if either ever consumes an event that writes a customer login.
 
-## WP-07 — Erasure: orchestration · BLOCKED
+## WP-07 — Erasure: orchestration · READY (unblocked by D37)
 
 A complete erasure is three separate desk calls, and calling one without the others leaves a partially
-erased customer. There is no orchestrator because this estate has no service-to-service authentication,
-so an endpoint that fanned out would need a mechanism that does not exist. Sequencing belongs in the
-`hc-admin` desk. Related: there is no back-sweep for anyone erased before `erased_subject` existed — on
+erased customer.
+
+**D37 answered this, and corrected the question.** Sequencing does *not* belong in the `hc-admin` desk:
+that product shares a signing key with hc-patient and hc-professional, and hc-market is not in that
+set — it carries its own `JWT_BASE64_SECRET`, so an hc-admin token fails signature validation here.
+The mechanism to use is the key hc-market's own five services already share: one service mints a token
+signed with the estate key and the others accept it.
+
+The token must carry a narrow, named authority used by nothing else. Any service holding the estate
+key can already mint anything — that is a property of the shared key, not something this introduces —
+but the fan-out must not become a general "any service may call anything" credential. Related: there is no back-sweep for anyone erased before `erased_subject` existed — on
 quality that was test data only, and it has been cleared.
 
 ## WP-08 — Erasure: the still-active account · BLOCKED
