@@ -24,6 +24,11 @@ x-service-base: &service-base
     SPRING_KAFKA_BOOTSTRAP_SERVERS: ${HC_KAFKA_BOOTSTRAP:-kafka:9092}
     # One signing key across the estate. Never set a per-service override: a local value silently
     # wins and the symptom is a successful login followed by 401s from the services.
+    #
+    # Supplied from $REMOTE_PATH/secrets.env on the host, NOT from the .env deploy-prod.sh writes —
+    # see the note on the pepper below, which applies to both. Until 2026-09-02 nothing supplied it
+    # at all: render_env emitted neither secret and the deploy ran `docker compose up` with no
+    # environment, so every production deploy would have died right here on the :? message.
     JHIPSTER_SECURITY_AUTHENTICATION_JWT_BASE64_SECRET: ${JWT_BASE64_SECRET:?platform JWT secret is required}
     # The erasure pepper — decisions.md D35. Keys the HMAC behind an erased customer's alias, and is
     # required for the same reason the signing key is: a committed default in a public repository is
@@ -34,6 +39,19 @@ x-service-base: &service-base
     # erased in production: aliases are written into rows in place, nothing re-keys them, and a new
     # pepper leaves messaging unable to recognise its own erased subjects. It belongs with the
     # platform's other long-lived secrets, not in a per-deploy .env that deploy-prod.sh regenerates.
+    #
+    # That sentence described an intention nothing implemented, which is how it survived: there was
+    # no such file, this variable came from nowhere, and the first real deploy would have stopped
+    # here. It now names something real — `secrets.env`, created once by hand next to the generated
+    # .env, passed to every compose invocation as a second --env-file, and rewritten by no deploy and
+    # no rollback. deploy-prod.sh checks both keys are in it during preflight, before the running
+    # stack is touched, and never reads their values.
+    #
+    # ALL REPLICAS OF MESSAGING MUST SHARE THIS VALUE, or none may run. ErasureRegisterGuard decides
+    # once, at startup, per process: an instance started without the pepper against a database whose
+    # register is still empty passes its guard and then answers `isErased` = false for the rest of
+    # its life, writing real logins for people a peppered sibling has erased. Scaling any of the
+    # three services means scaling this variable with them.
     HEALTHCONNECT_PRIVACY_PEPPER: ${HC_PRIVACY_PEPPER:?erasure pepper is required — see decisions.md D35}
     # The seed loader is unreachable under prod regardless; this is the second, explicit lock.
     HEALTHCONNECT_SEED_ENABLED: ${HEALTHCONNECT_SEED_ENABLED:-false}

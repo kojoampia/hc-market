@@ -47,6 +47,30 @@ DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$DEPLOY_DIR/.." && pwd)"       # the workspace holding gateway/ catalog/ …
 cd "$DEPLOY_DIR"
 
+# --- deploy/.env, and why it has to be sourced rather than left to compose ----------------------
+#
+# `apps_up` tells the operator to keep HC_PRIVACY_PEPPER in deploy/.env, and until 2026-09-02 that
+# instruction could not work: nothing here read the file, and compose auto-loads `.env` from the
+# PROJECT DIRECTORY — which for `-f deploy/docker/docker-compose.dev.yml` is deploy/docker/, not
+# deploy/. So an operator who did exactly as they were told still hit the compose file's `:?` and
+# concluded the script was broken, which is the worst kind of documentation defect: it is followed.
+#
+# Sourced here, before the defaults, so a value in it can also override the published ports and the
+# shared-plane names below. `set -a` exports every assignment, because compose interpolates from the
+# environment and an unexported shell variable is invisible to it. Same shape as
+# hc-patient/run-local.sh.
+#
+# It is NOT an error for the file to be absent — every variable in it has another source, and the
+# `:?` checks further down still name what is missing.
+if [[ -f "$DEPLOY_DIR/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091  # operator-supplied, not in the repository
+  . "$DEPLOY_DIR/.env"
+  set +a
+  # The colour helpers are defined further down, after the defaults this file may change.
+  printf '▸ sourced %s\n' "$DEPLOY_DIR/.env"
+fi
+
 # ------------------------------------------------------------------ defaults --
 PROFILES="test,dev"
 SEED_FILE="$DEPLOY_DIR/demo/seed-data.json"
@@ -62,7 +86,11 @@ TIMEOUT=180
 # mode is an incremental build that silently passes — see the workspace guide.
 JAVA_HOME="${JAVA_HOME:-/usr/lib/jvm/jdk-25.0.2-oracle-x64}"
 
-case "${1:-}" in -h|--help) sed -n '2,43p' "$0"; exit 0 ;; esac
+# "$DEPLOY_DIR/…", not "$0": this script cd's into DEPLOY_DIR above, so a relative invocation
+# (./deploy/deploy-dev.sh --help, which is how the header itself spells it) leaves $0 pointing at a
+# path that no longer resolves, and --help fails with a sed error instead of printing the help.
+SELF="$DEPLOY_DIR/$(basename "${BASH_SOURCE[0]}")"
+case "${1:-}" in -h|--help) sed -n '2,43p' "$SELF"; exit 0 ;; esac
 # the first bare word is the command; anything starting with "-" is an option
 if [[ $# -gt 0 && "$1" != -* ]]; then COMMAND="$1"; shift; else COMMAND="up"; fi
 
@@ -121,7 +149,7 @@ while [[ $# -gt 0 ]]; do
     --with-tests) RUN_TESTS=1; shift ;;
     --clean)     DO_CLEAN=1; shift ;;
     --timeout)   TIMEOUT="$2"; shift 2 ;;
-    -h|--help)   sed -n '2,43p' "$0"; exit 0 ;;
+    -h|--help)   sed -n '2,43p' "$SELF"; exit 0 ;;
     *)           die "unknown option: $1 (try --help)" ;;
   esac
 done
@@ -277,8 +305,10 @@ apps_up() {
   export JWT_BASE64_SECRET
   # The erasure pepper (decisions.md D35). Required, not generated: one value across booking,
   # catalog and messaging, and nothing re-keys aliases already written, so a value that changes
-  # between runs leaves earlier erasures unreconcilable. Generate one once and keep it in deploy/.env:
-  #     HC_PRIVACY_PEPPER=$(head -c 32 /dev/urandom | base64 -w0)
+  # between runs leaves earlier erasures unreconcilable. Generate one once and keep it in deploy/.env,
+  # which this script sources at startup — see the note at the top, and note that compose does NOT
+  # pick that file up by itself, because its project directory is deploy/docker/:
+  #     echo "HC_PRIVACY_PEPPER=$(head -c 32 /dev/urandom | base64 -w0)" >> deploy/.env
   : "${HC_PRIVACY_PEPPER:?set HC_PRIVACY_PEPPER (the erasure pepper — see decisions.md D35)}"
   export HC_PRIVACY_PEPPER
   local names=(); for s in "${SERVICES[@]}"; do names+=("$(compose_name "$s")"); done
