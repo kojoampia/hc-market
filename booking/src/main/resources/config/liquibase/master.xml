@@ -32,4 +32,9 @@
          this line: every erase-everywhere then 500s on a missing table, and nothing keeps a record
          of an irreversible act. -->
     <include file="config/liquibase/changelog/20260902160000_added_erasure_record.xml" relativeToChangelogFile="false"/>
+    <!-- HAND-WRITTEN: the provider handle a payment comes back with, decisions.md D41. Regeneration
+         drops this line and every booking paid through a real provider then fails on a missing
+         table — silently today, because the only provider configured is the one that returns no
+         handle at all, so the breakage waits until the day somebody wires a real one. -->
+    <include file="config/liquibase/changelog/20260902200000_added_payment_attempt.xml" relativeToChangelogFile="false"/>
 </databaseChangeLog>

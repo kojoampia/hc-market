@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+        The handle a payment provider gave us - decisions.md D41.
+
+        A table rather than a column on booking, and the reason is a sequence rather than a
+        preference: the authorization happens BEFORE the booking row is written (D31, so that a
+        third-party call is not inside the transaction publishing booking.requested), so at the
+        instant the handle arrives there is no booking row to put it on. That is also the case the
+        table exists for - create() throws, the money is committed, and the reference is the only
+        way to give it back.
+
+        NO PERSONAL DATA, deliberately. No login, no name, no contact detail; the only link to a
+        person is booking_reference, which an erasure keeps on purpose. That is why ErasureWorkflow
+        does not sweep this table, and it stops being true the moment somebody adds a customer
+        column here - see PaymentAttempt's javadoc.
+
+        Hand-written, not generated from JDL, exactly as outbox_event is. Regenerating booking
+        rewrites master.xml and DROPS this include, and the failure is loud: every booking whose
+        provider hands back a reference fails on a missing table. Today no provider does, so it
+        would be silent until the day one is configured, which is the worst of both.
+    -->
+    <changeSet id="20260902200000-1" author="healthconnect">
+        <createTable tableName="payment_attempt">
+            <column name="id" type="varchar(64)">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="booking_reference" type="varchar(64)"><constraints nullable="false"/></column>
+            <column name="provider" type="varchar(64)"><constraints nullable="false"/></column>
+            <!-- Not unique. A provider that reuses a reference across a void and a retry is telling
+                 us the truth about its own model; refusing to store the second one would lose the
+                 handle again, which is the whole defect this table closes. -->
+            <column name="provider_reference" type="varchar(255)"><constraints nullable="false"/></column>
+            <column name="state" type="varchar(32)"><constraints nullable="false"/></column>
+            <column name="amount_minor" type="bigint"><constraints nullable="false"/></column>
+            <column name="currency" type="varchar(3)"><constraints nullable="false"/></column>
+            <column name="recorded_at" type="${datetimeType}"><constraints nullable="false"/></column>
+            <column name="resolved_at" type="${datetimeType}"/>
+            <column name="needs_attention" type="boolean" defaultValueBoolean="false"><constraints nullable="false"/></column>
+            <column name="attention_note" type="varchar(255)"/>
+        </createTable>
+
+        <!-- "What money is there against this booking?" - the platform's question, on every release. -->
+        <createIndex tableName="payment_attempt" indexName="idx_payment_attempt_booking_reference">
+            <column name="booking_reference"/>
+        </createIndex>
+        <!-- "Which booking is this?" - the provider's question, which a webhook arrives asking
+             (WP-11). Nothing reads it yet; unindexed it would be a full scan on a table that only
+             grows, discovered on the first day a provider is live. -->
+        <createIndex tableName="payment_attempt" indexName="idx_payment_attempt_provider_reference">
+            <column name="provider_reference"/>
+        </createIndex>
+    </changeSet>
+</databaseChangeLog>

@@ -3018,3 +3018,142 @@ every booking that predates the erasure, and that is all the rows there are.
 **Catalog was not touched and did not need to be.** It runs no Kafka consumer, so it has no path by
 which a stale event can write a login back; its `erased_subject` remains the write-only record D39
 made it.
+## D41 — The payment seam could not complete a lifecycle it had already started
+
+Built 2026-09-03, from WP-10 and the payment review. D31 built the seam and left one defect in it that
+was sharper than everything else in this repository: **`authorizePayment` read the outcome's state and
+threw away `providerReference`.**
+
+That handle is the first argument of `capture`, `refund` and `status` — every method on the port
+except `authorize` — and there was no table holding it, no column, and no log line. So the day a real
+provider first answered `AUTHORIZED`, the customer's money was committed and the platform held nothing
+with which to capture it, give it back, or ask what had become of it. The seam was able to *start* a
+payment lifecycle it had made itself unable to finish, and nothing anywhere would have gone red.
+
+The same defect from the other side, which is why the two were fixed together: if `creator.create`
+threw after a successful authorization, the customer was charged for a booking that does not exist,
+and there was nothing to void the authorization with. One is the cause of the other.
+
+### Where the handle is stored, and why it is not on `Booking`
+
+Storing it at all needs stating against this repository's central rule. **Derived, never stored** is
+about figures that have a source — a rating, an earning, a total — and it says: compute it, so that
+the copy cannot drift from the thing it copies. A `providerReference` has no source here. It is issued
+by somebody else and derivable from nothing the estate holds, so the choice is not "store or derive",
+it is "store or lose". `Professional.verification` (D16) is the existing precedent for a stated
+exception of this shape, and this is a second one.
+
+**Where** was the real decision, and a column on `Booking` was the obvious candidate. It is wrong, and
+the deciding argument is a sequence rather than a preference:
+
+> **The authorization happens before the booking row is written.** D31 put it there deliberately, so
+> that a third-party call is not inside the transaction that publishes `booking.requested` — a
+> provider timing out must not roll back a booking the customer's screen had every reason to believe
+> in. So at the instant the handle arrives **there is no booking row to put it on**, and the case
+> where that matters most is exactly the case this package was opened for: the create fails, the money
+> is committed, and a column on a row that was never written holds nothing.
+
+Three more things a column could not hold, all of them already on the backlog:
+
+| | A column on `Booking` | `payment_attempt` |
+|---|---|---|
+| Authorize now, capture part of it later | one handle, one state — the second movement overwrites the first | two rows, both readable |
+| WP-13, customer chooses between three providers | a decline followed by a retry on another provider overwrites the abandoned handle — and an abandoned attempt that the first provider later confirms is precisely the one that must stay voidable | one row per attempt, none lost |
+| WP-11, confirmation arrives by webhook naming only the provider's reference | no index on it; the estate cannot find out what the payment was for | `idx_payment_attempt_provider_reference` |
+
+**What it costs.** A table, two indexes, and a join for anyone wanting a booking and its money in one
+read. Nothing in the estate wants that today — no screen shows a payment — so the cost is paid later,
+and the alternative would have had to be torn up by WP-11 in any case. The table also carries rows
+whose booking does not exist, which is not a defect: it is the true account of money committed for a
+booking that failed, and it is why there is no foreign key to `booking`.
+
+**A row is written when there is a handle to write, and only then.** Today's estate is entirely
+`OFF_PLATFORM` — the customer pays the professional directly — and recording every outcome would fill
+the table with one contentless row per booking and make "is there money against this booking?" answer
+yes for every booking in the estate. Every handle *is* kept whatever the state, including a decline's:
+a provider that hands one back is telling us how to ask about that attempt later, and a declined
+booking that turns out to have taken money is exactly when somebody needs to.
+
+**And it holds no personal data**, deliberately. No login, no name, no contact detail a provider might
+have needed for a mobile-money prompt; the only link to a person is `bookingReference`, which an
+erasure keeps on purpose (D24/D31). So `ErasureWorkflow` does not sweep it — correct as long as the
+columns stay as they are, which is why both the entity and the changelog say so where the next writer
+will meet it. The one place a customer's details could have arrived unannounced is an error string, so
+`attention_note` is composed by this platform from a provider name, a reference and an exception
+class, and never copied from a provider's message. D39's stored receipt needed a scrub for exactly
+that reason, by way of a URL rather than a message.
+
+### `PaymentRecorder` is `REQUIRES_NEW`, and that is the load-bearing annotation
+
+The exact mirror of `OutboxRecorder`, which is `MANDATORY` so an event can only be written in the same
+transaction as the change it describes. A payment handle is the opposite kind of fact: **it exists to
+survive the failure of the work that comes after it.** A row sharing the booking's transaction would
+be rolled back precisely when the money was committed and the booking was not, which is the case the
+table exists for.
+
+### The rest of the package
+
+**`voidAuthorization` on the port.** A distinct call at every real provider, and not a settlement-model
+choice, so it belongs on the interface rather than being deferred with D15's open questions. Without
+it the estate had no answer at all to "money committed, booking not created". `BookingPayments.release`
+chooses by state — an authorization is voided, money already captured is refunded — because a void
+against a settled payment is refused by every provider that distinguishes them. That choice is not a
+settlement assumption: it is true of any provider with both calls, and a provider with only one
+implements the other as an alias.
+
+**A release that fails is flagged, not retried.** `needs_attention` is the column an operator queries.
+A second automatic attempt against a provider that has just failed is how one stuck payment becomes
+several, and reconciling against a provider's console is not an action this platform can take. The
+state is left as the provider last reported it — overwriting it would lose the one fact the person
+clearing it up needs — and the full cause goes to the log at ERROR, where a provider's message can say
+whatever it likes.
+
+**`refund` carries a currency now**, against the house rule that money is minor units *plus* an
+explicit ISO code — and it was missing in the method where the omission is least recoverable, since a
+refund in the wrong currency is a second wrong transaction rather than a rejected one. **`capture`
+takes an amount and a currency** for the same reason and one more: a `capture(reference)` that could
+only take the whole authorization made the estate's only route to a smaller charge a full capture
+followed by a refund, which is two entries on a customer's statement and, at most providers, two fees.
+The amount comes from the `payment_attempt` row rather than from the booking, because what may be
+moved is bounded by what the provider agreed to.
+
+**`PaymentState.holdsMoney()` is not `permitsBooking()`.** `OFF_PLATFORM` permits a booking and holds
+nothing, and the release path has to ask the second question: the unconfigured provider throws on
+`voidAuthorization` by design, so releasing an off-platform booking would have replaced whatever real
+failure had just happened with an `IllegalStateException` about payments.
+
+### The idempotency key: the comment was wrong, not the code
+
+`PaymentIntent`'s javadoc described `bookingReference` as "the natural idempotency key … so a retried
+authorization is recognisable as the same one". **The call site defeats that**, and knowingly:
+`CustomerBookingResource.create` mints `"b-" + a fresh UUID` per request, so two submissions of one
+wizard are two references, two intents and — once a provider exists — two charges.
+
+Of the two ways to make code and comment agree, the comment was corrected. Making the promise true
+needs a key chosen by whoever *intends* the booking — an `Idempotency-Key` header on
+`POST /api/bookings`, threaded through — and that is a contract with the client rather than with the
+provider. The payment seam is not the place to invent one unilaterally, and deriving a reference from
+the request's contents instead would change what a booking reference *is* for the sake of one
+downstream caller. What the key does buy is real and is written down where it was overstated: a
+provider's own retry, a client library's retry and every later call about this payment all name the
+same booking, so duplicates of *this* call can be collapsed and `payment_attempt` reconciles against
+the provider's records without a second identifier to keep in step with the first. The gap is named in
+the same javadoc rather than left for somebody to rediscover.
+
+### What this deliberately does not do
+
+**No `PENDING`/`REQUIRES_ACTION`, no next-action field, no webhook contract.** That is WP-11, and it is
+the next package. This makes it easier rather than harder: a webhook needs a row to update and an index
+to find it by, and both now exist — the second is unused today and was added for that reason.
+
+**No zero-amount condition.** That is WP-12, and this package neither helps nor hinders it: a free
+booking still asks the provider to authorize 0 pesewas, and the day a real provider is configured it
+will still refuse.
+
+**Nothing pays the professional**, and that is still the property that makes the seam survivable
+(D15/D31). Nothing added here assumes when settlement happens or in how many hops.
+
+**Not run against a live provider, because there is not one.** Every branch is exercised through a
+substituted provider in `PaymentSeamIT`, which is the same limitation D31 recorded and the same reason:
+a refusal path that has never run is a refusal path nobody knows the shape of, and the day a provider
+is added is the wrong day to discover that a failed booking keeps the customer's money.

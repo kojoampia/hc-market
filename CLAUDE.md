@@ -169,6 +169,7 @@ regeneration.
 | The `privacy_pepper_witness` include | messaging `master.xml` | the guard finds no witness, concludes this is a **first** peppered startup, and records whatever pepper is currently set as the correct one — so a wrong pepper is adopted rather than refused, and every existing alias is orphaned in silence |
 | The `erasure_record` include | booking `master.xml` | two tables in one changelog. **Loud one way, silent the other:** every `erase-everywhere` 500s on a missing `erasure_run`, while the lost `erased_subject` simply stops recording that anybody was erased here at all |
 | The `erased_subject` include | catalog `master.xml` | **silent.** Erasure keeps working and the receipt still reports what it redacted and deleted; the estate just stops keeping any record of an irreversible act, in the one service that *deletes* rather than redacts |
+| The `payment_attempt` include | booking `master.xml` | **silent until the day it is not.** Today's only provider returns no handle, so nothing is ever written and every test stays green; the first booking paid through a real provider then fails on a missing table, and the failure lands on the one path where a customer's money is already committed |
 | The `processed_event` include | payout `master.xml` | consumer idempotency keys gone; replays double-credit |
 | `contexts: dev` (not `dev, faker`) | each `config/application-dev.yml` | see faker collision below |
 | The `healthconnect` block | each `config/application.yml` **and** `application-prod.yml` | seed never loads |
@@ -619,6 +620,16 @@ time.**
   change when a price is later edited, and the professional's inbox must not have to ask catalog on
   every read — but *denormalised* is not *unverified*. Adding another client-supplied field that
   something downstream trusts reopens this.
+- **A provider's payment handle is stored; nothing else about a payment is** (D41). The second
+  deliberate exception to "derived, never stored", and it is a different kind from `verification`: a
+  `providerReference` is issued by somebody else and derivable from nothing, so the choice is store or
+  lose. It lives in `payment_attempt` in booking rather than on `Booking` because the authorization
+  happens **before** the booking row exists — which is also the case it exists for, `creator.create`
+  throwing with the money already committed. A row is written only when a handle comes back, so the
+  off-platform estate writes none. **The table holds no personal data and the erasure sweep therefore
+  does not visit it**; adding a customer field there without adding it to `ErasureWorkflow` in the same
+  commit is how that stops being true, and `attention_note` is composed by the platform rather than
+  copied from a provider's message for the same reason.
 - Review integrity is one-directional: there is **no** endpoint to delete a review. The only
   response is a public reply. `bookingReference` is unique, making "one review per booking" a schema
   guarantee.
