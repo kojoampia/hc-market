@@ -141,6 +141,17 @@ x-service-base: &service-base
     # rows and stop matching anything recomputed, so a dev estate that has erased somebody wants
     # `down --clean` rather than a new pepper.
     HEALTHCONNECT_PRIVACY_PEPPER: ${HC_PRIVACY_PEPPER:?set HC_PRIVACY_PEPPER in deploy/.env}
+    # Retention policy and controller registration — decisions.md D42, counsel 2026-09-03. Optional
+    # here, unlike the pepper above: counsel's ratified figures are the committed fallback in
+    # application.yml, so an unset variable runs the correct policy rather than none. Set them in
+    # deploy/.env only to try a different one.
+    #
+    # HC_DPC_REGISTRATION has no fallback and is expected to be absent in dev — the service starts,
+    # logs a warning, and the desk reports null. That is the honest answer on a developer machine.
+    HC_RETENTION_FINANCIAL_DAYS: ${HC_RETENTION_FINANCIAL_DAYS:-2190}
+    HC_RETENTION_OPERATIONAL_DAYS: ${HC_RETENTION_OPERATIONAL_DAYS:-365}
+    HC_RETENTION_CARE_SUMMARY_DAYS: ${HC_RETENTION_CARE_SUMMARY_DAYS:-90}
+    HC_DPC_REGISTRATION: ${HC_DPC_REGISTRATION:-}
   # The Jib images contain no curl and no wget -- a CMD-based HTTP check fails with "executable
   # file not found" forever and the container sits in `health: starting` for its whole life. They
   # DO contain bash, so this uses bash's /dev/tcp to speak HTTP with no external tools at all.

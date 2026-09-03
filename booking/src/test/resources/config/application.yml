@@ -118,3 +118,23 @@ management:
 healthconnect:
   privacy:
     pepper: hc-market-test-pepper-not-a-real-one
+    # The retention periods are repeated here, and they must stay equal to the main config's
+    # fallbacks — decisions.md D42.
+    #
+    # THIS FILE SHADOWS src/main/resources/config/application.yml RATHER THAN MERGING WITH IT. Both
+    # sit at `config/application.yml` on the classpath and test resources come first, so the main
+    # file is not read at all under test. That is the same mechanism that makes a lost `pepper` block
+    # above fail the ITs with a 503, and it is why these three lines are not redundant: without them
+    # the periods bind to null under test and PrivacyResourceIT fails asserting counsel's figures
+    # against nothing — which reads as a broken assertion rather than as a shadowed config file.
+    #
+    # They are written as literals rather than as ${HC_RETENTION_*:...} placeholders on purpose: a
+    # test must assert what counsel ratified, not whatever happens to be exported into the shell
+    # running the build. An environment variable set on a developer's machine should not be able to
+    # turn this suite green or red.
+    retention:
+      financial-days: 2190
+      operational-days: 365
+      care-summary-days: 90
+    # controller-registration is deliberately UNSET. PrivacyResourceIT asserts the desk reports null
+    # for it, and a real registration number has no business in a public repository — see D42.

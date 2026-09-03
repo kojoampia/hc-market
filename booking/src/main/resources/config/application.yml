@@ -272,11 +272,33 @@ healthconnect:
     base-url: http://healthconnectmessaging
   erasure:
     timeout-ms: 10000
-  # Retention -- decisions.md D24. Deliberately absent rather than set to a plausible number: a
-  # default here would be a legal position taken by whoever typed it. Counsel supplies the number,
-  # this supplies the mechanism. Nothing sweeps on it yet -- there is no scheduler in this estate.
+  # Retention -- decisions.md D24, answered by D42. These used to be deliberately absent, on the
+  # argument that a default would be a legal position taken by whoever typed it. That argument has
+  # been DISCHARGED, not abandoned: counsel ratified these three periods on 2026-09-03, so the values
+  # below are attributable rather than invented. They are read from the environment so a deployment
+  # can be corrected without a release, with counsel's figures as the fallback.
   #
-  # `pepper` is absent for a different reason -- decisions.md D35. It keys the HMAC that turns an
+  # THREE CATEGORIES, because one clock cannot be right for all of them. A period short enough for a
+  # message body is far too short for a ledger row the platform must keep; one long enough for the
+  # ledger holds health data for six years. The split makes financial rows survive an operational
+  # sweep by construction rather than by a condition somebody has to remember to write.
+  #
+  # care-summary-days is LOAD-BEARING. D42 records counsel's position that the care summary is
+  # ordinary contract data rather than special-category, and that rests partly on it being held
+  # briefly. Shortening it is safe; lengthening it is a question for counsel, not for whoever is
+  # editing the environment file.
+  #
+  # NOTHING SWEEPS ON ANY OF THIS. There is no scheduler in this estate, and three populated
+  # categories look far more like a working retention regime than one unset integer did -- which is
+  # why GET /api/desk/privacy reports `enforced: false` beside them.
+  #
+  # controller-registration has NO fallback, unlike the periods. It is a real identifier belonging to
+  # a real organisation: a wrong one is a false claim about a regulatory relationship and a
+  # plausible-looking placeholder is worse than an absent value, because it stops anyone asking.
+  # Blank counts as absent. This repository is public, which is the second reason it lives in the
+  # gitignored environment file rather than here.
+  #
+  # `pepper` is absent for a third reason -- decisions.md D35. It keys the HMAC that turns an
   # erased customer's login into the alias their rows carry, and this repository is public, so a
   # committed pepper is not a pepper. It is injected exactly as the JWT signing key is: all three
   # compose files require HEALTHCONNECT_PRIVACY_PEPPER, and the value must be the SAME in booking,
@@ -284,8 +306,12 @@ healthconnect:
   #
   # Absent, this service still starts and everything except the erasure desk works -- that endpoint
   # answers 503. See SubjectPseudonym for why refusing to start would be the worse trade.
-  privacy: {}
-  #   retention-days: 365
+  privacy:
+    retention:
+      financial-days: ${HC_RETENTION_FINANCIAL_DAYS:2190}
+      operational-days: ${HC_RETENTION_OPERATIONAL_DAYS:365}
+      care-summary-days: ${HC_RETENTION_CARE_SUMMARY_DAYS:90}
+    controller-registration: ${HC_DPC_REGISTRATION:}
   #   pepper: injected, never written here
 
 # ===================================================================
