@@ -64,6 +64,18 @@ public record PaymentOutcome(PaymentState state, String providerReference, Strin
         return new PaymentOutcome(PaymentState.OFF_PLATFORM, null, null);
     }
 
+    /**
+     * There is nothing to pay, so nobody was asked — {@code decisions.md} D44.
+     *
+     * <p>The only factory here that is <strong>not</strong> a provider reporting something.
+     * {@link BookingPayments#take} returns it for an amount of zero without reaching an adapter at
+     * all, which is why it carries no reference: a handle is a thing a provider issues, and none was.
+     * No {@code payment_attempt} row follows, by D41's existing rule rather than by a second one.
+     */
+    public static PaymentOutcome nothingToPay() {
+        return new PaymentOutcome(PaymentState.NOTHING_TO_PAY, null, null);
+    }
+
     public static PaymentOutcome authorized(String providerReference) {
         return new PaymentOutcome(PaymentState.AUTHORIZED, providerReference, null);
     }

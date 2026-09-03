@@ -90,12 +90,21 @@ class PaymentConfigurationUnitTest {
      *
      * <p>So the expectations are a map keyed by the enum, and the first assertion is that the map
      * covers it exactly. A ninth state fails that line naming itself, before any answer is checked.
+     *
+     * <p><strong>It did.</strong> D44 added {@link PaymentState#NOTHING_TO_PAY} and this test went red
+     * on the {@code containsExactlyInAnyOrder} line before a single answer was compared — which is the
+     * mechanism working, one package after it was built. The answer was then written here deliberately
+     * rather than acquired by omission.
      */
     @Test
     @DisplayName("only committed money permits a booking, and every state has to say so")
     void permitsBookingIsExhaustive() {
         Map<PaymentState, Boolean> expected = Map.of(
             PaymentState.OFF_PLATFORM,
+            true,
+            // Nothing to pay, so nothing stands in the way — and unlike its neighbours above, no
+            // provider was consulted to arrive at this. See D44.
+            PaymentState.NOTHING_TO_PAY,
             true,
             PaymentState.PENDING,
             true,
@@ -159,9 +168,9 @@ class PaymentConfigurationUnitTest {
     @Test
     @DisplayName("only committed money has to be given back")
     void holdsMoneyIsNotPermitsBooking() {
-        // The same guard as above, one line: this list is complete today, and a ninth state must not
+        // The same guard as above, one line: this list is complete today, and a tenth state must not
         // be able to arrive without somebody deciding whether the platform would be holding its money.
-        assertThat(PaymentState.values()).hasSize(8);
+        assertThat(PaymentState.values()).hasSize(9);
         assertThat(PaymentState.AUTHORIZED.holdsMoney()).isTrue();
         assertThat(PaymentState.CAPTURED.holdsMoney()).isTrue();
         assertThat(PaymentState.OFF_PLATFORM.holdsMoney()).isFalse();
@@ -170,6 +179,10 @@ class PaymentConfigurationUnitTest {
         assertThat(PaymentState.DECLINED.holdsMoney()).isFalse();
         assertThat(PaymentState.FAILED.holdsMoney()).isFalse();
         assertThat(PaymentState.PENDING.holdsMoney()).isFalse();
+        // Nothing was taken because nothing was owed, so the release path must not reach a provider
+        // for it — the same reason OFF_PLATFORM answers false. D44.
+        assertThat(PaymentState.NOTHING_TO_PAY.holdsMoney()).isFalse();
+        assertThat(PaymentState.NOTHING_TO_PAY.awaitingCustomer()).isFalse();
     }
 
     @Test

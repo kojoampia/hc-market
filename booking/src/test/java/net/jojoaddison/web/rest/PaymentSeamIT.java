@@ -387,6 +387,77 @@ class PaymentSeamIT {
         assertThat(onlyAttempt().getState()).isEqualTo("VOIDED");
     }
 
+    // ------------------------------------------------------------- nothing to pay, and no answer --
+
+    /**
+     * WP-12's reason to exist, at the endpoint — {@code decisions.md} D44.
+     *
+     * <p>Two seeded professionals offer a service at {@code priceMinor: 0}. Every provider D37 chose
+     * refuses an authorization for 0, so the day one is configured every free booking in the estate
+     * becomes a 402 or a 502 depending on how that provider phrases its refusal — and nothing here
+     * would have gone red beforehand, because the unconfigured provider says {@code OFF_PLATFORM} to
+     * any amount at all. Confirmed as {@code expected:<201> but was:<402>} before the guard existed.
+     *
+     * <p>The first assertion is the substance: <strong>no provider is asked</strong>. The
+     * booking is created in {@code REQUESTED} rather than {@code PENDING_PAYMENT} — nothing would ever
+     * confirm a payment that was never started — {@code booking.requested} is published, so the
+     * professional hears about it exactly as they do for a priced booking, and no
+     * {@code payment_attempt} row is written because no handle came back (D41).
+     */
+    @Test
+    @Transactional
+    @DisplayName("a free booking is created without asking any provider to authorize nothing")
+    void aFreeBookingAsksNoProvider() throws Exception {
+        when(catalog.priceOf(anyString(), anyString())).thenReturn(
+            new CatalogClient.Offering(new CatalogClient.ServiceView("s1b", "Community walking group", 0L, "GHS", true), "Africa/Accra")
+        );
+        // What a configured provider actually does with an amount of 0, and the reason this test was
+        // red before the guard existed: a refusal here made the booking a 402 rather than a booking.
+        when(payments.authorize(any())).thenReturn(PaymentOutcome.declined("amount must be greater than zero"));
+
+        String body = send()
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.status").value("REQUESTED"))
+            .andExpect(jsonPath("$.priceMinor").value(0))
+            .andExpect(jsonPath("$.payment").doesNotExist())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+
+        org.mockito.Mockito.verify(payments, org.mockito.Mockito.never()).authorize(any());
+        String reference = om.readTree(body).path("reference").asText();
+        assertThat(attempts.findByBookingReferenceOrderByRecordedAtAsc(reference)).isEmpty();
+        // The recorder qualifies the name; what matters here is that the professional's half of the
+        // estate is told about a free booking exactly as it is told about a priced one.
+        assertThat(eventsAbout(reference)).extracting(OutboxEvent::getType).containsExactly("healthconnect.booking.requested");
+    }
+
+    /**
+     * An adapter that throws answers the customer the way a provider that failed does — D44.
+     *
+     * <p>{@code FAILED} and its 502 existed already; there was no route to them from an exception, so
+     * a provider whose client timed out produced a 500 and a stack trace while a provider that
+     * answered {@code FAILED} produced a 502 and a retry. The 500 is the wrong answer twice over: it
+     * says this platform is broken when a third party is, and it is the one shape of response a client
+     * is entitled to treat as "do not try that again".
+     *
+     * <p>And the provider's own words stay out of the body, for the reason D41 keeps them out of
+     * {@code attention_note} and D43 keeps them off the next action: an exception message from a
+     * payment provider is where a phone number or a cardholder name arrives unannounced.
+     */
+    @Test
+    @Transactional
+    @DisplayName("a provider that throws is a 502, not a 500, and does not quote itself")
+    void aThrowingProviderIsNotAServerError() throws Exception {
+        when(payments.authorize(any())).thenThrow(new IllegalStateException("MTN refused 0244123456 for Ama Mensah"));
+        long before = bookings.count();
+
+        String body = send().andExpect(status().isBadGateway()).andReturn().getResponse().getContentAsString();
+
+        assertThat(bookings.count()).isEqualTo(before);
+        assertThat(body).doesNotContain("Ama Mensah").doesNotContain("0244123456");
+    }
+
     // ------------------------------------------------------------------------- helpers --
 
     /**

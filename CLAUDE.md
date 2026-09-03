@@ -504,7 +504,11 @@ keeps the estate uniformly Boot 4 — and matches all three sibling products. Se
 
 - **Money is `long` minor units (pesewas)** plus an explicit ISO currency, never `double`. `28000` is
   ₵280.00, and the 12% brokerage fee is **inside** the price, not added to it. Two seeded services
-  are genuinely free (`priceMinor: 0`) — a "from ₵0" listing is correct, not a bug.
+  are genuinely free (`priceMinor: 0`) — a "from ₵0" listing is correct, not a bug, and **no provider
+  is ever asked to authorize zero** (D44): `BookingPayments.take` answers `NOTHING_TO_PAY` without
+  reaching an adapter, and the booking is created in `REQUESTED` with `booking.requested` published
+  and no `payment_attempt` row. Not `PENDING_PAYMENT` — nothing would ever confirm a payment that was
+  never started, and that state has no expiry sweep.
 - **One `Booking` aggregate** replaces the prototype's four arrays. `ACCEPTED` was removed as
   unreachable; accepting goes straight to `CONFIRMED`. The topic is still `booking.accepted` — it
   names the act, not the state.
@@ -642,6 +646,20 @@ time.**
   does not visit it**; adding a customer field there without adding it to `ErasureWorkflow` in the same
   commit is how that stops being true, and `attention_note` is composed by the platform rather than
   copied from a provider's message for the same reason.
+- **An adapter that throws is a provider that `FAILED`, and the reason is composed rather than
+  relayed** (D44). `BookingPayments.take` catches `RuntimeException` around `provider.authorize`, so
+  a timed-out HTTP client answers the customer with the same 502 a provider politely answering
+  `FAILED` always got, instead of a 500 and a stack trace. The reason names the provider and the
+  exception's class only — it is rendered into a response body, which is the fourth road by which a
+  provider's prose could carry a customer's phone number (D39, D41 and D43 are the other three). **Only
+  the provider call is wrapped**: a `PaymentRecorder` that throws is this platform losing the one fact
+  it cannot reconstruct while the money may be committed, and that stays a loud 500.
+- **`@ConditionalOnMissingBean` in `PaymentConfiguration` is order-sensitive** (D44). The annotation
+  is only reliable in an auto-configuration, and that class is a user `@Configuration`, so the
+  condition is evaluated against whatever the component scanner had registered by then — a property of
+  the filesystem, which can differ between a laptop and CI on identical code. A real provider must be
+  `@Primary` or an explicit `@Bean`, never a hopeful `@Component`. WP-13 replaces the condition with a
+  registry keyed by provider name, which is why the caveat is a javadoc line and not a fix.
 - **A booking may exist while its payment is pending, and the professional is not told** (D43). All
   three providers D37 chose confirm asynchronously, so `authorize` can answer `PENDING`; the booking is
   written in **`BookingStatus.PENDING_PAYMENT`** and `booking.requested` is **withheld** until a webhook

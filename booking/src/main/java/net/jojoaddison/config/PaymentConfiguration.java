@@ -20,10 +20,31 @@ import org.springframework.context.annotation.Configuration;
  * <p>A new file rather than an addition to the generated {@code SecurityConfiguration} or the
  * application class, for the usual reason: regeneration preserves new files and discards edits to
  * generated ones.
+ *
+ * <h2>Read this before adding the real provider — {@code decisions.md} D44</h2>
+ *
+ * <p><strong>{@code @ConditionalOnMissingBean} is only reliable in an auto-configuration, and this is
+ * not one.</strong> In a user {@code @Configuration} the condition is evaluated when this class is
+ * parsed, against the bean definitions registered <em>so far</em> — so whether it sees a
+ * component-scanned {@code PaymentProvider} depends on the order the scanner happened to reach the
+ * two classes in, which is a property of the filesystem. The failure it produces is two beans of one
+ * type and a {@code NoUniqueBeanDefinitionException} at startup, and it can differ between a laptop
+ * and CI on identical code, which is the worst place to first meet it.
+ *
+ * <p>So a real provider must be either {@code @Primary} or, better, declared as an explicit
+ * {@code @Bean} that this class's condition can see — and <strong>not</strong> merely a
+ * {@code @Component} sitting in the package hoping to win. WP-13 replaces the condition outright with
+ * a registry keyed by provider name, which is the shape three providers need anyway: the fallback
+ * becomes the entry named {@code none} rather than the only entry, and the webhook's "a callback
+ * addressed to a provider this service is not configured for" refusal starts doing real work.
  */
 @Configuration
 public class PaymentConfiguration {
 
+    /**
+     * The fallback, and the ordering caveat is on the class — see its javadoc before relying on this
+     * condition to step aside for a real provider.
+     */
     @Bean
     @ConditionalOnMissingBean(PaymentProvider.class)
     public PaymentProvider unconfiguredPaymentProvider() {

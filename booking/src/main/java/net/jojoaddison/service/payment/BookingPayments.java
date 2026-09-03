@@ -63,6 +63,17 @@ public class BookingPayments {
      * situation in which somebody needs to. An outcome with no reference stores nothing — there is
      * no fact to keep — so today's off-platform estate writes no rows at all and behaves as it always
      * has.
+     *
+     * <p><strong>A booking that costs nothing reaches no provider at all</strong> — {@code
+     * decisions.md} D44. Two seeded services are genuinely free, every provider D37 chose refuses an
+     * authorization for zero, and the guard is here rather than at the call site for the same reason
+     * "no handle, no row" is in the recorder: an invariant about money should be held by the one
+     * method every caller goes through, not by the manners of whoever calls it.
+     *
+     * <p><strong>A provider that throws answers {@link PaymentState#FAILED}</strong>, which is what
+     * the exception means. Only the call to the provider is wrapped: a {@link PaymentRecorder} that
+     * throws is this platform failing to keep the one fact it cannot reconstruct, and that has to stay
+     * loud.
      */
     public Taken take(Booking booking) {
         PaymentIntent intent = new PaymentIntent(
@@ -72,11 +83,51 @@ public class BookingPayments {
             booking.getCurrency(),
             booking.getServiceName()
         );
-        PaymentOutcome outcome = provider.authorize(intent);
+        if (intent.amountMinor() == 0) {
+            // Nothing to authorize, so nothing is asked and nothing is recorded. Zero exactly: a
+            // negative amount is a defect in whatever priced it, and quietly treating it as free
+            // would be this service deciding that the platform owes the customer money.
+            LOG.debug("booking {} costs nothing; no provider is asked to authorize it", intent.bookingReference());
+            return new Taken(intent, PaymentOutcome.nothingToPay(), null);
+        }
+        PaymentOutcome outcome = authorize(intent);
         // Returns null when the outcome carried no reference — the guard lives in the recorder, so the
         // "no handle, no row" invariant cannot be lost by a caller. See PaymentRecorder#record.
         String attemptId = recorder.record(provider.name(), intent, outcome);
         return new Taken(intent, outcome, attemptId);
+    }
+
+    /**
+     * Asks the provider, and turns a thrown exception into the answer it is — {@code decisions.md}
+     * D44.
+     *
+     * <p>{@link PaymentState#FAILED} and its 502 already existed; there was no route to them from an
+     * exception, so an adapter whose HTTP client timed out produced a 500 and a stack trace while a
+     * provider that politely answered {@code FAILED} produced a 502 and a retry. Two answers to one
+     * situation, and the unhandled one is the shape every real adapter will actually take — a
+     * {@code RestClientException}, a {@code JsonProcessingException}, a null dereference in somebody
+     * else's response body.
+     *
+     * <p><strong>The reason is composed here, never copied.</strong> It is rendered into the response
+     * body, and a payment provider's own words are where a phone number or a cardholder's name
+     * arrives unannounced — the hazard D41 met by way of {@code attention_note} and D43 by way of the
+     * next action. The class name is enough for whoever reads the log, and the log gets the whole
+     * thing at ERROR because a provider that cannot be reached is worth a line whatever the customer
+     * is told.
+     *
+     * <p>It is deliberately not narrowed to a provider-specific exception type. There is no such type
+     * on the port, on purpose: an adapter is somebody else's code and the seam has no business
+     * requiring it to wrap its failures correctly before this platform will behave.
+     */
+    private PaymentOutcome authorize(PaymentIntent intent) {
+        try {
+            return provider.authorize(intent);
+        } catch (RuntimeException e) {
+            LOG.error("{} could not be asked to authorize booking {}", provider.name(), intent.bookingReference(), e);
+            return PaymentOutcome.failed(
+                "the %s payment provider could not be asked (%s)".formatted(provider.name(), e.getClass().getSimpleName())
+            );
+        }
     }
 
     /**

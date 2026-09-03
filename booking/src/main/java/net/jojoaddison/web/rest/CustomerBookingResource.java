@@ -377,7 +377,14 @@ public class CustomerBookingResource {
      *
      * <p><strong>402 for a decline, 502 for a provider that fell over.</strong> The client's next
      * move differs: one means try another instrument, the other means try again. Collapsing them into
-     * one status would make the customer re-enter details that were never the problem.
+     * one status would make the customer re-enter details that were never the problem. A provider
+     * that <em>threw</em> rather than answering is the second of those, decided in
+     * {@link BookingPayments#take} rather than here — see {@code decisions.md} D44.
+     *
+     * <p><strong>A booking that costs nothing never gets here in any meaningful sense</strong>: the
+     * seam answers {@link PaymentState#NOTHING_TO_PAY} without asking a provider, which permits the
+     * booking exactly as {@code OFF_PLATFORM} does (D44). Two seeded services are genuinely free, and
+     * every provider D37 chose refuses an authorization for zero.
      *
      * <p><strong>The handle comes back, and it is kept</strong> — {@code decisions.md} D41. This used
      * to read the outcome's state and drop the rest of it, including the provider's own reference,
