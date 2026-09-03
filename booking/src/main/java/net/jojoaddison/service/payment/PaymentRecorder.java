@@ -41,11 +41,26 @@ public class PaymentRecorder {
     /**
      * Stores the handle. Called before anything else that could fail.
      *
+     * <p><strong>No handle, no row.</strong> The table exists to hold a reference issued by somebody
+     * else; a row without one records nothing that could not be derived from the booking, and
+     * {@code provider_reference} is {@code NOT NULL} in the changelog precisely so that a row which
+     * has forgotten its only purpose cannot exist. Today's off-platform provider returns no reference,
+     * so a correctly-behaving estate writes no rows at all.
+     *
+     * <p>The guard is here rather than at the call site on purpose. It was at the call site once, as a
+     * sentence in a javadoc that the code below it did not honour, and the result was every booking in
+     * the estate failing with a 500 from a not-null violation. An invariant the schema enforces should
+     * be enforced by the one method that writes the row, not by the manners of whoever calls it.
+     *
      * @return the row's id, which is how the caller comes back to it — not the provider's reference,
-     *     because two attempts against one booking may legitimately carry the same one
+     *     because two attempts against one booking may legitimately carry the same one; or
+     *     <strong>null</strong> when the outcome carried no reference and nothing was written
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public String record(String provider, PaymentIntent intent, PaymentOutcome outcome) {
+        if (outcome.providerReference() == null || outcome.providerReference().isBlank()) {
+            return null;
+        }
         PaymentAttempt attempt = new PaymentAttempt();
         attempt.setId(UUID.randomUUID().toString());
         attempt.setBookingReference(intent.bookingReference());

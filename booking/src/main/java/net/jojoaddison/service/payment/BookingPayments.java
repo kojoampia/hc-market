@@ -73,7 +73,9 @@ public class BookingPayments {
             booking.getServiceName()
         );
         PaymentOutcome outcome = provider.authorize(intent);
-        String attemptId = recorder.record(provider.name(), intent, outcome); // RED-FIRST: record every outcome
+        // Returns null when the outcome carried no reference — the guard lives in the recorder, so the
+        // "no handle, no row" invariant cannot be lost by a caller. See PaymentRecorder#record.
+        String attemptId = recorder.record(provider.name(), intent, outcome);
         return new Taken(intent, outcome, attemptId);
     }
 
