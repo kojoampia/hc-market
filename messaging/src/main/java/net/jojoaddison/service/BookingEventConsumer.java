@@ -3,6 +3,7 @@ package net.jojoaddison.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
+import java.time.format.DateTimeParseException;
 import net.jojoaddison.domain.Conversation;
 import net.jojoaddison.domain.Notification;
 import net.jojoaddison.domain.ProcessedEvent;
@@ -67,17 +68,26 @@ public class BookingEventConsumer {
     }
 
     /**
-     * Resolves the login an event carries into the one this service may store — {@code decisions.md} D32.
+     * Resolves the login an event carries into the one this service may store — {@code decisions.md}
+     * D32 and D37.
      *
-     * <p>Returns the pseudonym when the person has been erased, and the login otherwise. Every write
-     * keyed to a person goes through here, because erasure is a standing fact and an event in flight
-     * does not know about it: a lagging {@code booking.requested} re-created a conversation under a
-     * login that had been erased seconds earlier, against a receipt already filed saying it was gone.
+     * <p>Returns the pseudonym when the erasure covers this booking, and the login otherwise. Every
+     * write keyed to a person goes through here, because erasure is a standing fact and an event in
+     * flight does not know about it: a lagging {@code booking.requested} re-created a conversation
+     * under a login that had been erased seconds earlier, against a receipt already filed saying it
+     * was gone.
+     *
+     * <p><strong>The register is scoped to the booking's age, not applied to the person for ever
+     * — D37.</strong> An erased customer is not locked out and may book again; that new booking is
+     * stored under their real login, while everything raised before the erasure stays pseudonymised.
+     * The instant that decides it is {@code bookingRaisedAt} from the payload, which is when the
+     * <em>booking</em> was created — see {@link #bookingRaisedAt(JsonNode)} for why the event's own
+     * timestamp is the wrong clock and what it would cost.
      *
      * <p>The row is still written. Skipping it would leave the professional's thread list and bell
      * menu with holes where a real booking was, to protect an identifier that can simply be replaced.
      */
-    private String storable(String login) {
+    private String storable(JsonNode p, String login) {
         if (login == null || login.isBlank()) {
             return login;
         }
@@ -86,7 +96,7 @@ public class BookingEventConsumer {
            writes the original login anyway — the very failure D32 was written to close. See
            SubjectLockRepository. */
         erasure.lockSubject(login);
-        return erasure.isErased(login) ? erasure.pseudonym(login) : login;
+        return erasure.covers(login, bookingRaisedAt(p)) ? erasure.pseudonym(login) : login;
     }
 
     /** The customer's display name, or nothing anyone can be identified by once they are erased. */
@@ -98,7 +108,42 @@ public class BookingEventConsumer {
         // Same lock as storable(), for the same reason. Advisory locks are counted per transaction,
         // so taking it again here is a no-op rather than a second wait.
         erasure.lockSubject(login);
-        return erasure.isErased(login) ? "A customer" : name(p);
+        // Same scoping as storable(), and it has to be the same or the two disagree: a returning
+        // customer's thread would carry their login while the professional's bell menu said
+        // "A customer", or the reverse.
+        return erasure.covers(login, bookingRaisedAt(p)) ? "A customer" : name(p);
+    }
+
+    /**
+     * When the booking this event is about was created — {@code decisions.md} D37, backlog WP-08.
+     *
+     * <p>{@code bookingRaisedAt} is {@code Booking.raisedAt} as booking's {@code OutboxRecorder} puts
+     * it on the payload: a property of the booking, written once at creation and never moved by a
+     * transition, so every event about one booking reports the same instant however late in the
+     * lifecycle it is published. That is what makes it a truthful answer to "did this booking exist
+     * before the erasure", which is the only question {@link ErasureWorkflow#covers} asks.
+     *
+     * <p><strong>Not the envelope's {@code occurredAt}.</strong> A booking still open when an erasure
+     * ran goes on emitting events afterwards, so under an event-timestamp rule its acceptance and its
+     * completion would each write the customer's real login and name back onto a booking erased
+     * seconds earlier — the erasure growing back one lifecycle step at a time, with nothing red.
+     *
+     * <p>Absent, blank or unparseable answers null, and {@code covers} treats null as covered. An
+     * event published before this field existed is still an event about a booking that predates the
+     * erasure being consulted, and a malformed value must not be the thing that decides an identifier
+     * is safe to store.
+     */
+    private static Instant bookingRaisedAt(JsonNode p) {
+        String raw = p.path("bookingRaisedAt").asText("");
+        if (raw.isBlank()) {
+            return null;
+        }
+        try {
+            return Instant.parse(raw);
+        } catch (DateTimeParseException notAnInstant) {
+            LOG.warn("bookingRaisedAt {} is not an instant — treating the booking as predating any erasure", raw);
+            return null;
+        }
     }
 
     @KafkaListener(
@@ -144,19 +189,19 @@ public class BookingEventConsumer {
                         p.path("bookingRef").asText());
                     openThreadIfNone(p);
                 }
-                case "healthconnect.booking.accepted" -> raise(storable(p.path("customerLogin").asText()), "Booking confirmed",
+                case "healthconnect.booking.accepted" -> raise(storable(p, p.path("customerLogin").asText()), "Booking confirmed",
                     "Your %s on %s at %s is confirmed.".formatted(service(p), p.path("scheduledDate").asText(), p.path("scheduledTime").asText()),
                     p.path("bookingRef").asText());
-                case "healthconnect.booking.declined" -> raise(storable(p.path("customerLogin").asText()), "Booking declined",
+                case "healthconnect.booking.declined" -> raise(storable(p, p.path("customerLogin").asText()), "Booking declined",
                     "Your request for %s on %s could not be taken.".formatted(service(p), p.path("scheduledDate").asText()),
                     p.path("bookingRef").asText());
                 case "healthconnect.booking.cancelled" -> {
-                    raise(storable(p.path("customerLogin").asText()), "Booking cancelled",
+                    raise(storable(p, p.path("customerLogin").asText()), "Booking cancelled",
                         "Your %s on %s was cancelled.".formatted(service(p), p.path("scheduledDate").asText()), p.path("bookingRef").asText());
                     raise(p.path("professionalLogin").asText(), "Booking cancelled",
                         "%s cancelled %s on %s.".formatted(storableName(p), service(p), p.path("scheduledDate").asText()), p.path("bookingRef").asText());
                 }
-                case "healthconnect.booking.completed" -> raise(storable(p.path("customerLogin").asText()), "Review requested",
+                case "healthconnect.booking.completed" -> raise(storable(p, p.path("customerLogin").asText()), "Review requested",
                     "How was your %s? Leave a review.".formatted(service(p)), p.path("bookingRef").asText());
                 default -> LOG.debug("no notification defined for {}", type);
             }
@@ -171,7 +216,7 @@ public class BookingEventConsumer {
     /** Spec §7: booking.requested should "open a thread if none exists". */
     private void openThreadIfNone(JsonNode p) {
         // storable, not the raw login: this is the write that reappeared under an erased login.
-        String customerLogin = storable(p.path("customerLogin").asText());
+        String customerLogin = storable(p, p.path("customerLogin").asText());
         String professionalRef = p.path("professionalRef").asText();
         boolean exists = conversations
             .findVisibleTo(customerLogin, professionalRef)

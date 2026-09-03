@@ -34,6 +34,7 @@ import net.jojoaddison.security.SecurityUtils;
 import net.jojoaddison.service.FanoutTokenMinter;
 import net.jojoaddison.service.SubjectPseudonym;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -77,6 +78,12 @@ class ErasureFanoutIT {
     private static final String CUSTOMER = "ama.tobeforgotten";
     private static final String BYSTANDER = "kojo.stillhere";
 
+    /**
+     * A login the gateway's {@code LOGIN_REGEX} permits and a URI path segment cannot carry literally
+     * — see {@link #theRecordNeverNamesThePersonEvenEncoded()}. Ugly on purpose.
+     */
+    private static final String AWKWARD = "ama?forgot@example.com";
+
     /** One request a stub received, kept so the token and the payload can be read back. */
     private record Call(String path, String authorization, String body) {}
 
@@ -101,8 +108,23 @@ class ErasureFanoutIT {
     /** The read timeout the clients are built with in this class, and what {@code hang} outlasts. */
     private static final int TIMEOUT_MS = 1500;
 
-    private static final HttpServer MESSAGING = stub(MESSAGING_CALLS, () -> messagingAnswer);
-    private static final HttpServer CATALOG = stub(CATALOG_CALLS, () -> catalogAnswer);
+    /**
+     * Messaging's stub is not final, and its port is.
+     *
+     * <p>One test needs this leg to be <strong>genuinely</strong> unreachable rather than slow — see
+     * {@link #theRecordNeverNamesThePerson}, where a connection that is refused is the only failure
+     * whose message quotes the URL. So the server is stopped for that test and a new one is bound on
+     * the same port afterwards: the JDK's {@code HttpServer} cannot be restarted once stopped, and the
+     * port is already written into a property the context read at startup.
+     */
+    private static HttpServer messaging = stub(MESSAGING_CALLS, () -> messagingAnswer, 0);
+
+    private static final int MESSAGING_PORT = messaging.getAddress().getPort();
+
+    /** False between {@link #messagingGoesOffTheAir()} and the {@code @AfterEach} that rebinds it. */
+    private static boolean messagingIsListening = true;
+
+    private static final HttpServer CATALOG = stub(CATALOG_CALLS, () -> catalogAnswer, 0);
 
     /**
      * Both stubs are on ephemeral ports, so the addresses cannot be written into a properties file.
@@ -111,7 +133,7 @@ class ErasureFanoutIT {
      */
     @DynamicPropertySource
     static void addressTheStubs(DynamicPropertyRegistry registry) {
-        registry.add("healthconnect.messaging.base-url", () -> "http://127.0.0.1:" + MESSAGING.getAddress().getPort());
+        registry.add("healthconnect.messaging.base-url", () -> "http://127.0.0.1:" + MESSAGING_PORT);
         registry.add("healthconnect.catalog.base-url", () -> "http://127.0.0.1:" + CATALOG.getAddress().getPort());
         // Ten seconds is right in production and useless in a test. Short enough that a hung leg is a
         // second rather than ten, long enough that a loopback stub answering in microseconds is never
@@ -121,13 +143,32 @@ class ErasureFanoutIT {
 
     @AfterAll
     static void stopTheStubs() {
-        MESSAGING.stop(0);
+        if (messagingIsListening) {
+            messaging.stop(0);
+        }
         CATALOG.stop(0);
     }
 
-    private static HttpServer stub(List<Call> calls, Supplier<Answer> answer) {
+    /**
+     * Closes messaging's listening socket, so the next connection to it is <em>refused</em> rather
+     * than answered slowly. Put back by {@link #messagingComesBack()}.
+     */
+    private static void messagingGoesOffTheAir() {
+        messaging.stop(0);
+        messagingIsListening = false;
+    }
+
+    @AfterEach
+    void messagingComesBack() {
+        if (!messagingIsListening) {
+            messaging = stub(MESSAGING_CALLS, () -> messagingAnswer, MESSAGING_PORT);
+            messagingIsListening = true;
+        }
+    }
+
+    private static HttpServer stub(List<Call> calls, Supplier<Answer> answer, int port) {
         try {
-            HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+            HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
             server.createContext("/", exchange -> respond(exchange, calls, answer.get()));
             // A thread pool rather than the default in-line dispatcher: a hung answer must not still
             // be occupying the server when the next test asks it something.
@@ -614,24 +655,83 @@ class ErasureFanoutIT {
      * specifically to survive would be the only row in the estate holding the login of somebody who
      * asked to be forgotten, and it would be sitting in the audit trail of their erasure.
      *
-     * <p>The unreachable leg is produced as a read timeout for the reason
-     * {@link #anUnreachableLegIsReported} explains — but the assertion here is about the login rather
-     * than about the classification, and it holds whichever way the leg fails.
+     * <h2>It has to be a REFUSED connection, and that is the whole finding — backlog NEW-3</h2>
+     *
+     * <p>This test used to drive the leg with {@link #hangs()}, the same read timeout
+     * {@link #anUnreachableLegIsReported} uses, <strong>and it passed with the scrub deleted
+     * outright</strong>. A read timeout surfaces while the response body is being extracted, so its
+     * message is
+     *
+     * <pre>Error while extracting response for type [java.util.Map&lt;…&gt;] and content type [application/octet-stream]</pre>
+     *
+     * — no URL in it, therefore no login in it, therefore nothing for the scrub to remove and nothing
+     * for the assertion to catch. It was green because the leak is absent on that path, not because
+     * the scrub closed it, and a privacy test that cannot fail is worse than no test: it is read as
+     * evidence.
+     *
+     * <p>A <em>refused</em> connection is the failure that does quote the URL. It arrives as a
+     * {@code ResourceAccessException} thrown before any response exists, whose message is
+     * {@code I/O error on POST request for "http://…/api/desk/customers/<login>/erase"}. That is the
+     * path the scrub was written for, so it is the path it must be proved on — hence
+     * {@link #messagingGoesOffTheAir()} rather than a slow answer.
      */
     @Test
     @Transactional
     @WithMockUser(username = "desk", authorities = "ROLE_BROKERAGE")
     @DisplayName("the stored receipt carries the alias and never the login, even in a failure message")
     void theRecordNeverNamesThePerson() throws Exception {
-        messagingAnswer = hangs();
+        messagingGoesOffTheAir();
 
-        mockMvc.perform(post(URL, CUSTOMER).with(csrf())).andExpect(status().isBadGateway());
+        mockMvc
+            .perform(post(URL, CUSTOMER).with(csrf()))
+            .andExpect(status().isBadGateway())
+            // The response is NOT scrubbed and does not need to be — the operator typed the login into
+            // the path and it ends with the request. Asserted so that "the receipt does not name them"
+            // below is a statement about the stored row rather than about a message that never held a
+            // login in the first place. This is the assertion the read-timeout version could not make.
+            .andExpect(jsonPath("$.services[1].failure").value(containsString(CUSTOMER)));
 
         ErasureRun recorded = runs.findByPseudonymOrderByRanAtAsc(pseudonyms.of(CUSTOMER)).get(0);
         assertThat(recorded.getReceipt()).doesNotContain(CUSTOMER).doesNotContain("tobeforgotten").contains(pseudonyms.of(CUSTOMER));
         assertThat(recorded.getPseudonym()).doesNotContain(CUSTOMER);
         // The failure is still legible — scrubbing the login must not scrub the diagnosis with it.
-        assertThat(recorded.getReceipt()).contains("SocketTimeoutException").contains("FAILED");
+        assertThat(recorded.getReceipt()).contains("ConnectException").contains("FAILED");
+    }
+
+    /**
+     * <strong>The hypothesis NEW-3 raised beside itself, now settled — and it was a real one.</strong>
+     *
+     * <p>The scrub was {@code receipt.replace(login, alias)}, a raw substitution, and the string it is
+     * looking for arrives inside a <em>URL</em>. The gateway's {@code LOGIN_REGEX} permits
+     * {@code ? ^ ` { | }} in the local part of an email-shaped login, and {@code RestClient} strictly
+     * encodes a URI variable — so this login reached the kept row as
+     * {@code ama%3Fforgot%40example.com} (the {@code @} encoded too) while the scrub looked for
+     * {@code ama?forgot@example.com} and matched nothing. Nothing else in the estate has an opinion
+     * about it, so the login went into the one row kept for ever.
+     *
+     * <p>It could not be demonstrated when NEW-3 was written, for the same reason the test above could
+     * not: with a read timeout there is no URL in the message at all. Driving a refused connection
+     * makes both provable at once.
+     */
+    @Test
+    @Transactional
+    @WithMockUser(username = "desk", authorities = "ROLE_BROKERAGE")
+    @DisplayName("a login the URL has to percent-encode is scrubbed in its encoded form too")
+    void theRecordNeverNamesThePersonEvenEncoded() throws Exception {
+        messagingGoesOffTheAir();
+
+        mockMvc
+            .perform(post(URL, AWKWARD).with(csrf()))
+            .andExpect(status().isBadGateway())
+            // The URL really did encode them — otherwise this test proves nothing about encoding.
+            .andExpect(jsonPath("$.services[1].failure").value(containsString("ama%3Fforgot")));
+
+        ErasureRun recorded = runs.findByPseudonymOrderByRanAtAsc(pseudonyms.of(AWKWARD)).get(0);
+        assertThat(recorded.getReceipt())
+            .doesNotContain(AWKWARD)
+            .doesNotContain("ama%3Fforgot")
+            .doesNotContain("forgot@example.com")
+            .contains(pseudonyms.of(AWKWARD));
     }
 
     @Test

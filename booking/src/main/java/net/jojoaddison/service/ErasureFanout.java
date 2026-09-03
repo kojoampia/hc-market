@@ -1,6 +1,7 @@
 package net.jojoaddison.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -8,6 +9,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.function.Supplier;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import net.jojoaddison.domain.Booking;
 import net.jojoaddison.domain.ErasureRun;
 import net.jojoaddison.repository.BookingQueryRepository;
@@ -171,6 +174,13 @@ public class ErasureFanout {
      * response the operator sees is not scrubbed and does not need to be — they typed the login into
      * the path, and it ends with the request.
      *
+     * <p><strong>Blind, but not literal — see {@link #everySpellingOf(String)}.</strong> A plain
+     * {@code String.replace} was defeated by the very message it was written for: the login is in a
+     * <em>URL</em>, and the gateway's {@code LOGIN_REGEX} permits {@code ? ^ ` { | }} and {@code @},
+     * all of which a URI path segment percent-encodes. {@code ama?forgot@example.com} reached this row
+     * as {@code ama%3Fforgot%40example.com} while the substitution looked for the unencoded spelling
+     * and found nothing.
+     *
      * <p><strong>A failure to record does not fail the erasure, and does not go quiet either.</strong>
      * The redactions have already happened and are not coming back, so throwing here would replace a
      * receipt naming three legs with a 500 naming none — reintroducing exactly the invisibility this
@@ -187,7 +197,8 @@ public class ErasureFanout {
                first so that the two cannot differ. Storing a receipt that said `recorded: false` in a
                row whose existence proves otherwise would be its own small lie in an audit trail. */
             String receipt = mapper.writeValueAsString(new Receipt(alias, complete, true, id, references, outcome));
-            runs.save(new ErasureRun(id, alias, Instant.now(), complete, references, receipt.replace(login, alias)));
+            String scrubbed = everySpellingOf(login).matcher(receipt).replaceAll(Matcher.quoteReplacement(alias));
+            runs.save(new ErasureRun(id, alias, Instant.now(), complete, references, scrubbed));
             return id;
         } catch (Exception couldNotRecord) {
             LOG.error(
@@ -197,6 +208,42 @@ public class ErasureFanout {
             );
             return null;
         }
+    }
+
+    /**
+     * The login, in every way a URL could have spelled it — backlog NEW-3.
+     *
+     * <p>Character by character, each one matches either itself or its percent-encoding, so a message
+     * quoting {@code ama%3Fforgot%40example.com}, {@code ama?forgot%40example.com} or the unencoded
+     * login is scrubbed identically. That is deliberately independent of <em>which</em> encoder ran:
+     * {@code RestClient} strictly encodes URI variables, {@code UriUtils.encodePathSegment} leaves
+     * {@code @} alone because a path segment permits it, and pinning this to either of them would be a
+     * second thing to keep in step with a library. Matching both spellings of every character needs no
+     * agreement with anybody.
+     *
+     * <p>Hex case is not fixed by the standard, so the encoded alternative is matched
+     * case-insensitively. Non-ASCII is handled by encoding the character's UTF-8 bytes, which
+     * {@code LOGIN_REGEX} does not currently permit and which costs nothing to be right about.
+     *
+     * <p>What this does <em>not</em> handle is a login that would need JSON escaping — a quote or a
+     * backslash — because it searches the serialised receipt. {@code LOGIN_REGEX} permits neither, and
+     * the day it does this becomes wrong silently, which is why it is written down here.
+     */
+    private static Pattern everySpellingOf(String login) {
+        StringBuilder pattern = new StringBuilder(login.length() * 16);
+        login
+            .codePoints()
+            .forEach(codePoint -> {
+                String character = new String(Character.toChars(codePoint));
+                StringBuilder encoded = new StringBuilder();
+                for (byte b : character.getBytes(StandardCharsets.UTF_8)) {
+                    // %XX is regex-literal throughout, so it needs no quoting — unlike the character
+                    // itself, which may well be a metacharacter.
+                    encoded.append("%%%02X".formatted(b & 0xFF));
+                }
+                pattern.append("(?:").append(Pattern.quote(character)).append("|(?i:").append(encoded).append("))");
+            });
+        return Pattern.compile(pattern.toString());
     }
 
     /**

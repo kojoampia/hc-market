@@ -670,10 +670,18 @@ Event envelope:
   "occurredAt": "2026-08-10T09:14:22Z",
   "aggregateRef": "b14",
   "actor": "akosua.mensah",
-  "payload": { "bookingRef":"b14", "professionalRef":"p1", "customerLogin":"kojo.ampia.addison",
+  "payload": { "bookingRef":"b14", "bookingRaisedAt":"2026-08-10T08:02:11Z",
+               "professionalRef":"p1", "customerLogin":"kojo.ampia.addison",
                "scheduledDate":"2026-08-12", "scheduledTime":"10:00", "priceMinor":15000, "currency":"GHS" }
 }
 ```
+
+`occurredAt` and `bookingRaisedAt` are different facts and the difference is load-bearing —
+`decisions.md` D40. `occurredAt` is when the **event** was recorded; `bookingRaisedAt` is when the
+**booking** was created, written once and never moved by a transition. Messaging decides whether an
+erasure covers a booking by comparing the second to its `erasedAt`, and comparing the first would put
+an erased customer's real login back one lifecycle step at a time. The payload carries more than this
+example shows; the recorder is the record of it.
 
 ---
 

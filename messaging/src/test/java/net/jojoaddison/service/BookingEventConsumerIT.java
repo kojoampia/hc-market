@@ -2,11 +2,13 @@ package net.jojoaddison.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.time.Instant;
 import java.util.List;
 import net.jojoaddison.IntegrationTest;
 import net.jojoaddison.domain.Conversation;
 import net.jojoaddison.domain.Notification;
 import net.jojoaddison.repository.ConversationRepository;
+import net.jojoaddison.repository.ErasedSubjectRepository;
 import net.jojoaddison.repository.NotificationRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -52,14 +54,42 @@ class BookingEventConsumerIT {
     @Autowired
     private NotificationRepository notifications;
 
+    /** Read for its {@code erasedAt} — WP-08's assertions are all relative to that instant. */
+    @Autowired
+    private ErasedSubjectRepository register;
+
+    /**
+     * An event carrying no {@code bookingRaisedAt} — which is every event published before WP-08 added
+     * the field, and which {@code covers} must therefore keep treating as predating any erasure.
+     */
     private static String requested(String bookingRef, String customerLogin) {
+        return event("healthconnect.booking.requested", bookingRef, customerLogin, null);
+    }
+
+    /**
+     * @param bookingRaisedAt when the BOOKING was created, not when the event was published — the
+     *     distinction WP-08 turns on. Null omits the field.
+     */
+    private static String event(String type, String bookingRef, String customerLogin, Instant bookingRaisedAt) {
+        String raisedAt = bookingRaisedAt == null ? "" : "\"bookingRaisedAt\":\"%s\",".formatted(bookingRaisedAt);
         return
             """
-            {"eventId":"%s","type":"healthconnect.booking.requested","payload":{
-              "bookingRef":"%s","customerLogin":"%s","customerName":"Yaa Tobeforgotten",
+            {"eventId":"%s","type":"%s","payload":{
+              "bookingRef":"%s",%s"customerLogin":"%s","customerName":"Yaa Tobeforgotten",
               "professionalLogin":"%s","professionalRef":"%s","serviceName":"Home visit",
               "scheduledDate":"2026-09-12","scheduledTime":"10:00"}}
-            """.formatted("evt-" + bookingRef, bookingRef, customerLogin, PRO_LOGIN, PRO_REF);
+            """.formatted("evt-" + type + "-" + bookingRef, type, bookingRef, raisedAt, customerLogin, PRO_LOGIN, PRO_REF);
+    }
+
+    /** When this service recorded the erasure — the instant every WP-08 assertion is relative to. */
+    private Instant erasedAt() {
+        return register.findById(pseudonyms.of(CUSTOMER)).orElseThrow(() -> new AssertionError("nobody was erased")).getErasedAt();
+    }
+
+    private Notification onlyNotificationFor(String bookingRef) {
+        List<Notification> raised = notificationsFor(bookingRef);
+        assertThat(raised).as("exactly one notification for %s", bookingRef).hasSize(1);
+        return raised.get(0);
     }
 
     private Conversation threadFor(String bookingRef) {
@@ -115,6 +145,11 @@ class BookingEventConsumerIT {
      * {@link net.jojoaddison.domain.ErasedSubject}, that event re-created a conversation under the
      * original login — verified on the quality box, where {@code t-b-a2216d8d | verify.subject}
      * appeared seconds after that login had been erased and a clean receipt had been filed.
+     *
+     * <p>Since WP-08 it pins a second thing: this event carries <strong>no</strong>
+     * {@code bookingRaisedAt}, which is every event published before that field existed, and an event
+     * that cannot say how old its booking is must still be treated as older than the erasure. Scoping
+     * the register (D37) must not become a way to bypass it.
      */
     @Test
     @Transactional
@@ -146,5 +181,105 @@ class BookingEventConsumerIT {
         assertThat(notificationsFor("b-late-name"))
             .isNotEmpty()
             .allSatisfy(n -> assertThat(n.getBody()).doesNotContain("Yaa").doesNotContain("Tobeforgotten"));
+    }
+
+    /**
+     * <strong>WP-08, case 1 — the erasure still covers what existed when it ran.</strong>
+     *
+     * <p>{@code decisions.md} D37 scopes the register rather than removing it, so the first thing to
+     * pin is that the scoping did not quietly turn it off. A booking raised before {@code erasedAt} is
+     * covered whatever event about it turns up and whenever it turns up.
+     *
+     * <p>Green before WP-08 as well as after — the old code pseudonymised everything — and that is the
+     * point of keeping it: it is the assertion that goes red if someone later scopes this by the
+     * event's timestamp, or by the person, or not at all.
+     */
+    @Test
+    @Transactional
+    @DisplayName("a booking raised before the erasure is still pseudonymised")
+    void aBookingOlderThanTheErasureStaysErased() {
+        erasure.eraseCustomer(CUSTOMER);
+
+        consumer.onBookingEvent(event("healthconnect.booking.requested", "b-old", CUSTOMER, erasedAt().minusSeconds(3600)));
+
+        assertThat(threadFor("b-old").getCustomerLogin()).isEqualTo(pseudonyms.of(CUSTOMER)).isNotEqualTo(CUSTOMER);
+        assertThat(onlyNotificationFor("b-old").getBody()).doesNotContain("Yaa").doesNotContain("Tobeforgotten");
+    }
+
+    /**
+     * <strong>WP-08, case 2 — somebody who comes back is not erased again.</strong>
+     *
+     * <p>Erasure does not touch the gateway's user store, so an erased person can log in and book
+     * again. Before {@code decisions.md} D37 the register was a permanent verdict on the person:
+     * messaging pseudonymised the new booking's thread while booking and catalog stored the real login,
+     * and the estate disagreed with itself about whether that customer existed. D37 answers that the
+     * erasure covered what existed when it ran, so a booking raised afterwards is a new relationship
+     * and is stored under the real login.
+     *
+     * <p>Confirmed red against the code before this package, where the thread came back keyed to
+     * {@code erased-…} instead of to the login.
+     */
+    @Test
+    @Transactional
+    @DisplayName("a booking raised after the erasure is stored under the real login")
+    void aCustomerWhoBooksAgainIsNotErasedAgain() {
+        erasure.eraseCustomer(CUSTOMER);
+
+        consumer.onBookingEvent(event("healthconnect.booking.requested", "b-new", CUSTOMER, erasedAt().plusSeconds(3600)));
+
+        assertThat(threadFor("b-new").getCustomerLogin()).isEqualTo(CUSTOMER);
+        // And the professional is told who is asking, which is the other half of the same decision —
+        // a thread under the real login beside a bell row saying "A customer" is the estate
+        // disagreeing with itself in a smaller way rather than not at all.
+        assertThat(onlyNotificationFor("b-new").getBody()).contains("Yaa Tobeforgotten");
+    }
+
+    /**
+     * <strong>WP-08, case 3 — the regression the obvious reading would introduce, and the most
+     * important of the three.</strong>
+     *
+     * <p>D37's first wording said to compare the <em>event's</em> timestamp against {@code erasedAt}.
+     * A booking that was already open when the erasure ran goes on emitting events afterwards — its
+     * acceptance, its completion, its cancellation — and every one of those is stamped after
+     * {@code erasedAt}. Under that reading each would be written under the customer's real login,
+     * putting an erased person back into the estate one lifecycle step at a time, and breaking D36's
+     * guarantee that its residual does not grow.
+     *
+     * <p>So the comparison is against the <em>booking's</em> {@code raisedAt}, carried on the payload
+     * by booking's {@code OutboxRecorder} and unchanged by any transition. Here the booking predates
+     * the erasure and the event does not: the event is a completion of it, delivered an hour later.
+     * The notification must go to the alias.
+     *
+     * <p>Green against the code before this package, which pseudonymised unconditionally, and
+     * <strong>confirmed red against the event-timestamp reading</strong> — with
+     * {@code bookingRaisedAt} swapped for the event's own instant this asserts
+     * {@code expected: "erased-…" but was: "yaa.tobeforgotten"}.
+     */
+    @Test
+    @Transactional
+    @DisplayName("a later event on a booking older than the erasure does not restore the login")
+    void aLaterLifecycleEventOnAnOldBookingStaysErased() {
+        erasure.eraseCustomer(CUSTOMER);
+        Instant raisedBeforeTheErasure = erasedAt().minusSeconds(86400);
+
+        // The completion happens now, an hour after the erasure. Only the booking's age may decide it.
+        consumer.onBookingEvent(event("healthconnect.booking.completed", "b-open", CUSTOMER, raisedBeforeTheErasure));
+
+        assertThat(onlyNotificationFor("b-open").getRecipientLogin()).isEqualTo(pseudonyms.of(CUSTOMER)).isNotEqualTo(CUSTOMER);
+    }
+
+    /**
+     * And the same booking's later events, once it is the <em>new</em> booking, keep the real login —
+     * so the scoping is a property of the booking rather than of the event that opened it.
+     */
+    @Test
+    @Transactional
+    @DisplayName("a later event on a booking raised after the erasure keeps the real login")
+    void aLaterLifecycleEventOnANewBookingKeepsTheLogin() {
+        erasure.eraseCustomer(CUSTOMER);
+
+        consumer.onBookingEvent(event("healthconnect.booking.completed", "b-new-open", CUSTOMER, erasedAt().plusSeconds(60)));
+
+        assertThat(onlyNotificationFor("b-new-open").getRecipientLogin()).isEqualTo(CUSTOMER);
     }
 }
