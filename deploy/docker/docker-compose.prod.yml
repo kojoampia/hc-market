@@ -53,6 +53,23 @@ x-service-base: &service-base
     # its life, writing real logins for people a peppered sibling has erased. Scaling any of the
     # three services means scaling this variable with them.
     HEALTHCONNECT_PRIVACY_PEPPER: ${HC_PRIVACY_PEPPER:?erasure pepper is required — see decisions.md D35}
+    # Retention policy and controller registration — decisions.md D42, counsel 2026-09-03.
+    #
+    # UNLIKE the two secrets above these are NOT required, and the difference is deliberate. A missing
+    # secret must stop a deploy; a missing retention figure must not, because counsel's ratified values
+    # are the committed fallback in application.yml and a stack that refused to start over a number it
+    # already knows would be failing for no reason. Set them here only to correct a deployment without
+    # cutting a release.
+    #
+    # The registration number has no fallback anywhere — absent it, the service starts, logs a warning
+    # and reports null from GET /api/desk/privacy. It is a real identifier belonging to a real
+    # organisation, so a placeholder would be a false claim rather than a harmless default, and this
+    # repository is public. It belongs in secrets.env beside the two keys — not because it is secret,
+    # but because it is not ours to publish on the organisation's behalf.
+    HC_RETENTION_FINANCIAL_DAYS: ${HC_RETENTION_FINANCIAL_DAYS:-2190}
+    HC_RETENTION_OPERATIONAL_DAYS: ${HC_RETENTION_OPERATIONAL_DAYS:-365}
+    HC_RETENTION_CARE_SUMMARY_DAYS: ${HC_RETENTION_CARE_SUMMARY_DAYS:-90}
+    HC_DPC_REGISTRATION: ${HC_DPC_REGISTRATION:-}
     # The seed loader is unreachable under prod regardless; this is the second, explicit lock.
     HEALTHCONNECT_SEED_ENABLED: ${HEALTHCONNECT_SEED_ENABLED:-false}
     # --- OpenTelemetry -----------------------------------------------------------------------

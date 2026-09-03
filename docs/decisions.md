@@ -3157,3 +3157,127 @@ will still refuse.
 substituted provider in `PaymentSeamIT`, which is the same limitation D31 recorded and the same reason:
 a refusal path that has never run is a refusal path nobody knows the shape of, and the day a provider
 is added is the wrong day to discover that a failed booking keeps the customer's money.
+## D42 — WP-09 put to counsel, and the answers gated on the environment
+
+`WP-09` had been blocked since it was written, on four questions no engineer here can answer:
+retention periods, lawful basis, controller registration and data residency. All four were put to
+counsel on 2026-09-03 and all four came back. This records the answers, how they are wired, and — for
+two of them — what the answer rests on, because both carry a dependency that should be visible now
+rather than discovered by a regulator.
+
+**Where the figures came from, stated first because it changes how they should be read.** The three
+retention periods were offered as a worked example inside the question, authored here rather than
+proposed by counsel independently. Counsel selected the *model* and then ratified the numbers for use
+today, which is what makes them attributable. They are not a considered legal opinion on how long a
+booking must be kept, and the day counsel produces one, the environment is where it goes.
+
+### Retention — three categories, read from the environment
+
+**Answered: financial records on a statutory clock, operational data shorter, the care summary
+shortest — and ratified for use today.**
+
+```yaml
+healthconnect:
+  privacy:
+    retention:
+      financial-days: ${HC_RETENTION_FINANCIAL_DAYS:2190}    # bookings, ledger, disputes
+      operational-days: ${HC_RETENTION_OPERATIONAL_DAYS:365}  # messages, notifications
+      care-summary-days: ${HC_RETENTION_CARE_SUMMARY_DAYS:90} # conditions, allergies, medications
+```
+
+This replaces the single nullable `retentionDays` on `PrivacyProperties`. It is the only one of the
+three models offered under which a sweep can run at all without destroying records the platform is
+required to keep: a clock short enough for a message body is far too short for a ledger row, and one
+long enough for the ledger holds health data for six years. The split makes financial rows survive an
+operational sweep **by construction** rather than by a condition somebody has to remember to write.
+
+**The old comment argued at length that a default would be "a legal position taken by whoever typed
+it".** That argument was right and it has been *discharged*, not abandoned — a number that came from
+counsel is not a developer inventing a claim about Ghanaian law. What survives from it is the shape:
+the values are read from the environment so a deployment can be corrected without cutting a release,
+with counsel's figures as the committed fallback so an unconfigured estate still runs the ratified
+policy rather than none.
+
+**One correction to the question as it was put.** It described `retentionDays` as "duplicated across
+booking, catalog and messaging". It is not: `PrivacyProperties` and `PrivacyResource` exist **only in
+booking**. The *pepper* is estate-wide and the retention policy is not, which is correct — booking
+owns the bookings, the disputes and the ledger's counterpart, and a retention period is a statement
+about records rather than about services.
+
+**Nothing enforces any of it, and the risk of that being missed went UP with this change.** Three
+populated categories look far more like a working retention regime than one unset integer ever did.
+`GET /api/desk/privacy` therefore keeps reporting `enforced: false` beside the numbers, `PrivacyProperties`
+logs the same caveat at every startup, and `PrivacyResourceIT` pins it with a test that should fail
+and be changed deliberately the day a scheduler exists.
+
+### Lawful basis — contract throughout, including the care summary
+
+**Answered: contract performance, with the care summary treated as ordinary contract data rather than
+special-category.**
+
+The reasoning is that the customer volunteers conditions, allergies and medications to make a
+*non-medical* booking work — a trainer needs to know about a knee, a nutritionist about an allergy —
+and the scope note is a hard boundary: nobody on this platform may diagnose or prescribe.
+
+**This is the answer that carries risk, and the record should say so plainly.** It was the option with
+the lowest engineering cost, and it asserts something a regulator could disagree with: that
+conditions, allergies and medications are not health data attracting extra protection merely because
+the recipient is not a clinician. Counsel has taken that position and it is counsel's to take. What
+follows from it:
+
+- **No consent record is built**, and the schema has nowhere to put one. If the position is revised,
+  the remedy is per-booking, revocable, explicitly-recorded consent — a schema change, an API change
+  and a screen, not a configuration flag. It gets more expensive with every real care summary stored.
+- **`care-summary-days` becomes load-bearing.** It is now the main thing limiting the exposure, so
+  shortening it is safe and lengthening it changes what the position rests on. That is a question for
+  counsel, not for whoever is editing the environment file, and it is written where the value lives.
+- Nothing in the code changes today. This answer is a documentation deliverable — the privacy notice
+  and the processing record — not an implementation one.
+
+### Controller registration — registered, injected, never committed
+
+**Answered: Jojo Addison Consultancy is registered with Ghana's Data Protection Commission.** So
+registration does not gate launch.
+
+**The number was not supplied with the answer**, and it is needed for the privacy notice and the
+processing record. That gap is now a configuration one rather than a documentation one:
+`HC_DPC_REGISTRATION` is read at startup, blank counts as absent, and there is **no fallback**. Unlike
+the retention periods, a wrong value here is a false claim about a real organisation's relationship
+with a regulator, and a plausible-looking placeholder is worse than absence because it stops anyone
+asking. Absent, booking starts, logs a warning, and the desk reports `null` — reported as `null`
+rather than as an empty string so "not configured" cannot be read as "registered with a number nobody
+can see".
+
+It lives in the same `secrets.env` as the two real secrets, for a different reason than they do: not
+because publishing it would be dangerous, but because this repository is public and the number is not
+ours to publish on the organisation's behalf. It stays unset on quality on purpose — quality's job is
+to look like production, but it has no business asserting a real registration.
+
+### Data residency — cross-border transfer permitted, safeguards to be written down
+
+**Answered: the transfer conditions are met; document what is transferred, where, and under what
+safeguards.**
+
+Production stays on `webserver` (199.247.5.252). No infrastructure change, and specifically no
+relocation and no split store — the third option offered, care summaries in Ghana and the rest abroad,
+would have meant a second data store, a cross-border join and a new failure mode on every booking
+read.
+
+**Two things about scope.** The machine hosts **all six products**, not just hc-market: the same
+customer data crosses the same border for `hc-patient` and `hc-professional`. A document written here
+can only speak for hc-market, and somebody should decide whether the estate needs one transfer basis
+or six. And this repository is public, so the document will be read — the same discipline already
+applied to keeping every usable secret out of `application-dev.yml` and `application-prod.yml`.
+
+### What WP-09 becomes
+
+| Piece | State |
+| --- | --- |
+| Retention model, three categories | **Built here.** Environment-gated, counsel's figures as fallback |
+| Retention *numbers* | Ratified for use today; authored here, not independently proposed |
+| Lawful basis | **Answered.** No code. Privacy notice and processing record outstanding |
+| Controller registration | **Answered and wired.** Awaiting the number itself |
+| Data residency | **Answered.** No code. Transfer basis outstanding, scope across six products undecided |
+
+The two coded judgements D37 ratified — the review body is not erased, `Dispute.resolution` is kept —
+are untouched by this and stay as they are.

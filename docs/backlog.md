@@ -21,12 +21,12 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **WP-02** | Erasure: reach every table | DONE | — |
 | **WP-03** | Erasure: survive in-flight events | DONE | — |
 | **WP-04** | Erasure: pepper the pseudonym | DONE | merged `b4d0138`, released, quality rebuilt clean |
-| **WP-05** | Erasure: the notifications a repeat booking hides | DONE (unmerged) | D36 |
-| **WP-06** | Erasure: a durable record in booking and catalog | DONE (unmerged) | D39 |
-| **WP-07** | Erasure: orchestration across the three services | DONE (unmerged) | D38 |
-| **WP-08** | Erasure: what an erased person who keeps their account is | DONE (unmerged) | D37, built as D40 |
-| **WP-09** | Erasure: retention periods and lawful basis | BLOCKED (narrowed) | counsel — the two coded judgements are ratified by D37 |
-| **WP-10** | Payments: the seam can complete a lifecycle | DONE (unmerged) | D41 |
+| **WP-05** | Erasure: the notifications a repeat booking hides | DONE | D36 |
+| **WP-06** | Erasure: a durable record in booking and catalog | DONE | D39 |
+| **WP-07** | Erasure: orchestration across the three services | DONE | D38 |
+| **WP-08** | Erasure: what an erased person who keeps their account is | DONE | D37, built as D40 |
+| **WP-09** | Erasure: retention periods and lawful basis | PARTLY DONE | D42 — counsel answered all four. Retention built and environment-gated; two documents and one registration number outstanding |
+| **WP-10** | Payments: the seam can complete a lifecycle | DONE | D41 |
 | **WP-11** | Payments: asynchronous confirmation | READY | — |
 | **WP-12** | Payments: the zero-amount booking | READY | — |
 | **WP-13** | Payments: provider choice and Act 987 | READY (large) | D37 — Paystack, Hubtel and MoMo direct, customer chooses. **Depends on WP-11** |
@@ -35,9 +35,9 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **WP-16** | Search performance | WON'T (measured) | — |
 | **WP-17** | Video and WhatsApp providers | READY (spec only) | D37 — cost both, build neither |
 | **WP-18** | Production `infranet` alias check | CLOSED | D37 — the rename made it moot |
-| **NEW-1** | A retry reported rows re-written, not rows that held data | DONE (unmerged) | D39 |
-| **NEW-2** | Catalog's receipt omitted what it deleted | DONE (unmerged) | D39 |
-| **NEW-3** | A privacy test that could not fail, over a leak that was real | DONE (unmerged) | D40 |
+| **NEW-1** | A retry reported rows re-written, not rows that held data | DONE | D39 |
+| **NEW-2** | Catalog's receipt omitted what it deleted | DONE | D39 |
+| **NEW-3** | A privacy test that could not fail, over a leak that was real | DONE | D40 |
 
 ---
 
@@ -324,12 +324,34 @@ login against the old code, and the pre-existing-booking case came back as the l
 **Not done:** no run against the quality box — an erased customer really booking again through a live
 estate is the thing no test here can stand in for.
 
-## WP-09 — Erasure: retention and lawful basis · BLOCKED
+## WP-09 — Erasure: retention and lawful basis · PARTLY DONE
 
-Retention periods, lawful basis, controller registration, data residency. Plus two judgement calls the
-code has taken and flagged: the **review body** is not erased (public speech about a professional), and
-`Dispute.resolution` is kept (the brokerage's record of a financial decision, underpinning a
-compensating ledger entry). Both may name the customer.
+Counsel answered all four questions on 2026-09-03 — **D42**. Retention, lawful basis, controller
+registration and data residency each have a position, and the engineering half is built.
+
+**Built.** The single nullable `retentionDays` becomes three categories — financial 2190, operational
+365, care summary 90 — read from `HC_RETENTION_*` at startup with counsel's ratified figures as the
+committed fallback, so a deployment can be corrected without a release and an unconfigured estate still
+runs the ratified policy rather than none. `HC_DPC_REGISTRATION` is read the same way but with **no**
+fallback: blank counts as absent, the desk reports `null`, and a placeholder would be a false claim
+about a real organisation. `GET /api/desk/privacy` reports all of it beside `enforced: false`.
+
+**Still open, and none of it is engineering:**
+
+- the **registration number itself** — answered "registered", but the number was not supplied, and the
+  privacy notice and processing record cannot be published without it;
+- the **privacy notice and processing record**, following from the lawful-basis answer;
+- the **data-residency transfer basis** — a written document, and a decision about whether the estate
+  needs one or six, since `webserver` hosts all six products.
+
+**Watch two things.** The retention numbers were authored in the question and ratified rather than
+independently proposed, so they are provisional in origin even though they are live in configuration.
+And `care-summary-days` is load-bearing: counsel's position that the care summary is ordinary contract
+data rests partly on it being held briefly, so lengthening it is a legal change and not a tuning one.
+
+The two coded judgements D37 ratified — the **review body** is not erased (public speech about a
+professional) and `Dispute.resolution` is kept (the brokerage's record of a financial decision,
+underpinning a compensating ledger entry) — are untouched and stay as they are.
 
 ## WP-10 — Payments: the seam can complete a lifecycle · DONE (unmerged)
 

@@ -175,6 +175,8 @@ regeneration.
 | The `healthconnect` block | each `config/application.yml` **and** `application-prod.yml` | seed never loads |
 | `application.liquibase.async-start: false` | each `config/application.yml` | Liquibase races the seed loader; service comes up **healthy and empty** |
 | The `healthconnect.privacy.pepper` block | booking, catalog, messaging **`src/test/resources/config/application.yml`** | the ITs fail at the erasure endpoint with a 503 — which reads as a broken test, not a lost config block. The test config is generated too, and it *shadows* the main one |
+| The `healthconnect.privacy.retention` block | booking **`src/test/resources/config/application.yml`** | same shadowing, different symptom: the three periods bind to `null` under test and `PrivacyResourceIT` fails asserting counsel's ratified figures against nothing, which reads as a broken assertion rather than a lost block |
+| The `healthconnect.privacy` block with its `${HC_RETENTION_*}` placeholders | booking `config/application.yml` | **silent.** The periods bind to `null`, the desk reports `null` for all three, and the estate's answer to "what is your retention policy" becomes "none" — with every test still green, because the test config carries its own copy |
 
 **Per app — generated classes to delete.** Each would otherwise win or tie an ambiguous mapping
 against the hand-written resource that replaced it:

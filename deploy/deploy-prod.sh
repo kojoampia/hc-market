@@ -45,6 +45,17 @@
 #     JWT_BASE64_SECRET  the platform signing key   (one value across the estate)
 #     HC_PRIVACY_PEPPER  the erasure pepper          (decisions.md D35)
 #
+#  Optional in the same file, and NOT a secret:
+#     HC_DPC_REGISTRATION  the Data Protection Commission registration number (decisions.md D42)
+#
+#  It sits beside the two secrets for a different reason than they do: not because publishing it
+#  would be dangerous, but because it is a real identifier belonging to a real organisation and this
+#  repository is public, so it is not ours to commit on their behalf. Absent, the stack starts
+#  normally, booking logs a warning and GET /api/desk/privacy reports null — which is the honest
+#  answer and is why this is not a `:?` variable. The retention periods need nothing here at all:
+#  counsel's ratified figures are the committed fallback (HC_RETENTION_FINANCIAL_DAYS and its two
+#  siblings override them only if a deployment has to be corrected without cutting a release).
+#
 #  Those two are the stack's long-lived secrets and this script never sees them. It generates .env
 #  on every deploy and overwrites what was there, so anything kept in .env survives exactly until
 #  the next deploy — which is why docker-compose.prod.yml's two `:?` variables lived in a file that
@@ -59,6 +70,7 @@
 #      ssh $HC_PROD_HOST 'mkdir -p /srv/healthconnect && umask 077 && cat > /srv/healthconnect/secrets.env' <<'EOF'
 #      JWT_BASE64_SECRET=<the platform key, from ~/webroot/01-healthconnect/.env>
 #      HC_PRIVACY_PEPPER=<the estate pepper — see decisions.md D35 before ever changing it>
+#      HC_DPC_REGISTRATION=<the DPC registration number — optional, see D42>
 #      EOF
 #
 #  Both files are passed to compose explicitly (--env-file .env --env-file secrets.env), because

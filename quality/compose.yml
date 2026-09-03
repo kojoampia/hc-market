@@ -83,6 +83,17 @@ x-service: &service
     # and persisted by startup.sh alongside the signing key, and required here rather than defaulted
     # because a value written into a public repository is not a pepper.
     HEALTHCONNECT_PRIVACY_PEPPER: ${HC_PRIVACY_PEPPER:?set by startup.sh}
+    # Retention policy and controller registration — decisions.md D42, counsel 2026-09-03. Optional,
+    # unlike the two above: counsel's ratified figures are the committed fallback in application.yml,
+    # so quality runs the real policy without startup.sh having to know anything about it.
+    #
+    # HC_DPC_REGISTRATION stays unset here on purpose. Quality is the last gate before production and
+    # its job is to look like production, but a registration number is a claim about a real
+    # organisation and quality has no business asserting one. The desk reporting null is correct.
+    HC_RETENTION_FINANCIAL_DAYS: ${HC_RETENTION_FINANCIAL_DAYS:-2190}
+    HC_RETENTION_OPERATIONAL_DAYS: ${HC_RETENTION_OPERATIONAL_DAYS:-365}
+    HC_RETENTION_CARE_SUMMARY_DAYS: ${HC_RETENTION_CARE_SUMMARY_DAYS:-90}
+    HC_DPC_REGISTRATION: ${HC_DPC_REGISTRATION:-}
     JAVA_OPTS: -Xmx512m -Xms256m
   # The images are built by Jib and contain NO curl and NO wget — a CMD-based HTTP healthcheck fails
   # with "executable file not found" on every attempt and the container never leaves `starting`.
