@@ -56,8 +56,18 @@ enum DeliveryMode {
  *
  * The Kafka topic stays `healthconnect.booking.accepted`: it names the act, not the resulting
  * state, and its payload carries status=CONFIRMED.
+ *
+ * D43 adds PENDING_PAYMENT in FRONT of REQUESTED, and it is the only value that is not part of the
+ * machine above: it is where a booking waits while the customer approves a payment on their phone
+ * or on a provider's page. Nothing the professional can see returns it, and no `booking.requested`
+ * is published until it leaves — the professional learns of a booking when its money is confirmed
+ * and not before.
+ *
+ *   PENDING_PAYMENT ──payment confirmed──▶ REQUESTED
+ *          └────────payment abandoned────▶ CANCELLED (by PLATFORM, never a late-cancellation fee)
  */
 enum BookingStatus {
+  PENDING_PAYMENT,
   REQUESTED,
   DECLINED,
   RESCHEDULE_PROPOSED,

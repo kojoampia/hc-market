@@ -5,6 +5,7 @@ import java.util.List;
 import net.jojoaddison.domain.Booking;
 import net.jojoaddison.domain.BookingStatusChange;
 import net.jojoaddison.service.dto.BookingDtos.BookingView;
+import net.jojoaddison.service.dto.BookingDtos.PaymentAction;
 import net.jojoaddison.service.dto.BookingDtos.StatusChangeView;
 import org.springframework.stereotype.Component;
 
@@ -20,6 +21,18 @@ import org.springframework.stereotype.Component;
 public class BookingMapper {
 
     public BookingView toView(Booking b) {
+        return toView(b, null);
+    }
+
+    /**
+     * The same view, carrying what the customer must do about a pending payment —
+     * {@code decisions.md} D43.
+     *
+     * <p>One caller: the create endpoint, and only when the provider answered {@code PENDING}. Every
+     * other view has null there, deliberately — a payment link is a thing to do now, not a property of
+     * a booking that can be read back.
+     */
+    public BookingView toView(Booking b, PaymentAction payment) {
         return new BookingView(
             b.getReference(),
             b.getCustomerLogin(),
@@ -43,7 +56,8 @@ public class BookingMapper {
             b.getCancelledBy() == null ? null : b.getCancelledBy().name(),
             b.getCancellationReason(),
             b.getLateCancellation(),
-            Boolean.TRUE.equals(b.getReviewed())
+            Boolean.TRUE.equals(b.getReviewed()),
+            payment
         );
     }
 

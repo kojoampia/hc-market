@@ -92,6 +92,48 @@ public class PaymentRecorder {
     }
 
     /**
+     * The provider told us, unprompted, what became of a payment — {@code decisions.md} D43.
+     *
+     * <p>Two things distinguish it from its neighbours, and both are deliberate.
+     *
+     * <p><strong>It joins the caller's transaction</strong> rather than opening its own. Every other
+     * method here is {@link Propagation#REQUIRES_NEW}, because a handle has to survive the failure of
+     * the work that follows it — the booking is written afterwards and may not be. A webhook is the
+     * opposite arrangement: the provider's verdict and the booking transition it justifies are one
+     * change, and a callback that fails half-way is <em>retried by the provider</em>, so there is
+     * nothing to preserve independently and a great deal to be said for the two moving together. It
+     * also means the webhook needs one database connection rather than two, which is not a design
+     * argument but is the difference between working and hanging under a pool of one.
+     *
+     * <p><strong>It does not clear {@code needs_attention}</strong>, unlike {@link #resolved}. A
+     * webhook arriving on a row an operator has been asked to look at is not evidence that the problem
+     * went away — it is quite often the evidence that it is real, as when a payment the platform failed
+     * to cancel is confirmed by the customer twenty minutes later. Clearing the flag would take the one
+     * row a person was going to act on off their list, and nothing would put it back.
+     *
+     * @param state what the provider now says, recorded as the provider said it. The platform does not
+     *     second-guess it: a confirmation that contradicts what we did is a fact to keep, not one to
+     *     reconcile away
+     * @param attentionNote null in the ordinary case; a note when this confirmation is itself the
+     *     problem. Composed by the caller from a provider name and a reference, never from a
+     *     provider's message — see {@link #needsAttention}
+     */
+    @Transactional
+    public void confirmed(String attemptId, PaymentState state, String attentionNote) {
+        attempts
+            .findById(attemptId)
+            .ifPresent(attempt -> {
+                attempt.setState(state.name());
+                attempt.setResolvedAt(Instant.now());
+                if (attentionNote != null) {
+                    attempt.setNeedsAttention(true);
+                    attempt.setAttentionNote(trimmed(attentionNote));
+                }
+                attempts.save(attempt);
+            });
+    }
+
+    /**
      * Money is committed, its booking does not exist, and giving it back did not work.
      *
      * <p>The state is left as the provider last reported it, because that is still what the provider
@@ -110,8 +152,13 @@ public class PaymentRecorder {
             .ifPresent(attempt -> {
                 attempt.setNeedsAttention(true);
                 attempt.setResolvedAt(Instant.now());
-                attempt.setAttentionNote(note.length() > 255 ? note.substring(0, 255) : note);
+                attempt.setAttentionNote(trimmed(note));
                 attempts.save(attempt);
             });
+    }
+
+    /** The column is 255, and a note that overflowed it would fail the write rather than the note. */
+    private static String trimmed(String note) {
+        return note.length() > 255 ? note.substring(0, 255) : note;
     }
 }

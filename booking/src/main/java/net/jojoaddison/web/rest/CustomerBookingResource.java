@@ -32,6 +32,7 @@ import net.jojoaddison.service.dto.BookingDtos.BookingView;
 import net.jojoaddison.service.dto.BookingDtos.CancelRequest;
 import net.jojoaddison.service.dto.BookingDtos.CancellationPreview;
 import net.jojoaddison.service.dto.BookingDtos.CreateBooking;
+import net.jojoaddison.service.dto.BookingDtos.PaymentAction;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -102,6 +103,14 @@ public class CustomerBookingResource {
      * one was not a wrong number but a wrong <em>recipient</em>: a truthful {@code professionalRef}
      * sent with somebody else's login put a real booking into an inbox it did not belong to, and
      * nothing anywhere disagreed. Same 409 on a mismatch, same 503 when catalog cannot be asked.
+     *
+     * <p><strong>A payment that is not decided yet still yields a booking</strong>, in
+     * {@code PENDING_PAYMENT} — {@code decisions.md} D43. All three providers D37 chose confirm
+     * asynchronously, so the alternative was to hold the customer's request in a second table that is
+     * a booking in everything but name, and to reserve nothing while they tap their phone. The row is
+     * written, no {@code booking.requested} is published, and the professional learns of it when the
+     * webhook confirms the money. The response carries {@code payment} — a URL to visit or "a prompt
+     * has been sent" — and it is the only response in the estate that does.
      */
     @PostMapping
     public ResponseEntity<BookingView> create(@Valid @RequestBody CreateBooking request) {
@@ -139,10 +148,19 @@ public class CustomerBookingResource {
             .raisedAt(Instant.now())
             .reviewed(false);
         BookingPayments.Taken taken = authorizePayment(booking);
+        // The provider has not decided yet — Paystack's redirect, Hubtel's and MoMo's phone prompt.
+        // D43: the booking is written, in a state the professional never sees, and announced only
+        // when the money is confirmed. Everything else about the request is unchanged.
+        boolean awaitingPayment = taken.outcome().state() == PaymentState.PENDING;
+        if (awaitingPayment) {
+            booking.setStatus(BookingStatus.PENDING_PAYMENT);
+        }
         try {
             // Saved through BookingCreator so the row and its booking.requested event share one
-            // transaction — the same guarantee every transition gets.
-            return ResponseEntity.status(HttpStatus.CREATED).body(mapper.toView(creator.create(booking, login)));
+            // transaction — the same guarantee every transition gets. The pending path writes the
+            // same row and publishes nothing; the event follows from the webhook.
+            Booking saved = awaitingPayment ? creator.createAwaitingPayment(booking, login) : creator.create(booking, login);
+            return ResponseEntity.status(HttpStatus.CREATED).body(mapper.toView(saved, nextActionFor(taken)));
         } catch (RuntimeException e) {
             // The money was committed a moment ago and the booking does not exist. Give it back
             // before the exception leaves this method — nothing further along knows a payment was
@@ -169,10 +187,24 @@ public class CustomerBookingResource {
     /**
      * What cancelling would cost, without cancelling. The prototype shows the fee before the
      * customer commits, which is the entire point of the modal.
+     *
+     * <p><strong>A booking that cannot be cancelled has no preview</strong>, and the refusal is the
+     * same 409 {@code /cancel} itself gives — asked of the same transition, so the two cannot drift
+     * apart. Without that check the endpoint answered for any status, and the case that made it matter
+     * is {@code PENDING_PAYMENT} (D43): a booking whose appointment is inside the free-cancellation
+     * window came back as {@code lateCancellation: true} carrying the full price, which is a fee
+     * quoted to a customer who has paid nothing, for an action the endpoint next door would refuse.
      */
     @GetMapping("/{ref}/cancellation-preview")
     public CancellationPreview cancellationPreview(@PathVariable String ref) {
         Booking booking = mineOr404(ref);
+        BookingTransition.Cancel cancel = new BookingTransition.Cancel(CancelledBy.CUSTOMER, null);
+        if (!cancel.legalFrom(booking.getStatus())) {
+            throw new ResponseStatusException(
+                HttpStatus.CONFLICT,
+                "booking " + ref + " cannot be cancelled from " + booking.getStatus() + ", so there is nothing to preview"
+            );
+        }
         Instant now = Instant.now();
         Instant scheduled = booking.getScheduledDate().atTime(booking.getScheduledTime()).toInstant(ZoneOffset.UTC);
         long hours = Duration.between(now, scheduled).toHours();
@@ -362,6 +394,25 @@ public class CustomerBookingResource {
         }
         HttpStatus status = taken.outcome().state() == PaymentState.DECLINED ? HttpStatus.PAYMENT_REQUIRED : HttpStatus.BAD_GATEWAY;
         throw new ResponseStatusException(status, taken.outcome().reason() == null ? "payment could not be taken" : taken.outcome().reason());
+    }
+
+    /**
+     * What the customer still has to do about the money, if anything — {@code decisions.md} D43.
+     *
+     * <p>Null unless the payment is pending, which is what keeps a payment link out of every other
+     * booking view in the estate. The state name travels beside the action so a client can tell
+     * "waiting on you" from "nothing to pay" without inferring it from the booking's status, and the
+     * URL is the provider's own, relayed rather than rewritten.
+     */
+    private static PaymentAction nextActionFor(BookingPayments.Taken taken) {
+        if (taken.outcome().state() != PaymentState.PENDING) {
+            return null;
+        }
+        return new PaymentAction(
+            taken.outcome().state().name(),
+            taken.outcome().nextAction().kind().name(),
+            taken.outcome().nextAction().url()
+        );
     }
 
     /**

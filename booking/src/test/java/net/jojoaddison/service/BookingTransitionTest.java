@@ -27,8 +27,17 @@ class BookingTransitionTest {
         new BookingTransition.ProposeReschedule(LocalDate.now(), "10:00"),
         new BookingTransition.Cancel(CancelledBy.CUSTOMER, "changed my mind"),
         new BookingTransition.Complete(),
-        new BookingTransition.NoShow()
+        new BookingTransition.NoShow(),
+        new BookingTransition.PaymentConfirmed(),
+        new BookingTransition.PaymentAbandoned("payment was not completed")
     );
+
+    /**
+     * The two states a booking can be created in — {@code decisions.md} D43. Neither is reached by a
+     * transition, so both are excluded from the reachability test by construction rather than by being
+     * forgotten.
+     */
+    private static final Set<BookingStatus> ENTRY_POINTS = Set.of(BookingStatus.REQUESTED, BookingStatus.PENDING_PAYMENT);
 
     @Test
     @DisplayName("accepting a request confirms it — there is no ACCEPTED state")
@@ -67,18 +76,46 @@ class BookingTransitionTest {
     }
 
     /**
-     * Every state must be reachable, or it is dead code in an enum. REQUESTED is the entry point and
-     * has no transition into it — a booking is created there — so it is excluded by construction
-     * rather than by being forgotten.
+     * Every state must be reachable, or it is dead code in an enum. A booking is <em>created</em> in
+     * one of the two entry points rather than transitioned into it, so those are accounted for
+     * separately — and REQUESTED stopped being only an entry point with D43, since a confirmed payment
+     * transitions into it.
      */
     @Test
-    @DisplayName("every status except the entry point is reachable by some transition")
+    @DisplayName("every status is either an entry point or reachable by some transition")
     void everyStatusIsReachable() {
-        Set<BookingStatus> reachable = ALL.stream().map(BookingTransition::to).collect(Collectors.toSet());
-        Set<BookingStatus> expected = Arrays.stream(BookingStatus.values())
-            .filter(s -> s != BookingStatus.REQUESTED)
-            .collect(Collectors.toSet());
-        assertThat(reachable).containsExactlyInAnyOrderElementsOf(expected);
+        Set<BookingStatus> accountedFor = ALL.stream().map(BookingTransition::to).collect(Collectors.toCollection(java.util.HashSet::new));
+        accountedFor.addAll(ENTRY_POINTS);
+        assertThat(accountedFor).containsExactlyInAnyOrder(BookingStatus.values());
+    }
+
+    /**
+     * Nothing puts a booking <em>back</em> into {@code PENDING_PAYMENT} — {@code decisions.md} D43.
+     *
+     * <p>It is a state a booking is created in and leaves once, and that one-way property is what
+     * makes the professional's inbox safe: a booking they can see cannot become invisible again
+     * because a provider sent a late callback, and a confirmed booking cannot be returned to a state
+     * where the money is unsettled by anything a webhook says.
+     */
+    @Test
+    @DisplayName("no transition leads back into PENDING_PAYMENT")
+    void nothingReturnsToPendingPayment() {
+        assertThat(ALL.stream().map(BookingTransition::to)).doesNotContain(BookingStatus.PENDING_PAYMENT);
+    }
+
+    /**
+     * A booking whose money has not arrived is not a request anybody may act on — D43.
+     *
+     * <p>The professional's inbox filters by status, but the refusal that matters is this one: if
+     * {@code Accept} listed {@code PENDING_PAYMENT} among its sources, a professional who guessed a
+     * reference could confirm a booking nobody has paid for. Only the two payment transitions leave
+     * that state, and both are applied by a verified provider callback.
+     */
+    @Test
+    @DisplayName("only the payment transitions leave PENDING_PAYMENT")
+    void onlyPaymentLeavesPendingPayment() {
+        List<String> leaving = ALL.stream().filter(t -> t.legalFrom(BookingStatus.PENDING_PAYMENT)).map(BookingTransition::action).toList();
+        assertThat(leaving).containsExactlyInAnyOrder("payment confirmed", "payment abandoned");
     }
 
     @Test

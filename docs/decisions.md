@@ -3281,3 +3281,305 @@ applied to keeping every usable secret out of `application-dev.yml` and `applica
 
 The two coded judgements D37 ratified — the review body is not erased, `Dispute.resolution` is kept —
 are untouched by this and stay as they are.
+
+## D43 — A payment nobody can answer synchronously, and the booking that waits for it
+
+Built 2026-09-03, from WP-11. D37 chose Paystack, Hubtel and MTN MoMo and made this package a
+prerequisite of WP-13 rather than an improvement to it, because **none of the three can truthfully
+answer `AUTHORIZED` or `DECLINED` from the synchronous `authorize` the seam had.** Paystack returns an
+authorization URL the customer must visit; Hubtel and MoMo raise a prompt on the customer's phone and
+confirm by webhook minutes later. A seam whose only answers were "yes" and "no" would therefore have
+had to guess, and both guesses are bad in the same way: an optimistic one creates bookings for money
+that never arrives, a pessimistic one refuses every booking in the estate.
+
+The shape is common to all three, which is why it could be built without choosing one. Nothing here
+names a provider.
+
+### What was added to the seam
+
+**`PaymentState.PENDING`**, and the two questions the enum answers are now written on each constant
+rather than as `this == A || this == B` chains at the bottom of the file. That is not tidying. Those
+chains gave a new value `false` for both questions **by omission**, so the answer to "may a booking
+exist while its payment is pending?" would have been settled by whoever forgot rather than by whoever
+decided. Adding a state is now a compile error until both are answered.
+
+**`PaymentNextAction`** on the outcome — a `kind` and, for a redirect, a URL. Two shapes, because the
+providers produce two: `VISIT_URL` for Paystack's checkout page, `AWAIT_DEVICE_PROMPT` for a prompt
+that is already on the customer's phone and has nowhere to send them. A client switches on the kind
+rather than on the URL being present, so "check your phone" is a case it renders rather than a link it
+failed to find.
+
+It is deliberately not a message from the provider. A client cannot act on prose, and a provider's own
+words are where a customer's name or phone number arrives unannounced — the hazard D39 met by way of a
+URL in a stored receipt and D41 met by way of an error string in `attention_note`. The URL *is*
+validated, once, where it is built: it goes into a browser's address bar and it came from a third
+party, so a `javascript:` or `data:` URL relayed from a compromised or spoofed response would be
+script running in the customer's session one click after a screen that says "complete your payment".
+
+**A pending outcome must carry a provider reference**, enforced by the constructor. This is D41's
+defect arriving from the other end: the webhook finds a payment by the provider's handle and by
+nothing else, so a pending payment with no handle is one whose confirmation can never be matched to a
+booking — and the booking would sit waiting for ever while the customer's money went through
+perfectly well. Nothing downstream could detect that.
+
+**`PaymentProvider.readCallback`**, which is where a provider's signature scheme lives and is the only
+thing that authenticates a callback. And **`BookingPayments.release` now releases a pending payment
+too**: the test is `holdsMoney() || awaitingCustomer()`, because a booking abandoned while its payment
+is pending leaves the customer looking at a prompt they can approve a minute later. That is money
+taken for a booking that does not exist, confirmed by a webhook that will never find one — D41's
+defect exactly, down the asynchronous path.
+
+### May a booking exist while its payment is pending? **Yes, in a state nobody has been told about**
+
+The question WP-11 flagged and D37 repeated. It was answered here rather than referred, because both
+answers are defensible on the product and the decisive arguments turned out to be about *where the
+data lives* rather than about what a customer should see.
+
+**Both answers have to store the customer's intention somewhere durable.** That is the whole of it. A
+pending payment can be confirmed after the customer has closed the browser, so "refuse the booking and
+let the client re-submit once it clears" is not a third option — it loses a booking precisely when the
+money succeeded, which is the worst outcome available. So the choice is between holding the *booking*
+and holding the *request*.
+
+Holding the request means a second table carrying `customerLogin`, `customerName`, `customerNote`,
+`visitAddress`, `onBehalfOf` and `careSummaryShared` — a booking in everything but name, with none of
+the machinery a booking has. It would need its own erasure sweep and its own counter on the receipt
+(D34's defect was four tables that named a person and did not know it); its own expiry; and its own
+reference minting. And it would reserve nothing: two customers could both be pending on the same slot,
+both be charged, and one be refunded afterwards.
+
+Holding the booking uses the one place this estate already stores an intention to book, with the
+erasure sweep, the audit history, the state machine and the customer's own "my bookings" screen
+already attached to it. So: **`BookingStatus.PENDING_PAYMENT`**, in front of the state machine rather
+than in it, with two transitions out and none back in.
+
+**The condition on that answer is that the professional is not told, and it is enforced twice.**
+
+- **No `booking.requested` is published.** `BookingCreator.createAwaitingPayment` writes the row and
+  its audit entry and publishes nothing; `BookingTransition.PaymentConfirmed` publishes it when the
+  money is confirmed. This is the guard that matters, because the event is what reaches messaging, and
+  no query of messaging's is under booking's control. The event is late rather than lost, and every
+  consumer still sees exactly one of it.
+- **Every professional-facing query already filters by status.** `/api/pro/requests` asks for
+  `REQUESTED` and the schedule asks for `CONFIRMED`, so a pending booking reaches neither without a
+  line being changed. `Accept.from()` does not include `PENDING_PAYMENT` either, so a professional who
+  guessed a reference gets the ordinary 409 rather than a booking nobody paid for.
+
+**As written that was wrong, and the review found it: on the day WP-11 shipped it was enforced
+once.** JHipster's generated `BookingStatusChangeResource` was still mounted at
+`/api/booking-status-changes` with no `@PreAuthorize`, and `/api/**` asks only for `.authenticated()`
+— so any token in the estate read the whole status-change history, `PENDING_PAYMENT` entries and the
+`actor` column included. The status filters above were a second mechanism only against a caller who
+used the professional's own endpoints. **It is enforced twice now**, and the resource is deleted rather
+than locked down; see the review section at the end of this decision for what it did and why deletion
+was the answer.
+
+**What is deliberately not built: expiry.** A pending booking that is never confirmed sits there. It
+blocks nothing today — nothing in this estate reserves an availability slot when a booking is made,
+which was checked rather than assumed — and there is no scheduler here to sweep it with. The day slots
+are reserved, the reservation must ignore pending bookings older than the provider's own window,
+computed at read time in the manner D17 describes, rather than acquiring a sweeper for one column.
+
+**The abandoned path publishes nothing at all**, and is a transition of its own rather than a
+`Cancel`. `Cancel` computes `lateCancellation`, so a booking abandoned inside the free window would
+have acquired a 50% fee against a customer who paid nothing and whose booking no professional ever
+saw. It is cancelled by `PLATFORM` because neither party chose it. And an event would be the first
+thing anybody downstream ever heard about that booking — messaging would open a conversation to raise
+a notification about something the professional was deliberately never told about.
+
+### The webhook contract
+
+**`POST /webhooks/payments/{provider}`.** The body is taken as text and passed on untouched: every
+provider signs the bytes it sent, so a body parsed and re-serialised verifies against nothing, and the
+symptom of getting that wrong is "every callback is rejected", which reads as a wrong secret.
+
+**Authentication is the provider's signature and nothing else.** There is no token; a provider cannot
+hold one. `PaymentProvider.readCallback` verifies by the provider's own scheme — Paystack signs with
+HMAC-SHA512 under the secret key, the others have theirs — and returning an outcome is a statement
+that this really is the provider speaking. **An unauthenticated caller gets 401 with no detail**: not
+400 naming the missing header, not 403 confirming the provider exists, no message saying which part
+was wrong. An endpoint that explains its refusals is an oracle for constructing one that is not
+refused. Today every caller gets 401, because the only provider bean in the estate is the unconfigured
+one and it refuses every callback by definition — which is correct for an estate that collects no
+money, not a placeholder.
+
+**What it does:** finds the `payment_attempt` by the provider's handle, records the verdict, and — if
+the booking is still `PENDING_PAYMENT` — confirms it into `REQUESTED` or cancels it. Nothing else. It
+does not create bookings, and it reads nothing the callback says about amounts, customers or prices:
+the only things taken from it are the handle and the verdict. D22's rule is not weakened by a
+callback, because a callback decides nothing about what a booking costs or whose it is.
+
+**The same callback twice: 200, and nothing happens the second time.** All three providers retry until
+they get a 2xx and send duplicates besides, so this is the ordinary case. **Idempotency is decided
+from the booking's own state under a row lock**, not from a record of what has been seen. A
+`processed_event` table — payout's mechanism for its Kafka consumer — is the wrong tool here: what must
+not happen twice is the *transition*, not the callback. Two genuinely different callbacks about one
+payment must both be applied; one callback re-sent after a partial failure must be applied once in
+total. The booking's status answers both, and `findByReferenceForUpdate` is what stops two
+simultaneous retries both reading `PENDING_PAYMENT` and both publishing `booking.requested`.
+
+**409 was considered for the duplicate and rejected on cost of mis-reading**, the same way D38 rejected
+207: a provider told to retry keeps retrying until it gives up and files the payment as undelivered.
+
+**Two 404s, and they mean different things to us and the same thing to the provider.** A callback that
+overtakes its own booking — authorizing happens before the booking row is written, deliberately
+(D31/D41), so there is a window — is a genuine race, and the provider's retry resolves it. A handle
+this service never issued gets the same answer so that a provider replaying against a rebuilt database
+eventually stops. In both cases the attempt row still records what the provider said.
+
+**Money confirmed after this platform released it is flagged for a person**, not retried. It is told
+apart from the race with no new column: a row already carrying `VOIDED` or `REFUNDED` was released by
+us, so a confirmation on top of it is money committed for a booking that does not exist.
+`needs_attention` is the column an operator queries, exactly as in D41.
+
+**`PaymentRecorder.confirmed` joins the caller's transaction**, which is the one place this package
+inverts D41. Every other method there is `REQUIRES_NEW`, because a handle must survive the failure of
+the work that follows it. A webhook is the opposite arrangement: the verdict and the transition it
+justifies are one change, and a callback that fails half-way is retried by the provider, so there is
+nothing to preserve independently.
+
+### What keeps a public endpoint off the internet today
+
+**The same thing that keeps catalog's `/internal/**` private — D28.** The gateway's four route
+predicates match `/services/<service>/api/**`, and this path is not under `/api`, so no request from
+outside is routed to it in any environment. That was checked against all three compose files rather
+than assumed. It is deliberate for as long as there is no provider: an unauthenticated endpoint nobody
+legitimate calls should not be reachable, whatever it does with what it arrives with.
+
+**WP-13 makes it reachable, and it is two things rather than one.** A fifth route with
+`Path=/services/healthconnectbooking/webhooks/**`, *and* a permit in the gateway's security for that
+path — the generated gateway chain ends with `.pathMatchers("/services/**").authenticated()`, so the
+route alone returns 401 before routing, exactly as it did for the public catalogue reads
+`MarketplacePublicRouteConfiguration` exists to let through. A route without the permit is a webhook
+that silently never arrives, which reads as a broken provider integration. The exact lines are in
+`PaymentWebhookResource`'s javadoc, beside the code that would receive them.
+
+`PaymentWebhookSecurityConfiguration` permits the POST inside booking and denies everything else under
+the prefix, so the path cannot quietly acquire a readable endpoint. Like catalog's equivalent, it is a
+new file: regeneration rewrites `SecurityConfiguration` and discards edits to it.
+
+### No schema change, and that is D41 paying off
+
+`payment_attempt` already holds the state as a name, already has `idx_payment_attempt_provider_reference`
+for a lookup nothing performed until now, and already tolerates rows whose booking does not exist. D41
+built the index for this package and said so. The only migration-shaped change is a new
+`BookingStatus` value, which is a `varchar` with no check constraint — and it is in `jdl/booking.jdl`
+as well as in the generated enum, or the next regeneration would delete it.
+
+**The next-action URL is not stored.** It is short-lived, it is handed to the client in the response,
+and it is a bearer capability to complete somebody's payment — putting one in the table that was
+designed to hold no personal data would be a new hazard for the sake of a "resume payment" feature
+nobody has asked for.
+
+### Tested, and what the tests cannot reach
+
+Twenty-one new tests — eight unit and thirteen integration. The enum's three answers for `PENDING`,
+the unconfigured provider's refusal, the two constructor guards, the two next-action shapes and the
+state machine's one-way door; then, against the endpoints, the pending
+create that publishes nothing, the professional's inbox before and after confirmation, the duplicate,
+the decline, both 404s, the money-after-release, and the three refusals. Every one was confirmed red
+against a deliberate mutation of the implementation before being kept, and the mutations were reverted
+and the revert proved with a full `clean verify` — the discipline D41 broke when
+`recorder.record(...) // RED-FIRST` shipped as the implementation.
+
+**Not run against a live provider, because there is not one**, and not run against the quality box.
+Every branch here is exercised through a substituted provider, which is D31's limitation unchanged and
+D41's for the same reason: the day a provider is wired is the wrong day to discover what a refusal path
+looks like.
+
+### The review of WP-11, and the eight things it changed
+
+Reviewed 2026-09-03, nine findings, eight of them real. Each was reproduced before it was fixed — the
+first four against the running estate or a red test, the rest against a deliberate mutation — because
+this repository has already paid for a plausible-sounding hypothesis fixed without one.
+
+**The audit trail was an unauthenticated CRUD endpoint, and that is the finding that mattered.**
+`/api/booking-status-changes` was still the resource JHipster generates: no `@PreAuthorize`, `/api/**`
+asking only for `.authenticated()`, and therefore 200 with **292 rows** to a plain `ROLE_USER` on the
+quality estate. The read leak is narrower than it looks — the nested `booking` serialises with only
+`id`, so `customerLogin`, `visitAddress`, `customerNote`, `priceMinor` and `status` all come back null
+— but the history itself and the `actor` column do not, and `actor` holds real logins beside erasure
+aliases. **The write half is the serious one**: `POST`, `PUT`, `PATCH` and `DELETE` were open to the
+same token, which was confirmed by creating a forged row (201) and editing another (200) from a test
+holding nothing but `ROLE_USER`. That contradicts D34 and D39, which file this history as the
+append-only evidence of what happened to a booking, and `BookingTransition`'s own claim that
+`BookingWorkflow.apply` is the only thing that writes one.
+
+It is **deleted**, not locked down, which is what this repository already did to `BookingResource`,
+`DisputeResource` and `DisputeStatusChangeResource`. Nothing read it — checked across the Java, the
+prototype, the deploy scripts and the verification scripts before deleting — and the history is already
+served, scoped to the caller's own booking, by `CustomerBookingResource.one`. A `ROLE_BROKERAGE`
+read-only version was the alternative and buys nothing today: no screen asks for the estate's whole
+status history, and an endpoint with no caller is an endpoint whose authorization nobody exercises.
+The two files are in CLAUDE.md's regeneration delete table, and a new `AuditTrailIsNotAnApiIT` — a new
+file, so regeneration leaves it alone — fails if either comes back.
+
+**A failed release looks exactly like an untouched payment, by state.** `PaymentConfirmations`
+distinguished "money arrived after we released it" from "the callback overtook its booking" by reading
+`VOIDED` or `REFUNDED` off the attempt row. But D41's rule is that a release which *fails* is flagged
+and the state is deliberately left as the provider last reported it — so the worst case in the estate,
+money committed for a booking that does not exist *and* a cancellation the provider refused, carried
+`PENDING` and was filed as a benign race at INFO. `needs_attention` is now part of the same question,
+read from a value captured before anything writes. And the mirror defect beside it: a released row
+whose callback holds no money was having its `VOIDED` overwritten with the `FAILED` that followed,
+destroying this platform's own record of the release — the one fact whoever reconciles it needs. It is
+left alone now.
+
+**Taking the newest attempt for a reused handle was a guess, not a match.** The lookup returns a list
+because `PaymentRecorder.record` says two attempts against one booking may legitimately carry one
+provider reference. Picking `get(0)` off a newest-first ordering is right whenever the newer row is the
+same payment and wrong whenever it is not: with the newer row belonging to a booking that was never
+written, a confirmation for a customer who is actually waiting answers the provider 404 and leaves the
+booking in `PENDING_PAYMENT` for ever, every retry landing on the same wrong row. The reviewer could
+not demonstrate a provider that reuses handles and said so; the code-level defect was demonstrated by a
+test and is fixed by **matching on the booking that is waiting** — at most one per handle can be, since
+the transitions out of `PENDING_PAYMENT` are one-way — with recency kept as the fallback.
+
+**The flat 401 was the adapter's manners rather than the endpoint's guarantee.** Only
+`PaymentCallbackRefused` was caught, so a malformed body that made an adapter throw `NullPointerException`,
+`JsonProcessingException` or `IllegalArgumentException` escaped as 500 — and two of those are reachable
+from constructors written in this very package. A forged malformed body got 500 and a forged
+well-formed one got 401, which is a two-valued oracle telling a prober which of their attempts is
+structurally closer to one this service would accept. Every failure to establish the provider is one
+answer now.
+
+**A pending booking is a dead end for the customer, and that is a decision.** `Cancel.from()` does not
+include `PENDING_PAYMENT`, so the customer's cancel is a 409, and it stays that way: at the moment they
+press it the provider is holding a live authorization — a page open, or a prompt on their phone they
+can approve a minute later — and a cancel that moved the booking without cancelling the payment is
+D41's defect exactly. Releasing it first needs a provider that can be asked, which is WP-13. It is not
+a *permanent* dead end: the provider's callback ends it either way, confirming into `REQUESTED` or
+abandoning into `CANCELLED`. What was a plain defect is that **`cancellation-preview` had no status
+guard at all**, and answered `lateCancellation: true` with the full `priceMinor` for a booking inside
+the free window whose money had never moved — a fee quoted to a customer who has paid nothing, for an
+action the endpoint next door refuses. The preview now asks the same transition `/cancel` asks and
+answers the same 409.
+
+**`PENDING` could be built with no next action.** The constructor enforced the handle — what the
+platform needs to finish the payment — and said nothing about what the *customer* needs. An outcome
+with `PaymentNextAction.none()` renders as "nothing to do" against a payment that completes only when
+somebody visits a page or approves a prompt. Both halves are now enforced in the same place.
+
+**And the test whose job was to break when a state was added did not break.**
+`permitsBookingIsExhaustive` hand-listed seven constants; there are eight, and `PENDING`'s answer is
+the substance of this whole decision. Confirmed by adding a ninth state and watching it pass. It is
+driven from `values()` now, with the expectation table asserted to cover the enum exactly, so a new
+state fails the first line naming itself — the same argument that moved `permitsBooking` and
+`holdsMoney` on to the constants, one layer out.
+
+**The ninth finding did not reproduce, and the code was left alone.** The webhook takes
+`@RequestBody String` while `PaymentCallback` promises the bytes as received, and the concern was a
+lossy decode that would read like a wrong secret. Checked rather than assumed: the
+`StringHttpMessageConverter` in this application's context reports `defaultCharset=UTF-8`, and Spring
+special-cases a JSON content type to UTF-8 whatever the default — so a charset-less body decodes
+faithfully, verified with two-, three- and four-byte characters through the real endpoint. It stays a
+`String`. A provider that signed something other than UTF-8 would break it, and none of the three D37
+chose does.
+
+**Two javadoc claims were also corrected**, both true of the gateway and neither true of a host.
+`PaymentWebhookResource` said "no request from outside can be routed here in any environment" and
+`PaymentWebhookSecurityConfiguration` said "nothing routes here from outside today": D28's property is
+about the four route predicates, and `docker-compose.dev.yml` publishes booking's own port on every
+interface. Quality publishes it on loopback and production not at all. This is the same property
+catalog's `/internal/**` has always had, so it is not a regression — but the route predicates are a
+control against the internet, not against the machine the container runs on.

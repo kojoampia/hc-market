@@ -27,9 +27,9 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **WP-08** | Erasure: what an erased person who keeps their account is | DONE | D37, built as D40 |
 | **WP-09** | Erasure: retention periods and lawful basis | PARTLY DONE | D42 — counsel answered all four. Retention built and environment-gated; two documents and one registration number outstanding |
 | **WP-10** | Payments: the seam can complete a lifecycle | DONE | D41 |
-| **WP-11** | Payments: asynchronous confirmation | READY | — |
+| **WP-11** | Payments: asynchronous confirmation | DONE | D43 |
 | **WP-12** | Payments: the zero-amount booking | READY | — |
-| **WP-13** | Payments: provider choice and Act 987 | READY (large) | D37 — Paystack, Hubtel and MoMo direct, customer chooses. **Depends on WP-11** |
+| **WP-13** | Payments: provider choice and Act 987 | READY (large) | D37 — Paystack, Hubtel and MoMo direct, customer chooses. WP-11 is done, so no longer blocked |
 | **WP-14** | Verification badge | DONE | — |
 | **WP-15** | Badge: date-only on the wire | READY | — |
 | **WP-16** | Search performance | WON'T (measured) | — |
@@ -393,14 +393,67 @@ that records every outcome.
 **Not done:** no run against the quality box, and no live provider to run against. Every branch is
 exercised through a substituted provider, which is D31's limitation unchanged.
 
-## WP-11 — Payments: asynchronous confirmation · READY
+## WP-11 — Payments: asynchronous confirmation · DONE (unmerged)
 
-Paystack returns an authorization URL the customer must visit; Hubtel and MTN MoMo raise a prompt on
-the customer's phone and confirm by webhook. None can truthfully return `AUTHORIZED` or `DECLINED` from
-a synchronous `authorize`. The shape is common to all three, so it can be built without choosing one: a
-`PENDING`/`REQUIRES_ACTION` state with `permitsBooking` decided explicitly, a next-action field on the
-outcome, and a stated webhook contract. Deciding whether a booking may exist while payment is pending
-is much cheaper now than after a provider is wired.
+D43. Paystack returns an authorization URL the customer must visit; Hubtel and MTN MoMo raise a prompt
+on the customer's phone and confirm by webhook. None can truthfully return `AUTHORIZED` or `DECLINED`
+from a synchronous `authorize`, so the seam had to guess — and both guesses are bad the same way: an
+optimistic one creates bookings for money that never arrives, a pessimistic one refuses every booking
+in the estate.
+
+**Built: `PaymentState.PENDING`, a next action on the outcome, and a webhook.** The two questions the
+enum answers are now on each constant rather than in a `this == A || this == B` chain, because a chain
+gives a new value `false` for both **by omission** — which would have made D43's central decision one
+that whoever forgot took. The next action is a kind plus, for a redirect, a URL: two shapes because
+the providers produce two, and a client switches on the kind so "a prompt is on your phone" is a case
+it renders rather than a link it failed to find. The URL is scheme-checked where it is built, since it
+comes from a third party and ends up in a browser's address bar. A pending outcome must carry a
+provider reference — the constructor refuses without one, because a pending payment nothing can name is
+one no webhook can ever match to a booking, which is D41's dropped handle from the other end.
+
+**The unanswered question was answered: yes, a booking may exist while its payment is pending** — as
+`PENDING_PAYMENT`, in front of the state machine rather than in it. The decisive argument is that
+*both* answers must store the customer's intention durably, because a payment can confirm after the
+browser is closed; so the choice was between holding the booking and holding the request, and holding
+the request means a second table carrying six personal-data columns, its own erasure sweep, its own
+counter on the receipt, its own expiry and its own reference minting — a booking in everything but
+name, reserving nothing. The condition attached is enforced twice: **no `booking.requested` is
+published** until the money is confirmed (the guard that matters, since the event is what reaches
+messaging), and every professional-facing query already filters by status.
+
+**The webhook contract:** `POST /webhooks/payments/{provider}`, authenticated by the provider's own
+signature over the raw body and by nothing else; an unverified caller gets **401 with no detail**, and
+today that is every caller, because the unconfigured provider refuses every callback by definition. A
+duplicate is **200 and nothing happens** — idempotency is decided from the booking's state under a row
+lock rather than from a seen-set, because what must not happen twice is the transition, not the
+callback. A callback that overtakes its own booking gets 404 so the provider retries; money confirmed
+after this platform released it is flagged for a person rather than retried.
+
+**What keeps it off the internet is D28's property, not the security chain**: the gateway routes match
+`/services/<service>/api/**` and this path is not under `/api`. WP-13 makes it reachable and must add
+*two* things — the route and a gateway permit — or the callback silently never arrives.
+
+**Not done:** no run against the quality box, no live provider, and no expiry for a pending booking
+that is never confirmed. It blocks nothing today: nothing in this estate reserves an availability slot
+when a booking is made, which was checked rather than assumed, and the day that changes the
+reservation should ignore stale pending bookings at read time rather than acquire a sweeper.
+
+**Reviewed 2026-09-03: nine findings, eight real, all fixed on the same branch.** The largest was not
+WP-11's at all — JHipster's generated `BookingStatusChangeResource` was still mounted, so any
+`ROLE_USER` token read the estate's whole status-change history (292 rows on quality) and could forge
+or delete an audit row. Deleted, as `BookingResource` and the two dispute resources already were, with
+a new `AuditTrailIsNotAnApiIT` that fails if regeneration puts it back. In the payment code: a release
+that *failed* was indistinguishable from an untouched payment, so the worst case in the estate was
+logged as a benign race; a released row's `VOIDED` was overwritten by the `FAILED` that followed it; a
+reused provider handle was matched by recency rather than to the booking that is waiting; a malformed
+body escaped as 500 while a forged one got 401, which is an oracle; `cancellation-preview` quoted a
+late-cancellation fee at full price against a pending booking whose money had never moved; a `PENDING`
+outcome could be built with no next action; and `permitsBookingIsExhaustive` hand-listed seven of eight
+states, so the test whose job was to break when a state was added did not break when `PENDING` was.
+The ninth — a lossy charset on the raw webhook body — **did not reproduce** and the code was left
+alone: the converter in this application's context is UTF-8 and JSON is special-cased regardless,
+checked rather than argued. D43 carries the detail, including the correction to its own "enforced
+twice" claim, which was true of the design and not of the estate while that CRUD endpoint was up.
 
 ## WP-12 — Payments: the zero-amount booking · READY
 
@@ -414,12 +467,29 @@ Adjacent, same package: provider exceptions currently become 500s rather than th
 be a component-scanned bean — worth a javadoc line before somebody discovers it as a startup failure
 that differs between a laptop and CI.
 
-## WP-13 — Payments: provider and Act 987 · BLOCKED
+## WP-13 — Payments: provider and Act 987 · READY, no longer blocked on WP-11
 
 Provider choice and contract, and whether a split-settlement model clears Act 987. The seam is
 deliberately agnostic between split-at-capture and reconcile-afterwards, and **nothing on
 `PaymentProvider` pays the professional** — that omission is what makes it survivable, and it should
 survive this decision rather than be pre-empted by it.
+
+**What WP-11 leaves for it to do, beyond writing the three adapters** (D43):
+
+- **the registry.** `PaymentConfiguration` still supplies one provider by `@ConditionalOnMissingBean`;
+  three of them need a registry keyed by name, with the off-platform bean as the fallback rather than
+  the only entry. The webhook already resolves the provider by the name in its path, so it becomes a
+  registry lookup and the "callback addressed to a provider this service is not configured for"
+  refusal starts doing real work;
+- **the customer's choice on the intent**, validated against something the server knows rather than
+  taken on faith (D22);
+- **two lines per environment to expose the webhook, not one.** A route with
+  `Path=/services/healthconnectbooking/webhooks/**` *and* a permit in the gateway's security for it —
+  the generated gateway chain authenticates `/services/**` before routing, so the route on its own
+  gives a webhook that silently never arrives. Nothing before that moment is reachable from outside,
+  which is deliberate;
+- **each provider's signing secret**, handled like the estate's other two: required, never committed,
+  and absent means the callbacks are refused rather than trusted.
 
 ## WP-14 — Verification badge · DONE
 

@@ -10,6 +10,7 @@ import java.util.Optional;
 import net.jojoaddison.domain.Booking;
 import net.jojoaddison.domain.BookingStatusChange;
 import net.jojoaddison.domain.enumeration.BookingStatus;
+import net.jojoaddison.domain.enumeration.CancelledBy;
 import net.jojoaddison.repository.BookingHistoryRepository;
 import net.jojoaddison.repository.BookingQueryRepository;
 import org.slf4j.Logger;
@@ -113,6 +114,18 @@ public class BookingWorkflow {
             }
             case BookingTransition.Complete ignored -> booking.setCompletedAt(now);
             case BookingTransition.NoShow ignored -> booking.setCompletedAt(now);
+            // Nothing to set: raisedAt was written when the row was created and must not move, or
+            // D40's "was this booking made before the erasure?" comparison changes its answer.
+            case BookingTransition.PaymentConfirmed ignored -> {}
+            case BookingTransition.PaymentAbandoned abandoned -> {
+                booking.setCancelledAt(now);
+                booking.setCancelledBy(CancelledBy.PLATFORM);
+                booking.setCancellationReason(abandoned.reason());
+                // Explicitly false rather than computed. A booking nobody paid for and nobody saw
+                // cannot owe a late-cancellation fee, and isLate() would say otherwise for any
+                // appointment inside the free window.
+                booking.setLateCancellation(false);
+            }
         }
 
         Booking saved = bookings.save(booking);
@@ -128,7 +141,10 @@ public class BookingWorkflow {
         // Same transaction as the booking write and the audit row. OutboxRecorder is MANDATORY,
         // so if this ever ends up outside a transaction it fails loudly rather than quietly
         // reintroducing the dual write.
-        outbox.record(eventNameFor(transition), saved, actor);
+        String event = eventNameFor(transition);
+        if (event != null) {
+            outbox.record(event, saved, actor);
+        }
 
         LOG.info("booking {} {} -> {} by {}", saved.getReference(), current, saved.getStatus(), actor);
         return saved;
@@ -140,6 +156,18 @@ public class BookingWorkflow {
      * <p>{@code booking.accepted} is the event for accepting even though the resulting state is
      * CONFIRMED: the topic names the act, not the state. Declining, proposing and no-show have no
      * topic of their own in the spec, so they fan in through {@code notification.raised}.
+     *
+     * <p><strong>Null means "publish nothing", and exactly one transition uses it</strong> —
+     * {@code decisions.md} D43. A booking abandoned for want of a payment never had a
+     * {@code booking.requested} published for it, so an event about its cancellation would be the
+     * first thing anyone downstream ever heard of it: messaging would open a conversation to raise a
+     * notification about a booking the professional was deliberately never told about, and the
+     * customer's own notification would arrive for a booking their screen has been calling "awaiting
+     * payment" since they abandoned it. The switch stays exhaustive over the sealed hierarchy, so a
+     * transition added later still has to state its answer here, and null has to be chosen rather
+     * than fallen into.
+     *
+     * @return the short topic name, or null to publish nothing at all
      */
     private static String eventNameFor(BookingTransition transition) {
         return switch (transition) {
@@ -149,6 +177,10 @@ public class BookingWorkflow {
             case BookingTransition.Complete ignored -> "booking.completed";
             case BookingTransition.ProposeReschedule ignored -> "notification.raised";
             case BookingTransition.NoShow ignored -> "notification.raised";
+            // The booking is announced when its money is confirmed, not when it was created. This is
+            // the event BookingCreator.createAwaitingPayment did not publish.
+            case BookingTransition.PaymentConfirmed ignored -> "booking.requested";
+            case BookingTransition.PaymentAbandoned ignored -> null;
         };
     }
 

@@ -1,5 +1,7 @@
 package net.jojoaddison.config;
 
+import net.jojoaddison.service.payment.PaymentCallback;
+import net.jojoaddison.service.payment.PaymentCallbackRefused;
 import net.jojoaddison.service.payment.PaymentIntent;
 import net.jojoaddison.service.payment.PaymentOutcome;
 import net.jojoaddison.service.payment.PaymentProvider;
@@ -87,6 +89,24 @@ public class PaymentConfiguration {
         @Override
         public PaymentOutcome status(String providerReference) {
             throw new IllegalStateException(NO_PROVIDER);
+        }
+
+        /**
+         * Refuses, and the refusal is the security answer rather than a complaint — {@code
+         * decisions.md} D43.
+         *
+         * <p>This one does <strong>not</strong> throw {@link IllegalStateException} like its
+         * neighbours, and the difference matters. The others are reached only by this platform's own
+         * code holding a false belief, so failing loudly is how that gets found. This one is reached
+         * by whoever posts to the webhook, and against an estate with no provider configured that is
+         * by definition not a provider. {@link PaymentCallbackRefused} is what the endpoint turns into
+         * a flat 401; an {@code IllegalStateException} would be a 500, which tells a stranger that
+         * their request got further into the application than it should have and puts a stack trace
+         * in the log for every probe of the path.
+         */
+        @Override
+        public PaymentOutcome readCallback(PaymentCallback callback) {
+            throw new PaymentCallbackRefused("no payment provider is configured, so no callback can be genuine (decisions.md D15/D43)");
         }
     }
 }

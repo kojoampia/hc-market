@@ -1,7 +1,7 @@
 package net.jojoaddison.service.payment;
 
 /**
- * What actually happened — {@code decisions.md} D15/D31/D41.
+ * What actually happened — {@code decisions.md} D15/D31/D41/D43.
  *
  * @param state see {@link PaymentState}
  * @param providerReference the provider's own handle for this payment, or null when there is none.
@@ -19,9 +19,47 @@ package net.jojoaddison.service.payment;
  *     can be queried afterwards — should use the canonical constructor rather than
  *     {@link #declined(String)}. The handle is kept whatever the state; a refusal that can be looked
  *     up later is worth more than a tidy null.
+ *     <p><strong>{@link PaymentState#PENDING} is the one state that requires it</strong>, and the
+ *     constructor refuses without it (D43). A pending payment is confirmed later by a webhook that
+ *     carries the provider's handle and nothing else, so a pending outcome with no handle describes a
+ *     payment the estate can never find again — the same defect as D41's, arriving from the other end.
  * @param reason why, in words, when the state is not a success. Null otherwise
+ * @param nextAction what the customer has to do, when the answer is "it depends on them" — D43. Never
+ *     null; {@link PaymentNextAction#none()} is the answer for every state that is already final, and
+ *     {@link PaymentState#PENDING} is the one state for which it is <strong>refused</strong>. A pending
+ *     payment with nothing for the customer to do is a payment that never completes: the constructor
+ *     enforces that in the same place, and for the same reason, as it enforces the handle.
+ *     <p>It is on the outcome rather than on a separate pending-specific type because a provider may
+ *     answer any of these states from {@code authorize}, and a caller that had to switch on the state
+ *     before knowing which shape it held would be a caller that can forget to.
  */
-public record PaymentOutcome(PaymentState state, String providerReference, String reason) {
+public record PaymentOutcome(PaymentState state, String providerReference, String reason, PaymentNextAction nextAction) {
+    public PaymentOutcome {
+        if (nextAction == null) {
+            nextAction = PaymentNextAction.none();
+        }
+        if (state == PaymentState.PENDING && (providerReference == null || providerReference.isBlank())) {
+            throw new IllegalArgumentException("a PENDING payment needs a provider reference — nothing else can find it when the webhook arrives");
+        }
+        if (state == PaymentState.PENDING && !nextAction.isRequired()) {
+            // The same invariant from the customer's side. The clause above keeps the platform able to
+            // finish the payment; this one keeps the customer able to. A pending outcome with no action
+            // renders as "nothing to do" against a payment that completes only when somebody visits a
+            // page or approves a prompt — so the wait screen waits for a prompt nobody raised, and the
+            // booking stays in PENDING_PAYMENT until the provider times it out.
+            throw new IllegalArgumentException("a PENDING payment needs a next action — the customer has to do something or it never completes");
+        }
+    }
+
+    /**
+     * The three-argument form every caller before D43 used, so adding {@code nextAction} did not
+     * become an edit to every provider that will ever be written. An outcome with no stated action
+     * has none.
+     */
+    public PaymentOutcome(PaymentState state, String providerReference, String reason) {
+        this(state, providerReference, reason, PaymentNextAction.none());
+    }
+
     public static PaymentOutcome offPlatform() {
         return new PaymentOutcome(PaymentState.OFF_PLATFORM, null, null);
     }
@@ -41,6 +79,20 @@ public record PaymentOutcome(PaymentState state, String providerReference, Strin
     /** The authorization was released before any money moved — {@link PaymentState#VOIDED}. */
     public static PaymentOutcome voided(String providerReference) {
         return new PaymentOutcome(PaymentState.VOIDED, providerReference, null);
+    }
+
+    /**
+     * Paystack's answer: the payment is live and the customer must visit a page to complete it — D43.
+     *
+     * <p>The handle is not optional here. See the {@code providerReference} note above.
+     */
+    public static PaymentOutcome pendingAt(String providerReference, String url) {
+        return new PaymentOutcome(PaymentState.PENDING, providerReference, null, PaymentNextAction.visit(url));
+    }
+
+    /** Hubtel's and MoMo's answer: a prompt is on the customer's phone and we wait for the webhook. */
+    public static PaymentOutcome pendingOnDevice(String providerReference) {
+        return new PaymentOutcome(PaymentState.PENDING, providerReference, null, PaymentNextAction.awaitDevicePrompt());
     }
 
     public static PaymentOutcome declined(String reason) {

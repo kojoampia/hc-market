@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -13,8 +14,10 @@ import java.time.LocalDate;
 import java.util.LinkedHashMap;
 import java.util.List;
 import net.jojoaddison.IntegrationTest;
+import net.jojoaddison.domain.OutboxEvent;
 import net.jojoaddison.domain.PaymentAttempt;
 import net.jojoaddison.repository.BookingRepository;
+import net.jojoaddison.repository.OutboxEventRepository;
 import net.jojoaddison.repository.PaymentAttemptRepository;
 import net.jojoaddison.service.BookingCreator;
 import net.jojoaddison.service.CatalogClient;
@@ -63,6 +66,9 @@ class PaymentSeamIT {
 
     @Autowired
     private PaymentAttemptRepository attempts;
+
+    @Autowired
+    private OutboxEventRepository outbox;
 
     @MockitoBean
     private CatalogClient catalog;
@@ -304,6 +310,83 @@ class PaymentSeamIT {
         assertThat(attempt.getAttentionNote()).doesNotContain("kojo.customer");
     }
 
+    // ------------------------------------------------------- the payment that is not decided yet --
+
+    /**
+     * D43's decision, at the endpoint that takes it: <strong>a booking may exist while its payment is
+     * pending</strong>, and it exists in a state nobody has been told about.
+     *
+     * <p>Three assertions, and the third is the one that matters. The row is written, so the customer
+     * has something to come back to and the erasure sweep has something to find. Its status is
+     * {@code PENDING_PAYMENT}, which {@code /api/pro/requests} does not ask for. And <strong>no
+     * {@code booking.requested} is in the outbox</strong> — the professional is told when the money is
+     * confirmed and not before, which is the whole reason the state can be permitted to exist at all.
+     * A status filter alone would not do it: the event is what reaches messaging, and no query of
+     * messaging's is under this service's control.
+     */
+    @Test
+    @Transactional
+    @DisplayName("a pending payment creates a booking nobody has been told about")
+    void pendingCreatesASilentBooking() throws Exception {
+        when(payments.authorize(any())).thenReturn(PaymentOutcome.pendingAt("prov-p1", "https://checkout.example.com/pay/abc"));
+
+        send()
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.status").value("PENDING_PAYMENT"))
+            .andExpect(jsonPath("$.payment.state").value("PENDING"))
+            .andExpect(jsonPath("$.payment.action").value("VISIT_URL"))
+            .andExpect(jsonPath("$.payment.url").value("https://checkout.example.com/pay/abc"));
+
+        String reference = referenceOfThisBooking();
+        assertThat(bookings.findAll().stream().filter(b -> reference.equals(b.getReference())).findFirst())
+            .get()
+            .extracting(b -> b.getStatus().name())
+            .isEqualTo("PENDING_PAYMENT");
+        assertThat(eventsAbout(reference)).isEmpty();
+    }
+
+    /**
+     * The mobile-money half of the same answer: there is nowhere to send the customer, and that is a
+     * next action rather than a missing one.
+     */
+    @Test
+    @Transactional
+    @DisplayName("a phone prompt is reported as a next action with no url")
+    void pendingOnDeviceHasNoUrl() throws Exception {
+        when(payments.authorize(any())).thenReturn(PaymentOutcome.pendingOnDevice("prov-p2"));
+
+        send()
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.payment.action").value("AWAIT_DEVICE_PROMPT"))
+            .andExpect(jsonPath("$.payment.url").doesNotExist());
+    }
+
+    /**
+     * The asynchronous shape of D41's defect, and the reason {@code release} cannot test
+     * {@code holdsMoney()} alone.
+     *
+     * <p>A pending payment holds nothing — yet — and the customer is looking at a prompt they can
+     * approve a minute after the booking failed to be created. Left alone, that is money taken for a
+     * booking that does not exist, confirmed by a webhook that will never find one. So the pending
+     * payment is cancelled at the provider on the same path an authorization is voided on.
+     */
+    @Test
+    @Transactional
+    @DisplayName("a pending payment is cancelled at the provider when the booking cannot be created")
+    void pendingIsReleasedToo() throws Exception {
+        when(payments.authorize(any())).thenReturn(PaymentOutcome.pendingOnDevice("prov-p3"));
+        when(payments.voidAuthorization(anyString(), anyString())).thenReturn(PaymentOutcome.voided("prov-p3"));
+        org.mockito.Mockito.doThrow(new IllegalStateException("the outbox insert failed")).when(creator).create(any(), anyString());
+        org.mockito.Mockito.doThrow(new IllegalStateException("the outbox insert failed"))
+            .when(creator)
+            .createAwaitingPayment(any(), anyString());
+
+        send().andExpect(status().isInternalServerError());
+
+        org.mockito.Mockito.verify(payments).voidAuthorization(org.mockito.ArgumentMatchers.eq("prov-p3"), anyString());
+        assertThat(onlyAttempt().getState()).isEqualTo("VOIDED");
+    }
+
     // ------------------------------------------------------------------------- helpers --
 
     /**
@@ -327,5 +410,17 @@ class PaymentSeamIT {
         List<PaymentAttempt> found = attemptsForThisBooking();
         assertThat(found).hasSize(1);
         return found.get(0);
+    }
+
+    /** The reference minted inside the request, read back off the intent the provider was given. */
+    private String referenceOfThisBooking() {
+        ArgumentCaptor<PaymentIntent> intent = ArgumentCaptor.forClass(PaymentIntent.class);
+        org.mockito.Mockito.verify(payments).authorize(intent.capture());
+        return intent.getValue().bookingReference();
+    }
+
+    /** Every outbox row about one booking. The seeded estate is full of them, so filter by reference. */
+    private List<OutboxEvent> eventsAbout(String reference) {
+        return outbox.findAll().stream().filter(e -> reference.equals(e.getAggregateRef())).toList();
     }
 }

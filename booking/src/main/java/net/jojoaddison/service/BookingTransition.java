@@ -24,6 +24,20 @@ import net.jojoaddison.domain.enumeration.CancelledBy;
  * <p>{@code ACCEPTED} is deliberately absent from {@link BookingStatus} — accepting moves straight
  * to {@code CONFIRMED}, which is what the prototype's schedule always assumed. See decisions.md D7.
  * The Kafka topic is still {@code booking.accepted}: it names the act, not the resulting state.
+ *
+ * <p>D43 puts one state in front of that machine and two transitions out of it:
+ *
+ * <pre>
+ *   PENDING_PAYMENT ──payment confirmed──▶ REQUESTED
+ *          └─────────payment abandoned───▶ CANCELLED
+ * </pre>
+ *
+ * <p>Both are applied by a provider's webhook rather than by a person, and both are here rather than
+ * in a payment-specific service for the reason the class comment gives: {@code BookingWorkflow.apply}
+ * is the only method that writes {@code status}, so a second path would be a status change with no
+ * audit row and no legality check. Nothing else may enter or leave {@code PENDING_PAYMENT} — a
+ * professional cannot accept a booking whose money has not arrived, and the refusal is the ordinary
+ * 409 from {@link #legalFrom} rather than a check anybody had to remember to write.
  */
 public sealed interface BookingTransition {
     /** The states this transition may be applied from. */
@@ -147,6 +161,64 @@ public sealed interface BookingTransition {
         @Override
         public String action() {
             return "no-show";
+        }
+    }
+
+    /**
+     * The money arrived — {@code decisions.md} D43. The booking becomes an ordinary request.
+     *
+     * <p>This is where {@code booking.requested} is published for a booking that waited on a payment,
+     * and it is the only place: {@code BookingCreator.createAwaitingPayment} writes the row and
+     * publishes nothing, because a professional should not be told about a booking whose money may
+     * never arrive. So the event is late rather than absent, and everything downstream — the
+     * conversation messaging opens, the notification in the bell menu — happens exactly once, when
+     * there is something to tell.
+     */
+    record PaymentConfirmed() implements BookingTransition {
+        @Override
+        public Set<BookingStatus> from() {
+            return Set.of(BookingStatus.PENDING_PAYMENT);
+        }
+
+        @Override
+        public BookingStatus to() {
+            return BookingStatus.REQUESTED;
+        }
+
+        @Override
+        public String action() {
+            return "payment confirmed";
+        }
+    }
+
+    /**
+     * The money did not arrive — {@code decisions.md} D43. The customer declined the prompt, the
+     * payment failed, or the provider gave up on it.
+     *
+     * <p>Cancelled by {@link CancelledBy#PLATFORM}, because neither party chose this. It is
+     * deliberately <strong>not</strong> a {@link Cancel}: that transition computes
+     * {@code lateCancellation}, and a booking cancelled for want of a payment inside the free window
+     * would acquire a 50% fee against a customer who has not paid anything and whose booking the
+     * professional never saw.
+     *
+     * @param reason plain words, composed by the platform. Never the provider's own message — that is
+     *     the route by which a customer's details arrive in a column an erasure has to remember to
+     *     sweep, and this one is on the booking rather than in {@code payment_attempt}
+     */
+    record PaymentAbandoned(String reason) implements BookingTransition {
+        @Override
+        public Set<BookingStatus> from() {
+            return Set.of(BookingStatus.PENDING_PAYMENT);
+        }
+
+        @Override
+        public BookingStatus to() {
+            return BookingStatus.CANCELLED;
+        }
+
+        @Override
+        public String action() {
+            return "payment abandoned";
         }
     }
 
