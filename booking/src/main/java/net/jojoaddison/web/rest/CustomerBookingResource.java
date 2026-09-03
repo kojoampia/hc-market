@@ -187,10 +187,24 @@ public class CustomerBookingResource {
     /**
      * What cancelling would cost, without cancelling. The prototype shows the fee before the
      * customer commits, which is the entire point of the modal.
+     *
+     * <p><strong>A booking that cannot be cancelled has no preview</strong>, and the refusal is the
+     * same 409 {@code /cancel} itself gives — asked of the same transition, so the two cannot drift
+     * apart. Without that check the endpoint answered for any status, and the case that made it matter
+     * is {@code PENDING_PAYMENT} (D43): a booking whose appointment is inside the free-cancellation
+     * window came back as {@code lateCancellation: true} carrying the full price, which is a fee
+     * quoted to a customer who has paid nothing, for an action the endpoint next door would refuse.
      */
     @GetMapping("/{ref}/cancellation-preview")
     public CancellationPreview cancellationPreview(@PathVariable String ref) {
         Booking booking = mineOr404(ref);
+        BookingTransition.Cancel cancel = new BookingTransition.Cancel(CancelledBy.CUSTOMER, null);
+        if (!cancel.legalFrom(booking.getStatus())) {
+            throw new ResponseStatusException(
+                HttpStatus.CONFLICT,
+                "booking " + ref + " cannot be cancelled from " + booking.getStatus() + ", so there is nothing to preview"
+            );
+        }
         Instant now = Instant.now();
         Instant scheduled = booking.getScheduledDate().atTime(booking.getScheduledTime()).toInstant(ZoneOffset.UTC);
         long hours = Duration.between(now, scheduled).toHours();

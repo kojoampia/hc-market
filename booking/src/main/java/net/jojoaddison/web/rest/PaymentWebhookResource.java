@@ -60,9 +60,17 @@ import org.springframework.web.server.ResponseStatusException;
  *
  * <p>The same thing that keeps catalog's {@code /internal/**} private — {@code decisions.md} D28. The
  * gateway's four routes match {@code /services/<service>/api/**} and nothing else, and this path is
- * not under {@code /api}, so <strong>no request from outside can be routed here in any
+ * not under {@code /api}, so <strong>nothing can be routed here through the gateway in any
  * environment</strong>. That is deliberate for as long as there is no provider: an unauthenticated
  * endpoint nobody legitimate calls should not be reachable, whatever it does with what it receives.
+ *
+ * <p><strong>Through the gateway is not the same as from outside.</strong> Booking's own port is
+ * published on all interfaces by {@code docker-compose.dev.yml} ({@code ${HC_BOOKING_PORT:-8082}:8080}),
+ * so on a development host anyone who can reach that port can post here directly, gateway or no
+ * gateway. Quality publishes on {@code 127.0.0.1} only and production publishes booking's port not at
+ * all. This is exactly the property catalog's {@code /internal/**} has always had and is not a
+ * regression — but "the route predicates are the control" holds against the internet, not against the
+ * host the container runs on, and the signature check is the only thing standing between the two.
  *
  * <p>WP-13 makes it reachable, and doing that is one line per environment beside the provider's
  * configuration:
@@ -132,6 +140,17 @@ public class PaymentWebhookResource {
      * the signature is — but it stops a callback signed by one provider being applied as another's the
      * day there is more than one (WP-13), and it means the verifier is never handed a body from a
      * provider it does not speak for.
+     *
+     * <p><strong>Every way of failing to establish the provider gives the same answer</strong>, which
+     * is why the second catch is here. {@link PaymentCallbackRefused} is what an adapter throws when it
+     * has read a request and decided against it; it is not what a <em>malformed</em> request produces.
+     * A missing field is a {@code NullPointerException}, a body that is not this provider's shape is a
+     * {@code JsonProcessingException}, and a relayed {@code javascript:} URL is an
+     * {@code IllegalArgumentException} from {@code PaymentNextAction} — the last two are reachable from
+     * code in this package. Letting those escape as 500 while a well-formed forgery got 401 published
+     * the difference between the two, which tells a prober which of their attempts is structurally
+     * closer to one this service would accept. The 401 belongs to the endpoint, not to the manners of
+     * whichever adapter is configured.
      */
     private PaymentOutcome verified(String named, Map<String, String> headers, String body) {
         try {
@@ -143,7 +162,18 @@ public class PaymentWebhookResource {
             // The cause goes to the log, where an operator reads it; the caller is told only that it
             // was not authenticated. Nothing from the request is echoed — see PaymentCallbackRefused.
             LOG.warn("refused a payment callback: {}", refused.getMessage());
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED);
+        } catch (RuntimeException broken) {
+            // An adapter that threw rather than refused. The class and message go to the log because
+            // this is also how a genuine provider integration reports being broken, and "401s, no
+            // reason given" is not something anybody can debug. The message may quote the request,
+            // which is why it goes to a log an operator reads and never into the response.
+            LOG.warn(
+                "a payment callback could not be read by the {} adapter: {}: {}",
+                provider.name(),
+                broken.getClass().getName(),
+                broken.getMessage()
+            );
         }
+        throw new ResponseStatusException(HttpStatus.UNAUTHORIZED);
     }
 }

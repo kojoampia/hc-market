@@ -25,7 +25,10 @@ package net.jojoaddison.service.payment;
  *     payment the estate can never find again — the same defect as D41's, arriving from the other end.
  * @param reason why, in words, when the state is not a success. Null otherwise
  * @param nextAction what the customer has to do, when the answer is "it depends on them" — D43. Never
- *     null; {@link PaymentNextAction#none()} is the answer for every state that is already final.
+ *     null; {@link PaymentNextAction#none()} is the answer for every state that is already final, and
+ *     {@link PaymentState#PENDING} is the one state for which it is <strong>refused</strong>. A pending
+ *     payment with nothing for the customer to do is a payment that never completes: the constructor
+ *     enforces that in the same place, and for the same reason, as it enforces the handle.
  *     <p>It is on the outcome rather than on a separate pending-specific type because a provider may
  *     answer any of these states from {@code authorize}, and a caller that had to switch on the state
  *     before knowing which shape it held would be a caller that can forget to.
@@ -37,6 +40,14 @@ public record PaymentOutcome(PaymentState state, String providerReference, Strin
         }
         if (state == PaymentState.PENDING && (providerReference == null || providerReference.isBlank())) {
             throw new IllegalArgumentException("a PENDING payment needs a provider reference — nothing else can find it when the webhook arrives");
+        }
+        if (state == PaymentState.PENDING && !nextAction.isRequired()) {
+            // The same invariant from the customer's side. The clause above keeps the platform able to
+            // finish the payment; this one keeps the customer able to. A pending outcome with no action
+            // renders as "nothing to do" against a payment that completes only when somebody visits a
+            // page or approves a prompt — so the wait screen waits for a prompt nobody raised, and the
+            // booking stays in PENDING_PAYMENT until the provider times it out.
+            throw new IllegalArgumentException("a PENDING payment needs a next action — the customer has to do something or it never completes");
         }
     }
 

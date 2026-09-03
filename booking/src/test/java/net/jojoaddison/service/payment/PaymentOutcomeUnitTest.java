@@ -80,6 +80,32 @@ class PaymentOutcomeUnitTest {
         assertThat(new PaymentOutcome(PaymentState.FAILED, null, "timeout", null).nextAction()).isEqualTo(PaymentNextAction.none());
     }
 
+    /**
+     * The second half of the same invariant, and it was missing.
+     *
+     * <p>The constructor enforced that a pending payment carries a handle — the thing the
+     * <em>platform</em> needs to finish it — and said nothing about the thing the <em>customer</em>
+     * needs. A {@code PENDING} outcome whose next action is {@link PaymentNextAction#none()} tells a
+     * client there is nothing to do about a payment that cannot complete until somebody visits a page
+     * or approves a prompt, so the customer is shown a wait screen for a prompt nobody raised and the
+     * booking sits in {@code PENDING_PAYMENT} until the provider times it out. Both halves are the same
+     * class of defect: an outcome that describes a payment nothing can move.
+     *
+     * <p>The two factories are the only correct ways to build one, which is precisely why the check
+     * belongs on the constructor rather than in them.
+     */
+    @Test
+    @DisplayName("a pending payment must say what the customer has to do")
+    void pendingNeedsANextAction() {
+        assertThatThrownBy(() -> new PaymentOutcome(PaymentState.PENDING, "ps-1", null, PaymentNextAction.none()))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("PENDING");
+        // The three-argument form is the same thing arrived at by omission: it fills in none().
+        assertThatThrownBy(() -> new PaymentOutcome(PaymentState.PENDING, "ps-1", null)).isInstanceOf(IllegalArgumentException.class);
+        // And nothing else is constrained — a decided payment has nothing for the customer to do.
+        assertThat(PaymentOutcome.captured("ps-1").nextAction().isRequired()).isFalse();
+    }
+
     /** A URL on an action that is not a redirect is a contradiction a client would follow anyway. */
     @Test
     @DisplayName("only a redirect carries a url")

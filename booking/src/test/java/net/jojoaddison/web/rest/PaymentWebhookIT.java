@@ -120,6 +120,31 @@ class PaymentWebhookIT {
     }
 
     /**
+     * The refusal is the <em>endpoint's</em> guarantee, not the adapter's good manners.
+     *
+     * <p>{@code PaymentCallbackRefused} is what an adapter throws when it has read a request and
+     * decided against it. It is not what happens when the request is malformed: a body with a field
+     * missing gets a {@code NullPointerException}, a body that is not JSON gets a
+     * {@code JsonProcessingException}, and a next-action URL relayed as {@code javascript:} gets an
+     * {@code IllegalArgumentException} out of {@code PaymentNextAction} — two of those three are
+     * reachable from constructors written in this very package. Catching only the refusal meant a
+     * forged malformed body answered 500 and a forged well-formed one answered 401, which is a
+     * two-valued oracle telling a prober which of their attempts is structurally closer to a callback
+     * this service would accept. Every failure to establish the provider is one answer.
+     */
+    @Test
+    @Transactional
+    @DisplayName("a body that makes the adapter throw is refused with the same flat 401")
+    void aMalformedCallbackIsRefusedTheSameWay() throws Exception {
+        when(payments.readCallback(any())).thenThrow(new NullPointerException("Cannot invoke \"String.length()\" because \"data\" is null"));
+
+        mockMvc
+            .perform(post(WEBHOOK).with(csrf()).contentType(MediaType.APPLICATION_JSON).content("{}"))
+            .andExpect(status().isUnauthorized())
+            .andExpect(result -> assertThat(result.getResponse().getContentAsString()).doesNotContain("NullPointer"));
+    }
+
+    /**
      * A callback addressed to a provider this service is not configured for never reaches the
      * verifier, and gets the same 401.
      *
@@ -326,6 +351,156 @@ class PaymentWebhookIT {
         assertThat(after.isNeedsAttention()).isTrue();
         assertThat(after.getAttentionNote()).contains("after it was released");
         assertThat(after.getAttentionNote()).doesNotContain(CUSTOMER);
+    }
+
+    /**
+     * One handle, two attempt rows — the case {@code PaymentAttemptRepository} returns a {@code List}
+     * for, and which taking the newest row got wrong.
+     *
+     * <p>{@code PaymentRecorder.record}'s own javadoc says why the list exists: "two attempts against
+     * one booking may legitimately carry the same" provider reference. A provider that reuses a handle
+     * across a retry therefore leaves the platform with several rows and one callback, and the newest
+     * of them is a guess rather than a match. Here the newest belongs to a booking that was never
+     * written and the older one to a customer waiting on their phone: picking by recency confirms
+     * nothing, answers the provider 404, and leaves a paid booking sitting in {@code PENDING_PAYMENT}
+     * for ever — the provider's retries all landing on the same wrong row.
+     *
+     * <p>Matching on the booking that is actually waiting is not a heuristic: at most one booking per
+     * handle can be in {@code PENDING_PAYMENT}, because the transition out of it is one-way. Recency
+     * remains the fallback for the ordinary case, where there is one row and nothing to choose between.
+     */
+    @Test
+    @Transactional
+    @DisplayName("a reused handle is matched to the booking that is waiting, not to the newest row")
+    void areusedHandleFindsTheBookingThatIsWaiting() throws Exception {
+        String waiting = bookPending("prov-w9");
+        // A later attempt carrying the same handle, for a booking that never made it to the database.
+        // Recorded after the first, so it is the one findByProviderReferenceOrderByRecordedAtDesc
+        // hands back first.
+        PaymentAttempt newer = pendingAttemptFor("b-never-written", "prov-w9");
+        newer.setRecordedAt(Instant.now().plusSeconds(60));
+        attempts.save(newer);
+
+        mockMvc
+            .perform(post(WEBHOOK).with(csrf()).contentType(MediaType.APPLICATION_JSON).content(BODY))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.result").value("applied"));
+
+        assertThat(statusOf(waiting)).isEqualTo("REQUESTED");
+    }
+
+    /**
+     * The other shape a released payment comes in, and the one the first version of this could not
+     * see: a release that <em>failed</em>.
+     *
+     * <p>{@code BookingPayments.flag} deliberately leaves {@code state} alone — D41, so the operator
+     * can still see what the provider last reported — and sets {@code needs_attention} instead. So a
+     * row this platform tried and failed to void carries {@code PENDING}, which is exactly what a row
+     * that has never been touched carries. Reading the state alone therefore filed the worst case in
+     * the estate — money committed, booking gone, and the cancellation we attempted did not work — as a
+     * benign race at INFO, and the ERROR a person is meant to act on never fired.
+     */
+    @Test
+    @Transactional
+    @DisplayName("money confirmed after a release that failed is flagged too, not filed as a race")
+    void moneyAfterAFailedReleaseNeedsAPersonAsWell() throws Exception {
+        PaymentAttempt stuck = pendingAttemptFor("b-gone-2", "prov-w7");
+        // The row BookingPayments.flag leaves behind: still PENDING, because the provider never
+        // agreed to cancel it, and flagged because a person has to.
+        stuck.setNeedsAttention(true);
+        stuck.setAttentionNote("release of stub payment prov-w7 threw IllegalStateException");
+        attempts.save(stuck);
+        when(payments.readCallback(any())).thenReturn(PaymentOutcome.captured("prov-w7"));
+
+        mockMvc.perform(post(WEBHOOK).with(csrf()).contentType(MediaType.APPLICATION_JSON).content(BODY)).andExpect(status().isNotFound());
+
+        PaymentAttempt after = attempts.findByProviderReferenceOrderByRecordedAtDesc("prov-w7").get(0);
+        assertThat(after.isNeedsAttention()).isTrue();
+        assertThat(after.getAttentionNote()).contains("after it was released");
+    }
+
+    /**
+     * A released payment whose callback carries no money must not overwrite the release.
+     *
+     * <p>{@code VOIDED} is this platform's own record that it gave the authorization back. A provider
+     * following up with {@code FAILED} — which is the ordinary end of a prompt nobody approved — used
+     * to be written straight over it, so the one fact an operator needs while reconciling ("did we
+     * cancel this, or did it just die?") was destroyed by the callback that confirmed we had. Nothing
+     * is owed here and nothing needs flagging; the row is simply left as it is.
+     */
+    @Test
+    @Transactional
+    @DisplayName("a failure reported after a void does not erase the record of the void")
+    void aReleasedPaymentKeepsItsReleaseState() throws Exception {
+        PaymentAttempt released = pendingAttemptFor("b-gone-3", "prov-w8");
+        released.setState("VOIDED");
+        released.setResolvedAt(Instant.now());
+        attempts.save(released);
+        when(payments.readCallback(any())).thenReturn(
+            new PaymentOutcome(net.jojoaddison.service.payment.PaymentState.FAILED, "prov-w8", "the prompt expired")
+        );
+
+        mockMvc.perform(post(WEBHOOK).with(csrf()).contentType(MediaType.APPLICATION_JSON).content(BODY)).andExpect(status().isNotFound());
+
+        PaymentAttempt after = attempts.findByProviderReferenceOrderByRecordedAtDesc("prov-w8").get(0);
+        assertThat(after.getState()).isEqualTo("VOIDED");
+        assertThat(after.isNeedsAttention()).isFalse();
+    }
+
+    // ------------------------------------ what the customer may do while the money is undecided --
+
+    /**
+     * The preview must not quote a fee against money nobody has taken.
+     *
+     * <p>{@code cancellation-preview} exists to fill the prototype's modal: "cancelling now costs you
+     * X". It had no status guard, so for a booking in {@code PENDING_PAYMENT} whose appointment is
+     * inside the free-cancellation window it answered {@code lateCancellation: true} and the full
+     * price of the service — a bill, shown to a customer who has paid nothing, for cancelling a booking
+     * the endpoint next door will refuse to cancel at all. Both halves are wrong on their own and the
+     * pair of them is worse: the screen quotes a charge and then cannot carry it out.
+     *
+     * <p>It now answers exactly what {@code /cancel} would: if the cancellation is not legal there is
+     * nothing to preview, and 409 says so.
+     */
+    @Test
+    @Transactional
+    @DisplayName("cancelling a booking whose payment has not arrived has no preview, and no fee")
+    void aPendingBookingHasNoCancellationFee() throws Exception {
+        String reference = bookPendingSoon("prov-w10");
+
+        mockMvc
+            .perform(get(BOOKINGS + "/" + reference + "/cancellation-preview"))
+            .andExpect(status().isConflict())
+            .andExpect(result -> assertThat(result.getResponse().getContentAsString()).doesNotContain("15000"));
+    }
+
+    /**
+     * {@code PENDING_PAYMENT} has exactly two exits and the customer holds neither — D43, as amended
+     * by the WP-11 review.
+     *
+     * <p>This asserts a decision rather than fixing a defect, so it pins the 409 the state machine
+     * already gives. The customer's "cancel" is deliberately <em>not</em> wired to
+     * {@code PENDING_PAYMENT}: at the moment they press it the provider is still holding a live
+     * authorization — a page open, or a prompt on their phone that they can approve a minute later —
+     * and a cancel that moved the booking without cancelling the payment at the provider is precisely
+     * D41's defect, money taken for a booking that does not exist. Abandoning is the provider's
+     * callback to report, and releasing the payment first is WP-13's job, alongside the provider that
+     * can actually be asked to do it. Recorded in D43 so the dead end is a decision somebody took.
+     *
+     * <p>It is red against the obvious shortcut: adding {@code PENDING_PAYMENT} to {@code Cancel.from()}.
+     */
+    @Test
+    @Transactional
+    @DisplayName("the customer cannot cancel a booking out of PENDING_PAYMENT; only the provider ends it")
+    void aPendingBookingIsNotTheCustomersToCancel() throws Exception {
+        String reference = bookPendingSoon("prov-w11");
+
+        mockMvc.perform(post(BOOKINGS + "/" + reference + "/cancel").with(csrf())).andExpect(status().isConflict());
+
+        assertThat(statusOf(reference)).isEqualTo("PENDING_PAYMENT");
+        // And the payment is untouched, which is the reason for the refusal rather than a side effect
+        // of it: nothing here has asked the provider to stop.
+        assertThat(attempts.findByProviderReferenceOrderByRecordedAtDesc("prov-w11").get(0).getState()).isEqualTo("PENDING");
     }
 
     // ------------------------------------------------------------------------- helpers --

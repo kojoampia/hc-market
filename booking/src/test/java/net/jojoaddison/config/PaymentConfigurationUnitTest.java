@@ -3,7 +3,9 @@ package net.jojoaddison.config;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.Arrays;
 import java.util.Map;
+import java.util.stream.Collectors;
 import net.jojoaddison.service.payment.PaymentCallback;
 import net.jojoaddison.service.payment.PaymentCallbackRefused;
 import net.jojoaddison.service.payment.PaymentIntent;
@@ -76,16 +78,45 @@ class PaymentConfigurationUnitTest {
             .hasMessageContaining("D43");
     }
 
+    /**
+     * Every state's answer to "may a booking exist against this?", driven from {@code values()}.
+     *
+     * <p>The point of this test is to <strong>break when a state is added</strong>, and the version it
+     * replaces did not. It hand-listed seven constants and there were eight: D43 added {@link
+     * PaymentState#PENDING}, whose answer here is the whole substance of that decision, and this test
+     * went green throughout. A test that has to be remembered is the same mechanism as the {@code this
+     * == A || this == B} chain {@link PaymentState} moved away from, one layer out — the omission is
+     * just silent in a test file instead of in an enum.
+     *
+     * <p>So the expectations are a map keyed by the enum, and the first assertion is that the map
+     * covers it exactly. A ninth state fails that line naming itself, before any answer is checked.
+     */
     @Test
-    @DisplayName("only committed money permits a booking")
+    @DisplayName("only committed money permits a booking, and every state has to say so")
     void permitsBookingIsExhaustive() {
-        assertThat(PaymentState.OFF_PLATFORM.permitsBooking()).isTrue();
-        assertThat(PaymentState.AUTHORIZED.permitsBooking()).isTrue();
-        assertThat(PaymentState.CAPTURED.permitsBooking()).isTrue();
-        assertThat(PaymentState.REFUNDED.permitsBooking()).isFalse();
-        assertThat(PaymentState.VOIDED.permitsBooking()).isFalse();
-        assertThat(PaymentState.DECLINED.permitsBooking()).isFalse();
-        assertThat(PaymentState.FAILED.permitsBooking()).isFalse();
+        Map<PaymentState, Boolean> expected = Map.of(
+            PaymentState.OFF_PLATFORM,
+            true,
+            PaymentState.PENDING,
+            true,
+            PaymentState.AUTHORIZED,
+            true,
+            PaymentState.CAPTURED,
+            true,
+            PaymentState.REFUNDED,
+            false,
+            PaymentState.VOIDED,
+            false,
+            PaymentState.DECLINED,
+            false,
+            PaymentState.FAILED,
+            false
+        );
+
+        assertThat(expected.keySet()).containsExactlyInAnyOrder(PaymentState.values());
+        assertThat(Arrays.stream(PaymentState.values()).collect(Collectors.toMap(state -> state, PaymentState::permitsBooking))).isEqualTo(
+            expected
+        );
     }
 
     /**
@@ -128,6 +159,9 @@ class PaymentConfigurationUnitTest {
     @Test
     @DisplayName("only committed money has to be given back")
     void holdsMoneyIsNotPermitsBooking() {
+        // The same guard as above, one line: this list is complete today, and a ninth state must not
+        // be able to arrive without somebody deciding whether the platform would be holding its money.
+        assertThat(PaymentState.values()).hasSize(8);
         assertThat(PaymentState.AUTHORIZED.holdsMoney()).isTrue();
         assertThat(PaymentState.CAPTURED.holdsMoney()).isTrue();
         assertThat(PaymentState.OFF_PLATFORM.holdsMoney()).isFalse();

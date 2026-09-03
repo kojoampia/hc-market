@@ -123,15 +123,15 @@ public class PaymentConfirmations {
             LOG.warn("a payment callback named a reference this service has never issued; nothing to apply");
             return Result.UNKNOWN_PAYMENT;
         }
-        PaymentAttempt attempt = found.get(0);
+        PaymentAttempt attempt = matching(found);
         // Read before anything writes to the row. The question moneyWithNoBooking has to answer is
-        // what this platform believed BEFORE the callback arrived — "did we already give this money
-        // back?" — and one line further down that is no longer recoverable.
-        String believedBefore = attempt.getState();
+        // what this platform believed BEFORE the callback arrived — "did we already let this money
+        // go?" — and one line further down that is no longer recoverable.
+        Believed believed = Believed.of(attempt);
         Optional<Booking> booking = bookings.findByReferenceForUpdate(attempt.getBookingReference());
 
         if (booking.isEmpty()) {
-            return moneyWithNoBooking(attempt, believedBefore, outcome);
+            return moneyWithNoBooking(attempt, believed, outcome);
         }
         // The provider's verdict and the booking transition it justifies are one change, so they are
         // written in one transaction — see PaymentRecorder.confirmed. A callback that fails part-way
@@ -165,30 +165,94 @@ public class PaymentConfirmations {
     }
 
     /**
+     * Which attempt row a callback is about, when a handle names more than one.
+     *
+     * <p>{@link PaymentRecorder#record} says in its own javadoc that "two attempts against one booking
+     * may legitimately carry the same" provider reference, which is why the lookup returns a list and
+     * not an {@code Optional} — declaring it as one would 500 on a callback that is perfectly correct.
+     * The first version then took the newest row, and that is a guess rather than a match: it is right
+     * whenever a provider reuses a handle for a retry of the <em>same</em> payment and wrong whenever
+     * the newer row belongs to a booking that no longer exists, in which case the confirmation is
+     * filed against the wrong booking and the customer who is actually waiting waits for ever — every
+     * retry landing on the same wrong row.
+     *
+     * <p><strong>The booking that is waiting is a match rather than a preference.</strong> At most one
+     * booking per handle can be in {@code PENDING_PAYMENT}: the two transitions out of it are one-way
+     * and nothing re-enters it, so a booking still in that state is the one and only thing this
+     * callback could legally move. Recency stays as the fallback for everything else — a second
+     * callback about an already-confirmed payment, a handle whose bookings have all moved on — where
+     * there is nothing to choose between and the newest row is the most recent account of the payment.
+     *
+     * <p>The lookup is deliberately the unlocked {@link BookingQueryRepository#findByReference}: this
+     * is choosing which row to work on, and the lock is taken once, on the one that is chosen.
+     */
+    private PaymentAttempt matching(List<PaymentAttempt> candidates) {
+        if (candidates.size() == 1) {
+            return candidates.get(0);
+        }
+        return candidates
+            .stream()
+            .filter(candidate ->
+                bookings
+                    .findByReference(candidate.getBookingReference())
+                    .filter(waiting -> waiting.getStatus() == BookingStatus.PENDING_PAYMENT)
+                    .isPresent()
+            )
+            .findFirst()
+            .orElseGet(() -> candidates.get(0));
+    }
+
+    /**
      * A payment whose booking is not there — either a race, or the case somebody has to look at.
      *
-     * <p>They are told apart by what the platform did to the attempt earlier, with no extra column:
-     * a row this service has already released carries {@code VOIDED} or {@code REFUNDED}, or is
-     * already flagged. A row still sitting in the state the provider first reported has simply
-     * arrived before the booking's transaction committed.
+     * <p>They are told apart by what the platform did to the attempt earlier, with no extra column —
+     * see {@link Believed}. A row still sitting in the state the provider first reported, unflagged,
+     * has simply arrived before the booking's transaction committed.
+     *
+     * <p>Three outcomes, and the middle one is the reason this is not two lines:
+     *
+     * <ul>
+     *   <li><strong>Released, and the callback holds money.</strong> The customer approved the prompt
+     *       in the gap, or the provider settled something we had cancelled. Money is committed for a
+     *       booking that does not exist and nothing here can put that right, so the row is flagged and
+     *       the log carries the whole of it at ERROR.
+     *   <li><strong>Released, and the callback holds no money.</strong> The prompt expired, or the
+     *       provider is confirming the cancellation itself. Nothing is owed, so nothing is flagged —
+     *       and, importantly, <strong>nothing is written</strong>: {@code state} here is this
+     *       platform's own record of what it did about the payment, and overwriting {@code VOIDED}
+     *       with the {@code FAILED} that follows it would destroy the one fact whoever reconciles this
+     *       needs. That is D41's rule for a failed release, applied to the callback that comes after.
+     *   <li><strong>Not released.</strong> The ordinary race. The verdict is recorded, because it is a
+     *       fact about a payment the platform will act on as soon as the booking is there, and the
+     *       provider is asked to retry.
+     * </ul>
      */
-    private Result moneyWithNoBooking(PaymentAttempt attempt, String believedBefore, PaymentOutcome outcome) {
-        boolean released = PaymentState.VOIDED.name().equals(believedBefore) || PaymentState.REFUNDED.name().equals(believedBefore);
-        if (released && outcome.state().holdsMoney()) {
-            recorder.confirmed(
-                attempt.getId(),
-                outcome.state(),
-                "%s confirmed payment %s after it was released, and its booking does not exist".formatted(
-                        attempt.getProvider(),
-                        attempt.getProviderReference()
-                    )
-            );
-            LOG.error(
-                "{} confirmed payment {} after this platform released it, for booking {} which does not exist — money is committed and nothing is owed for it",
-                attempt.getProvider(),
-                attempt.getProviderReference(),
-                attempt.getBookingReference()
-            );
+    private Result moneyWithNoBooking(PaymentAttempt attempt, Believed believed, PaymentOutcome outcome) {
+        if (believed.released()) {
+            if (outcome.state().holdsMoney()) {
+                recorder.confirmed(
+                    attempt.getId(),
+                    outcome.state(),
+                    "%s confirmed payment %s after it was released, and its booking does not exist".formatted(
+                            attempt.getProvider(),
+                            attempt.getProviderReference()
+                        )
+                );
+                LOG.error(
+                    "{} confirmed payment {} after this platform released it, for booking {} which does not exist — money is committed and nothing is owed for it",
+                    attempt.getProvider(),
+                    attempt.getProviderReference(),
+                    attempt.getBookingReference()
+                );
+            } else {
+                LOG.info(
+                    "{} reported {} for payment {}, which this platform had already released for booking {}; nothing owed, nothing changed",
+                    attempt.getProvider(),
+                    outcome.state(),
+                    attempt.getProviderReference(),
+                    attempt.getBookingReference()
+                );
+            }
             // Still a 404 to the provider: there is nothing here to apply it to, and a 200 would tell
             // them the platform has this in hand when a person has to sort it out by hand.
             return Result.BOOKING_NOT_YET;
@@ -200,5 +264,34 @@ public class PaymentConfirmations {
             attempt.getProvider()
         );
         return Result.BOOKING_NOT_YET;
+    }
+
+    /**
+     * What the platform believed about a payment before this callback arrived.
+     *
+     * <p>Captured as a value rather than read from the entity where it is needed, because the entity
+     * is managed: {@link PaymentRecorder#confirmed} joins this transaction and writes through the same
+     * persistence context, so by the time {@link #moneyWithNoBooking} runs on a path that has already
+     * recorded something, the row would answer with the callback's own verdict rather than with what
+     * preceded it.
+     *
+     * @param state the state as the row last held it, which is either the provider's last word or this
+     *     platform's record of having released the payment
+     * @param flagged whether an operator has already been asked to look at this row. It is part of
+     *     "have we let this money go?" and was missing from the first version: {@code BookingPayments}
+     *     flags a <em>failed</em> release and deliberately leaves {@code state} alone (D41), so a row
+     *     the platform tried and failed to void is indistinguishable from an untouched one by state.
+     *     Reading state alone therefore filed the worst case in the estate — money committed, booking
+     *     gone, cancellation refused — as a benign race, at INFO
+     */
+    private record Believed(String state, boolean flagged) {
+        static Believed of(PaymentAttempt attempt) {
+            return new Believed(attempt.getState(), attempt.isNeedsAttention());
+        }
+
+        /** Whether this platform has already stopped expecting to keep this money. */
+        boolean released() {
+            return PaymentState.VOIDED.name().equals(state) || PaymentState.REFUNDED.name().equals(state) || flagged;
+        }
     }
 }

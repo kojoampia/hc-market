@@ -188,13 +188,19 @@ against the hand-written resource that replaced it:
 | `AvailabilityRuleResource`, `AvailabilityOverrideResource` | catalog `web/rest/` | `ProWorkspaceResource` — generated CRUD would let **any authenticated user edit anyone's availability** |
 | `VerificationReviewResource` | catalog `web/rest/` | `VerificationDeskResource` — generated CRUD would let **any authenticated user forge or erase an audit trail about somebody else's trustworthiness**, and a forged verification is a public claim about a real person |
 | `BookingResource` | booking `web/rest/` | `CustomerBookingResource` |
+| `BookingStatusChangeResource` | booking `web/rest/` | `CustomerBookingResource.one` and the professional's equivalent, both scoped to the caller's own booking. Generated CRUD returns **200 with every status change in the estate to any `ROLE_USER`** — the history plus an `actor` column holding real logins beside erasure aliases — and, worse, lets the same token **forge or delete an audit row**, which is D34/D39's append-only evidence and the one thing `BookingWorkflow.apply` is supposed to be the only writer of. Verified at 292 rows on the quality estate |
 | `DisputeResource`, `DisputeStatusChangeResource` | booking `web/rest/` | the `ROLE_BROKERAGE` desk resource |
 | `NotificationResource` | messaging `web/rest/` | `MessagingResource` |
 
 **And their tests.** A generated `...ResourceIT` for a resource you just deleted compiles fine and
 fails at run time against a 404. Delete `CategoryResourceIT`, `ReviewResourceIT`,
 `FavouriteResourceIT`, `AvailabilityRuleResourceIT`, `AvailabilityOverrideResourceIT`,
-`DisputeResourceIT`, `DisputeStatusChangeResourceIT`, `VerificationReviewResourceIT`.
+`DisputeResourceIT`, `DisputeStatusChangeResourceIT`, `VerificationReviewResourceIT`,
+`BookingStatusChangeResourceIT`.
+
+The last one is the only row in either table with a **test that fails if you miss it**:
+`AuditTrailIsNotAnApiIT` is a new file, so regeneration leaves it in place, and it goes red the moment
+`/api/booking-status-changes` answers anybody again. Everything else here is on you to remember.
 
 **Restore the two fixtures**, which regeneration replaces with real test classes:
 `BookingResourceIT` (0 tests → 139) and `ProfessionalResourceIT` (0 tests → 120). Both carry
@@ -296,6 +302,10 @@ holder from a `@Configuration`, so the fix is always to move the holder, never t
 `BookingStatusChangeResourceIT` calls `BookingResourceIT.createEntity()` in one place and
 `createEntity(em)` in another, and which form JHipster emits has changed between versions. The
 fixtures expose **both** overloads so a regeneration cannot break the build by picking the other.
+
+That IT is now deleted along with its resource (see the delete table), so nothing in the tree calls
+either overload today. **Keep both anyway**: they exist for the window between a regeneration and the
+deletion, when the freshly generated IT is present and has to compile before you can run anything.
 
 ### The faker collision
 
@@ -650,6 +660,19 @@ time.**
   A duplicate callback is 200 and does nothing: idempotency comes from the booking's status under a
   `findByReferenceForUpdate` row lock, never from a seen-set, because what must not happen twice is the
   transition rather than the callback.
+  **Every way of failing to establish the provider gives the same 401** — a refusal, a malformed body,
+  an adapter that throws. A 500 among them is an oracle telling a prober which forgery was structurally
+  closer, which is what catching only `PaymentCallbackRefused` produced. And "off the internet" is
+  about the *gateway*: `docker-compose.dev.yml` publishes booking's own port on every interface, so on
+  a dev host the endpoint is reachable directly — the same property catalog's `/internal/**` has always
+  had.
+- **A `PENDING_PAYMENT` booking is not the customer's to cancel** (D43, as reviewed). `Cancel.from()`
+  omits it and that is deliberate, not an oversight: at that moment the provider holds a live
+  authorization the customer can still approve, so cancelling the booking without cancelling the
+  payment is money taken for a booking that does not exist. The provider's callback is the only exit —
+  into `REQUESTED` or into `CANCELLED` — until WP-13 brings a provider that can be asked to release
+  one. `cancellation-preview` refuses it with the same 409 `/cancel` gives, because it used to quote a
+  late-cancellation fee at full price against a booking whose money had never moved.
 - Review integrity is one-directional: there is **no** endpoint to delete a review. The only
   response is a public reply. `bookingReference` is unique, making "one review per booking" a schema
   guarantee.

@@ -438,6 +438,23 @@ that is never confirmed. It blocks nothing today: nothing in this estate reserve
 when a booking is made, which was checked rather than assumed, and the day that changes the
 reservation should ignore stale pending bookings at read time rather than acquire a sweeper.
 
+**Reviewed 2026-09-03: nine findings, eight real, all fixed on the same branch.** The largest was not
+WP-11's at all — JHipster's generated `BookingStatusChangeResource` was still mounted, so any
+`ROLE_USER` token read the estate's whole status-change history (292 rows on quality) and could forge
+or delete an audit row. Deleted, as `BookingResource` and the two dispute resources already were, with
+a new `AuditTrailIsNotAnApiIT` that fails if regeneration puts it back. In the payment code: a release
+that *failed* was indistinguishable from an untouched payment, so the worst case in the estate was
+logged as a benign race; a released row's `VOIDED` was overwritten by the `FAILED` that followed it; a
+reused provider handle was matched by recency rather than to the booking that is waiting; a malformed
+body escaped as 500 while a forged one got 401, which is an oracle; `cancellation-preview` quoted a
+late-cancellation fee at full price against a pending booking whose money had never moved; a `PENDING`
+outcome could be built with no next action; and `permitsBookingIsExhaustive` hand-listed seven of eight
+states, so the test whose job was to break when a state was added did not break when `PENDING` was.
+The ninth — a lossy charset on the raw webhook body — **did not reproduce** and the code was left
+alone: the converter in this application's context is UTF-8 and JSON is special-cased regardless,
+checked rather than argued. D43 carries the detail, including the correction to its own "enforced
+twice" claim, which was true of the design and not of the estate while that CRUD endpoint was up.
+
 ## WP-12 — Payments: the zero-amount booking · READY
 
 Two seeded services are genuinely free, and "from ₵0" is correct rather than a bug. `authorizePayment`
