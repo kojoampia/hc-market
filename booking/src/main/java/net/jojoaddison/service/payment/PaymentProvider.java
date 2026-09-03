@@ -115,4 +115,34 @@ public interface PaymentProvider {
 
     /** Asks the provider what it thinks the state is — the reconciliation call. */
     PaymentOutcome status(String providerReference);
+
+    /**
+     * Turns a request that claims to be this provider's webhook into an outcome, or refuses it —
+     * {@code decisions.md} D43.
+     *
+     * <p><strong>This method is the authentication.</strong> Nothing before it has established who is
+     * calling: {@code /webhooks/payments/{provider}} takes no token, because a provider cannot be
+     * given one, and the security chain in front of it permits the request precisely so that this can
+     * decide. An implementation must verify the callback by the provider's own scheme — Paystack signs
+     * the raw body with HMAC-SHA512 under the secret key, Hubtel and MoMo have their own — and must
+     * throw {@link PaymentCallbackRefused} for anything it cannot prove came from the provider.
+     * Returning an outcome is a statement that this really is the provider speaking, and everything
+     * downstream acts on it: a booking is created, or cancelled, on the strength of it.
+     *
+     * <p><strong>Verify before parsing, and parse the same bytes that were verified.</strong> The
+     * signature covers what was sent, so a body round-tripped through a parser is a different body.
+     * See {@link PaymentCallback}.
+     *
+     * <p>The outcome's {@code providerReference} is the whole point of the return value: it is how the
+     * platform finds the {@code payment_attempt} row, and through it the booking. An outcome without
+     * one cannot be applied to anything, so an implementation that cannot extract a reference should
+     * refuse rather than return.
+     *
+     * <p>An implementation must be prepared for the <em>same</em> callback more than once — every one
+     * of these providers retries until it gets a 2xx, and some send a duplicate for good measure. It
+     * does not have to de-duplicate: {@code PaymentConfirmations} decides idempotency from the state
+     * of the booking rather than from a record of what has been seen, so the honest thing for an
+     * adapter to do is to report each callback faithfully.
+     */
+    PaymentOutcome readCallback(PaymentCallback callback);
 }

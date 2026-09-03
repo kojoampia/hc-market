@@ -1,10 +1,20 @@
 package net.jojoaddison.service.payment;
 
 /**
- * What the platform knows about the money for one booking — {@code decisions.md} D15/D31.
+ * What the platform knows about the money for one booking — {@code decisions.md} D15/D31/D43.
  *
  * <p>Every payment provider has a notion of these states; none of them is specific to one. That is
  * the test each value had to pass to be here.
+ *
+ * <h2>The two questions are answered per value, not by a rule over the list</h2>
+ *
+ * <p>{@link #permitsBooking()} and {@link #holdsMoney()} used to be written as {@code this == A ||
+ * this == B} chains at the bottom of the file. Both were correct, and both had the same defect: a
+ * value added later gets {@code false} for each of them <strong>by omission</strong>, which is a
+ * decision taken by whoever forgot rather than by whoever added the state. D43 added {@link #PENDING}
+ * and the answer to the first question is the whole substance of that decision, so the answers now
+ * sit on the constants where they cannot be reached by default. Adding a state without answering both
+ * is a compile error.
  */
 public enum PaymentState {
     /**
@@ -16,16 +26,44 @@ public enum PaymentState {
      * defensible business model, but it was nowhere stated, and an unstated assumption about money is
      * the kind that gets discovered by an accountant.
      */
-    OFF_PLATFORM,
+    OFF_PLATFORM(true, false),
+
+    /**
+     * The provider has taken the request and nobody can yet say whether the money will arrive —
+     * {@code decisions.md} D43.
+     *
+     * <p>This is the ordinary answer from all three providers D37 chose. Paystack returns an
+     * authorization URL for the customer to visit; Hubtel and MTN MoMo raise a prompt on the
+     * customer's phone. In each case the synchronous call ends with the payment un-decided and the
+     * customer holding the next move, so a seam whose {@code authorize} could only answer
+     * {@code AUTHORIZED} or {@code DECLINED} would have had to <em>guess</em>, and the shape of that
+     * guess is the same either way: an optimistic guess creates bookings for money that never
+     * arrives, and a pessimistic one refuses every booking in the estate.
+     *
+     * <p><strong>It permits a booking, and that is D43's decision rather than a property of the
+     * word.</strong> What it does not permit is a booking in {@code REQUESTED}: a pending payment
+     * yields a booking in {@code PENDING_PAYMENT}, which no professional-facing query returns and
+     * which publishes no {@code booking.requested} until the money is confirmed. See D43 for the
+     * reasoning and for what the alternative would have cost.
+     *
+     * <p>It holds no money — nothing is committed until the customer acts — but it is not inert
+     * either, which is why {@link #awaitingCustomer()} exists: an abandoned pending payment has to be
+     * cancelled at the provider, because the customer may still approve the prompt afterwards.
+     *
+     * <p>A pending outcome <strong>must</strong> carry a provider reference; {@link PaymentOutcome}
+     * refuses to construct one without. A pending payment nothing can name is one no webhook can ever
+     * find, which is the same class of defect as D41's dropped handle.
+     */
+    PENDING(true, false),
 
     /** The provider has the customer's commitment; the money has not moved yet. */
-    AUTHORIZED,
+    AUTHORIZED(true, true),
 
     /** The money has moved to wherever the provider moves it to. */
-    CAPTURED,
+    CAPTURED(true, true),
 
     /** Returned to the customer, in whole or in part. */
-    REFUNDED,
+    REFUNDED(false, false),
 
     /**
      * The authorization was released without the money ever moving — {@code decisions.md} D41.
@@ -40,26 +78,39 @@ public enum PaymentState {
      * questions D15 defers: whichever way settlement is eventually arranged, an authorization the
      * platform decides not to use has to be given back.
      */
-    VOIDED,
+    VOIDED(false, false),
 
     /** The customer's instrument said no. A business answer, and final for this attempt. */
-    DECLINED,
+    DECLINED(false, false),
 
     /** The provider could not be asked, or answered with an error. A technical answer, so retryable. */
-    FAILED;
+    FAILED(false, false);
+
+    private final boolean permitsBooking;
+    private final boolean holdsMoney;
+
+    PaymentState(boolean permitsBooking, boolean holdsMoney) {
+        this.permitsBooking = permitsBooking;
+        this.holdsMoney = holdsMoney;
+    }
 
     /**
-     * Whether a booking may be created against this state.
+     * Whether a booking row may be written against this state.
      *
      * <p>{@link #OFF_PLATFORM} passes — it has to, or the estate as it stands today could take no
      * bookings at all. {@link #AUTHORIZED} and {@link #CAPTURED} pass because the money is committed.
-     * The rest do not, and the distinction between {@link #DECLINED} and {@link #FAILED} is what the
-     * client should do next, not whether to proceed. {@link #VOIDED} does not pass either: it is what
-     * an authorization becomes after the platform has given it back, so a booking made against one
-     * would be a booking whose money has already been released.
+     * {@link #PENDING} passes because D43 says so, and it is the only one of the four whose booking is
+     * not a {@code REQUESTED} one. The rest do not pass, and the distinction between {@link #DECLINED}
+     * and {@link #FAILED} is what the client should do next, not whether to proceed.
+     *
+     * <p><strong>This answers "may a row exist", not "in what state".</strong> The mapping from an
+     * outcome to a {@code BookingStatus} is in {@code CustomerBookingResource}, deliberately: a
+     * payment seam that named booking states would be a seam that knows the booking state machine,
+     * and this one is meant to survive a provider being chosen without knowing anything about
+     * bookings beyond a reference and an amount.
      */
     public boolean permitsBooking() {
-        return this == OFF_PLATFORM || this == AUTHORIZED || this == CAPTURED;
+        return permitsBooking;
     }
 
     /**
@@ -68,8 +119,25 @@ public enum PaymentState {
      * <p>{@link #OFF_PLATFORM} is the whole reason this is a method rather than a null check on the
      * reference: nothing was ever committed, so there is nothing to release, and calling a provider
      * to release it would fail loudly against an estate where that is simply the normal case.
+     *
+     * <p>{@link #PENDING} answers <strong>false</strong> and still needs releasing — see
+     * {@link #awaitingCustomer()}. Money that has not arrived is not money held, but the request for
+     * it is still live at the provider.
      */
     public boolean holdsMoney() {
-        return this == AUTHORIZED || this == CAPTURED;
+        return holdsMoney;
+    }
+
+    /**
+     * Whether the provider is still waiting on the customer, so money may yet arrive.
+     *
+     * <p>The state that is neither "we hold it" nor "nothing will happen", and the reason
+     * {@link BookingPayments#release} cannot be written as a test of {@link #holdsMoney()} alone. A
+     * booking abandoned while its payment is pending must still have that payment cancelled at the
+     * provider: the customer's phone is sitting on a prompt, and approving it an hour later against a
+     * booking that was never created is D41's defect arriving down the asynchronous path.
+     */
+    public boolean awaitingCustomer() {
+        return this == PENDING;
     }
 }

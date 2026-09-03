@@ -92,6 +92,16 @@ public class BookingPayments {
      * assumption — it is true of any provider that has both calls, and a provider with only one
      * implements the other as an alias.
      *
+     * <p><strong>A pending payment is released too, and that is D43's addition.</strong> It holds no
+     * money — {@link PaymentState#holdsMoney()} is false for it — and it is the state that most needs
+     * this: the customer's phone is sitting on a prompt, or their browser on a payment page, for a
+     * booking that has just failed to exist. Left alone, they approve it a minute later and the estate
+     * has taken money for nothing, with the confirmation arriving at a webhook that will never find a
+     * booking. That is exactly D41's defect coming back down the asynchronous path, which is why the
+     * test here is {@code holdsMoney() || awaitingCustomer()} rather than the tidier first half alone.
+     * A provider that cannot cancel a live prompt answers {@link PaymentState#FAILED} and the row is
+     * flagged — correctly, because a person now has a payment to watch for.
+     *
      * <p><strong>A release that fails is flagged, not retried.</strong> The row is marked for a
      * person: an automatic second attempt against a provider that has just failed is how one stuck
      * payment becomes several, and the operator's action — reconcile against the provider's console —
@@ -105,9 +115,11 @@ public class BookingPayments {
      *     customer
      */
     public void release(Taken taken, String why) {
-        if (taken.attemptId() == null || !taken.outcome().state().holdsMoney()) {
-            // Nothing was committed — an off-platform booking, or a refusal. There is nothing to give
-            // back, and asking the unconfigured provider to give it back throws by design.
+        PaymentState state = taken.outcome().state();
+        if (taken.attemptId() == null || !(state.holdsMoney() || state.awaitingCustomer())) {
+            // Nothing was committed and nothing is on its way — an off-platform booking, or a
+            // refusal. There is nothing to give back, and asking the unconfigured provider to give it
+            // back throws by design.
             return;
         }
         String reference = taken.outcome().providerReference();
@@ -115,7 +127,10 @@ public class BookingPayments {
             // The amount and currency come from the intent that was authorized, not from the
             // booking: what may be given back is bounded by what the provider agreed to, and the
             // booking is the thing that failed to exist.
-            PaymentOutcome released = taken.outcome().state() == PaymentState.CAPTURED
+            // A pending payment takes the void path with an authorization: both are "stop this, no
+            // money has moved", and a provider with one call for cancelling a live payment uses it
+            // for both. Only a capture has to be undone by moving money back.
+            PaymentOutcome released = state == PaymentState.CAPTURED
                 ? provider.refund(reference, taken.intent().amountMinor(), taken.intent().currency(), why)
                 : provider.voidAuthorization(reference, why);
             if (released.state() == PaymentState.VOIDED || released.state() == PaymentState.REFUNDED) {

@@ -632,6 +632,24 @@ time.**
   does not visit it**; adding a customer field there without adding it to `ErasureWorkflow` in the same
   commit is how that stops being true, and `attention_note` is composed by the platform rather than
   copied from a provider's message for the same reason.
+- **A booking may exist while its payment is pending, and the professional is not told** (D43). All
+  three providers D37 chose confirm asynchronously, so `authorize` can answer `PENDING`; the booking is
+  written in **`BookingStatus.PENDING_PAYMENT`** and `booking.requested` is **withheld** until a webhook
+  confirms the money. That withheld event is the guard that matters — the status filter on
+  `/api/pro/requests` is the second one, because the event is what reaches messaging and no query of
+  messaging's is under booking's control. So `BookingCreator` has two ways in and only one of them
+  publishes; if you add a third, decide which it is. Nothing enters `PENDING_PAYMENT` again once it has
+  left, and only the two payment transitions leave it.
+- **The payment webhook is `POST /webhooks/payments/{provider}`, and no gateway route matches it**
+  (D43). Authentication is the provider's signature over the **raw** body, checked inside
+  `PaymentProvider.readCallback`; an unverified caller gets 401 with no detail, which today is every
+  caller. What keeps it off the internet is D28's property — the four route predicates are
+  `/services/<service>/api/**` and this is not under `/api` — not the `permitAll` in
+  `PaymentWebhookSecurityConfiguration`. Exposing it (WP-13) is **two** changes, a route *and* a
+  gateway security permit; the route alone returns 401 before routing and reads as a broken provider.
+  A duplicate callback is 200 and does nothing: idempotency comes from the booking's status under a
+  `findByReferenceForUpdate` row lock, never from a seen-set, because what must not happen twice is the
+  transition rather than the callback.
 - Review integrity is one-directional: there is **no** endpoint to delete a review. The only
   response is a public reply. `bookingReference` is unique, making "one review per booking" a schema
   guarantee.

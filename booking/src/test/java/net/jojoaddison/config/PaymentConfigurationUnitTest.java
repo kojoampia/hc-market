@@ -3,6 +3,9 @@ package net.jojoaddison.config;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.Map;
+import net.jojoaddison.service.payment.PaymentCallback;
+import net.jojoaddison.service.payment.PaymentCallbackRefused;
 import net.jojoaddison.service.payment.PaymentIntent;
 import net.jojoaddison.service.payment.PaymentProvider;
 import net.jojoaddison.service.payment.PaymentState;
@@ -56,6 +59,23 @@ class PaymentConfigurationUnitTest {
             .hasMessageContaining("D15");
     }
 
+    /**
+     * A callback is refused, and refusing is not the same as failing — {@code decisions.md} D43.
+     *
+     * <p>Every other unreachable call on this bean throws {@link IllegalStateException}, deliberately,
+     * because reaching it means this platform's own code holds a false belief. This one is reached by
+     * whoever posts to a public webhook, so it answers with the type the endpoint turns into a flat
+     * 401. An {@code IllegalStateException} here would be a 500 and a stack trace per probe, which
+     * tells a stranger their request got further into the application than it did.
+     */
+    @Test
+    @DisplayName("a callback to an estate with no provider is refused, not exploded over")
+    void readCallbackRefusesQuietly() {
+        assertThatThrownBy(() -> provider.readCallback(new PaymentCallback("none", Map.of("x-signature", "whatever"), "{}")))
+            .isInstanceOf(PaymentCallbackRefused.class)
+            .hasMessageContaining("D43");
+    }
+
     @Test
     @DisplayName("only committed money permits a booking")
     void permitsBookingIsExhaustive() {
@@ -66,6 +86,34 @@ class PaymentConfigurationUnitTest {
         assertThat(PaymentState.VOIDED.permitsBooking()).isFalse();
         assertThat(PaymentState.DECLINED.permitsBooking()).isFalse();
         assertThat(PaymentState.FAILED.permitsBooking()).isFalse();
+    }
+
+    /**
+     * D43's decision, pinned where it is taken rather than only where it is used.
+     *
+     * <p>Three answers, and each of them is the substance of a paragraph in the decision. A pending
+     * payment <strong>permits</strong> a booking — that is "may a booking exist while its payment is
+     * pending", answered yes. It <strong>holds no money</strong>, because nothing has been committed.
+     * And it is nevertheless <strong>awaiting the customer</strong>, which is why an abandoned pending
+     * payment still has to be cancelled at the provider: the customer's phone is on a prompt they can
+     * approve a minute later.
+     *
+     * <p>This asserts a decision rather than fixing a defect, so it cannot be red against the code
+     * before D43 — {@code PENDING} did not exist. It is red against the two obvious alternatives: a
+     * {@code PENDING(false, false)} that refuses the booking, and a {@code holdsMoney} that folds
+     * pending in with authorized.
+     */
+    @Test
+    @DisplayName("a pending payment permits a booking, holds no money, and is still live")
+    void pendingIsThreeAnswers() {
+        assertThat(PaymentState.PENDING.permitsBooking()).isTrue();
+        assertThat(PaymentState.PENDING.holdsMoney()).isFalse();
+        assertThat(PaymentState.PENDING.awaitingCustomer()).isTrue();
+        // And nothing else is: awaitingCustomer exists to name one state, not to become a synonym for
+        // "not final". A DECLINED payment is over, and releasing it would call a provider for nothing.
+        assertThat(PaymentState.AUTHORIZED.awaitingCustomer()).isFalse();
+        assertThat(PaymentState.DECLINED.awaitingCustomer()).isFalse();
+        assertThat(PaymentState.OFF_PLATFORM.awaitingCustomer()).isFalse();
     }
 
     /**
@@ -87,6 +135,7 @@ class PaymentConfigurationUnitTest {
         assertThat(PaymentState.REFUNDED.holdsMoney()).isFalse();
         assertThat(PaymentState.DECLINED.holdsMoney()).isFalse();
         assertThat(PaymentState.FAILED.holdsMoney()).isFalse();
+        assertThat(PaymentState.PENDING.holdsMoney()).isFalse();
     }
 
     @Test
