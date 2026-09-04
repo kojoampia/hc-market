@@ -638,10 +638,23 @@ time.**
   this happen" (`raisedAt`, `completedAt`, the ledger) and wrong for "when is the appointment": if a
   zone's rules ever change, the 7 a.m. session must stay at 7 a.m. A booking's zone is captured from
   the professional at creation and never recomputed.
+  **Rendering an `Instant` as a date needs a zone too, and it must be named in the code** (D47).
+  There is no such thing as picking one silently — only picking one and not writing it down, and
+  because Ghana is UTC+0 all year `ZoneId.systemDefault()` is right on every machine anybody tests on
+  and wrong on the first one with a `TZ`. It is already wrong on this workstation, which runs
+  `Europe/Berlin`. `MarketplaceService.BADGE_ZONE` is the pattern; the four remaining
+  `LocalDate.now()` calls in catalog are the outstanding instances of the same thing.
 - **`Professional.verification` is the projection of the latest `VerificationReview`** (D16), and the
   desk writes both in one transaction. This is a deliberate exception to "derived, never stored":
   Browse filters on the column, and the 18 seeded professionals have a state with no history behind
   it. The history is append-only — no edit, no delete, same as reviews.
+  **What of it reaches the public profile is `verifiedOn` and nothing else** — a `LocalDate`, in
+  `Africa/Accra` because that is the desk's calendar and not the professional's (D21 gives the
+  professional's zone appointments, not acts), and dated from the *latest* review only if that review
+  is `VERIFIED`, so the date cannot outlive the badge (D33). The reviewer's login and the evidence
+  reference stay behind `ROLE_BROKERAGE`, and since D47 a test on the **serialised** profile body
+  fails if either appears — so "just add the reviewer, it's useful" is red rather than a disclosure.
+  It carried a full `Instant` until D47, publishing the time of day the verification desk works.
 - **Nothing a client sends decides what a booking costs or whose it is.** `POST /api/bookings` takes
   `priceMinor`, `currency` and `serviceName` from the catalogue (D22) and `professionalLogin` from
   catalog's `/internal/**` lookup (D28); a request that disagrees is 409, an unreachable catalogue is

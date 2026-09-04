@@ -8,6 +8,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import jakarta.persistence.EntityManager;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import net.jojoaddison.IntegrationTest;
 import net.jojoaddison.domain.Professional;
 import net.jojoaddison.domain.enumeration.VerificationState;
@@ -29,13 +31,20 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>Three properties matter here and they are the three this file asserts: the decision and the
  * professional's public state move <strong>together</strong>, the reviewer is taken from the token
  * rather than the body, and an ordinary user cannot touch any of it.
+ *
+ * <p>It also asserts what the desk's work looks like from <em>outside</em> — D33's date that must not
+ * outlive its badge, and D47's two: the date is a date on the wire, and the reviewer and the evidence
+ * reference are not on it at all. Those belong here rather than in a public-profile test because the
+ * only way to give the public profile something to disclose is to make a decision at this desk first.
  */
 @IntegrationTest
 @AutoConfigureMockMvc
 class VerificationDeskResourceIT {
 
     private static final String URL = "/api/desk/professionals/{ref}/verification";
+    private static final String PUBLIC_PROFILE = "/api/professionals/{ref}";
     private static final String DESK = "ama.brokerage";
+    private static final String EVIDENCE = "CID-2026-0041";
 
     @Autowired
     private MockMvc mockMvc;
@@ -240,6 +249,81 @@ class VerificationDeskResourceIT {
         assertThat(marketplace.verifiedOn(professional.getReference())).isNull();
         // And the history is still there — the date goes, the audit trail does not.
         assertThat(reviews.findByProfessionalReferenceOrderByReviewedAtDesc(professional.getReference())).hasSize(2);
+    }
+
+    /**
+     * <strong>The date only, on the wire and not just in the comment</strong> — {@code decisions.md}
+     * D47.
+     *
+     * <p>{@code ProfessionalDetail.verifiedOn} said "the DATE ONLY" while serialising an
+     * {@code Instant}, so the public profile carried {@code "2026-01-14T09:41:07Z"} — the time of day
+     * BridgeCare staff clear their queue, on a field that exists to say a person checked and when
+     * without saying which person.
+     *
+     * <p>Asserted on the serialised body rather than on the DTO, because the defect is a shape
+     * arriving on the wire and a Java object cannot show it. Rendered in {@code Africa/Accra} — the
+     * desk's own zone, not the professional's and not the JVM's; see
+     * {@code MarketplaceService.BADGE_ZONE} and {@code VerificationBadgeDateUnitTest}.
+     */
+    @Test
+    @Transactional
+    @WithMockUser(username = DESK, authorities = "ROLE_BROKERAGE")
+    @DisplayName("the public profile carries a date, not an instant")
+    void thePublicDateIsADate() throws Exception {
+        decide("VERIFIED");
+
+        String expected = LocalDate.now(ZoneId.of("Africa/Accra")).toString();
+        String body = mockMvc
+            .perform(get(PUBLIC_PROFILE, professional.getReference()))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.verifiedOn").value(expected))
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+
+        assertThat(body).contains("\"verifiedOn\":\"%s\"".formatted(expected));
+    }
+
+    /**
+     * <strong>What the badge must never say</strong> — {@code decisions.md} D16/D47.
+     *
+     * <p>D16 kept the reviewer's login and the evidence reference on the {@code ROLE_BROKERAGE} desk
+     * endpoint, and until D47 that was true only because nobody had added them to the public
+     * projection. This makes "just add the reviewer, it is useful" a red test rather than a
+     * disclosure — a staff name and a case number published to anyone who asks for a profile.
+     *
+     * <p>On the serialised body, deliberately. A serialiser being helpful — an added getter, an
+     * {@code @JsonUnwrapped}, a projection that starts returning the entity — is invisible to a test
+     * that inspects a Java object, and every one of those routes puts the field on the wire.
+     *
+     * <p>The professional is verified first with a real evidence reference, so the absence being
+     * asserted is an absence from a profile that <em>has</em> something to leak. Against an unverified
+     * one this would pass for the wrong reason for ever.
+     */
+    @Test
+    @Transactional
+    @WithMockUser(username = DESK, authorities = "ROLE_BROKERAGE")
+    @DisplayName("the public profile names neither the reviewer nor the evidence")
+    void thePublicProfileDisclosesNeitherReviewerNorEvidence() throws Exception {
+        mockMvc
+            .perform(
+                post(URL, professional.getReference())
+                    .with(csrf())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"decision\":\"VERIFIED\",\"evidenceRef\":\"%s\",\"note\":\"Ghana Card seen\"}".formatted(EVIDENCE))
+            )
+            .andExpect(status().isCreated());
+
+        String body = mockMvc
+            .perform(get(PUBLIC_PROFILE, professional.getReference()))
+            .andExpect(status().isOk())
+            // The date is there, so this is a profile with a verification behind it to disclose.
+            .andExpect(jsonPath("$.verifiedOn").isNotEmpty())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+
+        assertThat(body).doesNotContain("reviewer").doesNotContain(DESK).doesNotContain("evidenceRef").doesNotContain(EVIDENCE);
     }
 
     /** Re-verifying after a suspension dates the badge from the review that restored it. */

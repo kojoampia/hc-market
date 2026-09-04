@@ -31,7 +31,7 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **WP-12** | Payments: the zero-amount booking | DONE | D44 — reviewed 2026-09-03, four findings, all fixed |
 | **WP-13** | Payments: provider choice and Act 987 | PARTLY DONE | D45 — registry, choice, route, permit and secrets built; the three adapters are seams awaiting real documentation, and Act 987 is a question for a person. Reviewed 2026-09-04, five findings, all fixed |
 | **WP-14** | Verification badge | DONE | — |
-| **WP-15** | Badge: date-only on the wire | READY | — |
+| **WP-15** | Badge: date-only on the wire | DONE | D47 |
 | **WP-16** | Search performance | WON'T (measured) | — |
 | **WP-17** | Video and WhatsApp providers | READY (spec only) | D37 — cost both, build neither |
 | **WP-18** | Production `infranet` alias check | CLOSED | D37 — the rename made it moot |
@@ -607,15 +607,50 @@ past a later suspension, so `SUSPENDED` and an old `verifiedOn` shipped together
 rendering "Verified on {date}" showed a badge for someone whose verification had been removed. The
 regression tests were confirmed to fail on the old code before being kept.
 
-## WP-15 — Badge: date-only on the wire · READY
+## WP-15 — Badge: date-only on the wire · DONE
 
-The DTO comment says "the DATE ONLY" and the field serialises a full `Instant` — disclosing when desk
-staff work, which is adjacent to the reviewer identity D16 keeps private, and contradicting the DTO's
-own documentation. `LocalDate` in a stated zone. Small.
+D47. The DTO comment said "the DATE ONLY" and the field serialised a full `Instant`, to the
+nanosecond — disclosing when desk staff work, which is adjacent to the reviewer identity D16 keeps
+private, and contradicting the DTO's own documentation. It is now a `LocalDate`, and **only the
+rendering changed**: `VerificationReview.reviewedAt` is still an `Instant` and the desk endpoint
+still returns it in full.
 
-Same package: nothing pins the non-disclosure. One assertion that the public profile JSON contains
-neither the reviewer key nor `evidenceRef` turns a future "just add the reviewer" into a red test
-instead of a disclosure.
+**The zone was the decision, and it is `Africa/Accra`, named as `MarketplaceService.BADGE_ZONE`.**
+Not the JVM default, which is right on every machine in this estate and was already wrong on the
+workstation this was built on — `Europe/Berlin`, so the unit test written against a
+`systemDefault()` implementation reported `expected: 2026-01-14 but was: 2026-01-15` with no fixture
+arranging it. And not the professional's own `zoneId`, because D21 gives that the wall clock of an
+**appointment**, and a verification is not delivered anywhere — it is BridgeCare reading documents at
+a desk, which D21 puts in its other category, the `Instant` recording "when did this happen". Stated
+consequence: a review recorded at 23:40 in Accra is dated the 14th on the badge and is already the
+15th for a reader in Nairobi. The badge names the day BridgeCare did the work, in BridgeCare's
+calendar, and reads the same to everybody.
+
+**Same package: the non-disclosure is pinned now.** D16 kept the reviewer's login and the evidence
+reference behind `ROLE_BROKERAGE`, and until this that was true only because nobody had added them to
+the public projection — no test anywhere would have gone red. `thePublicProfileDisclosesNeitherReviewerNorEvidence`
+verifies a professional with a real evidence reference at the desk and asserts the **serialised**
+public body carries neither key nor value. On the body rather than the DTO, because a serialiser
+being helpful is invisible to a test that inspects a Java object.
+
+Both confirmed red first, and the second the only way it could be — by temporarily adding `reviewer`
+and `evidenceRef` to `ProfessionalDetail` and watching it quote the leaked body back
+(`"reviewer":"ama.brokerage","evidenceRef":"CID-2026-0041"` … `not to contain: "reviewer"`), then
+removing them. D33's two regression tests still mean what they claim: they assert presence and
+absence across a `VERIFIED → SUSPENDED → VERIFIED` history, which a type change does not touch.
+
+No client breaks, checked rather than assumed: the prototype's `p.verifiedOn.slice(0,10)` becomes a
+no-op instead of a truncation and `parseD` wants exactly what a `LocalDate` serialises to;
+`verify-prototype-live.mjs` reads `p1.verified`, not the date; `verify-cycle.sh` reads neither.
+catalog: **88 unit + 127 IT** green on a full `clean verify`.
+
+**Named, not fixed:** catalog has four other implicit-zone `LocalDate.now()` calls — the same class
+of latent defect, none of them this package's, and `Review.publishedOn` is a stored date rather than
+a rendered one so correcting it is a data question. D47 records them.
+
+**Not done:** no run against the quality box. The 18 seeded professionals have no verification review
+history, so `verifiedOn` is null on every one of them and the box cannot exercise this field without
+a desk call being made against it first.
 
 ## WP-16 — Search performance · WON'T, for now
 
