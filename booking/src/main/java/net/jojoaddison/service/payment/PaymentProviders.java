@@ -1,8 +1,12 @@
 package net.jojoaddison.service.payment;
 
+import jakarta.annotation.PostConstruct;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -29,8 +33,7 @@ import org.springframework.stereotype.Service;
  * <p>{@code PaymentConfiguration.unconfiguredPaymentProvider} is still here and still answers
  * {@link PaymentState#OFF_PLATFORM}, which is the truth about this estate today: the customer pays
  * the professional directly. It is injected <strong>by name</strong> rather than found by its type or
- * its {@code name()}, so this class holds no opinion about what an absent provider is called and a
- * real adapter cannot make itself the fallback by naming itself {@code none}.
+ * its {@code name()}, so this class holds no opinion about what an absent provider is called.
  *
  * <p><strong>The fallback is never a choice.</strong> {@link #choices()} excludes it, so a customer
  * cannot ask for "no provider" and get a booking created with no money behind it, and an estate with
@@ -38,6 +41,24 @@ import org.springframework.stereotype.Service;
  * reachable from {@link #named(String)} because the webhook resolves by the name in its path and
  * refusing a callback addressed to it is the fallback's own job — {@code readCallback} throws
  * {@link PaymentCallbackRefused}, which is a 401 rather than a 404 pretending to be one.
+ *
+ * <h2>One name, one provider — refused at startup</h2>
+ *
+ * <p>Injecting the fallback by bean name means no adapter can <em>become</em> the fallback by calling
+ * itself {@code none}. That was written down as the guarantee and it was only half of one: the hazard
+ * runs in the mirror direction. {@link #choices()} excludes the fallback <strong>by identity</strong>,
+ * so an adapter claiming the same name is offered; {@link #named(String)} returns the
+ * <strong>first</strong> match, and the fallback is declared first. So {@code chosen("none")} passed
+ * the check and resolved to the fallback — {@code OFF_PLATFORM}, a booking in {@code REQUESTED},
+ * {@code booking.requested} published, the professional told, and nobody ever asked for the money.
+ *
+ * <p>The same shape closes over any two adapters sharing a name: {@code distinct()} in
+ * {@code choices()} offers it once, {@code findFirst()} in {@code named} always answers with the
+ * same one, and the other is unreachable by a booking and unaddressable by its own callbacks — a
+ * provider that takes money nothing here can confirm. Neither is reachable today, since the three
+ * names are fixed constants, and {@link #refuseAmbiguousNames()} refuses both at startup anyway: a
+ * name collision is a programming error rather than a runtime condition, and there is nothing a
+ * running estate could usefully do about one.
  *
  * <h2>Nothing here calls {@code name()} eagerly</h2>
  *
@@ -71,6 +92,43 @@ public class PaymentProviders {
     }
 
     /**
+     * Refuses a registry in which two providers answer to one name, before it can take a booking.
+     *
+     * <p>Startup, because there is no other useful moment. A collision makes one adapter unreachable
+     * by {@link #named(String)} and invisible in {@link #choices()}, and neither of those can report
+     * it: the lookup has an answer and the offer looks complete. Refusing a booking at run time would
+     * be refusing the wrong party for somebody else's mistake, so the context does not start.
+     *
+     * <p><strong>This is not the eager index D44 warned against.</strong> It reads every name once
+     * through {@link #nameOf}'s safe path and keeps none of them — nothing is cached, so an adapter
+     * that could not answer at startup is still asked again on every later lookup. An adapter that
+     * cannot name itself is not a collision either: {@code null} is not a name two things can share,
+     * and such a provider is already excluded from the offer.
+     *
+     * <p>Package-private and {@code @PostConstruct}: the unit tests call it directly, and one of them
+     * asserts the annotation is still on it — a guard the container never runs is not a guard, which
+     * is the same lesson the gateway's webhook permit learned.
+     */
+    @PostConstruct
+    void refuseAmbiguousNames() {
+        Set<String> seen = new HashSet<>();
+        List<String> ambiguous = new ArrayList<>();
+        for (PaymentProvider provider : registered) {
+            String name = configuredName(provider);
+            if (name != null && !seen.add(name) && !ambiguous.contains(name)) {
+                ambiguous.add(name);
+            }
+        }
+        if (!ambiguous.isEmpty()) {
+            throw new IllegalStateException(
+                "two payment providers answer to the same name and only the first is reachable: " +
+                String.join(", ", ambiguous) +
+                " — a callback can be handed to one of them and the other takes bookings nothing can confirm (decisions.md D45)"
+            );
+        }
+    }
+
+    /**
      * The provider a callback addressed to {@code name} should be handed to, if there is one.
      *
      * <p>Searches everything registered, the fallback included. D43 wrote the refusal for "a callback
@@ -96,6 +154,11 @@ public class PaymentProviders {
      * <p>The fallback is not among them, and neither is an adapter that cannot name itself: a
      * provider nobody can name is a provider no callback can be routed back to, so offering it would
      * create bookings whose payments have nowhere to arrive.
+     *
+     * <p>The {@code distinct()} is belt and braces rather than the guarantee. Two providers sharing a
+     * name would be offered once and resolved always to the same one, which is why
+     * {@link #refuseAmbiguousNames()} stops the context instead of letting the list quietly tidy it
+     * away.
      */
     public List<String> choices() {
         return registered

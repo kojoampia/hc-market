@@ -3993,7 +3993,8 @@ in the gateway:
   authenticates *before* routing, so the route alone is a webhook that returns 401 at the edge:
   nothing reaches booking, nothing appears in booking's log, and the provider retries until it files
   the payment as undelivered. That reads as a broken provider integration rather than as a missing
-  line, which is why the pair is written down in four places and asserted in two.
+  line, which is why the pair is written down in four places and asserted in three — the review below
+  added the third, and it is the only one of them that observes the running container.
 
 **D28's property is narrowed by exactly one path and not weakened.** Catalog's `/internal/**` is
 still unroutable; the dangerous near-miss is `/services/healthconnectbooking/**`, one segment shorter
@@ -4002,6 +4003,11 @@ CI's route check used to demand that *every* predicate end in `/api/**` and that
 four; it now allows exactly one webhook route, matched in full, and a second check greps the
 gateway's permit for the same string and for `HttpMethod.POST`. A route without its permit fails CI
 rather than a provider.
+
+A third check, added by the review, pins the webhook route's **target and prefix** as well as its
+predicate: the greps above read predicates only, so a `ROUTES_4_URI` pointing at catalog and a
+`StripPrefix=1` both passed. The comparison is relative — the webhook route must point wherever
+booking's own `/api` route points — because the three compose files name booking three different ways.
 
 What now stands in front of that endpoint is the provider's signature and nothing else, which is what
 `readCallback` was always for. Today every caller still gets 401 — from two places rather than one: a
@@ -4091,10 +4097,14 @@ documentation says so where an implementer will read it.
 
 ### Tested, and what the tests still cannot reach
 
-Thirty-one new tests: eleven in a new `PaymentProvidersUnitTest`, ten in a new
-`ProviderAwaitingIntegrationUnitTest`, four in `BookingPaymentsUnitTest`, four replacing the two
-`PaymentConfigurationUnitTest` cases that pinned the deleted condition, six in a new
-`PaymentProviderChoiceIT` — the first test in this repository with **two** providers configured — one
+**Thirty-nine new tests, two deleted, thirty-seven net** — booking +27 unit and +7 integration, the
+gateway +3. The headline said thirty-one when the enumeration below already added to thirty-nine and
+the tree moved by thirty-seven; the review counted it and this is the corrected figure. Eleven in a
+new `PaymentProvidersUnitTest`, ten in a new `ProviderAwaitingIntegrationUnitTest` (one case and
+three parameterised over the three adapters), four in `BookingPaymentsUnitTest`, four in
+`PaymentConfigurationUnitTest` **replacing** the two that pinned the deleted condition — which is
+where the two-test gap between thirty-nine and thirty-seven is — six in a new
+`PaymentProviderChoiceIT`, the first test in this repository with **two** providers configured, one
 in `PaymentSeamIT`, and three in a new gateway `PaymentWebhookRouteConfigurationTest`.
 
 Confirmed red against a deliberate mutation before being kept, and the mutations are the plausible
@@ -4117,3 +4127,71 @@ wrong implementations rather than arbitrary breakage:
 quality box.** This time the sentence is not a limitation of the tests but the subject of the package:
 what WP-13 delivers is everything that can be true without a provider, and the three classes that
 cannot are marked as such rather than dressed up.
+
+### The review of WP-13, and the five things it changed
+
+Reviewed 2026-09-04. Both builds were green and the honesty constraint held — no invented wire format
+anywhere in the code, and Paystack's prose survived because it is labelled unverified. Five findings,
+all real, and the first of them turned out to be worse than the review thought.
+
+**The gateway permit was defended by nothing that observes Spring.** CI grepped two literals out of
+the source file and `PaymentWebhookRouteConfigurationTest` built the chain with
+`new PaymentWebhookRouteConfiguration()`. Neither asks the container for the bean, so removing
+`@Configuration`, `@Bean` or `@Order` left every check green while every provider callback was 401 at
+the edge. Measured, all three: CI green, three unit tests green, and the callback refused.
+
+`PaymentWebhookRoutePermitIT` is the half that asks the running context — the chain list, the declared
+precedence, and an anonymous POST through `WebTestClient` with an anonymous POST at
+`/services/healthconnectbooking/api/bookings` beside it as the control, because "not 401" would also
+pass on a gateway that authenticates nothing.
+
+**And `@Order` was already inert.** The review's model was that deleting it would reorder the chains
+to `[PUBLIC, GENERATED, WEBHOOK]`. It does not: measured both ways, the order is unchanged. Two
+unordered beans tie at `LOWEST_PRECEDENCE` and a stable sort leaves them in registration order, which
+for these is component-scan order — `MarketplacePublic…`, `PaymentWebhook…`, `SecurityConfiguration`,
+alphabetically. Probing further showed why the annotation could not have been doing the work:
+`findAnnotationOnBean(name, Order.class)` answered `null` for **all three** of the gateway's chains.
+Spring offers the comparator the factory *method* and the bean *type* as order sources, never the
+declaring configuration class, so an `@Order` on a `@Configuration` class holding `@Bean` factories is
+read by nobody.
+
+So the webhook was open because P sorts before S. **Renaming the class would have closed it, silently**
+— the generated `springSecurityFilterChain` has a *negated* `securityMatcher` claiming everything
+except `/app`, `/i18n`, `/content` and `/swagger-ui`, so it claims the callback path too and would
+have authenticated it first. `@Order` moved onto the `@Bean` method in both
+`PaymentWebhookRouteConfiguration` and `MarketplacePublicRouteConfiguration` — the public chain had
+the identical inert annotation and the identical accidental ordering — where the value is read and
+`HIGHEST_PRECEDENCE + 11` is *strictly* ahead of an unordered chain rather than tied with it. The IT
+asserts the strictness, so the annotation is now load-bearing and its removal is red.
+
+**`named()` could shadow an adapter, inverting the fallback guarantee.** No adapter can *become* the
+fallback — that is injected by bean name — but the hazard runs in the mirror direction, and the
+javadoc claimed the guarantee without it. `choices()` excludes the fallback **by identity**, so an
+adapter calling itself `none` is offered; `named()` returns the **first** match, and the fallback is
+declared first. `chosen("none")` therefore passed the check and resolved to `UnconfiguredPaymentProvider`:
+`OFF_PLATFORM`, a booking in `REQUESTED`, `booking.requested` published, the professional told, and
+nobody ever asked for the money. The same shape hits any two adapters sharing a name — one silently
+unreachable by a booking and unaddressable by its own callbacks.
+
+Unreachable today, since the three names are fixed constants. `refuseAmbiguousNames` refuses both at
+startup anyway, because a name collision is a programming error rather than a runtime condition and
+refusing the booking would be refusing the wrong party. It is **not** the eager index D44 warned
+about: it reads every name once through the safe path and caches none of them. One of its tests
+asserts the `@PostConstruct` is still on it — a guard the container never runs is not a guard, which
+is the lesson from the finding above, one method away.
+
+**The CI route check ignored the route's target.** Widening the predicate failed it, removing the
+route failed it, a trailing space failed it — but pointing `ROUTES_4_URI` at catalog passed, and
+`StripPrefix=2` → `StripPrefix=1` passed. Both are one character in a block that already names three
+other container hostnames, and both produce exactly the outcome the check's own comment describes: the
+callback is delivered somewhere that maps nothing at that path, the provider gets a 404 from a URL it
+was given, and the booking waits in `PENDING_PAYMENT` for ever with the professional never told it
+exists. Now asserted **relatively** — whatever booking's own `/api` route points at, the webhook route
+must point at too — because the three files name booking three different ways, and a literal would
+have to be maintained in the check as well as in the compose files.
+
+**Two documents were wrong about their own subject.** This section's headline said thirty-one tests
+over an enumeration adding to thirty-nine against a tree that moved by thirty-seven; all three now
+agree. And `CLAUDE.md`'s note on the gateway's hand-written files had grown a second file without
+growing a second consequence — "Without **it**" had two antecedents and described one. Both files'
+consequences are stated now, along with where the `@Order` has to sit and why.

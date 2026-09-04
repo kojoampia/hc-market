@@ -58,7 +58,6 @@ import org.springframework.security.web.server.util.matcher.PathPatternParserSer
  * {@code /api/**}, and CI asserts the shape of the route that reaches it in all three compose files.
  */
 @Configuration
-@Order(Ordered.HIGHEST_PRECEDENCE + 11)
 public class PaymentWebhookRouteConfiguration {
 
     /**
@@ -70,7 +69,33 @@ public class PaymentWebhookRouteConfiguration {
      */
     static final String WEBHOOK_PATH = "/services/healthconnectbooking/webhooks/**";
 
+    /**
+     * Ahead of the generated chain — and the annotation has to be <strong>here</strong>, on the
+     * method.
+     *
+     * <p>It sat on the {@code @Configuration} class until a mutation test went green without it, and
+     * there it ordered nothing at all. Spring hands the comparator the factory <em>method</em> and the
+     * bean <em>type</em> as order sources, never the declaring configuration class, so
+     * {@code findAnnotationOnBean(name, Order.class)} answered {@code null} for all three of this
+     * gateway's chains. What was actually ordering them was component-scan order:
+     * {@code MarketplacePublic…}, {@code PaymentWebhook…}, {@code SecurityConfiguration},
+     * alphabetically.
+     *
+     * <p>It kept working because a tie is resolved by registration order. The generated
+     * {@code SecurityConfiguration.springSecurityFilterChain} carries no order either, so both chains
+     * sat at {@code LOWEST_PRECEDENCE} and the stable sort left this one in front — the letter P
+     * coming before the letter S was the whole of what held the webhook open. That is not an academic
+     * point: the generated chain's {@code securityMatcher} is a <em>negated</em> matcher claiming
+     * everything except {@code /app}, {@code /i18n}, {@code /content} and {@code /swagger-ui}, so it
+     * claims this path too. Renaming this class to anything sorting after {@code SecurityConfiguration}
+     * would have made every provider callback a 401 at the edge, with nothing failing anywhere.
+     *
+     * <p>Read from the method the value counts, and {@code HIGHEST_PRECEDENCE + 11} is then strictly
+     * ahead of an unordered chain rather than tied with it. {@code PaymentWebhookRoutePermitIT}
+     * asserts the strictness, so deleting this line is red rather than merely lucky.
+     */
     @Bean
+    @Order(Ordered.HIGHEST_PRECEDENCE + 11)
     public SecurityWebFilterChain paymentWebhookRouteFilterChain(ServerHttpSecurity http) {
         http
             .securityMatcher(new PathPatternParserServerWebExchangeMatcher(WEBHOOK_PATH, HttpMethod.POST))

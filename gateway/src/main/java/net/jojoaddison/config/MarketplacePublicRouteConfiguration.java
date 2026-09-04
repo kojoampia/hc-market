@@ -41,7 +41,6 @@ import java.util.Arrays;
  * {@code /api/reviews/count} is named explicitly instead of matching {@code /api/reviews/**}.
  */
 @Configuration
-@Order(Ordered.HIGHEST_PRECEDENCE + 10)
 public class MarketplacePublicRouteConfiguration {
 
     /** Mirrors catalog's own public surface, prefixed with the gateway's service route. */
@@ -56,7 +55,16 @@ public class MarketplacePublicRouteConfiguration {
         "/services/healthconnectcatalog/api/reviews/count",
     };
 
+    /**
+     * On the method, not on the class — see {@link PaymentWebhookRouteConfiguration} for the measurement.
+     *
+     * <p>A class-level {@code @Order} on a {@code @Bean} factory orders nothing: the comparator is
+     * offered the factory method and the bean type, never the declaring configuration class. This
+     * chain was running ahead of the generated one on component-scan order alone, which is a property
+     * of the class's name rather than of anything written down.
+     */
     @Bean
+    @Order(Ordered.HIGHEST_PRECEDENCE + 10)
     public SecurityWebFilterChain publicMarketplaceRouteFilterChain(ServerHttpSecurity http) {
         ServerWebExchangeMatcher publicGets = new OrServerWebExchangeMatcher(
             Arrays.stream(PUBLIC_GET_PATHS)

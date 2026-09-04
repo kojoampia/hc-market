@@ -29,7 +29,7 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **WP-10** | Payments: the seam can complete a lifecycle | DONE | D41 |
 | **WP-11** | Payments: asynchronous confirmation | DONE | D43 |
 | **WP-12** | Payments: the zero-amount booking | DONE | D44 — reviewed 2026-09-03, four findings, all fixed |
-| **WP-13** | Payments: provider choice and Act 987 | PARTLY DONE | D45 — registry, choice, route, permit and secrets built; the three adapters are seams awaiting real documentation, and Act 987 is a question for a person |
+| **WP-13** | Payments: provider choice and Act 987 | PARTLY DONE | D45 — registry, choice, route, permit and secrets built; the three adapters are seams awaiting real documentation, and Act 987 is a question for a person. Reviewed 2026-09-04, five findings, all fixed |
 | **WP-14** | Verification badge | DONE | — |
 | **WP-15** | Badge: date-only on the wire | READY | — |
 | **WP-16** | Search performance | WON'T (measured) | — |
@@ -552,8 +552,10 @@ is the package's honest boundary rather than an unfinished afternoon.
   back to whoever took the money;
 - **both lines per environment.** The fifth gateway route in all three compose files *and*
   `PaymentWebhookRouteConfiguration` permitting POST on it. CI checks the pair — the route check now
-  allows exactly one webhook predicate matched in full, and a second check greps the gateway's permit
-  for the same string — so a route without its permit fails CI rather than a provider;
+  allows exactly one webhook predicate matched in full, a second check greps the gateway's permit
+  for the same string, and a third (added by the review) pins the route's target and prefix, because
+  the others read predicates only. `PaymentWebhookRoutePermitIT` asks the running container, which is
+  the only check of the four that notices when `@Configuration`, `@Bean` or `@Order` goes;
 - **each provider's signing secret**, handled like the estate's other two and never committed.
   Optional rather than required, because a provider nobody enabled needs none; **absent means callbacks
   are refused, not trusted**, and an enabled-but-secretless provider refuses with the same flat 401 an
@@ -572,6 +574,15 @@ on the one path where a customer's money is already committed.
 question for a person with standing. What the package protects is the property that keeps the answer
 cheap either way: `PaymentProvider` still has **no method that pays the professional**, and the package
 documentation says so where an implementer will meet the temptation.
+
+**Reviewed 2026-09-04 — five findings, all fixed.** Recorded in D45's review section. The largest
+was not the one the review named: the webhook permit's `@Order` sat on the `@Configuration` class,
+where Spring never reads it, so the chain was running ahead of the generated one on component-scan
+order alone and renaming the class would have made every provider callback a 401 with nothing failing.
+Both the webhook and the public chain now carry the annotation on the `@Bean` method. Also: a name
+collision between two providers is refused at startup rather than silently making one of them
+unreachable, the CI route check pins the webhook route's target and prefix, and two documents were
+corrected about their own subject.
 
 **Still open:**
 

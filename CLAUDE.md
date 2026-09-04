@@ -222,9 +222,21 @@ replaced on the next regeneration and the failure is a wall of "cannot find symb
 existed minutes ago. The booking lifecycle lives in **`BookingWorkflow`** for exactly this reason.
 
 The gateway has two hand-written files too — `MarketplacePublicRouteConfiguration` and
-`PaymentWebhookRouteConfiguration` — but both are new files, so regeneration leaves them alone. Without it, the generated
-`.pathMatchers("/services/**").authenticated()` returns 401 for Discover and Browse **before
-routing**, and "public reads need no token" is only true if you bypass the gateway.
+`PaymentWebhookRouteConfiguration` — and both are new files, so regeneration leaves them alone. They
+close the same gap at two different doors, because the generated
+`.pathMatchers("/services/**").authenticated()` runs **before routing**. Without the first, Discover
+and Browse are 401 and "public reads need no token" is only true if you bypass the gateway. Without
+the second, every payment provider's callback is 401 at the edge: nothing reaches booking, nothing
+appears in booking's log, and the provider retries until it files the payment as undelivered (D45).
+
+**Both carry their `@Order` on the `@Bean` method, and it has to stay there.** On the
+`@Configuration` class — where both had it until WP-13's review — Spring never reads it: the
+comparator is offered the factory method and the bean type, never the declaring class, so
+`findAnnotationOnBean` answered `null` for all three of the gateway's chains and the only thing
+putting these two in front of the generated one was component-scan order, alphabetically.
+`PaymentWebhookRoutePermitIT` asks the running container rather than the source, because the CI grep
+and the hand-built unit test beside it both stay green when `@Configuration`, `@Bean` or `@Order` is
+removed.
 
 Three things were made regeneration-proof on purpose and need no re-applying: `SeedProperties` is
 `@Component`-annotated rather than listed on the generated app class, public read access lives in a

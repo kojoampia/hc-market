@@ -3,6 +3,7 @@ package net.jojoaddison.service.payment;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import jakarta.annotation.PostConstruct;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -202,6 +203,78 @@ class PaymentProvidersUnitTest {
         assertThat(registry.nameOf(null)).isEqualTo("unnamed");
         // "unnamed" is what we call it, not a name it can be reached by.
         assertThat(registry.named("unnamed")).isEmpty();
+    }
+
+    // --------------------------------------------------------------------- two adapters, one name --
+
+    /**
+     * The mirror of the guarantee the class documentation used to claim.
+     *
+     * <p>No adapter can <em>become</em> the fallback — that is injected by bean name. But one calling
+     * itself {@code none} was <em>offered</em>, because {@link PaymentProviders#choices()} excludes
+     * the fallback by identity and this is not the fallback, and then resolved <em>to the fallback</em>,
+     * because {@link PaymentProviders#named} takes the first match and the fallback is declared first.
+     * So the name passed the check and the money went nowhere: {@code OFF_PLATFORM}, a booking in
+     * {@code REQUESTED}, {@code booking.requested} published, the professional told, and nobody ever
+     * asked for the payment.
+     */
+    @Test
+    @DisplayName("an adapter that names itself after the fallback stops the service starting")
+    void anAdapterShadowingTheFallbackIsRefused() {
+        PaymentProviders registry = new PaymentProviders(List.of(fallback, new StubProvider("none")), fallback);
+
+        assertThatThrownBy(registry::refuseAmbiguousNames).isInstanceOf(IllegalStateException.class).hasMessageContaining("none");
+    }
+
+    /**
+     * The same defect between two real adapters, where there is no fallback involved at all.
+     *
+     * <p>One of them is unreachable by a booking and unaddressable by its own callbacks — so it takes
+     * money this service can never confirm, which is the worst end of the path this package guards.
+     */
+    @Test
+    @DisplayName("two adapters answering to one name stop the service starting")
+    void twoAdaptersWithOneNameAreRefused() {
+        PaymentProviders registry = new PaymentProviders(
+            List.of(fallback, paystack, new StubProvider("PAYSTACK"), hubtel),
+            fallback
+        );
+
+        assertThatThrownBy(registry::refuseAmbiguousNames)
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("paystack")
+            .hasMessageNotContaining("hubtel");
+    }
+
+    /**
+     * Two adapters that cannot name themselves are not a collision, and a well-formed registry starts.
+     *
+     * <p>{@code null} is not a name two providers can share, and both are already excluded from the
+     * offer for the reason {@link #anAdapterThatWillNotNameItself} gives. Refusing to start over them
+     * would take the service down for a defect that costs nothing.
+     */
+    @Test
+    @DisplayName("distinct names start, and unnamed adapters do not collide with each other")
+    void aWellFormedRegistryStarts() {
+        registry(paystack, hubtel).refuseAmbiguousNames();
+        new PaymentProviders(List.of(fallback, new StubProvider("  "), new StubProvider(null)), fallback).refuseAmbiguousNames();
+    }
+
+    /**
+     * The guard has to be one the container runs.
+     *
+     * <p>The gateway's webhook permit was defended by a unit test that built the bean by hand and a CI
+     * check that grepped the source, and neither noticed when the annotations that make Spring look at
+     * it were removed. This is the same class of defect one method away: without
+     * {@code @PostConstruct} every test above still passes, because they call the method themselves,
+     * and no running service ever calls it at all.
+     */
+    @Test
+    @DisplayName("the ambiguity guard is annotated so that the container runs it")
+    void theGuardRunsAtStartup() throws NoSuchMethodException {
+        assertThat(PaymentProviders.class.getDeclaredMethod("refuseAmbiguousNames").getAnnotation(PostConstruct.class))
+            .as("refuseAmbiguousNames is only called by the tests unless @PostConstruct is on it")
+            .isNotNull();
     }
 
     /** A provider that exists, names itself and does nothing else. */

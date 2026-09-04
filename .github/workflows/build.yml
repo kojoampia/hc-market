@@ -267,6 +267,12 @@ jobs:
       # is why the pair is asserted here as well as documented in three places (decisions.md D45).
       #
       # The path is compared character for character against the compose predicate above.
+      #
+      # This is a grep and it only reads the source. It cannot see whether the container ever hears
+      # the chain — removing @Configuration, @Bean or @Order leaves this step green and every callback
+      # 401 at the edge, measured, all three. PaymentWebhookRoutePermitIT asks the running context
+      # instead, and the `test` job runs it; this step stays because it names the string, and it fails
+      # in seconds rather than after a Testcontainers boot.
       - name: The gateway must permit the webhook route it is asked to carry
         run: |
           permit=gateway/src/main/java/net/jojoaddison/config/PaymentWebhookRouteConfiguration.java
@@ -279,6 +285,47 @@ jobs:
             exit 1
           fi
           echo "ok   $permit"
+
+      # A route with the right predicate and the wrong target is the same outage as no route at all,
+      # and the check above cannot see it: it reads predicates only. Both mutations are one character.
+      #
+      # ROUTES_4_URI pointed at catalog: the callback is delivered to a service that maps nothing at
+      # /webhooks, so the provider gets a 404 from a URL it was given while the booking sits in
+      # PENDING_PAYMENT for ever and the professional is never told there is a booking at all. And the
+      # block it lives in already names three other container hostnames, so it is an easy line to
+      # mistype. StripPrefix=1 is the same outcome by a different road — booking is handed
+      # /healthconnectbooking/webhooks/payments/<provider>, which it maps nothing at either.
+      #
+      # Asserted relatively rather than against a literal host, because the three files name booking
+      # three different ways (a short service alias, a container_name, and a ${HC_BOOKING_HOST}
+      # default). Whatever booking's own /api route points at, the webhook route must point at too.
+      - name: The webhook route must reach booking itself, and strip the same two segments
+        run: |
+          fail=0
+          for f in quality/compose.yml deploy/docker/docker-compose.dev.yml deploy/docker/docker-compose.prod.yml; do
+            hook=$(grep -oE 'ROUTES_[0-9]+_PREDICATES_0: *Path=/services/healthconnectbooking/webhooks/\*\*$' "$f" \
+                   | sed -E 's/ROUTES_([0-9]+)_.*/\1/')
+            api=$(grep -oE 'ROUTES_[0-9]+_PREDICATES_0: *Path=/services/healthconnectbooking/api/\*\*$' "$f" \
+                  | sed -E 's/ROUTES_([0-9]+)_.*/\1/')
+            if [ "$(echo "$hook" | wc -w)" != 1 ] || [ "$(echo "$api" | wc -w)" != 1 ]; then
+              echo "::error file=$f::expected exactly one webhook route and one booking /api route to compare — see decisions.md D45."
+              fail=1
+              continue
+            fi
+            hook_uri=$(sed -nE "s/^ *SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_${hook}_URI: *//p" "$f")
+            api_uri=$(sed -nE "s/^ *SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_${api}_URI: *//p" "$f")
+            strip=$(sed -nE "s/^ *SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_${hook}_FILTERS_0: *//p" "$f")
+            if [ -z "$hook_uri" ] || [ "$hook_uri" != "$api_uri" ]; then
+              echo "::error file=$f::the webhook route points at '$hook_uri' and booking's own route at '$api_uri' — a provider's callback would be delivered to the wrong service, which answers 404 while the booking waits in PENDING_PAYMENT. See decisions.md D45."
+              fail=1
+            elif [ "$strip" != "StripPrefix=2" ]; then
+              echo "::error file=$f::the webhook route strips '$strip', not StripPrefix=2 — booking is handed a path it maps nothing at, so the callback is a 404 and the payment is never confirmed. See decisions.md D45."
+              fail=1
+            else
+              echo "ok   $f — webhook route $hook -> $hook_uri, StripPrefix=2"
+            fi
+          done
+          exit "$fail"
 
       # The dev estate's topic prefix is written TWICE: the compose file configures the apps with it
       # and deploy-dev.sh creates the topics with it (decisions.md D29). They must agree.
