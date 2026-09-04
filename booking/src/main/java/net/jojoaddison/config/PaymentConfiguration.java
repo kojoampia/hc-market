@@ -24,26 +24,51 @@ import org.springframework.context.annotation.Configuration;
  * <h2>Read this before adding the real provider — {@code decisions.md} D44</h2>
  *
  * <p><strong>{@code @ConditionalOnMissingBean} is only reliable in an auto-configuration, and this is
- * not one.</strong> In a user {@code @Configuration} the condition is evaluated when this class is
- * parsed, against the bean definitions registered <em>so far</em> — so whether it sees a
- * component-scanned {@code PaymentProvider} depends on the order the scanner happened to reach the
- * two classes in, which is a property of the filesystem. The failure it produces is two beans of one
- * type and a {@code NoUniqueBeanDefinitionException} at startup, and it can differ between a laptop
- * and CI on identical code, which is the worst place to first meet it.
+ * not one.</strong> What that costs here is specific, and it is the opposite of what one might guess.
  *
- * <p>So a real provider must be either {@code @Primary} or, better, declared as an explicit
- * {@code @Bean} that this class's condition can see — and <strong>not</strong> merely a
- * {@code @Component} sitting in the package hoping to win. WP-13 replaces the condition outright with
- * a registry keyed by provider name, which is the shape three providers need anyway: the fallback
- * becomes the entry named {@code none} rather than the only entry, and the webhook's "a callback
- * addressed to a provider this service is not configured for" refusal starts doing real work.
+ * <p><strong>A component-scanned {@code PaymentProvider} is always visible to this condition.</strong>
+ * {@code ConfigurationClassParser.doProcessConfigurationClass} runs the component scan through
+ * {@code ClassPathBeanDefinitionScanner.doScan}, which <em>registers</em> every scanned definition
+ * before the loop that recursively parses them; the condition on a {@code @Bean} method is evaluated
+ * later still, at {@code REGISTER_BEAN} phase in
+ * {@code ConfigurationClassBeanDefinitionReader.loadBeanDefinitionsForBeanMethod}, which
+ * {@code ConfigurationClassPostProcessor} does not reach until {@code parser.parse()} has finished. So
+ * the scan is complete before the first {@code @Bean} condition fires, and the fallback below reliably
+ * backs off for a {@code @Component}.
+ *
+ * <p><strong>The order-sensitive shape is an explicit {@code @Bean} in a sibling
+ * {@code @Configuration}</strong> — the one an earlier version of this note recommended. Two scanned
+ * configuration classes are parsed in the order the scanner found them, which is the order the
+ * classpath resources came back in, which is the filesystem's business and nobody else's. This class
+ * parsed first: the condition sees no {@code PaymentProvider}, the fallback is registered, the sibling
+ * then registers the real one unconditionally, and every injection point has two candidates and a
+ * {@code NoUniqueBeanDefinitionException}. Parsed second: it sees the real one and steps aside. Same
+ * code, two outcomes, and it can differ between a laptop and CI — the worst place to first meet it.
+ * {@code PaymentConfigurationUnitTest} demonstrates both halves.
+ *
+ * <p>So a real provider added before WP-13 should be a {@code @Component}, or anything carrying
+ * {@code @Primary} — {@code @Primary} settles the ambiguity however the parse order fell, so it is
+ * order-independent whichever shape declares it. The one thing to avoid is a bare {@code @Bean}
+ * beside this class. The order-independent fix for that shape is to move <em>this</em> class to
+ * {@code @AutoConfiguration} and list it in
+ * {@code META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports}:
+ * auto-configurations are processed from a deferred import selector after every user configuration
+ * class, which is exactly the ordering the annotation assumes, and {@code @SpringBootApplication}'s
+ * {@code AutoConfigurationExcludeFilter} keeps the class from also being component-scanned —
+ * {@code HealthconnectBookingApp} carries the plain annotation, so that filter is in place.
+ *
+ * <p>WP-13 replaces the condition outright with a registry keyed by provider name, which is the shape
+ * three providers need anyway: the fallback becomes the entry named {@code none} rather than the only
+ * entry, and the webhook's "a callback addressed to a provider this service is not configured for"
+ * refusal starts doing real work.
  */
 @Configuration
 public class PaymentConfiguration {
 
     /**
-     * The fallback, and the ordering caveat is on the class — see its javadoc before relying on this
-     * condition to step aside for a real provider.
+     * The fallback. It steps aside for a component-scanned provider every time; the shape it can
+     * collide with is a bare {@code @Bean} in a sibling {@code @Configuration}. See the class javadoc
+     * before adding either.
      */
     @Bean
     @ConditionalOnMissingBean(PaymentProvider.class)

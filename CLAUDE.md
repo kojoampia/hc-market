@@ -646,20 +646,43 @@ time.**
   does not visit it**; adding a customer field there without adding it to `ErasureWorkflow` in the same
   commit is how that stops being true, and `attention_note` is composed by the platform rather than
   copied from a provider's message for the same reason.
-- **An adapter that throws is a provider that `FAILED`, and the reason is composed rather than
-  relayed** (D44). `BookingPayments.take` catches `RuntimeException` around `provider.authorize`, so
-  a timed-out HTTP client answers the customer with the same 502 a provider politely answering
-  `FAILED` always got, instead of a 500 and a stack trace. The reason names the provider and the
-  exception's class only — it is rendered into a response body, which is the fourth road by which a
-  provider's prose could carry a customer's phone number (D39, D41 and D43 are the other three). **Only
-  the provider call is wrapped**: a `PaymentRecorder` that throws is this platform losing the one fact
-  it cannot reconstruct while the money may be committed, and that stays a loud 500.
-- **`@ConditionalOnMissingBean` in `PaymentConfiguration` is order-sensitive** (D44). The annotation
-  is only reliable in an auto-configuration, and that class is a user `@Configuration`, so the
-  condition is evaluated against whatever the component scanner had registered by then — a property of
-  the filesystem, which can differ between a laptop and CI on identical code. A real provider must be
-  `@Primary` or an explicit `@Bean`, never a hopeful `@Component`. WP-13 replaces the condition with a
-  registry keyed by provider name, which is why the caveat is a javadoc line and not a fix.
+- **An adapter that throws is a provider that `FAILED`** (D44). `BookingPayments.take` catches
+  `RuntimeException` around `provider.authorize`, so a timed-out HTTP client answers the customer with
+  the same 502 a provider politely answering `FAILED` always got, instead of a 500 and a stack trace.
+  **Only the provider call is wrapped**: a `PaymentRecorder` that throws is this platform losing the one
+  fact it cannot reconstruct while the money may be committed, and that stays a loud 500. `name()` is
+  somebody else's code too and every call to it goes through a wrapped `providerName()` — unwrapped, and
+  called twice inside that very catch block, an adapter whose `name()` throws re-threw straight back
+  onto the 500 the catch removes.
+- **No provider's words reach a response body — and the answered path is the one that matters** (D44,
+  as reviewed). `BookingPayments` composes the reason it invents for a provider that *threw*, from a
+  provider name and an exception class. That was only ever half of it: `PaymentOutcome.declined(reason)`
+  and `failed(reason)` take an adapter-authored string, and `authorizePayment` relayed it verbatim into
+  a `ResponseStatusException`, which `ExceptionTranslator` renders as the ProblemDetail's `detail`. So
+  **the refusal message is composed at the boundary too**, from the `PaymentState` alone, and
+  `outcome.reason()` goes to the log at WARN and nowhere else. This is the fourth road by which a
+  provider's prose could carry a customer's phone number into somewhere it is kept (D39, D41 and D43 are
+  the other three), and `getCustomizedErrorDetails` does not save you: it redacts package names and
+  `DataAccessException`, and only under `prod`.
+- **`PaymentState.NOTHING_TO_PAY` is the platform's answer, and a provider may not give it** (D44, as
+  reviewed). `take` refuses an outcome carrying it for a booking that costs something — `FAILED`, so a
+  502 and no booking, keeping any handle that came with it. Without that the quietest failure in the
+  seam is available: a priced booking created in `REQUESTED`, `booking.requested` published, the
+  professional told, no `payment_attempt` row because no handle came back, no money moved, and nothing
+  anywhere in the estate disagreeing with anything. The state is also **never on the wire** — a free
+  booking is a `REQUESTED` booking like any other, and `PaymentAction` is only ever built for `PENDING`.
+- **`@ConditionalOnMissingBean` in `PaymentConfiguration` is order-sensitive, but not in the direction
+  you would guess** (D44, as reviewed). The annotation is only reliable in an auto-configuration and
+  that class is a user `@Configuration` — but a **component-scanned** `PaymentProvider` is always
+  visible to it, because `ClassPathBeanDefinitionScanner.doScan` registers every scanned definition
+  before parsing recurses, and a `@Bean` method's condition is not evaluated until
+  `ConfigurationClassBeanDefinitionReader` runs after `parser.parse()` has finished. The shape that
+  actually collides is an explicit **`@Bean` in a sibling `@Configuration`**, which is registered in
+  parse order, i.e. the order the scanner found the two classes, i.e. the filesystem's — fallback first
+  gives two beans and a `NoUniqueBeanDefinitionException`, sibling first gives one, on identical code.
+  So a real provider added before WP-13 should be a `@Component`, or carry `@Primary`; never a bare
+  `@Bean` beside `PaymentConfiguration`. WP-13 replaces the condition with a registry keyed by provider
+  name, which is why the caveat is a javadoc and two context tests rather than a fix.
 - **A booking may exist while its payment is pending, and the professional is not told** (D43). All
   three providers D37 chose confirm asynchronously, so `authorize` can answer `PENDING`; the booking is
   written in **`BookingStatus.PENDING_PAYMENT`** and `booking.requested` is **withheld** until a webhook

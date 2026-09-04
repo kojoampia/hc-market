@@ -124,6 +124,104 @@ class BookingPaymentsUnitTest {
     }
 
     /**
+     * An adapter does not get to declare a priced booking free — {@code decisions.md} D44, as
+     * reviewed.
+     *
+     * <p>{@link PaymentState#NOTHING_TO_PAY} is documented as the one value in the enum no provider
+     * reports, and {@link PaymentOutcome#nothingToPay()} is a public factory on the record every
+     * adapter constructs — so the documentation was the whole of the guarantee.
+     * {@link PaymentState#PENDING} got two compact-constructor invariants for the same class of
+     * defect; this had a javadoc.
+     *
+     * <p>The failure it admits is the quietest one in the seam: a ₵150.00 booking, an adapter mapping
+     * an unrecognised provider status onto "free", {@code permitsBooking()} true and the state not
+     * {@code PENDING} — so the booking is created in {@code REQUESTED}, {@code booking.requested} is
+     * published, the professional is told, no {@code payment_attempt} row is written because no
+     * handle came back, and no money moved. There is nothing left in the estate that disagrees with
+     * anything.
+     *
+     * <p>{@code take} is where it is caught because {@code take} is the only place that knows the
+     * amount, which is the same reason the zero-amount guard is there rather than at the call site.
+     * The answer is {@code FAILED} rather than a thrown exception: a provider answering something
+     * this platform cannot use is precisely what that state means, and it lands on the 502 that the
+     * fix above exists to give instead of the 500 a throw would produce.
+     */
+    @Test
+    @DisplayName("a provider may not answer NOTHING_TO_PAY for a priced booking")
+    void aProviderCannotDeclareAPricedBookingFree() {
+        when(provider.name()).thenReturn("stub");
+        when(provider.authorize(any())).thenReturn(PaymentOutcome.nothingToPay());
+
+        BookingPayments.Taken taken = payments.take(booking(15000L));
+
+        assertThat(taken.outcome().state()).isEqualTo(PaymentState.FAILED);
+        assertThat(taken.outcome().state().permitsBooking()).isFalse();
+        assertThat(taken.outcome().reason()).contains("stub").contains("NOTHING_TO_PAY");
+    }
+
+    /**
+     * The handle survives the refusal, because D41's rule does not have exceptions.
+     *
+     * <p>A provider that answers {@code NOTHING_TO_PAY} <em>and</em> hands back a reference is
+     * confused about the amount and still holding a fact about this booking's money. Converting the
+     * outcome through {@link PaymentOutcome#failed(String)} would drop that reference — the one field
+     * on the record derivable from nothing — so the conversion keeps it and the recorder writes the
+     * row it always would have.
+     */
+    @Test
+    @DisplayName("a refused NOTHING_TO_PAY keeps whatever handle came with it")
+    void aRefusedNothingToPayKeepsTheHandle() {
+        when(provider.name()).thenReturn("stub");
+        when(provider.authorize(any())).thenReturn(new PaymentOutcome(PaymentState.NOTHING_TO_PAY, "prov-nt1", null));
+
+        BookingPayments.Taken taken = payments.take(booking(15000L));
+
+        assertThat(taken.outcome().state()).isEqualTo(PaymentState.FAILED);
+        assertThat(taken.outcome().providerReference()).isEqualTo("prov-nt1");
+    }
+
+    /**
+     * {@code name()} is somebody else's code too — {@code decisions.md} D44, as reviewed.
+     *
+     * <p>The catch that turns a thrown {@code authorize} into {@code FAILED} called
+     * {@code provider.name()} twice inside itself, unwrapped. An adapter whose {@code name()} throws
+     * — a lazily-read configuration property, a null region code — therefore re-threw out of the
+     * handler and landed back on exactly the 500 that catch was written to remove.
+     */
+    @Test
+    @DisplayName("an adapter whose name() throws is still a provider that failed")
+    void aThrowingNameIsStillAFailure() {
+        when(provider.name()).thenThrow(new IllegalStateException("no merchant id configured"));
+        when(provider.authorize(any())).thenThrow(new IllegalStateException("connect timed out"));
+
+        BookingPayments.Taken taken = payments.take(booking(15000L));
+
+        assertThat(taken.outcome().state()).isEqualTo(PaymentState.FAILED);
+        assertThat(taken.outcome().reason()).contains("IllegalStateException");
+    }
+
+    /**
+     * And on the success path, where the same unwrapped call would lose the handle.
+     *
+     * <p>{@code recorder.record(provider.name(), …)} is the third site. Money is committed by the
+     * time it runs, so a {@code name()} that throws there costs the one fact D41 exists to keep —
+     * for a reason that has nothing to do with the payment. The row is written under a placeholder
+     * instead; {@code provider} is a not-null column and a name nobody can produce is still better
+     * recorded than a handle nobody kept.
+     */
+    @Test
+    @DisplayName("an adapter whose name() throws does not cost the handle")
+    void aThrowingNameDoesNotCostTheHandle() {
+        when(provider.name()).thenThrow(new IllegalStateException("no merchant id configured"));
+        when(provider.authorize(any())).thenReturn(PaymentOutcome.authorized("prov-3"));
+
+        BookingPayments.Taken taken = payments.take(booking(15000L));
+
+        assertThat(taken.outcome().state()).isEqualTo(PaymentState.AUTHORIZED);
+        org.mockito.Mockito.verify(recorder).record(org.mockito.ArgumentMatchers.eq("unnamed"), any(), any());
+    }
+
+    /**
      * A failure to write the handle down is not a payment failure, and must not be turned into one.
      *
      * <p>Only the call to the provider is wrapped. If {@link PaymentRecorder#record} throws, the money

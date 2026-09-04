@@ -28,7 +28,7 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **WP-09** | Erasure: retention periods and lawful basis | PARTLY DONE | D42 — counsel answered all four. Retention built and environment-gated; two documents and one registration number outstanding |
 | **WP-10** | Payments: the seam can complete a lifecycle | DONE | D41 |
 | **WP-11** | Payments: asynchronous confirmation | DONE | D43 |
-| **WP-12** | Payments: the zero-amount booking | DONE | D44 |
+| **WP-12** | Payments: the zero-amount booking | DONE | D44 — reviewed 2026-09-03, four findings, all fixed |
 | **WP-13** | Payments: provider choice and Act 987 | READY (large) | D37 — Paystack, Hubtel and MoMo direct, customer chooses. WP-11 is done, so no longer blocked |
 | **WP-14** | Verification badge | DONE | — |
 | **WP-15** | Badge: date-only on the wire | READY | — |
@@ -393,7 +393,7 @@ that records every outcome.
 **Not done:** no run against the quality box, and no live provider to run against. Every branch is
 exercised through a substituted provider, which is D31's limitation unchanged.
 
-## WP-11 — Payments: asynchronous confirmation · DONE (unmerged)
+## WP-11 — Payments: asynchronous confirmation · DONE, merged as PR #19
 
 D43. Paystack returns an authorization URL the customer must visit; Hubtel and MTN MoMo raise a prompt
 on the customer's phone and confirm by webhook. None can truthfully return `AUTHORIZED` or `DECLINED`
@@ -492,13 +492,12 @@ customer's phone number arrives (D39, D41, D43 each met the same hazard by a dif
 provider call is wrapped; a recorder that throws stays a loud 500, with a test saying so.
 
 **And the ordering trap is documented rather than fixed.** `@ConditionalOnMissingBean` is only reliable
-in an auto-configuration, so in `PaymentConfiguration` it is evaluated against whatever the scanner
-had registered by then — a filesystem property, which can differ between a laptop and CI on identical
-code. The class now says a real provider must be `@Primary` or an explicit `@Bean` and not a hopeful
-`@Component`. The cheap order-independent fix — `@AutoConfiguration` plus an `.imports` file, which is
-the ordering the annotation assumes, with `@SpringBootApplication`'s exclude filter keeping the class
-from being scanned twice — is recorded in D44 and deliberately **not built, so not measured**: WP-13
-deletes the condition it would protect.
+in an auto-configuration, so `PaymentConfiguration` carries a warning about what that costs. The first
+version of that warning had the mechanism backwards and the review rewrote it — see below. The cheap
+order-independent fix — `@AutoConfiguration` plus an `.imports` file, which is the ordering the
+annotation assumes, with `@SpringBootApplication`'s exclude filter keeping the class from being scanned
+twice — is recorded in D44 and deliberately **not built, so not measured**: WP-13 deletes the condition
+it would protect.
 
 Seven new tests, five unit and two integration, plus the two D43 guard tests updated. Three were
 confirmed red first: the free booking at the endpoint with the provider stubbed to refuse a zero
@@ -506,6 +505,26 @@ amount (`Status expected:<201> but was:<402>` — the defect itself), the same t
 `verifyNoInteractions(provider)`, and the throwing adapter twice
 (`Status expected:<502> but was:<500>`, and an escaped `IllegalStateException`). booking: 114 unit +
 101 IT green on a full `clean verify`.
+
+**Reviewed 2026-09-03: four findings, all real, all fixed on the same branch — and three of the four
+were documents claiming a property the code did not have.** The largest: `authorizePayment` still
+relayed `outcome.reason()` verbatim into the response body, so "the reason is composed, never copied"
+was true of the *thrown* path this package added and false of the *answered* path beside it, which is
+the common one. Red at the endpoint with a stubbed `declined("Declined — card ending 4242, Ama Mensah,
+0244123456")` coming straight back as the ProblemDetail's `detail`; the refusal message is composed
+from the state now and the provider's words go to the log. Second: nothing stopped an adapter answering
+`NOTHING_TO_PAY` for a priced booking, which is the quietest failure in the seam — a ₵150.00 booking
+created in `REQUESTED`, the professional told, no money moved and nothing anywhere disagreeing. `take`
+knows the amount, so it refuses it there as a `FAILED` and a 502. Third: `provider.name()` was called
+unwrapped, twice inside the very catch block this package added, so an adapter whose `name()` throws
+landed back on the 500 that catch removed; wrapped now at all six sites, `release` included. Fourth:
+the `@ConditionalOnMissingBean` warning had the mechanism **backwards** — a component-scanned provider
+is always visible to the condition, and the explicit `@Bean` the warning recommended is the shape that
+collides — so the advice caused the failure it warned about. Verified against the Spring 7.0.8 sources
+and pinned with two context tests. Two smaller wording corrections went with them: D44's account of a
+negative price (a 500 from `@Min(0)` today, not the 402/502 it claimed) and `nextActionFor`'s javadoc
+(the state it carries is always `PENDING`). Nine more tests, seven of them confirmed red first. booking:
+**120 unit + 104 IT**. D44 carries the detail.
 
 **Not done:** no live provider and no run against the quality box. The zero-amount defect existed
 precisely because the estate's only provider answers the same thing to every question, so the
@@ -526,7 +545,9 @@ survive this decision rather than be pre-empted by it.
   registry lookup and the "callback addressed to a provider this service is not configured for"
   refusal starts doing real work. WP-12 left that annotation's **order-sensitivity** documented on the
   class rather than fixed (D44), precisely because this is the package that deletes it — a real
-  provider added before then must be `@Primary` or an explicit `@Bean`;
+  provider added before then should be a `@Component`, or carry `@Primary`, and **not** a bare `@Bean`
+  in a sibling `@Configuration`, which is the one shape whose parse order decides whether the fallback
+  steps aside or collides with it;
 - **the customer's choice on the intent**, validated against something the server knows rather than
   taken on faith (D22);
 - **two lines per environment to expose the webhook, not one.** A route with

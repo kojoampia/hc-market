@@ -38,6 +38,13 @@ public enum PaymentState {
      * in its strongest form rather than its usual one: it is not that every provider has a notion of
      * it, it is that the decision is identical whichever provider is configured.
      *
+     * <p><strong>And that is enforced, not merely stated.</strong> It was stated only, for one review:
+     * {@link PaymentOutcome#nothingToPay()} is public and an adapter mapping an unrecognised status
+     * onto it would have had a priced booking created in {@code REQUESTED} with no money behind it and
+     * nothing anywhere disagreeing. {@link BookingPayments#take} refuses this state from a provider
+     * when the amount is not zero — it is the only method that knows the amount — and answers
+     * {@link #FAILED} instead.
+     *
      * <p>Two of the eighteen seeded professionals offer a service at {@code priceMinor: 0} and "from
      * ₵0" is the catalogue working. All three providers D37 chose refuse an authorization for 0 — from
      * their published behaviour, there being no live account here — so without this every free booking

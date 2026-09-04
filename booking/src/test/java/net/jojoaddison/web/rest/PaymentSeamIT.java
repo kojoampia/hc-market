@@ -458,6 +458,73 @@ class PaymentSeamIT {
         assertThat(body).doesNotContain("Ama Mensah").doesNotContain("0244123456");
     }
 
+    /**
+     * The same rule on the path a provider actually takes — {@code decisions.md} D44, as reviewed.
+     *
+     * <p>The test above pins the <em>thrown</em> path, where {@code BookingPayments} composes the
+     * reason itself. This one pins the <em>answered</em> path, which is the common case and was the
+     * hole: {@code PaymentOutcome.declined(reason)} takes an adapter-authored string and
+     * {@code authorizePayment} relayed it verbatim into a {@code ResponseStatusException}, from where
+     * {@code ExceptionTranslator} renders it as the ProblemDetail's {@code detail}.
+     *
+     * <p>The failure this prevents is one line of WP-13: a Paystack adapter writing
+     * {@code declined(response.path("message").asText())}, Paystack answering with the cardholder's
+     * name and the phone number it texted, and that landing in a 402 body and in every client that
+     * logs a ProblemDetail. {@code getCustomizedErrorDetails} redacts only package names and
+     * {@code DataAccessException}, and only under {@code prod}, so nothing downstream saves this.
+     */
+    @Test
+    @Transactional
+    @DisplayName("a decline does not quote the provider back to the customer")
+    void aDeclineDoesNotQuoteTheProvider() throws Exception {
+        when(payments.authorize(any())).thenReturn(PaymentOutcome.declined("Declined — card ending 4242, Ama Mensah, 0244123456"));
+
+        String body = send().andExpect(status().isPaymentRequired()).andReturn().getResponse().getContentAsString();
+
+        assertThat(body).doesNotContain("Ama Mensah").doesNotContain("0244123456").doesNotContain("4242");
+        // Composed from the state, so the customer is still told which of the two answers this was.
+        assertThat(body).contains("declined");
+    }
+
+    /** And a provider that answered {@code FAILED} in words of its own is the same hazard. */
+    @Test
+    @Transactional
+    @DisplayName("an answered provider failure does not quote the provider either")
+    void anAnsweredFailureDoesNotQuoteTheProvider() throws Exception {
+        when(payments.authorize(any())).thenReturn(PaymentOutcome.failed("upstream rejected the token for Ama Mensah on 0244123456"));
+
+        String body = send().andExpect(status().isBadGateway()).andReturn().getResponse().getContentAsString();
+
+        assertThat(body).doesNotContain("Ama Mensah").doesNotContain("0244123456");
+    }
+
+    /**
+     * {@code NOTHING_TO_PAY} is not a provider's to give — {@code decisions.md} D44, as reviewed.
+     *
+     * <p>The state is documented as the one value in the enum no provider reports, and
+     * {@link PaymentOutcome#nothingToPay()} is a public factory on the record every adapter
+     * constructs. Nothing stopped an adapter mapping an unknown status onto it, and the consequence
+     * is the worst shape available here: {@code permitsBooking()} is true and the state is not
+     * {@code PENDING}, so a ₵150.00 booking is created in {@code REQUESTED},
+     * {@code booking.requested} is published, the professional is told, no {@code payment_attempt}
+     * row exists because no handle came back — and no money moved. Nothing in the estate disagrees
+     * with anything.
+     *
+     * <p>So it is refused where the amount is known. {@code FAILED}, and therefore 502: it is a
+     * provider answering something this platform cannot use, which is exactly what that state means.
+     */
+    @Test
+    @Transactional
+    @DisplayName("a provider may not declare a priced booking free")
+    void aProviderCannotDeclareAPricedBookingFree() throws Exception {
+        when(payments.authorize(any())).thenReturn(PaymentOutcome.nothingToPay());
+        long before = bookings.count();
+
+        send().andExpect(status().isBadGateway());
+
+        assertThat(bookings.count()).isEqualTo(before);
+    }
+
     // ------------------------------------------------------------------------- helpers --
 
     /**
