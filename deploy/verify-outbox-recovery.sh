@@ -29,23 +29,37 @@
 #  The booking CONTAINER was already overridable; the ports and the two database containers were
 #  not, so the script could not be pointed at the quality box — which is the box it most needs to
 #  run against, since a container severed from hcnet is a far better approximation of a real broker
-#  outage there than on a dev estate that is usually half up. All four are overridable now, and they
-#  must be overridden TOGETHER: an HTTP port from one estate beside a database container from
+#  outage there than on a dev estate that is usually half up. All of them are overridable now, and
+#  they must be overridden TOGETHER: an HTTP port from one estate beside a database container from
 #  another reads every assertion against rows the API never touched, and check_estate() below
 #  refuses that rather than letting it produce numbers.
 #
 #      # the quality box (quality/startup.sh's ports and its explicit container names)
-#      HC_BOOKING_PORT=18101 HC_MESSAGING_PORT=18102 \
+#      HC_BOOKING_PORT=18101 \
 #      HC_BOOKING_CTR=hc-market-quality-booking \
 #      HC_BOOKING_DB_CTR=hc-market-quality-booking-db \
 #      HC_MESSAGING_DB_CTR=hc-market-quality-messaging-db \
 #        ./deploy/verify-outbox-recovery.sh
 #
+#  MESSAGING IS READ FROM ITS DATABASE AND NEVER OVER HTTP, so there is no HC_MESSAGING_PORT here.
+#  It was required for one commit, as a precondition on a service this script makes no request to:
+#  the guard refused runs it had no reason to refuse, and a port variable nothing reads is a typo
+#  waiting to be silent. Messaging is still held to the estate check through HC_MESSAGING_DB_CTR,
+#  which is the thing the assertions actually read.
+#
 #  The port names are deploy-dev.sh's own, with deploy-dev.sh's own defaults, so exporting the
 #  HC_*_PORT block CLAUDE.md documents configures the estate and this script together.
+#
+#  --- IT REQUIRES A DOCKERISED, PORT-PUBLISHING BOOKING SERVICE ---------------------------------
+#
+#  Stated rather than discovered, and here it is not merely the consistency guard's price: the whole
+#  method is to DISCONNECT booking's container from a docker network, so a booking service running
+#  from a jar or an IDE cannot be cut off from the broker by this script at all. The precondition is
+#  the test. An estate whose databases are dockerised but whose services are not is refused, and
+#  correctly.
 # ==============================================================================
 set -uo pipefail
-BK=http://localhost:${HC_BOOKING_PORT:-8082}; M=http://localhost:${HC_MESSAGING_PORT:-8083}
+BK=http://localhost:${HC_BOOKING_PORT:-8082}
 PRO=$(cat /tmp/tok-pro.txt); CUST=$(cat /tmp/tok-cust.txt)
 NET="${HC_SHARED_NETWORK:-hcnet}"
 # HC_DEV_BOOKING_CTR is the name this variable had when the dev estate was the only estate it could
@@ -70,29 +84,39 @@ chk() { if [ "$2" = "$3" ]; then printf '  ok   %-46s %s\n' "$1" "$2"; else prin
 # restores the one it cut. So the check runs before anything is touched.
 #
 # Compose labels every container it starts with its project name, which is enough to compare the
-# five containers this script touches without knowing either estate's naming scheme. It reads the
+# four containers this script touches without knowing either estate's naming scheme. It reads the
 # label rather than the name because the two compose files disagree about naming on purpose — the
 # dev one prefixes `dev-` to keep hcnet's aliases apart, the quality one names every container.
+#
+# Only booking's PORT is a precondition, because booking's port is the only one this script uses:
+# every messaging assertion goes to mq() and reads the database directly. Requiring a publisher for
+# messaging's port too refused runs for a service the script never addresses.
 project_of() { docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$1" 2>/dev/null; }
 publisher_of() { docker ps --filter "publish=$1" --format '{{.Names}}' | head -1; }
 check_estate() {
-  local bad=0 seen="" name proj booking_api messaging_api
+  local bad=0 seen="" name proj booking_api
   booking_api="$(publisher_of "${HC_BOOKING_PORT:-8082}")"
-  messaging_api="$(publisher_of "${HC_MESSAGING_PORT:-8083}")"
   [ -n "$booking_api" ] || { echo "  FAIL nothing publishes booking's port ${HC_BOOKING_PORT:-8082} — is the estate up?"; bad=1; }
-  [ -n "$messaging_api" ] || { echo "  FAIL nothing publishes messaging's port ${HC_MESSAGING_PORT:-8083} — is the estate up?"; bad=1; }
   for name in "$BOOKING_CTR" "$BOOKING_DB_CTR" "$MESSAGING_DB_CTR"; do
     docker inspect "$name" >/dev/null 2>&1 || { echo "  FAIL no such container: $name"; bad=1; }
   done
   [ $bad -eq 0 ] || { echo ""; echo "OUTBOX RECOVERY FAILED — see the header for the quality box's values"; exit 1; }
 
-  for name in "$booking_api" "$messaging_api" "$BOOKING_CTR" "$BOOKING_DB_CTR" "$MESSAGING_DB_CTR"; do
+  # An empty project label must not collapse into the container name: `printf '%s\t%s' "" "$name"`
+  # is a line beginning with a tab, and whitespace-splitting awk reads the NAME as field 1, so N
+  # containers docker started rather than compose look like N distinct estates and are reported with
+  # names in the project column and blanks beside them. It fails safe and accuses the wrong thing.
+  # What the placeholder leaves, stated: two unlabelled containers group together as one "(none)",
+  # so two hand-started estates cannot be told apart — there is nothing to compare. The case that
+  # matters, an unlabelled container mixed with a compose-managed one, is still refused and is now
+  # named correctly.
+  for name in "$booking_api" "$BOOKING_CTR" "$BOOKING_DB_CTR" "$MESSAGING_DB_CTR"; do
     proj="$(project_of "$name")"
-    printf -v seen '%s\n%s\t%s' "$seen" "$proj" "$name"
+    printf -v seen '%s\n%s\t%s' "$seen" "${proj:-(none)}" "$name"
   done
-  if [ "$(printf '%s' "$seen" | awk 'NF{print $1}' | sort -u | wc -l)" != "1" ]; then
-    echo "  FAIL the ports, the booking container and the databases belong to different estates:"
-    printf '%s\n' "$seen" | awk 'NF{printf "         %-20s %s\n", $1, $2}'
+  if [ "$(printf '%s' "$seen" | awk -F'\t' 'NF{print $1}' | sort -u | wc -l)" != "1" ]; then
+    echo "  FAIL the port, the booking container and the databases belong to different estates:"
+    printf '%s\n' "$seen" | awk -F'\t' 'NF{printf "         %-20s %s\n", $1, $2}'
     echo "       Nothing has been disconnected. Override them TOGETHER — see the header."
     echo ""; echo "OUTBOX RECOVERY FAILED — the estate is not consistently addressed"; exit 1
   fi
@@ -103,8 +127,9 @@ check_estate() {
     echo "       Nothing has been disconnected. Set HC_BOOKING_CTR to match the port."
     echo ""; echo "OUTBOX RECOVERY FAILED — the estate is not consistently addressed"; exit 1
   fi
-  printf '  estate  %s   booking %s   messaging %s   severing %s\n' \
-    "$(project_of "$BOOKING_CTR")" "$BK" "$M" "$BOOKING_CTR"
+  proj="$(project_of "$BOOKING_CTR")"
+  printf '  estate  %s   booking %s   messaging db %s   severing %s\n' \
+    "${proj:-(none)}" "$BK" "$MESSAGING_DB_CTR" "$BOOKING_CTR"
 }
 check_estate
 

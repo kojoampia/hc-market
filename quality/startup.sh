@@ -265,7 +265,67 @@ env_for_compose() {
 # on a non-number exactly as `== 63` did. The check below is added to make that stronger rather than
 # weaker: it compares p1's rating against the reviews the API itself serves, which is the "derived,
 # never stored" invariant and holds whatever the count is. Nothing serving somebody else's data can
-# satisfy it, and a count alone never could.
+# satisfy it, and a count alone never could — see where it is asked, immediately below, because that
+# last sentence is only about collisions on the address where a collision is possible.
+#
+# --- WHERE THE DERIVATION CHECK IS ASKED, WHICH IS THE POINT OF IT -------------------------------
+#
+# It is asked TWICE: once on the stack's own published loopback port, and once through $SITE when
+# the name resolves. Those prove different things and only the second one is about collisions.
+# 127.0.0.1:$GATEWAY_PORT reaches this compose project's gateway and nothing else — no sibling can
+# answer there — so on that address the check proves the read model, not the identity of whoever
+# answered. The shared nginx is the surface where a wrong app can reply at all; that is where
+# admin.healthconnect.local served the patient app with a 200 and a plausible login page, and it is
+# the only address at which "unsatisfiable by a sibling on a stolen hostname" is a claim about
+# anything. The first version of this check ran on loopback only and the prose claimed the
+# collision property regardless — the check was right and the sentence around it was not, which is
+# this repository's most repeated defect.
+derived_rating_agrees() {
+  python3 - "$1" <<'PY' 2>/dev/null
+# ROUND_HALF_UP, not round(). The view rounds in Postgres, whose numeric round is half-away-from
+# zero; Python's built-in round is half-to-even. The first version of this check used round() and
+# reported "rating 4.3 over 8, reviews say 4.2 over 8" against an estate that was entirely correct —
+# a 4.25 average landing on either side of the same boundary. Exactly the class of plausible wrong
+# number this file exists to catch, arriving in the checker instead of in the estate.
+#
+# And it PAGES rather than asking for one big page. The first version read `?page=0&size=200` and
+# compared the length of that page against `reviewCount`, which the view does not cap: past 200
+# reviews on p1 it would have reported "rating 4.4 over 250, reviews say 4.5 over 200" against a
+# correct estate — the round() defect again, one release later. p1 carries 7 today and
+# verify-cycle.sh adds one per run TO p1, so it is distant and not theoretical. A page that cannot
+# be completed is refused rather than averaged, and `totalElements` is compared to the view's own
+# `reviewCount` because those two numbers coming from different endpoints is the whole assertion.
+import json, sys, urllib.request
+from decimal import Decimal, ROUND_HALF_UP
+base = sys.argv[1] + "/services/healthconnectcatalog"
+def get(p):
+    with urllib.request.urlopen(base + p, timeout=10) as r:
+        return json.load(r)
+card = get("/api/professionals/p1")["card"]
+rows, total, page = [], None, 0
+while page < 50:
+    body = get("/api/professionals/p1/reviews?page=%d&size=200" % page)
+    if not isinstance(body, dict):          # an unpaged answer is its own total
+        rows, total = body, len(body)
+        break
+    chunk = body.get("content") or []
+    total = body.get("totalElements")
+    rows += chunk
+    page += 1
+    if total is None or not chunk or len(rows) >= total:
+        break
+if card.get("rating") is None or not rows:
+    print("no reviews served for p1")
+elif total is None or len(rows) != total:
+    print("served %s of %s reviews — refusing to average a truncated page" % (len(rows), total))
+elif card.get("reviewCount") != total:
+    print("the view counts %s reviews, the review endpoint serves %s" % (card.get("reviewCount"), total))
+else:
+    avg = (Decimal(sum(r["stars"] for r in rows)) / Decimal(len(rows))).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+    ok = Decimal(str(card["rating"])) == avg
+    print("agrees" if ok else "rating %s over %s, reviews say %s over %s" % (card["rating"], card.get("reviewCount"), avg, len(rows)))
+PY
+}
 verify() {
   step "Verify"
   local base="http://127.0.0.1:${GATEWAY_PORT}"
@@ -304,45 +364,35 @@ verify() {
   # come from the professional_rating view; the reviews come from the review table through a
   # different endpoint. They must agree, and they agree whether the box is seed-exact or has been
   # exercised — which is why this replaces the exactness the check above gave up rather than merely
-  # sitting beside it. A wrong-app collision cannot satisfy it, and neither can a stale read model.
+  # sitting beside it. On loopback that is a check of the read model; through $SITE below it is also
+  # a check that our application is the one answering.
   local derived
-  derived="$(python3 - "$base" <<'PY' 2>/dev/null
-# ROUND_HALF_UP, not round(). The view rounds in Postgres, whose numeric round is half-away-from
-# zero; Python's built-in round is half-to-even. The first version of this check used round() and
-# reported "rating 4.3 over 8, reviews say 4.2 over 8" against an estate that was entirely correct —
-# a 4.25 average landing on either side of the same boundary. Exactly the class of plausible wrong
-# number this file exists to catch, arriving in the checker instead of in the estate.
-import json, sys, urllib.request
-from decimal import Decimal, ROUND_HALF_UP
-base = sys.argv[1] + "/services/healthconnectcatalog"
-def get(p):
-    with urllib.request.urlopen(base + p, timeout=10) as r:
-        return json.load(r)
-card = get("/api/professionals/p1")["card"]
-rows = get("/api/professionals/p1/reviews?page=0&size=200")
-rows = rows.get("content", []) if isinstance(rows, dict) else rows
-if not rows or card.get("rating") is None:
-    print("no reviews served for p1")
-else:
-    avg = (Decimal(sum(r["stars"] for r in rows)) / Decimal(len(rows))).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
-    ok = Decimal(str(card["rating"])) == avg and card.get("reviewCount") == len(rows)
-    print("agrees" if ok else "rating %s over %s, reviews say %s over %s" % (card["rating"], card.get("reviewCount"), avg, len(rows)))
-PY
-)"
+  derived="$(derived_rating_agrees "$base" || true)"
   chk "p1's rating equals the reviews it serves" "${derived:-unreachable}" "agrees"
 
-  # It must be OUR application answering, not a sibling's Angular app on a stolen hostname.
+  # It must be OUR catalogue answering — a body, never a status code. On this address that is a
+  # check of the DATA (a wrong seed, a wrong image, an empty database); the stolen-hostname case it
+  # is named for is the same assertion asked through $SITE below, which is the only place a sibling
+  # can answer at all.
   chk "the body is this catalogue, not a sibling's app" \
     "$(curl -s --max-time 10 "$base/services/healthconnectcatalog/api/categories" | grep -c 'Fitness & Movement' || true)" "1"
 
   chk "lifetime gross via payout" \
     "$(curl -s --max-time 10 "http://127.0.0.1:${PAYOUT_PORT}/management/health" -o /dev/null -w '%{http_code}')" "200"
 
-  # And the same, through the hostname — only meaningful once the vhost is installed.
+  # And the same, through the hostname — only meaningful once the vhost is installed, and the only
+  # address in this function where a WRONG APPLICATION can answer at all. Everything above reaches
+  # this compose project's own published port; the shared nginx is where a stolen server_name puts a
+  # sibling's app behind our name, which is on record. So the derivation check is asked again here:
+  # a count of 18 is a number any JSON endpoint could produce, while "the rating in this card equals
+  # the average of the reviews this same host serves from another endpoint" is not something a
+  # sibling application can satisfy by accident.
   if getent hosts "$SITE" >/dev/null 2>&1; then
-    local viahost
+    local viahost derived_viahost
     viahost="$(curl -s --max-time 10 "http://$SITE/services/healthconnectcatalog/api/professionals/count" || echo "")"
     chk "professionals via http://$SITE" "$viahost" "18"
+    derived_viahost="$(derived_rating_agrees "http://$SITE" || true)"
+    chk "p1's rating is derived via http://$SITE" "${derived_viahost:-unreachable}" "agrees"
   else
     warn "$SITE does not resolve — skipping the hostname checks. See the sudo block below."
   fi

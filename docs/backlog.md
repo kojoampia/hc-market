@@ -42,6 +42,7 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **NEW-5** | A passing `verify-cycle.sh` made `--verify` report a fault | DONE | D46 |
 | **NEW-6** | A refusal that offered the one name it withholds | DONE | D46 |
 | **NEW-7** | "Sessions brokered" was not live, under a LIVE banner | DONE | D46 |
+| **NEW-8** | The prototype's professional workspace is demo-only in live mode | WON'T (documented) | D46 §5 |
 
 ---
 
@@ -721,13 +722,27 @@ Counts are split by whether anything here writes to them: `professionals` stays 
 recorded)`) rather than swallowed. The exactness given up is replaced by something stronger against
 the failure that mattered — p1's rating and reviewCount, from the `professional_rating` view, must
 equal the average and the count of the reviews the API serves from a different endpoint. "Derived,
-never stored" asserted directly, true whether or not the box has been exercised, and unsatisfiable
-by a sibling app on a stolen hostname. `verify-cycle.sh` also states what it wrote and how to
-reseed, because half of this defect was a tool that changed an estate and did not say so.
+never stored" asserted directly, and true whether or not the box has been exercised.
+`verify-cycle.sh` also states what it wrote and how to reseed, because half of this defect was a
+tool that changed an estate and did not say so.
 
 **The cost, stated:** `--verify` reports rather than fails when somebody has hand-written reviews
 into the box. The collision check is stronger than before, not weaker — `at least 63` fails on a
 non-number exactly as `== 63` did.
+
+**Reviewed 2026-09-04 — seven findings, all applied; D46 §5 carries the detail.** Three of them
+were documents claiming a property the code did not have. The largest was that this fix landed in
+`quality/startup.sh` and not in `deploy/deploy-dev.sh`, whose `verify_seed` had the same
+seed-exact-plus-seed-file-average pairing and is called by `up` as well as `reseed` — so a
+successful cycle against a dev estate made the next `up` without `--clean` die, which is this defect
+verbatim, one script over. NEW-4 is what made it reachable. Also: the derivation check was justified
+as a collision check while being asked only on loopback, where no sibling can answer (it runs
+through `$SITE` as well now, and three documents are corrected); it averaged one page of 200 against
+an uncapped `reviewCount` and would have reported a plausible wrong number past 200 reviews on p1
+(it pages now, and refuses a page it could not complete); an empty compose label collapsed into the
+container name in both end-to-end scripts' estate guard; `verify-outbox-recovery.sh` required a
+published messaging port for a service it only ever reads from the database; and
+`verify-cycle.sh`'s header documented an `HC_BOOKING_DB_CTR` that `q()` does not read.
 
 ## NEW-6 — A refusal that offered the one name it withholds · DONE
 
@@ -755,6 +770,30 @@ the seed regenerates byte-identically. Pinned in `verify-prototype-live.mjs` in 
 live must not show it, the demo must still show it and still count 269 — because deleting the tile
 outright satisfies the first and quietly changes the acceptance target. Confirmed red before the fix
 and ended in a real browser, both modes.
+
+## NEW-8 — The prototype's professional workspace is demo-only in live mode · WON'T, documented
+
+Found by the review of NEW-4 to NEW-7, and **pre-existing rather than introduced by them**. Block 4
+of the prototype computes `proStats()`, "Recently completed", "N confirmed sessions ahead · N
+completed to date", the earnings screen's upcoming total and "% of sessions reviewed" from
+`PRO_HISTORY` and `PRO_SCHEDULE` — two consts in the first script block that live mode never
+repopulates. So in live mode **that entire screen renders demo figures under the LIVE banner**,
+which is NEW-7 one screen wide instead of one tile.
+
+**Not fixed, and deliberately not fixed in the same branch as NEW-7.** Making it live needs a
+professional's token in the prototype and endpoints this estate does not publish; widening a review
+fix into it is how a branch stops being reviewable, and the tile's own argument — do not show a
+figure that cannot be true — resolves differently here, because the workspace is the professional
+half of the acceptance target and deleting it is not an option.
+
+**What was done is the one sentence the rule now requires.** NEW-7 generalised to "adding a hero
+figure means saying which mode it is true in", so the live block's "WHAT IS LIVE, AND WHAT IS NOT"
+section says the workspace is demo-only and points here. It is a decision with a reason attached
+rather than an oversight nobody has met yet. The seed still regenerates byte-identically after the
+edit.
+
+**When it comes back:** the day a professional-side screen is driven from the estate, this is the
+work, and the endpoints it needs are the same ones `/api/pro/**` already has behind a token.
 
 ---
 

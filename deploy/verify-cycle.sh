@@ -37,12 +37,26 @@
 #      # the quality box (quality/startup.sh's ports and its explicit container names)
 #      HC_CATALOG_PORT=18100 HC_BOOKING_PORT=18101 HC_PAYOUT_PORT=18103 \
 #      HC_CATALOG_DB_CTR=hc-market-quality-catalog-db \
-#      HC_BOOKING_DB_CTR=hc-market-quality-booking-db \
 #      HC_PAYOUT_DB_CTR=hc-market-quality-payout-db \
 #        ./deploy/verify-cycle.sh
 #
+#  Only the two databases this script actually reads are named. There is deliberately no
+#  HC_BOOKING_DB_CTR: booking is addressed over HTTP throughout and q() knows about catalog and
+#  payout only, so a variable for it would imply booking's DATABASE is part of the estate check when
+#  only its API container is — and a typo in a variable nothing reads is silent.
+#
 #  The port names are deploy-dev.sh's own, with deploy-dev.sh's own defaults, so exporting the
 #  HC_*_PORT block CLAUDE.md documents configures the estate and this script together.
+#
+#  --- IT REQUIRES A DOCKERISED, PORT-PUBLISHING ESTATE, WHICH IS A REAL CONSTRAINT --------------
+#
+#  Stated rather than discovered. Two of the four containers it compares are found by asking docker
+#  WHICH CONTAINER PUBLISHES a port, so an estate whose services run from a jar or an IDE against
+#  dockerised databases is refused even though every assertion in the script would work against it.
+#  That is the price of the consistency guard: the only thing tying an HTTP port to the rows behind
+#  it, without either estate's naming scheme being hardcoded, is the compose project label on the
+#  container listening there. Run the services in containers for this check, or read the numbers by
+#  hand.
 # ==============================================================================
 set -uo pipefail
 CAT=http://localhost:${HC_CATALOG_PORT:-8081}; BK=http://localhost:${HC_BOOKING_PORT:-8082}
@@ -90,17 +104,28 @@ check_estate() {
   done
   [ $bad -eq 0 ] || { echo ""; echo "CYCLE FAILED — see the header for the quality box's values"; exit 1; }
 
+  # A container docker started rather than compose carries no project label, and an EMPTY label must
+  # not collapse into the container name: `printf '%s\t%s' "" "$name"` is a line beginning with a
+  # tab, and whitespace-splitting awk then reads the NAME as field 1. Two unlabelled containers
+  # would look like two distinct estates and be reported with names in the project column and blanks
+  # beside them — it fails safe, but it accuses the wrong thing, and a hand-started database is
+  # exactly what CLAUDE.md's `docker run -d --name hc-catalog-db …` loop produces. Hence a
+  # placeholder, and -F'\t' so the fields are the fields. What that leaves, stated: two containers
+  # with no label group together as one "(none)", so this cannot tell two hand-started estates
+  # apart — there is nothing to compare. It still refuses the case that matters, an unlabelled
+  # container mixed with a compose-managed one, and now names it correctly.
   for name in "$catalog_api" "$booking_api" "$CATALOG_DB_CTR" "$PAYOUT_DB_CTR"; do
     proj="$(project_of "$name")"
-    printf -v seen '%s\n%s\t%s' "$seen" "$proj" "$name"
+    printf -v seen '%s\n%s\t%s' "$seen" "${proj:-(none)}" "$name"
   done
-  if [ "$(printf '%s' "$seen" | awk 'NF{print $1}' | sort -u | wc -l)" != "1" ]; then
+  if [ "$(printf '%s' "$seen" | awk -F'\t' 'NF{print $1}' | sort -u | wc -l)" != "1" ]; then
     echo "  FAIL the ports and the databases belong to different estates:"
-    printf '%s\n' "$seen" | awk 'NF{printf "         %-20s %s\n", $1, $2}'
+    printf '%s\n' "$seen" | awk -F'\t' 'NF{printf "         %-20s %s\n", $1, $2}'
     echo "       Override the ports and the database containers TOGETHER — see the header."
     echo ""; echo "CYCLE FAILED — the estate is not consistently addressed"; exit 1
   fi
-  printf '  estate  %s   catalog %s   booking %s\n' "$(project_of "$CATALOG_DB_CTR")" "$CAT" "$BK"
+  proj="$(project_of "$CATALOG_DB_CTR")"
+  printf '  estate  %s   catalog %s   booking %s\n' "${proj:-(none)}" "$CAT" "$BK"
 }
 check_estate
 

@@ -4272,8 +4272,9 @@ exactness that is given up is replaced by something a count could never have giv
 - **And a new check that does not depend on the count at all**: p1's `rating` and `reviewCount`,
   which come from the `professional_rating` view, must equal the average and the number of the
   reviews the API serves from a different endpoint. That is "derived, never stored" asserted
-  directly, it holds whether the box is seed-exact or has been exercised, and nothing serving
-  somebody else's data can satisfy it.
+  directly, and it holds whether the box is seed-exact or has been exercised. *(As first written it
+  was asked on loopback only, where no sibling can answer, while the paragraph below claimed the
+  collision property for it. Corrected by the review — see §5.)*
 
 **What it costs, stated rather than buried:** `--verify` no longer fails when somebody has written
 extra reviews into the box by hand. It reports them. That is a real loss and it is the smaller half
@@ -4361,3 +4362,109 @@ is the only thing that turns live mode on. Both new checks confirmed red against
 either — the number looked fine. Chrome, both modes, against the live quality estate: demo renders
 `18 / 16 / 63 / 269`, live renders `18 / 16 / 64` with no fourth tile and no `NaN` anywhere in the
 rendered DOM.
+
+### 5 — Reviewed 2026-09-04: seven findings, all applied
+
+The review was positive on all four fixes and then found seven things. **Three of them are
+documents claiming a property the code does not have**, which is now the most repeated finding on
+this project; two are the fixes reaching one of the two places that needed them; one is a new
+checker that becomes a false alarm at a scale nobody has reached yet; and one is pre-existing and
+wider than this branch, recorded rather than fixed.
+
+**The substantive one: §2 was fixed in `quality/startup.sh` and not in `deploy/deploy-dev.sh`, and
+§1 is what made the second reachable.** `verify_seed` asserted `reviews == the seed file's count`
+and then compared the API's rating against an average computed *from the seed file*. It is called by
+`up` as well as by `reseed`, so the exact pairing this decision describes still existed one script
+over: run the newly-portable `verify-cycle.sh` against a dev estate, then `deploy-dev.sh up` without
+`--clean`, and it dies at `seed counts do not match` — or, past that, at `derived rating 4.3
+disagrees with the seed's own reviews (4.7)`. Making the cycle script portable is what put a second
+estate within its reach. Both deaths were reproduced verbatim, and the fix is `--verify`'s
+treatment: `professionals` stays seed-exact (nothing in this repository creates one), `reviews`
+becomes seed-plus-activity with the surplus printed, and the rating is compared against the reviews
+**the API itself serves** rather than against the seed file. It stays in `jq` — `deploy-dev.sh`
+requires `docker`, `curl` and `jq` and nothing else, and a new dependency in Appendix A is not free.
+Its arithmetic is integer tenths for the reason §2's own rounding defect gives: `add/length*10|round`
+is doubles, and 87/20 is 4.34999999999999964 in binary, which rounds *down* to 4.3 and disagrees
+with the view's 4.4 against an estate that is entirely correct. Re-embedded into the spec with
+`sync-appendices.sh`.
+
+**The collision argument was attached to a check that never traversed the vhost.** The derivation
+check was asked at `http://127.0.0.1:$GATEWAY_PORT`, which reaches this compose project's own
+gateway and nothing else — no sibling can answer there. So it proved the read model, and the prose
+around it (here, in `startup.sh` and in `CLAUDE.md`) claimed it was what makes `--verify`
+"unsatisfiable by a sibling app on a stolen hostname". The shared nginx is the only surface where a
+wrong application can reply at all, and the single count at `http://$SITE` was the only check that
+went through it. Both halves are done rather than either: the derivation check now runs **twice**,
+once on loopback and once through `$SITE` when the name resolves, and the three documents are
+corrected to claim only what is true. Nothing was lost by the original placement — the
+`reviews == 63` it replaced was on the same loopback port — but a justification that does not
+survive reading the code is the thing this project keeps having to fix.
+
+**The new check becomes a false alarm at 200 reviews.** It averaged `?page=0&size=200` and compared
+the length of that page against `reviewCount`, which comes from the uncapped view;
+`MarketplaceResource` passes `size` straight through with no cap, and the response already carries
+`totalElements`, which was ignored. Past 200 reviews on p1 it would have reported `rating 4.4 over
+250, reviews say 4.5 over 200` against a correct estate — the `round()` defect again, one release
+later, in the same checker. p1 carries 7 today and `verify-cycle.sh` adds one per run **to p1**, so
+it is distant and not theoretical. It pages now, asserts `totalElements == reviewCount` as a named
+failure of its own, and refuses to average a page it could not complete. Confirmed red at a scale
+this workstation cannot be driven to by **constructing** it: a stub catalogue serving 250 reviews
+whose first 200 are five stars and whose last 50 are four, so the true average (4.8) and the
+first-page average (5.0) differ. The old block reported `rating 4.8 over 250, reviews say 5.0 over
+200`; the new one agrees, and still fails on a skewed rating and on a `reviewCount` that disagrees
+with `totalElements`.
+
+**An empty compose label collapsed into the container name.** `project_of` returns empty for a
+container docker started rather than compose, and `printf '%s\t%s' "" "$name"` is a line beginning
+with a tab — which whitespace-splitting `awk` reads as the *name* being field 1. So N unlabelled
+containers looked like N distinct estates, and the refusal printed container names in the project
+column with blanks beside them. It fails safe and accuses the wrong thing, and a hand-started
+database is exactly what `CLAUDE.md`'s own `docker run -d --name hc-catalog-db …` loop produces.
+`awk -F'\t'` and a `(none)` placeholder, in both scripts. Reproduced first: projects `""`/`alpha`
+and `""`/`beta` give `unique=2` under the old form and `unique=1` under the new. **What that leaves
+is stated in both files** — two unlabelled containers now group together, so the guard cannot tell
+two hand-started estates apart, because there is nothing to compare. The case that matters, an
+unlabelled container mixed with a compose-managed one, is still refused and is now named correctly.
+
+**A precondition on a service one script never addresses.** `verify-outbox-recovery.sh` required
+`HC_MESSAGING_PORT` to be published by a container in the same project, and then never made an HTTP
+request to messaging — every messaging assertion goes to `mq()` and reads the database. So the guard
+refused runs it had no reason to refuse, which was reproduced: HEAD refuses the quality box's own
+documented invocation with `nothing publishes messaging's port 8083`. Narrowed to what the script
+uses; messaging is still held to the estate check through `HC_MESSAGING_DB_CTR`, which is the thing
+the assertions read. **The general form of it is documented rather than narrowed away**: both
+scripts find containers by asking docker which one *publishes* a port, so an estate whose services
+run from a jar or an IDE against dockerised databases is refused even though the assertions would
+work. In `verify-cycle.sh` that is the price of the consistency guard — the compose project label on
+the container listening there is the only thing tying an HTTP port to the rows behind it without
+hardcoding a naming scheme — and in `verify-outbox-recovery.sh` it is not a price at all but the
+method, since the test *is* disconnecting a container from a docker network. Both headers now say
+so plainly.
+
+**A documented variable the script does not read.** `verify-cycle.sh`'s header example set
+`HC_BOOKING_DB_CTR`; `q()` handles `catalog` and `payout` only and booking's database is never
+queried. It implied booking's *database* was part of the estate check when only its *API container*
+is, and a typo in it would have been silent. Removed, with the reason in its place.
+
+**And one that is pre-existing, wider than this branch, and deliberately not fixed.** The
+prototype's professional workspace — `proStats()`, "Recently completed", "N confirmed sessions ahead
+· N completed to date", the earnings screen's upcoming total, "% of sessions reviewed" — is computed
+from `PRO_HISTORY` and `PRO_SCHEDULE`, and live mode repopulates neither. **In live mode that entire
+screen renders demo figures under the LIVE banner**: §4's defect one screen wide instead of one tile.
+Fixing it needs a professional's token and endpoints this estate does not publish, and widening a
+review fix into it is how a branch stops being reviewable. But §4's rule generalises — adding a hero
+figure means saying which mode it is true in — so the live block's own "WHAT IS LIVE, AND WHAT IS
+NOT" section now says it, and the backlog carries it as **NEW-8**, a known limitation rather than an
+oversight. The seed still regenerates byte-identically after the edit, which is the only thing that
+proves a comment in that file is only a comment.
+
+**What could not be exercised, and what was reasoned instead.** The dev estate has been in a restart
+loop for five days, so `deploy-dev.sh up` could not be run and the largest finding could not be
+proved against a real dev estate. Its `verify_seed` was therefore run — the real function body,
+sourced from the real file with the router stripped — against a **stub catalogue** standing in for
+the estate a successful `verify-cycle.sh` leaves behind (18 professionals, 64 reviews, p1 with the
+seed's seven stars plus a one-star review: 34/8 = 4.25 → 4.3), and against the **live quality box**
+read-only, where it passes. Both of its old deaths fired against the stub and all five of the new
+one's refusals fire: a vanished professional, a rating that disagrees with its own reviews, a
+`reviewCount` that disagrees with `totalElements`, a page that truncates, and a sibling's HTML
+answering on the port. Nothing was written to any estate.

@@ -2675,6 +2675,16 @@ window.addEventListener('resize', ()=>{ clearTimeout(rz); rz = setTimeout(()=>{ 
    words into a real person's mouth in a real conversation, so it is gone and the thread is re-read
    from the server instead.
 
+   THE PROFESSIONAL WORKSPACE IS NOT LIVE, AND THAT IS A KNOWN LIMITATION RATHER THAN AN OVERSIGHT.
+   Everything under #/pro/… — the overview's counters, "Recently completed", "N confirmed sessions
+   ahead · N completed to date", the earnings screen's upcoming total and "% of sessions reviewed" —
+   is computed from PRO_HISTORY and PRO_SCHEDULE, two consts in the first script block that this one
+   never repopulates. So that whole screen renders the demo's figures under the LIVE banner. It is
+   the "Sessions brokered" defect (decisions.md D46) one screen wide instead of one tile, and it is
+   recorded here rather than fixed because the rule that came out of that tile is that a hero figure
+   has to say which mode it is true in — saying so costs a sentence, while making the workspace live
+   needs a professional's token and endpoints this estate does not publish. Backlog: NEW-8.
+
    The writes deliberately do NOT send priceMinor, currency or professionalLogin. The server
    establishes all three (decisions.md D22, D28), and sending them would mean the prototype was
    testing its own arithmetic rather than the estate's.

@@ -787,10 +787,19 @@ time.**
   HC_CATALOG_PORT=18100 HC_BOOKING_PORT=18101 HC_PAYOUT_PORT=18103 \
   HC_CATALOG_DB_CTR=hc-market-quality-catalog-db HC_PAYOUT_DB_CTR=hc-market-quality-payout-db \
     ./deploy/verify-cycle.sh
-  HC_BOOKING_PORT=18101 HC_MESSAGING_PORT=18102 HC_BOOKING_CTR=hc-market-quality-booking \
+  HC_BOOKING_PORT=18101 HC_BOOKING_CTR=hc-market-quality-booking \
   HC_BOOKING_DB_CTR=hc-market-quality-booking-db HC_MESSAGING_DB_CTR=hc-market-quality-messaging-db \
     ./deploy/verify-outbox-recovery.sh
   ```
+  **Only the variables each script reads appear there**, which is the point rather than tidiness: a
+  documented variable nothing reads implies the wrong thing about the estate check and a typo in it
+  is silent. `verify-cycle.sh` never queries booking's database (`q()` knows `catalog` and `payout`),
+  and `verify-outbox-recovery.sh` never makes an HTTP request to messaging (`mq()` reads its
+  database), so neither `HC_BOOKING_DB_CTR` for the first nor `HC_MESSAGING_PORT` for the second
+  exists any more. Both also require the services to be **dockerised and publishing their ports**,
+  because the estate check finds containers by asking docker which one publishes a port; for
+  `verify-outbox-recovery.sh` that is not a constraint but the method, since it works by
+  disconnecting a container from a docker network.
   Both were pinned to the dev estate until D46 — and to `CLAUDE.md`'s *override example* ports,
   18201/18202, rather than to `deploy-dev.sh`'s defaults — so neither could run against the box they
   exist for. They read the `HC_*_PORT` family with `deploy-dev.sh`'s own defaults now, plus one
@@ -817,6 +826,24 @@ time.**
   number of the reviews the API serves from a different endpoint. `verify-cycle.sh` prints what it
   wrote and the reseed command at the end. **Do not put `reviews == 63` back** — restore the box
   instead: `./quality/startup.sh --local --clean` then `TAG=<sha> ./quality/startup.sh --local`.
+  That derivation check is asked **twice, and only the second asking is about collisions**: on
+  `127.0.0.1:$GATEWAY_PORT` it reaches this compose project's gateway and nothing else, so there it
+  proves the read model; through `http://market.healthconnect.local` it also proves our application
+  is the one answering, which is the surface `admin.healthconnect.local` was stolen on. It was
+  loopback-only for one commit while three documents credited it with the collision property —
+  corrected in D46 §5. It **pages** rather than asking for one page of 200, because `size` is passed
+  through uncapped while `reviewCount` comes from the view: averaging a truncated page would report
+  a plausible wrong number past 200 reviews on p1, which is the same defect as the half-to-even
+  `round()` this check was already caught with once.
+- **`deploy-dev.sh`'s `verify_seed` had the identical defect and was fixed one commit later** (D46
+  §5). It asserted `reviews == the seed file's count` and compared the rating against an average
+  computed *from the seed file*, and it runs on `up` as well as `reseed` — so a successful
+  `verify-cycle.sh` against a dev estate made the next `up` without `--clean` die at `seed counts do
+  not match`. Same treatment, in `jq` rather than python because `deploy-dev.sh` requires only
+  `docker`, `curl` and `jq`. Its average is **integer tenths**, not `add/length*10|round`: jq's
+  numbers are doubles, 87/20 is 4.34999999999999964, and that rounds down to 4.3 against a view that
+  says 4.4. `deploy-dev.sh` is Appendix A, so re-embed with `./deploy/sync-appendices.sh` after
+  touching it.
 - **The prototype has two modes, and the default is still the closed demo.** Opened with no query
   string it behaves exactly as it always did — no network, all state in memory — because it is still
   the acceptance target *and* the seed's source. `?api=` turns on live mode (D29):
@@ -834,6 +861,12 @@ time.**
   **Reads are live, and so are all four writes with a token**: booking, reviewing, messaging, and
   the customer's own bookings and threads. The writes deliberately omit `priceMinor`, `currency` and
   `professionalLogin` so the server establishes them (D22, D28).
+  **The professional workspace is NOT live and is a known limitation** (D46 §5, backlog NEW-8):
+  everything under `#/pro/…` is computed from `PRO_HISTORY` and `PRO_SCHEDULE`, which live mode never
+  repopulates, so that screen renders demo figures under the LIVE banner — the "Sessions brokered"
+  defect one screen wide. Said in the live block's own "WHAT IS LIVE, AND WHAT IS NOT" section
+  rather than fixed. The rule it comes from is general: **adding a hero figure means saying which
+  mode it is true in.**
   `sendMsg` is **rewritten, not wrapped** — the demo fabricates a reply from the professional 1.6s
   after sending, which is a fine demo beat and a lie against a live estate. The verifier asserts no
   reply is invented.
