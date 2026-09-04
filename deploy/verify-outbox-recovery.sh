@@ -23,19 +23,90 @@
 #
 #  Reconnecting is not optional — a failure part-way through leaves booking off the plane. Hence
 #  the trap below, which reconnects on any exit.
+#
+#  --- WHICH ESTATE ------------------------------------------------------------------------------
+#
+#  The booking CONTAINER was already overridable; the ports and the two database containers were
+#  not, so the script could not be pointed at the quality box — which is the box it most needs to
+#  run against, since a container severed from hcnet is a far better approximation of a real broker
+#  outage there than on a dev estate that is usually half up. All four are overridable now, and they
+#  must be overridden TOGETHER: an HTTP port from one estate beside a database container from
+#  another reads every assertion against rows the API never touched, and check_estate() below
+#  refuses that rather than letting it produce numbers.
+#
+#      # the quality box (quality/startup.sh's ports and its explicit container names)
+#      HC_BOOKING_PORT=18101 HC_MESSAGING_PORT=18102 \
+#      HC_BOOKING_CTR=hc-market-quality-booking \
+#      HC_BOOKING_DB_CTR=hc-market-quality-booking-db \
+#      HC_MESSAGING_DB_CTR=hc-market-quality-messaging-db \
+#        ./deploy/verify-outbox-recovery.sh
+#
+#  The port names are deploy-dev.sh's own, with deploy-dev.sh's own defaults, so exporting the
+#  HC_*_PORT block CLAUDE.md documents configures the estate and this script together.
 # ==============================================================================
 set -uo pipefail
-BK=http://localhost:18202; M=http://localhost:18203
+BK=http://localhost:${HC_BOOKING_PORT:-8082}; M=http://localhost:${HC_MESSAGING_PORT:-8083}
 PRO=$(cat /tmp/tok-pro.txt); CUST=$(cat /tmp/tok-cust.txt)
-P=healthconnect-dev
 NET="${HC_SHARED_NETWORK:-hcnet}"
-BOOKING_CTR="${HC_DEV_BOOKING_CTR:-hc-market-dev-booking}"
-bq() { docker exec ${P}-booking-db-1 psql -U healthconnectBooking -t -A -c "$1"; }
-mq() { docker exec ${P}-messaging-db-1 psql -U healthconnectMessaging -t -A -c "$1"; }
+# HC_DEV_BOOKING_CTR is the name this variable had when the dev estate was the only estate it could
+# address. Still honoured so nobody's shell history breaks; the DEV in it is now a lie, hence the
+# rename.
+BOOKING_CTR="${HC_BOOKING_CTR:-${HC_DEV_BOOKING_CTR:-hc-market-dev-booking}}"
+# The dev compose names no database container, so compose derives `<project>-<service>-1`; the
+# quality compose names all five explicitly. Hence a variable per database rather than a prefix.
+BOOKING_DB_CTR="${HC_BOOKING_DB_CTR:-healthconnect-dev-booking-db-1}"
+MESSAGING_DB_CTR="${HC_MESSAGING_DB_CTR:-healthconnect-dev-messaging-db-1}"
+bq() { docker exec "$BOOKING_DB_CTR" psql -U healthconnectBooking -t -A -c "$1"; }
+mq() { docker exec "$MESSAGING_DB_CTR" psql -U healthconnectMessaging -t -A -c "$1"; }
 on_net() { docker inspect -f "{{if index .NetworkSettings.Networks \"$NET\"}}true{{else}}false{{end}}" "$BOOKING_CTR" 2>/dev/null; }
 trap 'if [ "$(on_net)" = false ]; then echo "reconnecting $BOOKING_CTR to $NET"; docker network connect "$NET" "$BOOKING_CTR" >/dev/null 2>&1; fi' EXIT
 fail=0
 chk() { if [ "$2" = "$3" ]; then printf '  ok   %-46s %s\n' "$1" "$2"; else printf '  FAIL %-46s got %s want %s\n' "$1" "$2" "$3"; fail=1; fi; }
+
+# --- The ports, the containers and the databases must name the SAME estate ----------------------
+#
+# This script disconnects a named container from hcnet. Naming the wrong estate's container is not
+# merely a wrong measurement — it severs a booking service somebody else is using, and the trap only
+# restores the one it cut. So the check runs before anything is touched.
+#
+# Compose labels every container it starts with its project name, which is enough to compare the
+# five containers this script touches without knowing either estate's naming scheme. It reads the
+# label rather than the name because the two compose files disagree about naming on purpose — the
+# dev one prefixes `dev-` to keep hcnet's aliases apart, the quality one names every container.
+project_of() { docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$1" 2>/dev/null; }
+publisher_of() { docker ps --filter "publish=$1" --format '{{.Names}}' | head -1; }
+check_estate() {
+  local bad=0 seen="" name proj booking_api messaging_api
+  booking_api="$(publisher_of "${HC_BOOKING_PORT:-8082}")"
+  messaging_api="$(publisher_of "${HC_MESSAGING_PORT:-8083}")"
+  [ -n "$booking_api" ] || { echo "  FAIL nothing publishes booking's port ${HC_BOOKING_PORT:-8082} — is the estate up?"; bad=1; }
+  [ -n "$messaging_api" ] || { echo "  FAIL nothing publishes messaging's port ${HC_MESSAGING_PORT:-8083} — is the estate up?"; bad=1; }
+  for name in "$BOOKING_CTR" "$BOOKING_DB_CTR" "$MESSAGING_DB_CTR"; do
+    docker inspect "$name" >/dev/null 2>&1 || { echo "  FAIL no such container: $name"; bad=1; }
+  done
+  [ $bad -eq 0 ] || { echo ""; echo "OUTBOX RECOVERY FAILED — see the header for the quality box's values"; exit 1; }
+
+  for name in "$booking_api" "$messaging_api" "$BOOKING_CTR" "$BOOKING_DB_CTR" "$MESSAGING_DB_CTR"; do
+    proj="$(project_of "$name")"
+    printf -v seen '%s\n%s\t%s' "$seen" "$proj" "$name"
+  done
+  if [ "$(printf '%s' "$seen" | awk 'NF{print $1}' | sort -u | wc -l)" != "1" ]; then
+    echo "  FAIL the ports, the booking container and the databases belong to different estates:"
+    printf '%s\n' "$seen" | awk 'NF{printf "         %-20s %s\n", $1, $2}'
+    echo "       Nothing has been disconnected. Override them TOGETHER — see the header."
+    echo ""; echo "OUTBOX RECOVERY FAILED — the estate is not consistently addressed"; exit 1
+  fi
+  # The booking container this is about to sever must be the one answering on the booking port, or
+  # the "accept still succeeded" assertion is made against a service that was never cut off.
+  if [ "$booking_api" != "$BOOKING_CTR" ]; then
+    echo "  FAIL port ${HC_BOOKING_PORT:-8082} is served by $booking_api but this would disconnect $BOOKING_CTR."
+    echo "       Nothing has been disconnected. Set HC_BOOKING_CTR to match the port."
+    echo ""; echo "OUTBOX RECOVERY FAILED — the estate is not consistently addressed"; exit 1
+  fi
+  printf '  estate  %s   booking %s   messaging %s   severing %s\n' \
+    "$(project_of "$BOOKING_CTR")" "$BK" "$M" "$BOOKING_CTR"
+}
+check_estate
 
 echo "── set up a booking to accept ──"
 D=$(date -u -d "+9 days" +%Y-%m-%d)

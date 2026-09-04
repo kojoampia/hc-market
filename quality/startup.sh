@@ -241,18 +241,56 @@ env_for_compose() {
 # These read the RESPONSE BODY, never just the status. A vhost that has been stolen by a sibling
 # answers 200 with a perfectly plausible page — that exact failure is on record for
 # admin.healthconnect.local — so "something replied" proves nothing at all.
+#
+# --- SEED-EXACT AND SEED-PLUS-ACTIVITY ARE TWO DIFFERENT ASSERTIONS ------------------------------
+#
+# Every count here used to be exact, and that made two of this repository's own tools contradict
+# each other. deploy/verify-cycle.sh books, accepts, completes and REVIEWS — the end-to-end check
+# the box exists for — and a review cannot be deleted, deliberately (spec §7). So a successful cycle
+# left `reviews` at 64 and the next --verify reported `✗ reviews through the gateway got 64 want 63`
+# and exited failure: one tool reporting another tool's success as a fault, with the next person
+# sent hunting a defect that is not there. Found by the quality run of 1eadc7a.
+#
+# So the counts are split by whether anything in this repository writes to them:
+#
+#   SEED-EXACT      professionals, and the catalogue's own body. Nothing here creates a
+#                   professional, so any drift is a real fault and stays an exact assertion.
+#   SEED + ACTIVITY reviews. At least the seed's figure, with the surplus PRINTED rather than
+#                   swallowed — a number that has moved is still on the screen, it just is not an
+#                   exit code.
+#
+# What that costs is real and is worth naming: --verify no longer fails when somebody has written
+# extra reviews into this box by hand. What it must not cost is the collision check, and it does
+# not — a sibling's Angular app answers with a page rather than an integer, and `at least 63` fails
+# on a non-number exactly as `== 63` did. The check below is added to make that stronger rather than
+# weaker: it compares p1's rating against the reviews the API itself serves, which is the "derived,
+# never stored" invariant and holds whatever the count is. Nothing serving somebody else's data can
+# satisfy it, and a count alone never could.
 verify() {
   step "Verify"
   local base="http://127.0.0.1:${GATEWAY_PORT}"
   local fail=0
   chk() { if [[ "$2" == "$3" ]]; then printf '  %s✓%s %-46s %s\n' "$c_ok" "$c_reset" "$1" "$2"; else printf '  %s✗%s %-46s got %s want %s\n' "$c_err" "$c_reset" "$1" "$2" "$3"; fail=1; fi; }
+  # Seed-or-more, with the surplus named. A blank or non-numeric answer fails, which is what keeps
+  # this as good a collision check as an exact count.
+  atleast() {
+    if [[ "$2" =~ ^[0-9]+$ ]] && (( $2 >= $3 )); then
+      if (( $2 > $3 )); then
+        printf '  %s✓%s %-46s %s %s(seed %s + %s recorded)%s\n' "$c_ok" "$c_reset" "$1" "$2" "$c_dim" "$3" "$(( $2 - $3 ))" "$c_reset"
+      else
+        printf '  %s✓%s %-46s %s %s(seed-exact)%s\n' "$c_ok" "$c_reset" "$1" "$2" "$c_dim" "$c_reset"
+      fi
+    else
+      printf '  %s✗%s %-46s got %s want at least %s\n' "$c_err" "$c_reset" "$1" "$2" "$3"; fail=1
+    fi
+  }
 
   chk "gateway health" "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$base/management/health")" "200"
 
   local n
   n="$(curl -s --max-time 10 "$base/services/healthconnectcatalog/api/professionals/count" || echo "")"
   chk "professionals through the gateway, no token" "$n" "18"
-  chk "reviews through the gateway" \
+  atleast "reviews through the gateway" \
     "$(curl -s --max-time 10 "$base/services/healthconnectcatalog/api/reviews/count" || echo "")" "63"
 
   # The rule the whole design turns on. A count can be right while the rating read model is broken;
@@ -261,6 +299,37 @@ verify() {
   rating="$(curl -s --max-time 10 "$base/services/healthconnectcatalog/api/professionals/p1" \
             | python3 -c 'import sys,json;print(json.load(sys.stdin)["card"]["rating"])' 2>/dev/null || echo "")"
   chk "p1 rating is derived, not null" "$(if [[ -n "$rating" && "$rating" != "None" ]]; then echo present; else echo missing; fi)" "present"
+
+  # And that the derivation is the RIGHT one, which no count can show. p1's rating and reviewCount
+  # come from the professional_rating view; the reviews come from the review table through a
+  # different endpoint. They must agree, and they agree whether the box is seed-exact or has been
+  # exercised — which is why this replaces the exactness the check above gave up rather than merely
+  # sitting beside it. A wrong-app collision cannot satisfy it, and neither can a stale read model.
+  local derived
+  derived="$(python3 - "$base" <<'PY' 2>/dev/null
+# ROUND_HALF_UP, not round(). The view rounds in Postgres, whose numeric round is half-away-from
+# zero; Python's built-in round is half-to-even. The first version of this check used round() and
+# reported "rating 4.3 over 8, reviews say 4.2 over 8" against an estate that was entirely correct —
+# a 4.25 average landing on either side of the same boundary. Exactly the class of plausible wrong
+# number this file exists to catch, arriving in the checker instead of in the estate.
+import json, sys, urllib.request
+from decimal import Decimal, ROUND_HALF_UP
+base = sys.argv[1] + "/services/healthconnectcatalog"
+def get(p):
+    with urllib.request.urlopen(base + p, timeout=10) as r:
+        return json.load(r)
+card = get("/api/professionals/p1")["card"]
+rows = get("/api/professionals/p1/reviews?page=0&size=200")
+rows = rows.get("content", []) if isinstance(rows, dict) else rows
+if not rows or card.get("rating") is None:
+    print("no reviews served for p1")
+else:
+    avg = (Decimal(sum(r["stars"] for r in rows)) / Decimal(len(rows))).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+    ok = Decimal(str(card["rating"])) == avg and card.get("reviewCount") == len(rows)
+    print("agrees" if ok else "rating %s over %s, reviews say %s over %s" % (card["rating"], card.get("reviewCount"), avg, len(rows)))
+PY
+)"
+  chk "p1's rating equals the reviews it serves" "${derived:-unreachable}" "agrees"
 
   # It must be OUR application answering, not a sibling's Angular app on a stolen hostname.
   chk "the body is this catalogue, not a sibling's app" \
