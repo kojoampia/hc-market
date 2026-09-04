@@ -557,6 +557,38 @@ class PaymentSeamIT {
         return intent.getValue().bookingReference();
     }
 
+    /**
+     * Naming a payment provider against an estate that has none is refused — {@code decisions.md}
+     * D45.
+     *
+     * <p>This is the estate as it actually stands: one fallback provider, nothing configured, money
+     * settled off-platform. A client that names {@code paystack} here believes this platform collects
+     * money and it does not, so answering 201 would create a booking whose customer thinks they have
+     * paid — the same class of untruth D44 refused when a provider claimed a priced booking was free.
+     * 409, and nothing is asked of the fallback either.
+     */
+    @Test
+    @Transactional
+    @DisplayName("naming a provider against an estate that has none is a 409, and nothing is asked")
+    void namingAProviderInAnEstateWithNoneIsRefused() throws Exception {
+        long before = bookings.count();
+
+        var request = new LinkedHashMap<String, Object>();
+        request.put("professionalRef", REF);
+        request.put("serviceRef", "s1b");
+        request.put("customerName", "Kojo Customer");
+        request.put("scheduledDate", LocalDate.now().plusDays(9).toString());
+        request.put("scheduledTime", "16:00");
+        request.put("deliveryMode", "ONLINE");
+        request.put("paymentProvider", "paystack");
+        mockMvc
+            .perform(post(URL).with(csrf()).contentType(MediaType.APPLICATION_JSON).content(om.writeValueAsString(request)))
+            .andExpect(status().isConflict());
+
+        assertThat(bookings.count()).isEqualTo(before);
+        org.mockito.Mockito.verify(payments, org.mockito.Mockito.never()).authorize(any());
+    }
+
     /** Every outbox row about one booking. The seeded estate is full of them, so filter by reference. */
     private List<OutboxEvent> eventsAbout(String reference) {
         return outbox.findAll().stream().filter(e -> reference.equals(e.getAggregateRef())).toList();

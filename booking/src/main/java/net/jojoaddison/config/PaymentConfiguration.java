@@ -5,75 +5,90 @@ import net.jojoaddison.service.payment.PaymentCallbackRefused;
 import net.jojoaddison.service.payment.PaymentIntent;
 import net.jojoaddison.service.payment.PaymentOutcome;
 import net.jojoaddison.service.payment.PaymentProvider;
+import net.jojoaddison.service.payment.PaymentProviderProperties;
+import net.jojoaddison.service.payment.PaymentProviders;
+import net.jojoaddison.service.payment.provider.HubtelPaymentProvider;
+import net.jojoaddison.service.payment.provider.MtnMomoPaymentProvider;
+import net.jojoaddison.service.payment.provider.PaystackPaymentProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * Supplies a {@link PaymentProvider} when nothing else does — {@code decisions.md} D15/D31.
- *
- * <p>{@code @ConditionalOnMissingBean}, so adding a real provider is one bean and no edit here. The
- * seam is designed to be filled from outside rather than extended from inside.
+ * Every {@link PaymentProvider} bean in the estate — {@code decisions.md} D15/D31/D45.
  *
  * <p>A new file rather than an addition to the generated {@code SecurityConfiguration} or the
  * application class, for the usual reason: regeneration preserves new files and discards edits to
  * generated ones.
  *
- * <h2>Read this before adding the real provider — {@code decisions.md} D44</h2>
+ * <h2>There is no {@code @ConditionalOnMissingBean} here any more, and that is the point of D45</h2>
  *
- * <p><strong>{@code @ConditionalOnMissingBean} is only reliable in an auto-configuration, and this is
- * not one.</strong> What that costs here is specific, and it is the opposite of what one might guess.
+ * <p>The fallback used to be supplied under that annotation, so a real provider was "one bean and no
+ * edit". D37 chose <strong>three</strong> providers with the customer choosing between them, and
+ * one-bean-wins cannot express that at all. D44 documented the annotation's order-sensitivity rather
+ * than fixing it, on the explicit grounds that WP-13 would delete the condition — so it is deleted,
+ * and the warning with it: every provider bean below is registered unconditionally or on a property,
+ * and {@link PaymentProviders} decides which one a booking reaches. There is nothing left here whose
+ * behaviour depends on the order two configuration classes were parsed in, so advice about it would
+ * be advice about a mechanism that is gone.
  *
- * <p><strong>A component-scanned {@code PaymentProvider} is always visible to this condition.</strong>
- * {@code ConfigurationClassParser.doProcessConfigurationClass} runs the component scan through
- * {@code ClassPathBeanDefinitionScanner.doScan}, which <em>registers</em> every scanned definition
- * before the loop that recursively parses them; the condition on a {@code @Bean} method is evaluated
- * later still, at {@code REGISTER_BEAN} phase in
- * {@code ConfigurationClassBeanDefinitionReader.loadBeanDefinitionsForBeanMethod}, which
- * {@code ConfigurationClassPostProcessor} does not reach until {@code parser.parse()} has finished. So
- * the scan is complete before the first {@code @Bean} condition fires, and the fallback below reliably
- * backs off for a {@code @Component}.
+ * <p>The conditions that remain are {@code @ConditionalOnProperty}, which is a different animal: it
+ * reads the {@code Environment} and never the bean registry, so no parse order can change its answer.
+ * That was the whole of D44's hazard.
  *
- * <p><strong>The order-sensitive shape is an explicit {@code @Bean} in a sibling
- * {@code @Configuration}</strong> — the one an earlier version of this note recommended. Two scanned
- * configuration classes are parsed in the order the scanner found them, which is the order the
- * classpath resources came back in, which is the filesystem's business and nobody else's. This class
- * parsed first: the condition sees no {@code PaymentProvider}, the fallback is registered, the sibling
- * then registers the real one unconditionally, and every injection point has two candidates and a
- * {@code NoUniqueBeanDefinitionException}. Parsed second: it sees the real one and steps aside. Same
- * code, two outcomes, and it can differ between a laptop and CI — the worst place to first meet it.
- * {@code PaymentConfigurationUnitTest} demonstrates both halves.
+ * <h2>Three adapters that refuse everything, and why they are here at all</h2>
  *
- * <p>So a real provider added before WP-13 should be a {@code @Component}, or anything carrying
- * {@code @Primary} — {@code @Primary} settles the ambiguity however the parse order fell, so it is
- * order-independent whichever shape declares it. The one thing to avoid is a bare {@code @Bean}
- * beside this class. The order-independent fix for that shape is to move <em>this</em> class to
- * {@code @AutoConfiguration} and list it in
- * {@code META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports}:
- * auto-configurations are processed from a deferred import selector after every user configuration
- * class, which is exactly the ordering the annotation assumes, and {@code @SpringBootApplication}'s
- * {@code AutoConfigurationExcludeFilter} keeps the class from also being component-scanned —
- * {@code HealthconnectBookingApp} carries the plain annotation, so that filter is in place.
+ * <p>{@link PaystackPaymentProvider}, {@link HubtelPaymentProvider} and
+ * {@link MtnMomoPaymentProvider} are seams with their provider-specific halves missing — WP-13 had no
+ * network access, no account and no credentials, and would have had to invent the wire format. See
+ * {@code net.jojoaddison.service.payment.provider}'s package documentation before implementing one.
  *
- * <p>WP-13 replaces the condition outright with a registry keyed by provider name, which is the shape
- * three providers need anyway: the fallback becomes the entry named {@code none} rather than the only
- * entry, and the webhook's "a callback addressed to a provider this service is not configured for"
- * refusal starts doing real work.
+ * <p>Each is registered only when its {@code enabled} property is true, and none is true anywhere in
+ * this repository. <strong>Turning one on today makes every priced booking that names it answer
+ * 502</strong>, because the adapter refuses to authorize anything; {@code PaymentProviderProperties}
+ * says so at startup, at WARN, once per enabled provider. That is the honest behaviour for an
+ * integration nobody has written, and it is preferable to the alternative shape — leaving the classes
+ * unregistered — because the wiring between a name, a choice, a route and a callback is exactly what
+ * this package could verify, and a bean that no configuration can produce is wiring nobody has run.
  */
 @Configuration
 public class PaymentConfiguration {
 
     /**
-     * The fallback. It steps aside for a component-scanned provider every time; the shape it can
-     * collide with is a bare {@code @Bean} in a sibling {@code @Configuration}. See the class javadoc
-     * before adding either.
+     * The honest answer when nothing else is configured, and now one entry in a registry rather than
+     * the only one.
+     *
+     * <p>The method name is load-bearing: {@link PaymentProviders} injects this bean by name through
+     * {@link PaymentProviders#FALLBACK_BEAN}, so that it can exclude it from the customer's choices
+     * without holding any opinion about what an absent provider calls itself. Renaming the method
+     * without renaming the constant fails the context at startup, which is the loud direction.
      */
     @Bean
-    @ConditionalOnMissingBean(PaymentProvider.class)
     public PaymentProvider unconfiguredPaymentProvider() {
         return new UnconfiguredPaymentProvider();
+    }
+
+    /** Paystack, when {@code healthconnect.payments.paystack.enabled} is true. It refuses everything. */
+    @Bean
+    @ConditionalOnProperty(prefix = "healthconnect.payments.paystack", name = "enabled", havingValue = "true")
+    public PaymentProvider paystackPaymentProvider(PaymentProviderProperties settings) {
+        return new PaystackPaymentProvider(settings.getPaystack());
+    }
+
+    /** Hubtel, when {@code healthconnect.payments.hubtel.enabled} is true. It refuses everything. */
+    @Bean
+    @ConditionalOnProperty(prefix = "healthconnect.payments.hubtel", name = "enabled", havingValue = "true")
+    public PaymentProvider hubtelPaymentProvider(PaymentProviderProperties settings) {
+        return new HubtelPaymentProvider(settings.getHubtel());
+    }
+
+    /** MTN MoMo, when {@code healthconnect.payments.momo.enabled} is true. It refuses everything. */
+    @Bean
+    @ConditionalOnProperty(prefix = "healthconnect.payments.momo", name = "enabled", havingValue = "true")
+    public PaymentProvider momoPaymentProvider(PaymentProviderProperties settings) {
+        return new MtnMomoPaymentProvider(settings.getMomo());
     }
 
     /**

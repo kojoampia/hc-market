@@ -29,13 +29,19 @@ package net.jojoaddison.service.payment;
  * implements {@code authorize} as a capture and returns {@link PaymentState#CAPTURED} — nothing here
  * requires two steps or forbids one.
  *
- * <h2>There is exactly one implementation today</h2>
+ * <h2>Four implementations, and none of them has ever spoken to a provider</h2>
  *
- * <p>{@link net.jojoaddison.config.PaymentConfiguration.UnconfiguredPaymentProvider}, which reports
- * {@link PaymentState#OFF_PLATFORM} and refuses everything else. This interface being unused in
- * anger is the accurate state of affairs, not an oversight: D15 has no provider and no Act 987
- * opinion, and writing a Paystack or Hubtel client before either exists would be the unfinished
- * integration rather than the seam.
+ * <p>{@link net.jojoaddison.config.PaymentConfiguration.UnconfiguredPaymentProvider} reports
+ * {@link PaymentState#OFF_PLATFORM} and refuses everything else, and is still what answers on an
+ * estate with nothing configured. Beside it, D45 added the three D37 chose — Paystack, Hubtel and MTN
+ * MoMo — as <em>seams with their wire formats missing</em>: they name themselves, they are selected
+ * and dispatched to exactly as a real adapter would be, and every call that would have to know how
+ * the provider speaks fails closed. WP-13 had no network access, no account and no credentials, so
+ * writing those calls would have been invention rather than integration.
+ *
+ * <p>Which one a booking reaches is {@link PaymentProviders}' decision, from a name the customer sent
+ * and the registry checked. <strong>Nothing injects this interface by type any more</strong>, which is
+ * what lets more than one implementation exist at once — see D45 before adding a bean.
  *
  * <h2>One thing is persisted: the handle</h2>
  *

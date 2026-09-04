@@ -272,6 +272,41 @@ healthconnect:
     base-url: http://healthconnectmessaging
   erasure:
     timeout-ms: 10000
+  # --- Payment providers -- decisions.md D37/D45 -----------------------------------------------
+  #
+  # D37 chose Paystack, Hubtel and MTN MoMo, with the customer choosing between them on the booking
+  # request. Each adapter is a bean only when its own `enabled` flag is true, and ALL THREE ARE OFF
+  # BY DEFAULT -- because none of them is implemented. WP-13 had no network access, no provider
+  # account and no credentials, so a signature scheme or a JSON field path written here would have
+  # been invention that passes the tests written to match it, on the one path where a customer's
+  # money is already committed. See net.jojoaddison.service.payment.provider's package docs.
+  #
+  # TURNING ONE ON MAKES EVERY PRICED BOOKING THAT NAMES IT ANSWER 502, and booking says so at WARN
+  # once per enabled provider at startup. With none of them on, the estate behaves exactly as it
+  # always has: one fallback provider reporting OFF_PLATFORM, and a booking request that names no
+  # provider because there is none to name.
+  #
+  # `secret` is what the provider signs its callbacks with. It is the estate's third secret and is
+  # handled like the other two -- injected, never written here, because this repository is public --
+  # with one difference: it is optional, since a provider nobody enabled needs none. ABSENT MEANS
+  # CALLBACKS ARE REFUSED RATHER THAN TRUSTED, which is D35's rule for the pepper applied to a
+  # provider's key. Blank counts as absent.
+  #
+  # The credentials an OUTBOUND call needs are deliberately not modelled: their shape differs per
+  # provider and nobody here has read the documentation. Whoever has an account adds the fields
+  # their provider actually has, in the same commit as the adapter that reads them.
+  payments:
+    paystack:
+      enabled: ${HC_PAYSTACK_ENABLED:false}
+      secret: ${HC_PAYSTACK_SECRET:}
+    hubtel:
+      enabled: ${HC_HUBTEL_ENABLED:false}
+      secret: ${HC_HUBTEL_SECRET:}
+    # MTN MoMo, taken directly. One word on the wire -- `momo` -- because the name is a URL segment,
+    # a property key and a payment_attempt column, and a hyphen has to survive all three.
+    momo:
+      enabled: ${HC_MOMO_ENABLED:false}
+      secret: ${HC_MOMO_SECRET:}
   # Retention -- decisions.md D24, answered by D42. These used to be deliberately absent, on the
   # argument that a default would be a legal position taken by whoever typed it. That argument has
   # been DISCHARGED, not abandoned: counsel ratified these three periods on 2026-09-03, so the values

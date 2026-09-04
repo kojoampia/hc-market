@@ -20,6 +20,8 @@ import net.jojoaddison.security.SecurityUtils;
 import net.jojoaddison.service.BookingMapper;
 import net.jojoaddison.service.BookingWorkflow;
 import net.jojoaddison.service.payment.BookingPayments;
+import net.jojoaddison.service.payment.PaymentChoiceRefused;
+import net.jojoaddison.service.payment.PaymentProviders;
 import net.jojoaddison.service.payment.PaymentState;
 import net.jojoaddison.service.BookingCreator;
 import net.jojoaddison.service.BrokerageClient;
@@ -67,6 +69,7 @@ public class CustomerBookingResource {
     private final BrokerageClient brokerage;
     private final CatalogClient catalog;
     private final BookingPayments payments;
+    private final PaymentProviders providers;
 
     public CustomerBookingResource(
         BookingWorkflow bookings,
@@ -76,7 +79,8 @@ public class CustomerBookingResource {
         BookingCreator creator,
         BrokerageClient brokerage,
         CatalogClient catalog,
-        BookingPayments payments
+        BookingPayments payments,
+        PaymentProviders providers
     ) {
         this.bookings = bookings;
         this.repository = repository;
@@ -86,6 +90,7 @@ public class CustomerBookingResource {
         this.brokerage = brokerage;
         this.catalog = catalog;
         this.payments = payments;
+        this.providers = providers;
     }
 
     /**
@@ -115,6 +120,14 @@ public class CustomerBookingResource {
      * written, no {@code booking.requested} is published, and the professional learns of it when the
      * webhook confirms the money. The response carries {@code payment} — a URL to visit or "a prompt
      * has been sent" — and it is the only response in the estate that does.
+     *
+     * <p><strong>{@code paymentProvider} is the customer's to choose and the server's to refuse</strong>
+     * — {@code decisions.md} D45. It is the one client-supplied field on this request that something
+     * downstream trusts with money, so it gets the treatment D22 gave the price and D28 gave the
+     * professional's login: checked against what this service is configured for, refused when it is
+     * not (409), and never quietly replaced with a provider of the platform's choosing. Absent means
+     * "no preference" and is honoured only while there is nothing to choose between; with more than
+     * one provider configured, a request that names none is a 400 listing the ones that exist.
      */
     @PostMapping
     public ResponseEntity<BookingView> create(@Valid @RequestBody CreateBooking request) {
@@ -151,7 +164,7 @@ public class CustomerBookingResource {
             .careSummaryShared(Boolean.TRUE.equals(request.careSummaryShared()))
             .raisedAt(Instant.now())
             .reviewed(false);
-        BookingPayments.Taken taken = authorizePayment(booking);
+        BookingPayments.Taken taken = authorizePayment(booking, request.paymentProvider());
         // The provider has not decided yet — Paystack's redirect, Hubtel's and MoMo's phone prompt.
         // D43: the booking is written, in a state the professional never sees, and announced only
         // when the money is confirmed. Everything else about the request is unchanged.
@@ -364,10 +377,12 @@ public class CustomerBookingResource {
     /**
      * Asks the payment seam whether this booking's money is in hand — {@code decisions.md} D15/D31.
      *
-     * <p><strong>Today this always passes</strong>, because the only provider bean in the estate
-     * reports {@code OFF_PLATFORM}: the customer pays the professional directly, which is what has
-     * always happened and is now stated rather than assumed. So this call changes no behaviour and
-     * is not meant to.
+     * <p><strong>Today this always passes for a request that names no provider</strong>, because with
+     * nothing configured the fallback answers {@code OFF_PLATFORM}: the customer pays the professional
+     * directly, which is what has always happened and is now stated rather than assumed. A request
+     * that <em>does</em> name one is refused before any of this — see the {@code catch} below and
+     * {@code decisions.md} D45 — because the caller believes this estate collects money and it does
+     * not.
      *
      * <p>What it is, is the one place a real provider gets consulted. When one is configured, a
      * booking whose payment is declined is refused here instead of being created and reconciled
@@ -407,8 +422,30 @@ public class CustomerBookingResource {
      * The status codes stay here because they are answers to a client; the money's lifecycle does
      * not, because it is not a detail of one endpoint.
      */
-    private BookingPayments.Taken authorizePayment(Booking booking) {
-        BookingPayments.Taken taken = payments.take(booking);
+    private BookingPayments.Taken authorizePayment(Booking booking, String chosenProvider) {
+        BookingPayments.Taken taken;
+        try {
+            taken = payments.take(booking, chosenProvider);
+        } catch (PaymentChoiceRefused refused) {
+            // Nothing has been asked of anybody and nothing is committed, so there is nothing to give
+            // back — which is why this is caught here rather than inside the try that releases.
+            //
+            // 409 for a name this estate does not offer, 400 for a choice that was needed and absent.
+            // The client's next move differs: re-read the offer and ask again, versus ask the
+            // customer. That is the same distinction 402 and 502 draw one paragraph down, and the 409
+            // matches what D22 already answers when a client's figures disagree with the catalogue.
+            //
+            // The message names the providers this service offers and never the one that was asked
+            // for. The offer is this estate's own configuration and is safe to say; the request is a
+            // stranger's string on its way to a response body, which is exactly the route D44 closed
+            // for a provider's prose. Without the offer a client that must name a provider has no way
+            // to learn the names, and there is no endpoint that publishes them.
+            HttpStatus status = refused.reason() == PaymentChoiceRefused.Reason.NOT_OFFERED
+                ? HttpStatus.CONFLICT
+                : HttpStatus.BAD_REQUEST;
+            LOG.warn("booking {} named a payment provider that could not be used: {}", booking.getReference(), refused.getMessage());
+            throw new ResponseStatusException(status, refused.getMessage());
+        }
         PaymentState state = taken.outcome().state();
         if (state.permitsBooking()) {
             return taken;
@@ -454,12 +491,16 @@ public class CustomerBookingResource {
      * is a booking in {@code REQUESTED} like any other (D44). The URL is the provider's own, relayed
      * rather than rewritten.
      */
-    private static PaymentAction nextActionFor(BookingPayments.Taken taken) {
+    private PaymentAction nextActionFor(BookingPayments.Taken taken) {
         if (taken.outcome().state() != PaymentState.PENDING) {
             return null;
         }
         return new PaymentAction(
             taken.outcome().state().name(),
+            // The provider that actually took it, from the registry's safe naming rather than from
+            // the adapter directly — D44 found what an adapter whose name() throws costs, and this
+            // one runs on the success path with the money already committed.
+            providers.nameOf(taken.provider()),
             taken.outcome().nextAction().kind().name(),
             taken.outcome().nextAction().url()
         );

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 import net.jojoaddison.service.payment.PaymentCallback;
@@ -11,11 +12,13 @@ import net.jojoaddison.service.payment.PaymentCallbackRefused;
 import net.jojoaddison.service.payment.PaymentIntent;
 import net.jojoaddison.service.payment.PaymentOutcome;
 import net.jojoaddison.service.payment.PaymentProvider;
+import net.jojoaddison.service.payment.PaymentProviderProperties;
+import net.jojoaddison.service.payment.PaymentProviders;
 import net.jojoaddison.service.payment.PaymentState;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.NoUniqueBeanDefinitionException;
-import org.springframework.beans.factory.support.RootBeanDefinition;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -197,66 +200,118 @@ class PaymentConfigurationUnitTest {
         assertThat(provider.name()).isEqualTo("none");
     }
 
-    // ------------------------------------------- which shape of real provider steps this one aside --
+    // ---------------------------------------------------- the registry, and what replaced the condition --
 
     /**
-     * The condition sees anything already in the registry — {@code decisions.md} D44, as corrected.
+     * Two providers in one context, which is the whole of what D45 changed here.
      *
-     * <p>This class's javadoc used to say the opposite: that a component-scanned {@code
-     * PaymentProvider} might or might not be visible depending on the order the scanner reached the
-     * two classes in. It is not order-dependent, and the sources on the classpath say why.
-     * {@code ConfigurationClassParser.doProcessConfigurationClass} calls
-     * {@code componentScanParser.parse(...)}, whose {@code ClassPathBeanDefinitionScanner.doScan}
-     * <strong>registers every scanned definition</strong> before returning the holders it then
-     * recurses over; a {@code @Bean} method's {@code REGISTER_BEAN}-phase condition is evaluated
-     * later still, in {@code ConfigurationClassBeanDefinitionReader.loadBeanDefinitionsForBeanMethod},
-     * which {@code ConfigurationClassPostProcessor} does not reach until {@code parser.parse()} has
-     * completed. So the scan is finished before the first condition fires.
+     * <p>This replaces the pair of tests that pinned {@code @ConditionalOnMissingBean}'s behaviour.
+     * One of them demonstrated that a sibling {@code @Bean PaymentProvider} collides or steps aside
+     * depending purely on which configuration class was parsed first — identical code, two outcomes,
+     * decided by the order {@code getResources} happened to return two files in. That is gone rather
+     * than fixed: <strong>nothing injects a {@code PaymentProvider} by type any more</strong>, so two
+     * of them are two entries rather than a {@code NoUniqueBeanDefinitionException}, and which one a
+     * booking reaches is decided by {@link PaymentProviders#chosen(String)} from a name.
      *
-     * <p>Registering the definition by hand is that state of the registry, reached the short way: the
-     * scanner's contribution is a bean definition present before parsing produces any {@code @Bean},
-     * and this asserts what the condition does with one.
+     * <p>Asserted in <strong>both registration orders</strong>, because order-independence is the
+     * property being claimed and the deleted test proved the opposite one.
      */
     @Test
-    @DisplayName("a provider already in the registry backs the fallback off")
-    void anAlreadyRegisteredProviderBacksTheFallbackOff() {
-        try (var context = new AnnotationConfigApplicationContext()) {
-            context.registerBeanDefinition("scannedProvider", new RootBeanDefinition(NamedProvider.class));
-            context.register(PaymentConfiguration.class);
-            context.refresh();
+    @DisplayName("a second provider is a second entry, not a collision, whichever order they arrive in")
+    void twoProvidersCoexistInEitherOrder() {
+        for (Class<?>[] order : List.of(
+            new Class<?>[] { PaymentConfiguration.class, SiblingProviderConfiguration.class },
+            new Class<?>[] { SiblingProviderConfiguration.class, PaymentConfiguration.class }
+        )) {
+            try (var context = new AnnotationConfigApplicationContext()) {
+                context.register(order);
+                context.register(PaymentProviders.class);
+                context.refresh();
 
-            assertThat(context.getBeansOfType(PaymentProvider.class)).hasSize(1).containsKey("scannedProvider");
+                assertThat(context.getBeansOfType(PaymentProvider.class)).hasSize(2);
+                PaymentProviders providers = context.getBean(PaymentProviders.class);
+                assertThat(providers.choices()).containsExactly("named");
+                assertThat(providers.named("none")).isPresent();
+                assertThat(providers.chosen("named")).isInstanceOf(NamedProvider.class);
+            }
         }
     }
 
     /**
-     * And the shape the javadoc used to recommend is the one that actually collides.
+     * The fallback carries no condition now, and is still not a payment method.
      *
-     * <p>An explicit {@code @Bean PaymentProvider} in a sibling {@code @Configuration} is registered
-     * in configuration-class parse order, which for two component-scanned classes is the order the
-     * scanner found them — a property of the filesystem. Parsed first, {@code PaymentConfiguration}'s
-     * condition sees nothing, the fallback is registered, the sibling then registers the real
-     * provider unconditionally, and the injection point has two candidates. Parsed second, it sees
-     * the real one and steps aside. Identical code, two outcomes, and the deciding factor is not in
-     * either file.
-     *
-     * <p>Registration order here stands in for parse order: {@code ConfigurationClassPostProcessor}
-     * sorts candidates only by {@code @Order}, and neither declares one, so a stable sort leaves them
-     * as they were registered.
+     * <p>Both halves matter. It is registered unconditionally, so an estate with a real provider has
+     * two beans rather than one — which is what makes the previous test's claim possible. And
+     * {@link PaymentProviders#choices()} excludes it by identity, so "pay through no provider" never
+     * becomes something a client can ask for.
      */
     @Test
-    @DisplayName("a sibling @Bean collides or not depending purely on which is parsed first")
-    void aSiblingBeanMethodIsTheOrderSensitiveShape() {
-        try (var fallbackFirst = new AnnotationConfigApplicationContext(PaymentConfiguration.class, SiblingProviderConfiguration.class)) {
-            assertThat(fallbackFirst.getBeansOfType(PaymentProvider.class)).hasSize(2);
-            assertThatThrownBy(() -> fallbackFirst.getBean(PaymentProvider.class)).isInstanceOf(NoUniqueBeanDefinitionException.class);
-        }
-        try (var providerFirst = new AnnotationConfigApplicationContext(SiblingProviderConfiguration.class, PaymentConfiguration.class)) {
-            assertThat(providerFirst.getBeansOfType(PaymentProvider.class)).hasSize(1);
+    @DisplayName("the fallback is always registered and never on offer")
+    void theFallbackIsUnconditionalAndUnselectable() {
+        try (var context = new AnnotationConfigApplicationContext(PaymentConfiguration.class, PaymentProviders.class)) {
+            assertThat(context.getBeansOfType(PaymentProvider.class)).hasSize(1).containsKey(PaymentProviders.FALLBACK_BEAN);
+            assertThat(context.getBean(PaymentProviders.class).choices()).isEmpty();
         }
     }
 
-    /** The sibling {@code @Configuration} the corrected advice tells WP-13 <em>not</em> to use. */
+    /**
+     * None of D37's three adapters exists unless somebody turns it on, and turning one on is the only
+     * way to get a provider into this estate.
+     *
+     * <p>{@code @ConditionalOnProperty} rather than {@code @ConditionalOnMissingBean}, and the
+     * difference is the whole of D44's hazard: this one reads the {@code Environment} and never the
+     * bean registry, so no parse order can change its answer.
+     */
+    @Test
+    @DisplayName("the three adapters are absent until their own property says otherwise")
+    void adaptersAreOptInOnly() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(WithProviderSettings.class, PaymentConfiguration.class, PaymentProviders.class)
+            .run(context -> assertThat(context.getBean(PaymentProviders.class).choices()).isEmpty());
+
+        new ApplicationContextRunner()
+            .withUserConfiguration(WithProviderSettings.class, PaymentConfiguration.class, PaymentProviders.class)
+            .withPropertyValues("healthconnect.payments.hubtel.enabled=true", "healthconnect.payments.momo.enabled=true")
+            .run(context -> {
+                PaymentProviders providers = context.getBean(PaymentProviders.class);
+                assertThat(providers.choices()).containsExactlyInAnyOrder("hubtel", "momo");
+                // And the one nobody enabled is not reachable by a callback either.
+                assertThat(providers.named("paystack")).isEmpty();
+                assertThat(providers.named("momo")).isPresent();
+            });
+    }
+
+    /**
+     * An enabled adapter with no secret is registered and refuses — {@code decisions.md} D35/D45.
+     *
+     * <p>The alternative shape, dropping it from the registry, was rejected: it presents as "the
+     * provider we configured is not offered" with nothing anywhere saying why. This way an operator
+     * sees the provider, sees the WARN at startup, and every callback addressed to it is refused with
+     * the same flat 401 an unimplemented one gives — no secret means refused, never trusted.
+     */
+    @Test
+    @DisplayName("a provider enabled without its secret is offered and refuses every callback")
+    void anEnabledProviderWithNoSecretRefuses() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(WithProviderSettings.class, PaymentConfiguration.class, PaymentProviders.class)
+            .withPropertyValues("healthconnect.payments.paystack.enabled=true")
+            .run(context -> {
+                PaymentProvider paystack = context.getBean(PaymentProviders.class).named("paystack").orElseThrow();
+                assertThatThrownBy(() -> paystack.readCallback(new PaymentCallback("paystack", Map.of(), "{}")))
+                    .isInstanceOf(PaymentCallbackRefused.class)
+                    .hasMessageContaining("no signing secret");
+            });
+    }
+
+    /** Binds {@code healthconnect.payments.*} the way the application does, without the application. */
+    @Configuration
+    @EnableConfigurationProperties(PaymentProviderProperties.class)
+    static class WithProviderSettings {}
+
+    /**
+     * A real provider declared as a bare {@code @Bean} beside {@code PaymentConfiguration} — the one
+     * shape D44 told WP-13 not to use, kept here because it is now harmless and that is the claim.
+     */
     @Configuration
     static class SiblingProviderConfiguration {
 
@@ -266,7 +321,7 @@ class PaymentConfigurationUnitTest {
         }
     }
 
-    /** A provider that exists and does nothing. Only its type and its presence matter here. */
+    /** A provider that exists and does nothing. Only its type, its presence and its name matter. */
     static class NamedProvider implements PaymentProvider {
 
         @Override

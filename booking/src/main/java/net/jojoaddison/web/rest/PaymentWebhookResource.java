@@ -1,12 +1,12 @@
 package net.jojoaddison.web.rest;
 
-import java.util.Locale;
 import java.util.Map;
 import net.jojoaddison.service.payment.PaymentCallback;
 import net.jojoaddison.service.payment.PaymentCallbackRefused;
 import net.jojoaddison.service.payment.PaymentConfirmations;
 import net.jojoaddison.service.payment.PaymentOutcome;
 import net.jojoaddison.service.payment.PaymentProvider;
+import net.jojoaddison.service.payment.PaymentProviders;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -39,9 +39,13 @@ import org.springframework.web.server.ResponseStatusException;
  * detail</strong>. Not 400, not 403, not a message saying which part was wrong: an endpoint that
  * explains its refusals is an oracle for constructing one that is not refused.
  *
- * <p><strong>Today every caller gets 401</strong>, because the only provider in the estate is the
- * unconfigured one and it refuses every callback by definition (D15). That is the correct behaviour
- * for an estate that collects no money, not a placeholder.
+ * <p><strong>Today every caller gets 401</strong>, and after D45 there are two ways to get it rather
+ * than one. A name this service is not configured for resolves to no adapter at all and is refused
+ * before anything reads the body — with three providers that is a real check rather than a comparison
+ * against the only entry there was. A name that does resolve reaches an adapter, and every adapter in
+ * this estate refuses: the fallback because there is no provider (D15), and the three named ones
+ * because their signature schemes are not implemented (D45). That is the correct behaviour for an
+ * estate that collects no money, not a placeholder.
  *
  * <p><strong>What it does.</strong> A verified callback is handed to {@link PaymentConfirmations},
  * which finds the payment by the provider's handle and, if its booking is still waiting, confirms it
@@ -56,24 +60,14 @@ import org.springframework.web.server.ResponseStatusException;
  * success. The one case that answers 404 is a callback that arrives <em>before</em> the booking has
  * been written, which is a genuine race the provider's retry resolves.
  *
- * <h2>What actually keeps this off the internet today</h2>
+ * <h2>This is reachable from the internet now, and that is D45</h2>
  *
- * <p>The same thing that keeps catalog's {@code /internal/**} private — {@code decisions.md} D28. The
- * gateway's four routes match {@code /services/<service>/api/**} and nothing else, and this path is
- * not under {@code /api}, so <strong>nothing can be routed here through the gateway in any
- * environment</strong>. That is deliberate for as long as there is no provider: an unauthenticated
- * endpoint nobody legitimate calls should not be reachable, whatever it does with what it receives.
- *
- * <p><strong>Through the gateway is not the same as from outside.</strong> Booking's own port is
- * published on all interfaces by {@code docker-compose.dev.yml} ({@code ${HC_BOOKING_PORT:-8082}:8080}),
- * so on a development host anyone who can reach that port can post here directly, gateway or no
- * gateway. Quality publishes on {@code 127.0.0.1} only and production publishes booking's port not at
- * all. This is exactly the property catalog's {@code /internal/**} has always had and is not a
- * regression — but "the route predicates are the control" holds against the internet, not against the
- * host the container runs on, and the signature check is the only thing standing between the two.
- *
- * <p>WP-13 makes it reachable, and doing that is one line per environment beside the provider's
- * configuration:
+ * <p>Until WP-13 it was not, and the thing keeping it private was D28's property rather than any rule
+ * in a security file: the gateway's four route predicates matched {@code /services/<service>/api/**}
+ * and this path is not under {@code /api}, so no request from outside could be routed here in any
+ * environment. A provider that cannot reach the webhook cannot confirm a payment, so exposing it is
+ * the last thing WP-13 owed, and it is <strong>two</strong> things in each environment rather than
+ * one:
  *
  * <pre>
  *   SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_4_ID: healthconnectbooking-webhooks
@@ -82,12 +76,29 @@ import org.springframework.web.server.ResponseStatusException;
  *   SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_4_FILTERS_0: StripPrefix=2
  * </pre>
  *
- * <p>It also needs the gateway to stop demanding a token for it — the generated gateway security ends
- * with {@code .pathMatchers("/services/**").authenticated()}, so the route alone would return 401
- * before routing, exactly as it did for the public catalogue reads that
- * {@code MarketplacePublicRouteConfiguration} exists to let through. Whoever wires a provider does
- * both or neither; a route without the permit is a webhook that silently never arrives, which reads as
- * a broken provider integration.
+ * <p>— in all three compose files, <em>and</em> a permit in the gateway's own security, because the
+ * generated gateway chain ends with {@code .pathMatchers("/services/**").authenticated()} and
+ * authenticates before routing. The route alone is a webhook that silently never arrives, which reads
+ * as a broken provider integration rather than as a missing line. That permit is
+ * {@code PaymentWebhookRouteConfiguration} in the gateway, a new file beside
+ * {@code MarketplacePublicRouteConfiguration} and for the same regeneration reason.
+ *
+ * <p><strong>So the signature check is now the only thing in front of this endpoint</strong>, which is
+ * what {@link PaymentProvider#readCallback} was always for. Two narrowings remain and both are worth
+ * keeping: the gateway permits only {@code POST}, and
+ * {@code PaymentWebhookSecurityConfiguration} inside booking denies everything under
+ * {@code /webhooks/} that is not one, so the prefix cannot quietly acquire a readable endpoint.
+ *
+ * <p>D28's property is untouched for everything else: catalog's {@code /internal/**} is still
+ * unreachable, and this is the one path in the estate deliberately routed outside {@code /api/**}.
+ * Widening the new predicate to {@code /services/healthconnectbooking/**} would publish booking's
+ * whole surface, so it is written as {@code /webhooks/**} and CI asserts that shape in all three
+ * files.
+ *
+ * <p><strong>Through the gateway was never the same as from outside.</strong> Booking's own port is
+ * published on all interfaces by {@code docker-compose.dev.yml} ({@code ${HC_BOOKING_PORT:-8082}:8080}),
+ * so on a development host anyone who can reach that port could always post here directly. Quality
+ * publishes on {@code 127.0.0.1} only and production publishes booking's port not at all.
  */
 @RestController
 @RequestMapping("/webhooks/payments")
@@ -95,11 +106,11 @@ public class PaymentWebhookResource {
 
     private static final Logger LOG = LoggerFactory.getLogger(PaymentWebhookResource.class);
 
-    private final PaymentProvider provider;
+    private final PaymentProviders providers;
     private final PaymentConfirmations confirmations;
 
-    public PaymentWebhookResource(PaymentProvider provider, PaymentConfirmations confirmations) {
-        this.provider = provider;
+    public PaymentWebhookResource(PaymentProviders providers, PaymentConfirmations confirmations) {
+        this.providers = providers;
         this.confirmations = confirmations;
     }
 
@@ -136,10 +147,14 @@ public class PaymentWebhookResource {
     /**
      * Establishes that this really is the provider, or refuses with 401 and no explanation.
      *
-     * <p>The name in the path is checked against the configured provider first. That is not security —
-     * the signature is — but it stops a callback signed by one provider being applied as another's the
-     * day there is more than one (WP-13), and it means the verifier is never handed a body from a
-     * provider it does not speak for.
+     * <p>The name in the path selects the adapter, through {@link PaymentProviders#named(String)}.
+     * That is not security — the signature is — but it stops a callback signed by one provider being
+     * applied as another's, and it means a verifier is never handed a body from a provider it does not
+     * speak for. <strong>D45 is where that started doing real work</strong>: until there was a
+     * registry the name was compared against the single configured provider, which was a comparison
+     * with only one possible right answer. A name nothing here is configured for resolves to nothing
+     * and is refused without any adapter being asked, so an unconfigured provider cannot be reached
+     * even by a caller who signs perfectly.
      *
      * <p><strong>Every way of failing to establish the provider gives the same answer</strong>, which
      * is why the second catch is here. {@link PaymentCallbackRefused} is what an adapter throws when it
@@ -153,10 +168,13 @@ public class PaymentWebhookResource {
      * whichever adapter is configured.
      */
     private PaymentOutcome verified(String named, Map<String, String> headers, String body) {
+        // Declared out here so the second catch can name the adapter that broke. It is null only on
+        // the path that throws PaymentCallbackRefused, which the first catch takes.
+        PaymentProvider provider = null;
         try {
-            if (named == null || !named.toLowerCase(Locale.ROOT).equals(provider.name().toLowerCase(Locale.ROOT))) {
-                throw new PaymentCallbackRefused("callback addressed to a provider this service is not configured for");
-            }
+            provider = providers
+                .named(named)
+                .orElseThrow(() -> new PaymentCallbackRefused("callback addressed to a provider this service is not configured for"));
             return provider.readCallback(new PaymentCallback(named, headers, body));
         } catch (PaymentCallbackRefused refused) {
             // The cause goes to the log, where an operator reads it; the caller is told only that it
@@ -169,7 +187,7 @@ public class PaymentWebhookResource {
             // which is why it goes to a log an operator reads and never into the response.
             LOG.warn(
                 "a payment callback could not be read by the {} adapter: {}: {}",
-                provider.name(),
+                providers.nameOf(provider),
                 broken.getClass().getName(),
                 broken.getMessage()
             );
