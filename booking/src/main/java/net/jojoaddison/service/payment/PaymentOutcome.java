@@ -64,6 +64,23 @@ public record PaymentOutcome(PaymentState state, String providerReference, Strin
         return new PaymentOutcome(PaymentState.OFF_PLATFORM, null, null);
     }
 
+    /**
+     * There is nothing to pay, so nobody was asked — {@code decisions.md} D44.
+     *
+     * <p>The only factory here that is <strong>not</strong> a provider reporting something.
+     * {@link BookingPayments#take} returns it for an amount of zero without reaching an adapter at
+     * all, which is why it carries no reference: a handle is a thing a provider issues, and none was.
+     * No {@code payment_attempt} row follows, by D41's existing rule rather than by a second one.
+     *
+     * <p><strong>It is public and an adapter must not use it.</strong> That is not left to manners:
+     * {@code take} refuses this state from a provider whenever the booking costs something, and
+     * answers {@link PaymentState#FAILED}. Calling it from an adapter therefore produces a 502 and no
+     * booking rather than the free session it asked for.
+     */
+    public static PaymentOutcome nothingToPay() {
+        return new PaymentOutcome(PaymentState.NOTHING_TO_PAY, null, null);
+    }
+
     public static PaymentOutcome authorized(String providerReference) {
         return new PaymentOutcome(PaymentState.AUTHORIZED, providerReference, null);
     }

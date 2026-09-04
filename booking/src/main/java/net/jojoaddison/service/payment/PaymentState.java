@@ -29,6 +29,41 @@ public enum PaymentState {
     OFF_PLATFORM(true, false),
 
     /**
+     * This booking costs nothing, so no provider was asked anything — {@code decisions.md} D44.
+     *
+     * <p><strong>The one value in this enum that is not a provider's answer</strong>, and the reason it is
+     * here rather than folded into {@link #OFF_PLATFORM}. Every other constant is a provider's answer;
+     * this one is the platform declining to ask the question, decided from the amount before any
+     * adapter is reached. It therefore passes the admission test above — "no provider dictates it" —
+     * in its strongest form rather than its usual one: it is not that every provider has a notion of
+     * it, it is that the decision is identical whichever provider is configured.
+     *
+     * <p><strong>And that is enforced, not merely stated.</strong> It was stated only, for one review:
+     * {@link PaymentOutcome#nothingToPay()} is public and an adapter mapping an unrecognised status
+     * onto it would have had a priced booking created in {@code REQUESTED} with no money behind it and
+     * nothing anywhere disagreeing. {@link BookingPayments#take} refuses this state from a provider
+     * when the amount is not zero — it is the only method that knows the amount — and answers
+     * {@link #FAILED} instead.
+     *
+     * <p>Two of the eighteen seeded professionals offer a service at {@code priceMinor: 0} and "from
+     * ₵0" is the catalogue working. All three providers D37 chose refuse an authorization for 0 — from
+     * their published behaviour, there being no live account here — so without this every free booking
+     * in the estate would have become uncreatable the day a provider was configured, silently until
+     * then, because {@link #OFF_PLATFORM} is the answer to any amount at all. And a provider that
+     * politely accepted zero would still be one round trip to a third party about money nobody owes.
+     *
+     * <p><strong>Not {@code OFF_PLATFORM}</strong>, which says the customer pays the professional
+     * directly. Nobody pays anybody for a free session, and the distinction earns its keep the day a
+     * provider is configured: {@code OFF_PLATFORM} should stop being produced at that moment, and a
+     * free booking wearing it would keep answering yes to "is any money in this estate settled off
+     * the platform?" for ever.
+     *
+     * <p>It permits a booking — in {@code REQUESTED}, like any other, because there is nothing for a
+     * webhook to confirm — and holds no money, so nothing is released if the create then fails.
+     */
+    NOTHING_TO_PAY(true, false),
+
+    /**
      * The provider has taken the request and nobody can yet say whether the money will arrive —
      * {@code decisions.md} D43.
      *
@@ -98,8 +133,9 @@ public enum PaymentState {
      * Whether a booking row may be written against this state.
      *
      * <p>{@link #OFF_PLATFORM} passes — it has to, or the estate as it stands today could take no
-     * bookings at all. {@link #AUTHORIZED} and {@link #CAPTURED} pass because the money is committed.
-     * {@link #PENDING} passes because D43 says so, and it is the only one of the four whose booking is
+     * bookings at all. {@link #NOTHING_TO_PAY} passes because there was nothing to ask anybody for
+     * (D44). {@link #AUTHORIZED} and {@link #CAPTURED} pass because the money is committed.
+     * {@link #PENDING} passes because D43 says so, and it is the only one of the five whose booking is
      * not a {@code REQUESTED} one. The rest do not pass, and the distinction between {@link #DECLINED}
      * and {@link #FAILED} is what the client should do next, not whether to proceed.
      *
@@ -123,6 +159,9 @@ public enum PaymentState {
      * <p>{@link #PENDING} answers <strong>false</strong> and still needs releasing — see
      * {@link #awaitingCustomer()}. Money that has not arrived is not money held, but the request for
      * it is still live at the provider.
+     *
+     * <p>{@link #NOTHING_TO_PAY} answers false and needs nothing at all: no provider was asked, so
+     * there is no attempt row and {@link BookingPayments#release} returns on the first clause.
      */
     public boolean holdsMoney() {
         return holdsMoney;

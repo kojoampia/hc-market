@@ -3583,3 +3583,310 @@ about the four route predicates, and `docker-compose.dev.yml` publishes booking'
 interface. Quality publishes it on loopback and production not at all. This is the same property
 catalog's `/internal/**` has always had, so it is not a regression — but the route predicates are a
 control against the internet, not against the machine the container runs on.
+
+## D44 — A booking that costs nothing was going to be refused by a provider asked to take nothing
+
+Built 2026-09-03, from WP-12. Three things in the payment seam, and the first is the package's reason
+to exist.
+
+### The free booking, which no test would have noticed
+
+`BookingPayments.take` asked the provider to authorize whatever the booking cost, unconditionally.
+**Two of the eighteen seeded professionals offer a service at `priceMinor: 0`** — recorded in
+`CLAUDE.md` as correct rather than a bug, because "from ₵0" is what the catalogue says and a free
+introductory session is a real offering. All three providers D37 chose refuse an authorization for
+zero: Paystack has a minimum charge, and neither Hubtel nor MTN MoMo raises a prompt for nothing.
+
+**That last claim is from the providers' published behaviour and not from a live account, because
+there is none.** It does not carry the decision on its own. Even a provider that politely accepted an
+amount of zero would be one HTTP round trip to a third party, per free booking, about money nobody
+owes — and a `payment_attempt` row asserting that somebody is holding a fact about it.
+
+So **every free booking in the estate becomes uncreatable the day a provider is configured**, and
+until that day nothing goes red. The unconfigured provider answers `OFF_PLATFORM` to any amount at
+all, including zero, so the whole test suite passes and the defect is invisible until it lands on
+customers. That is the same shape as D41's dropped handle — a path this estate cannot exercise
+because it has no provider, failing on the day it acquires one.
+
+**The condition is in `take`, not at the call site.** `CustomerBookingResource` could have skipped the
+call, and that is where a guard like this usually ends up. It is the wrong place for the same reason
+`PaymentRecorder.record` holds "no handle, no row" rather than trusting its callers: an invariant
+about money should be held by the one method everything goes through. WP-13 adds a second call site
+for the customer's provider choice, and a guard in the resource would have to be remembered there.
+
+**Zero exactly, not `<= 0`.** A negative price is a defect in whatever priced it, and treating it as
+free would be this service quietly deciding that the platform owes the customer money. So it does not
+take the free path; it goes past this guard and fails further along, loudly, rather than becoming a
+free session nobody questioned.
+
+**Where it fails was overstated, and the review corrected it.** This used to say the negative amount
+"goes to the provider and is refused — a 402 or a 502 somebody has to explain". That is what will
+happen once a provider is configured; it is not what happens today. `UnconfiguredPaymentProvider`
+answers `OFF_PLATFORM` to −500 exactly as it does to 15000, so the booking proceeds and dies at
+`bookings.save` on `Booking.priceMinor`'s `@Min(0)` — a `ConstraintViolationException`, and a 500. That
+is loud, which is the property the decision wanted, and it is unreachable anyway while catalog's own
+`@Min(0)` on `ServiceOffering.priceMinor` holds. The decision stands unchanged; only its account of
+the failure was written for an estate that does not exist yet, which is the same thing this whole
+package keeps having to be careful about.
+
+### What state the booking is created in, and it is not `PENDING_PAYMENT`
+
+**`REQUESTED`, and `booking.requested` is published**, exactly as for a priced booking whose payment
+is off-platform. D43 built `PENDING_PAYMENT` for a booking whose money is on its way, and the whole
+mechanism is that a webhook ends the wait. **Nothing will ever confirm a payment that was never
+started**, so a free booking in `PENDING_PAYMENT` would sit there for ever, unseen by the
+professional, in a state D43 deliberately gave no expiry sweep. The customer would have made a
+booking nobody was told about, and no timeout to discover it.
+
+The professional is therefore told about a free booking immediately, which is also the product
+answer: there is nothing to wait for.
+
+**No `payment_attempt` row**, and that follows from D41 rather than being a new decision: a row is
+written only when a handle comes back, and no provider was asked, so no handle exists. The table's
+account stays true — a row means somebody else is holding a fact about this booking's money.
+
+### `PaymentState.NOTHING_TO_PAY`, and why it is not `OFF_PLATFORM`
+
+The cheap implementation reuses `OFF_PLATFORM`: it permits a booking, holds no money, and writes no
+row, so every mechanical consequence is already right. It was rejected on what the estate would then
+be unable to say.
+
+**`OFF_PLATFORM` is a claim about who paid whom** — the customer paid the professional directly,
+which has always been true here and which D31 exists to state rather than assume. Nobody pays anybody
+for a free session, so filing one as off-platform is a false statement by the platform about its own
+booking. And it costs something concrete later: `OFF_PLATFORM` should **stop being produced** the day
+a provider is configured, and that is the signal that the estate has entered the money's path. Free
+bookings wearing it would answer "is any money in this estate settled off the platform?" yes for
+ever.
+
+`NOTHING_TO_PAY` is **the one value in the enum no provider reports.** `PaymentState`'s own admission
+test is that no value may be specific to one provider, and this passes it in a stronger form than its
+neighbours: it is not that every provider has a notion of it, it is that the decision is identical
+whichever provider is configured, because it is taken before any of them is reached. The javadoc says
+so, since the constant otherwise looks like a value somebody could return from an adapter.
+
+Adding it cost two red tests, and **both were the tests D43 built to go red for exactly this.**
+`permitsBookingIsExhaustive` failed on its `containsExactlyInAnyOrder` line before comparing a single
+answer, and `holdsMoneyIsNotPermitsBooking` failed on `values()).hasSize(8)`. That is one package's
+distance between a guard being written and the guard firing, which is about as good a demonstration
+as they were going to get. Both answers were then written down deliberately: it permits a booking, it
+holds no money, and it is not awaiting the customer.
+
+### A provider that throws is a provider that failed
+
+`PaymentState.FAILED` and its 502 have existed since D15. **There was no route to them from an
+exception**, so an adapter whose HTTP client timed out produced a 500 with a stack trace, while a
+provider that politely answered `FAILED` produced a 502 and a client that retries. Two answers to one
+situation, and the unhandled one is the shape every real adapter will actually take — a
+`RestClientException`, a `JsonProcessingException`, a null dereference in somebody else's response
+body. It is also the wrong answer twice over: a 500 says this platform is broken when a third party
+is, and it is the one response a client is entitled to read as "do not try that again".
+
+`take` now catches `RuntimeException` around `provider.authorize` and answers `FAILED`. Three notes on
+the shape:
+
+- **The reason is composed, never copied.** It names the provider and the exception's class and
+  nothing else, because it is rendered into a response body and a payment provider's own words are
+  where a phone number or a cardholder's name arrives unannounced — the hazard D41 met by way of
+  `attention_note`, D43 by way of the next action and D39 by way of a URL in a stored receipt. The
+  whole exception goes to the log at ERROR, where it can say whatever it likes.
+- **`FAILED`, not `DECLINED`.** The customer's instrument said nothing; a decline is a business answer
+  and sends the client to another card. The distinction was already drawn in the resource and this
+  simply lands on the correct side of it.
+- **Only the provider call is wrapped.** A `PaymentRecorder` that throws is this platform failing to
+  keep the one fact it cannot reconstruct, with the money possibly committed — that stays a 500, and
+  loudly. There is a test for it, because the tidier `try` around the whole method would have
+  swallowed it.
+
+**The first of those was half true, and the review found the other half.** "Composed, never copied"
+was a property of the *thrown* path this section adds, and not of the *answered* path beside it, which
+is the common one: `PaymentOutcome.declined(reason)` and `failed(reason)` take an adapter-authored
+string, and `CustomerBookingResource.authorizePayment` relayed it verbatim into a
+`ResponseStatusException` — from where `ExceptionTranslator` renders it as the ProblemDetail's
+`detail`. Composing at the boundary too is in the review section below.
+
+The catch is deliberately not narrowed to a payment-specific exception type. There is none on the
+port and there should not be: an adapter is somebody else's code, and a seam that only behaves when a
+third party wraps its failures correctly is a seam that does not behave.
+
+### `@ConditionalOnMissingBean` in a user `@Configuration` is order-sensitive — a warning, not a fix
+
+`PaymentConfiguration` supplies the fallback provider under `@ConditionalOnMissingBean`. **That
+annotation is only reliable in an auto-configuration**, which this is not. What that costs, however,
+was written down backwards, and the review caught it — the paragraph that follows is the corrected
+version. What it replaced said the condition might or might not see a component-scanned
+`PaymentProvider` depending on the order the scanner reached the two classes in, and told the reader
+to use an explicit `@Bean` in a sibling `@Configuration` instead. **That is the wrong way round in
+both halves**: the scanned shape is the reliable one and the recommended shape is the one that
+collides. Advice that causes the failure it warns about is worse than no advice, and this one sat in a
+javadoc, in this decision and in `CLAUDE.md`.
+
+**A component-scanned `PaymentProvider` is always visible to the condition.** Read from the Spring
+7.0.8 sources on the classpath, not from memory: `ConfigurationClassParser.doProcessConfigurationClass`
+calls `componentScanParser.parse(...)`, whose `ClassPathBeanDefinitionScanner.doScan`
+**registers every scanned definition** — `registerBeanDefinition` at the point it adds each holder —
+before returning the set the parser then recurses over. A `@Bean` method's condition is evaluated
+later still, at `REGISTER_BEAN` phase in
+`ConfigurationClassBeanDefinitionReader.loadBeanDefinitionsForBeanMethod`, which
+`ConfigurationClassPostProcessor` does not reach until `parser.parse(candidates)` has returned. The
+scan is therefore complete before the first `@Bean` condition fires, and the fallback backs off every
+time.
+
+**The genuinely order-sensitive shape is the one the old text recommended.** An explicit
+`@Bean PaymentProvider` in a sibling `@Configuration` is registered in configuration-class parse
+order; for two component-scanned classes that is the order `getResources` returned them in, which
+nothing sorts — `ClassPathScanningCandidateComponentProvider` has no comparator — so it is the
+filesystem's business. `PaymentConfiguration` parsed first: the condition sees nothing, the fallback is
+registered, the sibling then registers the real provider unconditionally, and every injection point
+has two candidates and a `NoUniqueBeanDefinitionException`. Parsed second: it sees the real one and
+steps aside. Identical code, two outcomes, and it can differ between a laptop and CI.
+
+**What is built is the corrected warning**, on the class, saying that a real provider added before
+WP-13 should be a `@Component` — or carry `@Primary`, which settles the ambiguity whichever way the
+parse order fell and is therefore order-independent in any shape. The thing to avoid is a bare `@Bean`
+beside `PaymentConfiguration`. WP-13 replaces the condition outright with a registry keyed by provider
+name, which is the shape three providers need anyway, so building an order-independent mechanism now
+would be building it twice.
+
+**Both halves are now asserted rather than described.** `PaymentConfigurationUnitTest` builds two
+`AnnotationConfigApplicationContext`s: one where a provider definition is already in the registry
+before `PaymentConfiguration` is registered, which yields exactly one `PaymentProvider` bean; and the
+sibling-`@Bean` pair in both orders, which yields two beans and a `NoUniqueBeanDefinitionException` one
+way and one bean the other. Registration order stands in for parse order there, and that substitution
+is sound: `ConfigurationClassPostProcessor` sorts candidates only by `@Order` and neither class
+declares one, so a stable sort leaves them as registered.
+
+**The cheap fix, recorded rather than taken:** move the class to `@AutoConfiguration` and list it in
+`META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`. Auto-configurations
+arrive through a deferred import selector, processed after every user configuration class, which is
+precisely the ordering the annotation assumes, and `@SpringBootApplication`'s
+`AutoConfigurationExcludeFilter` keeps the class from also being component-scanned —
+`HealthconnectBookingApp` carries the plain annotation, so that filter is in place, which was checked
+rather than assumed. Two small changes, and **not built, so not measured**: WP-13 deletes the condition
+it would be protecting, so one of the two would be throwaway work. If WP-13 slips and a bare `@Bean`
+provider is wired before it, this is the fix to reach for.
+
+### Tested, and what is not
+
+Seven new tests — five unit in a new `BookingPaymentsUnitTest`, two integration in `PaymentSeamIT` —
+plus the two D43 guard tests updated with the new state's answers.
+
+Three were confirmed red against the current code before the fix:
+
+- the free booking at the endpoint, with the provider stubbed to do what a real one does with zero.
+  **`Status expected:<201> but was:<402>`** — the defect itself, a free booking refused because a
+  provider was asked to take nothing. The kept assertion is `verify(payments, never()).authorize(any())`,
+  because a guard that asked and then ignored the answer would still be a round trip to a third party
+  per free booking and would still be refused;
+- the same thing at the seam, red on `verifyNoInteractions(provider)`;
+- the throwing adapter, red twice: `Status expected:<502> but was:<500>` at the endpoint and an escaped
+  `IllegalStateException` at the seam.
+
+`NOTHING_TO_PAY` being the state cannot be red before the constant exists, so it is asserted beside
+the interaction check rather than instead of it — the arrangement D43 used for `pendingIsThreeAnswers`.
+
+The two that assert decisions rather than fixes are the "a priced booking is still authorized" pair —
+the guard is a condition, not a switch — and "a recorder that throws is not dressed up as a provider
+failure", which pins the narrowness of the `catch`. booking finishes at **114 unit + 101 IT**, green on
+a full `clean verify`.
+
+**Not run against a live provider, because there is not one, and not run against the quality box.**
+This is the third package in a row to say so and the sentence is doing more work each time: the whole
+zero-amount defect exists because the estate's only provider answers the same thing to every question.
+
+### The review of WP-12, and the four things it changed
+
+Reviewed 2026-09-03, all four findings real and none of them in the zero-amount guard itself. Every one
+was reproduced against a red test before it was fixed, and the theme they share is the one this section
+is named for: **three of the four were documents asserting a property the code did not have.** WP-12
+wrote its javadoc, this decision and `CLAUDE.md` in the same pass as the code, and the writing ran
+slightly ahead of what was built.
+
+**The provider's own words still reached the response body.** The one that matters. `authorizePayment`
+relayed `taken.outcome().reason()` verbatim into a `ResponseStatusException`, and
+`ExceptionTranslator.getProblemDetailWithCause` → `customizeProblem` → `getCustomizedErrorDetails` →
+`err.getMessage()` renders that as the ProblemDetail's `detail`. So D44's "composed, never copied", the
+matching javadoc on `BookingPayments.authorize` and the new `CLAUDE.md` bullet were **true of the
+thrown path this package added and false of the answered path beside it** — which is the common one,
+since `PaymentOutcome.declined(reason)` and `failed(reason)` both take an adapter-authored string. The
+failure is one line of WP-13: a Paystack adapter writing `declined(response.path("message").asText())`,
+Paystack answering `"Declined — card ending 4242, Ama Mensah, 0244123456"`, and that landing in a 402
+body and in every client that logs a ProblemDetail. Nothing downstream saves it —
+`getCustomizedErrorDetails` redacts only package names and `DataAccessException`, and only under
+`prod`.
+
+Confirmed red at the endpoint with exactly that string, and the assertion failure is the whole finding:
+`"{"detail":"402 PAYMENT_REQUIRED \"Declined — card ending 4242, Ama Mensah, 0244123456\"", …}" not to
+contain "Ama Mensah"`. The refusal message is now **composed at the boundary too**, from the state
+alone — "the payment was declined" for a 402, "the payment provider could not be asked, or answered
+with an error" for a 502 — and `outcome.reason()` goes to the log at WARN, which is where whoever has
+to explain a refusal was always going to look. It says the same thing the status code says, which is
+all a customer can act on anyway: the client's next move is another instrument or another attempt, and
+no provider's prose changes which. The `switch` is exhaustive with no `default`, so a tenth
+`PaymentState` is a compile error there rather than a state that silently inherits somebody else's
+sentence.
+
+**Nothing stopped an adapter answering `NOTHING_TO_PAY`.** `PaymentState`'s javadoc calls it "the one
+value in this enum that is not a provider's answer" and `PaymentOutcome.nothingToPay()` is a public
+static factory on the record every adapter constructs — so, again, the documentation was the whole of
+the guarantee. `PENDING` got two compact-constructor invariants for this exact class of defect on the
+reasoning that a state which lies is worse than no state; this got a sentence.
+
+What it admits is the quietest failure in the seam: a ₵150.00 booking, an adapter mapping an
+unrecognised Hubtel status onto `nothingToPay()`. `permitsBooking()` is true and the state is not
+`PENDING`, so the booking is created in `REQUESTED`, `booking.requested` is published, the professional
+is told, no `payment_attempt` row exists because no handle came back, **no money moved, and nothing
+anywhere in the estate disagrees with anything.** Red at the endpoint as `Status expected:<502> but
+was:<201>` — a booking made for money nobody took.
+
+`take` already knows `intent.amountMinor() != 0` on that branch, so the refusal is structural there:
+the outcome cannot hold the check because it does not know the amount, and `take` is the one method
+that does — the same reason the zero-amount guard is there rather than at the call site. **The chosen
+failure is `FAILED`, not a thrown exception and not `DECLINED`.** A provider answering something this
+platform cannot use is precisely what `FAILED` means, and it lands on the 502 that this package's own
+`catch` exists to produce; throwing would have reintroduced the 500 one branch along, in the same
+commit that removed it. `DECLINED` would be a lie about whose fault it is and would send the customer
+to another card for a problem no card has. The handle is carried across if one came with the outcome,
+because D41's "every handle is stored, whatever the state" has no exceptions and
+`PaymentOutcome.failed(String)` alone would have dropped the reference.
+
+**`provider.name()` was called unwrapped, including twice inside the new catch block.** An adapter
+whose `name()` throws — a lazily-read merchant id, a null region code — re-threw straight out of the
+handler and landed back on the 500 that handler was written to remove. Red as an escaped
+`IllegalStateException: no merchant id configured` from `BookingPayments.authorize`. It goes through a
+wrapped `providerName()` now, at all six sites rather than the three the review named: the success
+path is one, where the money is committed by then and a name nobody can produce would have cost the
+handle D41 exists to keep; and `release` is three more, which is worse again, because `release` runs
+from the resource's `catch` and a throw there would replace the exception that failed the booking with
+one about a provider's name — on the single path where money is committed and the booking does not
+exist. Null and blank are treated as a throw is, because `payment_attempt.provider` is not-null and the
+row is worth more than the name.
+
+**And the `@ConditionalOnMissingBean` warning had the mechanism backwards**, which is written up in
+that section above rather than here, because the corrected text belongs where the wrong text was. The
+short version: the scanned shape is reliable and the shape the warning recommended is the one that
+collides, so the advice caused the failure it warned about. Verified against the Spring 7.0.8 sources
+on the classpath and then pinned with two context tests.
+
+Two smaller documentation corrections, both marked in place above: D44's claim that a **negative**
+price "goes to the provider and is refused — a 402 or a 502" describes an estate with a provider in it
+and not today's, where it reaches `bookings.save` and fails `@Min(0)` as a 500; and
+`nextActionFor`'s javadoc promised that the state name travels beside the action so a client can tell
+"waiting on you" from "nothing to pay", when only `PENDING` produces a `PaymentAction` and that field
+is therefore always `"PENDING"`. Keeping `NOTHING_TO_PAY` off the wire is right — a free booking is a
+`REQUESTED` booking like any other and the state is the platform's account of why no provider was
+asked — so the comment was corrected to say so rather than the code changed to match it.
+
+**Two flagged assertions were deliberately left alone.** The review noted `attempts…isEmpty()` and
+`jsonPath("$.payment").doesNotExist()` in the WP-12 ITs as redundant rather than wrong —
+`verifyNoInteractions(recorder)` and `verify(payments, never()).authorize(any())` in the unit tests do
+the real work — and redundant belt-and-braces in a payments test is not worth a commit to remove.
+
+Seven new tests, four unit and three integration, **all seven confirmed red against the current code
+before anything was changed**, plus two more in `PaymentConfigurationUnitTest` that pin the corrected
+ordering claim and were green on arrival — which is the point of them, since what they contradict was a
+javadoc rather than the code. booking finishes at **120 unit + 104 IT**, green on a full `clean verify`.
+
+Still not run against a live provider and still not run against the quality box, for the fourth package
+running. The whole of this review is about the seam that only a real provider will ever exercise, so the
+sentence is worth repeating rather than shortening.

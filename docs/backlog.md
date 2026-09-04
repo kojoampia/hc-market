@@ -28,7 +28,7 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **WP-09** | Erasure: retention periods and lawful basis | PARTLY DONE | D42 — counsel answered all four. Retention built and environment-gated; two documents and one registration number outstanding |
 | **WP-10** | Payments: the seam can complete a lifecycle | DONE | D41 |
 | **WP-11** | Payments: asynchronous confirmation | DONE | D43 |
-| **WP-12** | Payments: the zero-amount booking | READY | — |
+| **WP-12** | Payments: the zero-amount booking | DONE | D44 — reviewed 2026-09-03, four findings, all fixed |
 | **WP-13** | Payments: provider choice and Act 987 | READY (large) | D37 — Paystack, Hubtel and MoMo direct, customer chooses. WP-11 is done, so no longer blocked |
 | **WP-14** | Verification badge | DONE | — |
 | **WP-15** | Badge: date-only on the wire | READY | — |
@@ -393,7 +393,7 @@ that records every outcome.
 **Not done:** no run against the quality box, and no live provider to run against. Every branch is
 exercised through a substituted provider, which is D31's limitation unchanged.
 
-## WP-11 — Payments: asynchronous confirmation · DONE (unmerged)
+## WP-11 — Payments: asynchronous confirmation · DONE, merged as PR #19
 
 D43. Paystack returns an authorization URL the customer must visit; Hubtel and MTN MoMo raise a prompt
 on the customer's phone and confirm by webhook. None can truthfully return `AUTHORIZED` or `DECLINED`
@@ -455,17 +455,80 @@ alone: the converter in this application's context is UTF-8 and JSON is special-
 checked rather than argued. D43 carries the detail, including the correction to its own "enforced
 twice" claim, which was true of the design and not of the estate while that CRUD endpoint was up.
 
-## WP-12 — Payments: the zero-amount booking · READY
+## WP-12 — Payments: the zero-amount booking · DONE (unmerged)
 
-Two seeded services are genuinely free, and "from ₵0" is correct rather than a bug. `authorizePayment`
-runs unconditionally, so a real provider gets asked to authorize 0 pesewas and rejects it — every free
-booking in the estate becomes uncreatable the day a provider is configured, and no test would notice.
-One condition and one test.
+D44. Two seeded services are genuinely free, and "from ₵0" is correct rather than a bug.
+`authorizePayment` ran unconditionally, so a real provider was going to be asked to authorize 0
+pesewas and refuse it — every free booking in the estate uncreatable the day a provider is configured,
+with nothing going red until then, because the unconfigured provider answers `OFF_PLATFORM` to any
+amount at all.
 
-Adjacent, same package: provider exceptions currently become 500s rather than the `FAILED` path; and
-`@ConditionalOnMissingBean` in a user `@Configuration` is order-sensitive, so the real provider should
-be a component-scanned bean — worth a javadoc line before somebody discovers it as a startup failure
-that differs between a laptop and CI.
+**Built: no provider is asked.** The condition is in `BookingPayments.take` rather than at the
+call site, for the reason `PaymentRecorder` holds "no handle, no row" rather than trusting its callers
+— and because WP-13 adds a second call site. Zero exactly: a negative price is a defect in whatever
+priced it, and treating it as free would be this service deciding the platform owes the customer
+money.
+
+**The behaviour, not only the guard.** The booking is created in **`REQUESTED`** and
+`booking.requested` is published, so the professional hears about a free booking exactly as about a
+priced one. Not `PENDING_PAYMENT`: **nothing will ever confirm a payment that was never started**, and
+D43 deliberately gave that state no expiry sweep, so a free booking would have waited there for ever
+unseen. No `payment_attempt` row, which follows from D41 rather than being a second decision — a row
+is written only when a handle comes back and nobody was asked for one.
+
+**`PaymentState.NOTHING_TO_PAY` rather than reusing `OFF_PLATFORM`.** Every mechanical consequence of
+reusing it would have been right; what it costs is the ability to say anything true. `OFF_PLATFORM` is
+a claim about who paid whom, nobody pays anybody for a free session, and the value should **stop being
+produced** the day a provider is configured — free bookings wearing it would answer "is any money in
+this estate settled off the platform?" yes for ever. It is the one value in the enum no provider
+reports. Adding it turned **both** of D43's guard tests red before a single answer was compared, which
+is those tests working one package after they were written.
+
+**Also built: a provider that throws now answers `FAILED`** and gets the 502 a provider that answered
+`FAILED` always got, instead of a 500 and a stack trace — which is the shape every real adapter's
+failure will take. The reason is composed from a provider name and an exception class, never copied
+from the provider's message: it is rendered into a response body, and that is the route by which a
+customer's phone number arrives (D39, D41, D43 each met the same hazard by a different road). Only the
+provider call is wrapped; a recorder that throws stays a loud 500, with a test saying so.
+
+**And the ordering trap is documented rather than fixed.** `@ConditionalOnMissingBean` is only reliable
+in an auto-configuration, so `PaymentConfiguration` carries a warning about what that costs. The first
+version of that warning had the mechanism backwards and the review rewrote it — see below. The cheap
+order-independent fix — `@AutoConfiguration` plus an `.imports` file, which is the ordering the
+annotation assumes, with `@SpringBootApplication`'s exclude filter keeping the class from being scanned
+twice — is recorded in D44 and deliberately **not built, so not measured**: WP-13 deletes the condition
+it would protect.
+
+Seven new tests, five unit and two integration, plus the two D43 guard tests updated. Three were
+confirmed red first: the free booking at the endpoint with the provider stubbed to refuse a zero
+amount (`Status expected:<201> but was:<402>` — the defect itself), the same thing at the seam on
+`verifyNoInteractions(provider)`, and the throwing adapter twice
+(`Status expected:<502> but was:<500>`, and an escaped `IllegalStateException`). booking: 114 unit +
+101 IT green on a full `clean verify`.
+
+**Reviewed 2026-09-03: four findings, all real, all fixed on the same branch — and three of the four
+were documents claiming a property the code did not have.** The largest: `authorizePayment` still
+relayed `outcome.reason()` verbatim into the response body, so "the reason is composed, never copied"
+was true of the *thrown* path this package added and false of the *answered* path beside it, which is
+the common one. Red at the endpoint with a stubbed `declined("Declined — card ending 4242, Ama Mensah,
+0244123456")` coming straight back as the ProblemDetail's `detail`; the refusal message is composed
+from the state now and the provider's words go to the log. Second: nothing stopped an adapter answering
+`NOTHING_TO_PAY` for a priced booking, which is the quietest failure in the seam — a ₵150.00 booking
+created in `REQUESTED`, the professional told, no money moved and nothing anywhere disagreeing. `take`
+knows the amount, so it refuses it there as a `FAILED` and a 502. Third: `provider.name()` was called
+unwrapped, twice inside the very catch block this package added, so an adapter whose `name()` throws
+landed back on the 500 that catch removed; wrapped now at all six sites, `release` included. Fourth:
+the `@ConditionalOnMissingBean` warning had the mechanism **backwards** — a component-scanned provider
+is always visible to the condition, and the explicit `@Bean` the warning recommended is the shape that
+collides — so the advice caused the failure it warned about. Verified against the Spring 7.0.8 sources
+and pinned with two context tests. Two smaller wording corrections went with them: D44's account of a
+negative price (a 500 from `@Min(0)` today, not the 402/502 it claimed) and `nextActionFor`'s javadoc
+(the state it carries is always `PENDING`). Nine more tests, seven of them confirmed red first. booking:
+**120 unit + 104 IT**. D44 carries the detail.
+
+**Not done:** no live provider and no run against the quality box. The zero-amount defect existed
+precisely because the estate's only provider answers the same thing to every question, so the
+substituted-provider limitation D31, D41 and D43 all recorded is doing more work each package.
 
 ## WP-13 — Payments: provider and Act 987 · READY, no longer blocked on WP-11
 
@@ -480,7 +543,11 @@ survive this decision rather than be pre-empted by it.
   three of them need a registry keyed by name, with the off-platform bean as the fallback rather than
   the only entry. The webhook already resolves the provider by the name in its path, so it becomes a
   registry lookup and the "callback addressed to a provider this service is not configured for"
-  refusal starts doing real work;
+  refusal starts doing real work. WP-12 left that annotation's **order-sensitivity** documented on the
+  class rather than fixed (D44), precisely because this is the package that deletes it — a real
+  provider added before then should be a `@Component`, or carry `@Primary`, and **not** a bare `@Bean`
+  in a sibling `@Configuration`, which is the one shape whose parse order decides whether the fallback
+  steps aside or collides with it;
 - **the customer's choice on the intent**, validated against something the server knows rather than
   taken on faith (D22);
 - **two lines per environment to expose the webhook, not one.** A route with

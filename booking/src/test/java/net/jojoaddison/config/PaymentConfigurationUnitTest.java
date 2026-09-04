@@ -9,10 +9,16 @@ import java.util.stream.Collectors;
 import net.jojoaddison.service.payment.PaymentCallback;
 import net.jojoaddison.service.payment.PaymentCallbackRefused;
 import net.jojoaddison.service.payment.PaymentIntent;
+import net.jojoaddison.service.payment.PaymentOutcome;
 import net.jojoaddison.service.payment.PaymentProvider;
 import net.jojoaddison.service.payment.PaymentState;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.NoUniqueBeanDefinitionException;
+import org.springframework.beans.factory.support.RootBeanDefinition;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 
 /**
  * The default provider's asymmetry, asserted — {@code decisions.md} D15/D31.
@@ -90,12 +96,21 @@ class PaymentConfigurationUnitTest {
      *
      * <p>So the expectations are a map keyed by the enum, and the first assertion is that the map
      * covers it exactly. A ninth state fails that line naming itself, before any answer is checked.
+     *
+     * <p><strong>It did.</strong> D44 added {@link PaymentState#NOTHING_TO_PAY} and this test went red
+     * on the {@code containsExactlyInAnyOrder} line before a single answer was compared — which is the
+     * mechanism working, one package after it was built. The answer was then written here deliberately
+     * rather than acquired by omission.
      */
     @Test
     @DisplayName("only committed money permits a booking, and every state has to say so")
     void permitsBookingIsExhaustive() {
         Map<PaymentState, Boolean> expected = Map.of(
             PaymentState.OFF_PLATFORM,
+            true,
+            // Nothing to pay, so nothing stands in the way — and unlike its neighbours above, no
+            // provider was consulted to arrive at this. See D44.
+            PaymentState.NOTHING_TO_PAY,
             true,
             PaymentState.PENDING,
             true,
@@ -159,9 +174,9 @@ class PaymentConfigurationUnitTest {
     @Test
     @DisplayName("only committed money has to be given back")
     void holdsMoneyIsNotPermitsBooking() {
-        // The same guard as above, one line: this list is complete today, and a ninth state must not
+        // The same guard as above, one line: this list is complete today, and a tenth state must not
         // be able to arrive without somebody deciding whether the platform would be holding its money.
-        assertThat(PaymentState.values()).hasSize(8);
+        assertThat(PaymentState.values()).hasSize(9);
         assertThat(PaymentState.AUTHORIZED.holdsMoney()).isTrue();
         assertThat(PaymentState.CAPTURED.holdsMoney()).isTrue();
         assertThat(PaymentState.OFF_PLATFORM.holdsMoney()).isFalse();
@@ -170,11 +185,123 @@ class PaymentConfigurationUnitTest {
         assertThat(PaymentState.DECLINED.holdsMoney()).isFalse();
         assertThat(PaymentState.FAILED.holdsMoney()).isFalse();
         assertThat(PaymentState.PENDING.holdsMoney()).isFalse();
+        // Nothing was taken because nothing was owed, so the release path must not reach a provider
+        // for it — the same reason OFF_PLATFORM answers false. D44.
+        assertThat(PaymentState.NOTHING_TO_PAY.holdsMoney()).isFalse();
+        assertThat(PaymentState.NOTHING_TO_PAY.awaitingCustomer()).isFalse();
     }
 
     @Test
     @DisplayName("the absent provider names itself, so a log line can say so")
     void namesItself() {
         assertThat(provider.name()).isEqualTo("none");
+    }
+
+    // ------------------------------------------- which shape of real provider steps this one aside --
+
+    /**
+     * The condition sees anything already in the registry — {@code decisions.md} D44, as corrected.
+     *
+     * <p>This class's javadoc used to say the opposite: that a component-scanned {@code
+     * PaymentProvider} might or might not be visible depending on the order the scanner reached the
+     * two classes in. It is not order-dependent, and the sources on the classpath say why.
+     * {@code ConfigurationClassParser.doProcessConfigurationClass} calls
+     * {@code componentScanParser.parse(...)}, whose {@code ClassPathBeanDefinitionScanner.doScan}
+     * <strong>registers every scanned definition</strong> before returning the holders it then
+     * recurses over; a {@code @Bean} method's {@code REGISTER_BEAN}-phase condition is evaluated
+     * later still, in {@code ConfigurationClassBeanDefinitionReader.loadBeanDefinitionsForBeanMethod},
+     * which {@code ConfigurationClassPostProcessor} does not reach until {@code parser.parse()} has
+     * completed. So the scan is finished before the first condition fires.
+     *
+     * <p>Registering the definition by hand is that state of the registry, reached the short way: the
+     * scanner's contribution is a bean definition present before parsing produces any {@code @Bean},
+     * and this asserts what the condition does with one.
+     */
+    @Test
+    @DisplayName("a provider already in the registry backs the fallback off")
+    void anAlreadyRegisteredProviderBacksTheFallbackOff() {
+        try (var context = new AnnotationConfigApplicationContext()) {
+            context.registerBeanDefinition("scannedProvider", new RootBeanDefinition(NamedProvider.class));
+            context.register(PaymentConfiguration.class);
+            context.refresh();
+
+            assertThat(context.getBeansOfType(PaymentProvider.class)).hasSize(1).containsKey("scannedProvider");
+        }
+    }
+
+    /**
+     * And the shape the javadoc used to recommend is the one that actually collides.
+     *
+     * <p>An explicit {@code @Bean PaymentProvider} in a sibling {@code @Configuration} is registered
+     * in configuration-class parse order, which for two component-scanned classes is the order the
+     * scanner found them — a property of the filesystem. Parsed first, {@code PaymentConfiguration}'s
+     * condition sees nothing, the fallback is registered, the sibling then registers the real
+     * provider unconditionally, and the injection point has two candidates. Parsed second, it sees
+     * the real one and steps aside. Identical code, two outcomes, and the deciding factor is not in
+     * either file.
+     *
+     * <p>Registration order here stands in for parse order: {@code ConfigurationClassPostProcessor}
+     * sorts candidates only by {@code @Order}, and neither declares one, so a stable sort leaves them
+     * as they were registered.
+     */
+    @Test
+    @DisplayName("a sibling @Bean collides or not depending purely on which is parsed first")
+    void aSiblingBeanMethodIsTheOrderSensitiveShape() {
+        try (var fallbackFirst = new AnnotationConfigApplicationContext(PaymentConfiguration.class, SiblingProviderConfiguration.class)) {
+            assertThat(fallbackFirst.getBeansOfType(PaymentProvider.class)).hasSize(2);
+            assertThatThrownBy(() -> fallbackFirst.getBean(PaymentProvider.class)).isInstanceOf(NoUniqueBeanDefinitionException.class);
+        }
+        try (var providerFirst = new AnnotationConfigApplicationContext(SiblingProviderConfiguration.class, PaymentConfiguration.class)) {
+            assertThat(providerFirst.getBeansOfType(PaymentProvider.class)).hasSize(1);
+        }
+    }
+
+    /** The sibling {@code @Configuration} the corrected advice tells WP-13 <em>not</em> to use. */
+    @Configuration
+    static class SiblingProviderConfiguration {
+
+        @Bean
+        PaymentProvider realPaymentProvider() {
+            return new NamedProvider();
+        }
+    }
+
+    /** A provider that exists and does nothing. Only its type and its presence matter here. */
+    static class NamedProvider implements PaymentProvider {
+
+        @Override
+        public String name() {
+            return "named";
+        }
+
+        @Override
+        public PaymentOutcome authorize(PaymentIntent intent) {
+            return PaymentOutcome.offPlatform();
+        }
+
+        @Override
+        public PaymentOutcome capture(String providerReference, long amountMinor, String currency) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public PaymentOutcome refund(String providerReference, long amountMinor, String currency, String reason) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public PaymentOutcome voidAuthorization(String providerReference, String reason) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public PaymentOutcome status(String providerReference) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public PaymentOutcome readCallback(PaymentCallback callback) {
+            throw new UnsupportedOperationException();
+        }
     }
 }

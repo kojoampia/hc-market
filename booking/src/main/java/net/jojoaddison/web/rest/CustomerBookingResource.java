@@ -33,6 +33,8 @@ import net.jojoaddison.service.dto.BookingDtos.CancelRequest;
 import net.jojoaddison.service.dto.BookingDtos.CancellationPreview;
 import net.jojoaddison.service.dto.BookingDtos.CreateBooking;
 import net.jojoaddison.service.dto.BookingDtos.PaymentAction;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -51,6 +53,8 @@ import org.springframework.web.server.ResponseStatusException;
 @RestController
 @RequestMapping("/api/bookings")
 public class CustomerBookingResource {
+
+    private static final Logger LOG = LoggerFactory.getLogger(CustomerBookingResource.class);
 
     /** See {@link #zoneOf}. Ghana is UTC+0 all year, which is what makes this a safe fallback. */
     private static final String DEFAULT_ZONE_ID = "Africa/Accra";
@@ -377,7 +381,23 @@ public class CustomerBookingResource {
      *
      * <p><strong>402 for a decline, 502 for a provider that fell over.</strong> The client's next
      * move differs: one means try another instrument, the other means try again. Collapsing them into
-     * one status would make the customer re-enter details that were never the problem.
+     * one status would make the customer re-enter details that were never the problem. A provider
+     * that <em>threw</em> rather than answering is the second of those, decided in
+     * {@link BookingPayments#take} rather than here — see {@code decisions.md} D44.
+     *
+     * <p><strong>The message is composed from the state, never from the outcome's reason.</strong>
+     * This used to relay {@code outcome.reason()} verbatim, and {@code ExceptionTranslator} renders a
+     * {@code ResponseStatusException}'s reason as the ProblemDetail's {@code detail} — so an adapter
+     * writing {@code declined(response.path("message").asText())} would put a payment provider's prose
+     * in a 402 body and in every client that logs one. {@link BookingPayments#take} already composes
+     * the reason it invents for a provider that threw; this is the same rule on the answered path,
+     * which is the common one. The reason itself goes to the log, where a provider may say whatever
+     * it likes.
+     *
+     * <p><strong>A booking that costs nothing never gets here in any meaningful sense</strong>: the
+     * seam answers {@link PaymentState#NOTHING_TO_PAY} without asking a provider, which permits the
+     * booking exactly as {@code OFF_PLATFORM} does (D44). Two seeded services are genuinely free, and
+     * every provider D37 chose refuses an authorization for zero.
      *
      * <p><strong>The handle comes back, and it is kept</strong> — {@code decisions.md} D41. This used
      * to read the outcome's state and drop the rest of it, including the provider's own reference,
@@ -389,20 +409,50 @@ public class CustomerBookingResource {
      */
     private BookingPayments.Taken authorizePayment(Booking booking) {
         BookingPayments.Taken taken = payments.take(booking);
-        if (taken.outcome().state().permitsBooking()) {
+        PaymentState state = taken.outcome().state();
+        if (state.permitsBooking()) {
             return taken;
         }
-        HttpStatus status = taken.outcome().state() == PaymentState.DECLINED ? HttpStatus.PAYMENT_REQUIRED : HttpStatus.BAD_GATEWAY;
-        throw new ResponseStatusException(status, taken.outcome().reason() == null ? "payment could not be taken" : taken.outcome().reason());
+        HttpStatus status = state == PaymentState.DECLINED ? HttpStatus.PAYMENT_REQUIRED : HttpStatus.BAD_GATEWAY;
+        // The provider's own words end here. Whoever has to explain this refusal reads the log; the
+        // customer gets a sentence derived from the state and nothing that came off a wire.
+        LOG.warn("payment for booking {} answered {} — {}", booking.getReference(), state, taken.outcome().reason());
+        throw new ResponseStatusException(status, refusalFor(state));
+    }
+
+    /**
+     * What a customer is told when the money was refused — {@code decisions.md} D44, as reviewed.
+     *
+     * <p>Derived from the state alone. The two arms that can actually be reached are the two the
+     * status codes already distinguish, so the sentence says the same thing the 402 and the 502 say,
+     * in words, and carries nothing a provider authored.
+     *
+     * <p>The switch is exhaustive with no {@code default}, which makes a tenth {@link PaymentState}
+     * a compile error here rather than a state that silently acquires somebody else's message. That
+     * is the arrangement {@code PaymentState} itself uses for {@code permitsBooking} and
+     * {@code holdsMoney}, one layer out.
+     */
+    private static String refusalFor(PaymentState state) {
+        return switch (state) {
+            case DECLINED -> "the payment was declined";
+            case FAILED -> "the payment provider could not be asked, or answered with an error";
+            case REFUNDED, VOIDED -> "the payment was reversed before the booking could be made";
+            // Unreachable: all five permit a booking, so authorizePayment has already returned.
+            // Listed rather than defaulted, so the next state added has to be answered here.
+            case OFF_PLATFORM, NOTHING_TO_PAY, PENDING, AUTHORIZED, CAPTURED -> "the payment could not be taken";
+        };
     }
 
     /**
      * What the customer still has to do about the money, if anything — {@code decisions.md} D43.
      *
      * <p>Null unless the payment is pending, which is what keeps a payment link out of every other
-     * booking view in the estate. The state name travels beside the action so a client can tell
-     * "waiting on you" from "nothing to pay" without inferring it from the booking's status, and the
-     * URL is the provider's own, relayed rather than rewritten.
+     * booking view in the estate. <strong>So the state this carries is always {@code "PENDING"}</strong>
+     * — it names what the action belongs to rather than distinguishing anything, and a client learns
+     * "nothing to do" from the field's absence. {@link PaymentState#NOTHING_TO_PAY} deliberately never
+     * reaches the wire: it is the platform's account of why no provider was asked, and a free booking
+     * is a booking in {@code REQUESTED} like any other (D44). The URL is the provider's own, relayed
+     * rather than rewritten.
      */
     private static PaymentAction nextActionFor(BookingPayments.Taken taken) {
         if (taken.outcome().state() != PaymentState.PENDING) {
