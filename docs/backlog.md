@@ -29,7 +29,7 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **WP-10** | Payments: the seam can complete a lifecycle | DONE | D41 |
 | **WP-11** | Payments: asynchronous confirmation | DONE | D43 |
 | **WP-12** | Payments: the zero-amount booking | DONE | D44 — reviewed 2026-09-03, four findings, all fixed |
-| **WP-13** | Payments: provider choice and Act 987 | READY (large) | D37 — Paystack, Hubtel and MoMo direct, customer chooses. WP-11 is done, so no longer blocked |
+| **WP-13** | Payments: provider choice and Act 987 | PARTLY DONE | D45 — registry, choice, route, permit and secrets built; the three adapters are seams awaiting real documentation, and Act 987 is a question for a person |
 | **WP-14** | Verification badge | DONE | — |
 | **WP-15** | Badge: date-only on the wire | READY | — |
 | **WP-16** | Search performance | WON'T (measured) | — |
@@ -530,33 +530,58 @@ negative price (a 500 from `@Min(0)` today, not the 402/502 it claimed) and `nex
 precisely because the estate's only provider answers the same thing to every question, so the
 substituted-provider limitation D31, D41 and D43 all recorded is doing more work each package.
 
-## WP-13 — Payments: provider and Act 987 · READY, no longer blocked on WP-11
+## WP-13 — Payments: provider choice and Act 987 · PARTLY DONE
 
-Provider choice and contract, and whether a split-settlement model clears Act 987. The seam is
-deliberately agnostic between split-at-capture and reconcile-afterwards, and **nothing on
-`PaymentProvider` pays the professional** — that omission is what makes it survivable, and it should
-survive this decision rather than be pre-empted by it.
+D45. Everything around the providers is built and verified; the providers themselves are not, and that
+is the package's honest boundary rather than an unfinished afternoon.
 
-**What WP-11 leaves for it to do, beyond writing the three adapters** (D43):
+**Built, and all four of the things WP-11 left behind (D43):**
 
-- **the registry.** `PaymentConfiguration` still supplies one provider by `@ConditionalOnMissingBean`;
-  three of them need a registry keyed by name, with the off-platform bean as the fallback rather than
-  the only entry. The webhook already resolves the provider by the name in its path, so it becomes a
-  registry lookup and the "callback addressed to a provider this service is not configured for"
-  refusal starts doing real work. WP-12 left that annotation's **order-sensitivity** documented on the
-  class rather than fixed (D44), precisely because this is the package that deletes it — a real
-  provider added before then should be a `@Component`, or carry `@Primary`, and **not** a bare `@Bean`
-  in a sibling `@Configuration`, which is the one shape whose parse order decides whether the fallback
-  steps aside or collides with it;
-- **the customer's choice on the intent**, validated against something the server knows rather than
-  taken on faith (D22);
-- **two lines per environment to expose the webhook, not one.** A route with
-  `Path=/services/healthconnectbooking/webhooks/**` *and* a permit in the gateway's security for it —
-  the generated gateway chain authenticates `/services/**` before routing, so the route on its own
-  gives a webhook that silently never arrives. Nothing before that moment is reachable from outside,
-  which is deliberate;
-- **each provider's signing secret**, handled like the estate's other two: required, never committed,
-  and absent means the callbacks are refused rather than trusted.
+- **the registry.** `PaymentProviders`, keyed by the name each adapter answers to.
+  `@ConditionalOnMissingBean` is **deleted** — three providers is a shape one-bean-wins cannot express
+  — and D44's ordering hazard evaporates with it, because nothing injects a `PaymentProvider` by type
+  any more: two provider beans are two entries whichever order they are parsed in, asserted both ways.
+  The fallback is injected **by bean name**, excluded from the customer's choices by identity, and
+  still reachable by a callback so that it refuses one itself. The webhook's "addressed to a provider
+  this service is not configured for" refusal is a registry lookup now and does real work;
+- **the customer's choice**, under D22's rule. `CreateBooking.paymentProvider` decides who ends up
+  holding the money, so an unoffered name is **409**, more-than-one-and-none-named is **400**, and
+  nothing is ever defaulted on the customer's behalf. Nothing configured behaves exactly as before;
+  one configured provider is the default. Resolved **after** the zero-amount guard, or every free
+  booking becomes a 400 the day a second provider arrives, and carried on `Taken` so a release goes
+  back to whoever took the money;
+- **both lines per environment.** The fifth gateway route in all three compose files *and*
+  `PaymentWebhookRouteConfiguration` permitting POST on it. CI checks the pair — the route check now
+  allows exactly one webhook predicate matched in full, and a second check greps the gateway's permit
+  for the same string — so a route without its permit fails CI rather than a provider;
+- **each provider's signing secret**, handled like the estate's other two and never committed.
+  Optional rather than required, because a provider nobody enabled needs none; **absent means callbacks
+  are refused, not trusted**, and an enabled-but-secretless provider refuses with the same flat 401 an
+  unimplemented one gives.
+
+**Deliberately not built: the three adapters' wire formats.** WP-13 had no network access, no provider
+account and no credentials, so Paystack's, Hubtel's and MTN MoMo's documentation could not be read and
+none could be called. The classes exist, extend `ProviderAwaitingIntegration`, fail closed on every
+call, and carry a documented list of exactly what each still needs — the authorization call and its
+response, which field is the durable handle, the status vocabulary and its mapping, the callback
+payload, and the signature algorithm with what bytes it covers. A signature check or a status mapping
+written from plausibility would have compiled, passed the mocks written to match it, and been fiction
+on the one path where a customer's money is already committed.
+
+**Act 987 is unanswered and was not answerable here.** Whether a split-settlement model clears it is a
+question for a person with standing. What the package protects is the property that keeps the answer
+cheap either way: `PaymentProvider` still has **no method that pays the professional**, and the package
+documentation says so where an implementer will meet the temptation.
+
+**Still open:**
+
+- an implementer with credentials, per adapter, working from the lists on the three classes;
+- Act 987 itself, and with it whether settlement is split-at-capture or reconciled afterwards;
+- no run against the quality box, and no live provider — the fifth package in a row to say so;
+- no endpoint publishes the provider list. Deliberate (D45): no screen asks for one, and the 400 that
+  demands a choice names what there is to choose from. Revisit when a payment screen exists;
+- `PENDING_PAYMENT` is still a dead end for the customer's cancel (D43), because releasing a live
+  authorization needs a provider that can be asked and none of the three can be.
 
 ## WP-14 — Verification badge · DONE
 

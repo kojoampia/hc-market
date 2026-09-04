@@ -3890,3 +3890,230 @@ javadoc rather than the code. booking finishes at **120 unit + 104 IT**, green o
 Still not run against a live provider and still not run against the quality box, for the fourth package
 running. The whole of this review is about the seam that only a real provider will ever exercise, so the
 sentence is worth repeating rather than shortening.
+
+## D45 — Three providers a customer chooses between, and three adapters that have never spoken to one
+
+Built 2026-09-04, from WP-13. The largest of the payment packages and the one whose honest answer is
+partly a refusal: everything around the providers is built and verified, and the providers themselves
+are not, because this repository could not reach them.
+
+### What the registry replaced, and why the condition had to go
+
+`PaymentConfiguration` supplied one provider under `@ConditionalOnMissingBean`, so "adding a real
+provider is one bean and no edit". D37 chose **three** — Paystack, Hubtel and MTN MoMo, with the
+customer choosing between them — and one-bean-wins cannot express that at all: two providers under
+that annotation is a `NoUniqueBeanDefinitionException` at best and a silently arbitrary winner at
+worst. D44 documented the annotation's order-sensitivity rather than fixing it, explicitly because
+this is the package that deletes it. It is deleted, and **the warning went with it** rather than being
+left as advice about a mechanism that is gone.
+
+`PaymentProviders` is the replacement: every `PaymentProvider` bean, resolved by the name it answers
+to. Four properties of it are load-bearing.
+
+**Nothing injects a `PaymentProvider` by type any more.** `BookingPayments` and
+`PaymentWebhookResource` both take the registry. That is what makes two providers two entries rather
+than a collision, and it is why D44's whole ordering hazard evaporates instead of being worked
+around: `PaymentConfigurationUnitTest` now asserts a sibling `@Bean` provider coexisting with the
+fallback **in both registration orders**, which is the exact pair the deleted test used to
+demonstrate the opposite of.
+
+**The fallback is injected by bean name, not found by its `name()`.** `@Qualifier` on
+`PaymentProviders.FALLBACK_BEAN`, so this class holds no opinion about what an absent provider calls
+itself and a real adapter cannot make itself the fallback by claiming to be `none`.
+
+**The fallback is never a choice.** `choices()` excludes it by identity. Otherwise "pay through no
+provider" is a payment method a client can ask for: booking created, `booking.requested` published,
+the professional told, and no provider ever asked for the money. It stays reachable by
+`named()`, so a callback addressed to it is refused *by its own adapter* — a 401 like every other
+refusal, rather than a 404 arranged by hiding it from a lookup.
+
+**Nothing asks `name()` eagerly.** An index built in the constructor would ask every adapter to name
+itself before the context has finished starting, and D44 found what trusting `name()` costs. Four
+providers is a list to walk; `nameOf` never throws and never returns null, and an adapter that cannot
+name itself is excluded from `choices()` rather than offered — no callback could ever be routed back
+to it, so a booking made through it would wait for a confirmation with nowhere to arrive.
+
+### The customer's choice, under D22's rule
+
+`CreateBooking.paymentProvider` is the one client-supplied field on that request that decides **who
+ends up holding the customer's money**, which is exactly what D22 exists to be suspicious of. Unlike
+the price and the professional's login, it genuinely is the client's to say — nothing on the server
+knows which wallet a customer wants to pay from — so what the server keeps is the right to refuse.
+
+Three cases, resolved in `PaymentProviders.chosen`:
+
+- **nothing configured** — today's estate. `choices()` is empty, the fallback answers, and a request
+  that names nobody behaves exactly as it did before this package. A request that *names* somebody is
+  refused: the caller believes this estate collects money and it does not, and a 201 would create a
+  booking whose customer thinks they have paid;
+- **one provider** — it is the default. Requiring a name for a decision with one possible answer
+  would refuse every booking made by a client written before the choice existed;
+- **more than one, and no name** — refused. The platform must not pick who takes the customer's
+  money; picking the first would make the answer depend on bean registration order, which is the
+  property the registry was built to remove.
+
+**409 for a name that is not offered, 400 for a choice that was needed and absent.** The client's
+next move differs — re-read the offer and ask again, versus ask the customer — which is the same
+distinction 402 and 502 draw one layer down, and the 409 matches what D22 already answers when a
+client's figures disagree with the catalogue. A name that was never valid and one that has just
+stopped being valid are indistinguishable from here, so the answer that is right in both cases wins.
+
+**The refusal names the offer and never the request.** `offered()` is this service's own
+configuration and is safe to say out loud; the requested name is a stranger's string on its way to a
+response body, which is the route D44 closed for a provider's own prose.
+
+**The resolution happens after the zero-amount guard, and that ordering is a decision.** A free
+booking asks nobody, so it must not be refused for failing to name anybody: resolving first would
+make every one of the estate's free bookings a 400 the day a second provider was configured — D44's
+defect returning by a different road. Both halves are pinned, at the seam and at the endpoint.
+
+**`Taken` carries the provider that answered.** Before there were three, `release` used the single
+injected provider and was correct by accident. A `release` that resolved the provider again would ask
+whichever adapter a fresh choice landed on to void an authorization it never issued — on the one path
+where money is committed and the booking does not exist.
+
+**No endpoint publishes the list, deliberately.** A `GET /api/payments/providers` was considered and
+not built: no screen asks for it — the prototype has no payment step at all — and an endpoint with no
+caller is an endpoint whose authorization nobody exercises, which is the argument that kept a
+`ROLE_BROKERAGE` read of the status history out in D43's review. The gap it would fill is real and is
+closed the cheap way instead: the 400 that demands a choice lists what there is to choose from, so a
+client always has a route to the names. The day a provider is configured, the choice screen and its
+list arrive together.
+
+### The webhook is reachable now, and that is two lines per environment
+
+D43 recorded that nothing routes to `POST /webhooks/payments/{provider}` in any environment — the
+gateway's four predicates match `/services/<service>/api/**` and this path is not under `/api` — and
+that WP-13 would need **two** changes rather than one. Both are made, in all three compose files and
+in the gateway:
+
+- a fifth route, `Path=/services/healthconnectbooking/webhooks/**`, with `StripPrefix=2`;
+- `PaymentWebhookRouteConfiguration` in the gateway, permitting **POST** on that path and nothing
+  else. The generated chain ends with `.pathMatchers("/services/**").authenticated()` and
+  authenticates *before* routing, so the route alone is a webhook that returns 401 at the edge:
+  nothing reaches booking, nothing appears in booking's log, and the provider retries until it files
+  the payment as undelivered. That reads as a broken provider integration rather than as a missing
+  line, which is why the pair is written down in four places and asserted in two.
+
+**D28's property is narrowed by exactly one path and not weakened.** Catalog's `/internal/**` is
+still unroutable; the dangerous near-miss is `/services/healthconnectbooking/**`, one segment shorter
+and enough to publish every booking, dispute and erasure endpoint booking has to anonymous callers.
+CI's route check used to demand that *every* predicate end in `/api/**` and that there be exactly
+four; it now allows exactly one webhook route, matched in full, and a second check greps the
+gateway's permit for the same string and for `HttpMethod.POST`. A route without its permit fails CI
+rather than a provider.
+
+What now stands in front of that endpoint is the provider's signature and nothing else, which is what
+`readCallback` was always for. Today every caller still gets 401 — from two places rather than one: a
+name nothing is configured for resolves to no adapter at all, and every adapter that does resolve
+refuses.
+
+### The three adapters, and the line this package would not cross
+
+**WP-13 had no network access, no provider account and no credentials.** Paystack's, Hubtel's and MTN
+MoMo's documentation could not be read and none of the three could be called. So the adapters are
+**seams with their provider-specific halves missing**: a name, their settings, a documented list of
+what each still needs, and a refusal in place of every call that would have to know how the provider
+actually speaks.
+
+The alternative was to write them from memory and plausibility, and it was rejected on the same
+ground this repository has already paid for twice. **Code like that compiles and passes the mocks
+written to match it**, because the only thing it is ever checked against is the assumption that
+produced it — D9's suite that was skipped for a week while everything compiled, and D14's green
+publish that put no image in the registry. And the place it would have been wrong is the worst one
+available: an adapter runs on the path where a customer's money is already committed, so a wrong
+signature check accepts a forgery or rejects every genuine callback, and a wrong status mapping
+creates bookings for money that never arrived or cancels bookings whose money did.
+
+**How they fail is not uniform, and the asymmetry is the same one `UnconfiguredPaymentProvider`
+draws.** `authorize`, `capture`, `refund`, `voidAuthorization` and `status` throw
+`UnsupportedOperationException`, which `BookingPayments` turns into `FAILED` — a 502 and no booking,
+with the whole exception at ERROR. `readCallback` throws `PaymentCallbackRefused`, which is the flat
+401: that method is reached by whoever posts to a public endpoint rather than by this platform's own
+code, and a 500 with a stack trace per probe tells a stranger their request got further in than it
+did.
+
+**Each is registered only when its own `enabled` property is true, and none is true anywhere in this
+repository.** Turning one on today makes every priced booking that names it answer 502, and
+`PaymentProviderProperties` says exactly that at WARN, once per enabled provider, at startup. They are
+beans at all — rather than classes nothing can produce — because the wiring between a name, a choice,
+a route and a callback is precisely what this package could verify, and a bean no configuration can
+create is wiring nobody has run.
+
+`@ConditionalOnProperty` rather than `@ConditionalOnMissingBean`, and the difference is the whole of
+D44's hazard: it reads the `Environment` and never the bean registry, so no parse order can change its
+answer.
+
+**What each adapter still needs is written where whoever has the credentials will be looking** — on
+the class, with the shared questions in `net.jojoaddison.service.payment.provider`'s `package-info`.
+The shape is the same for all three: the authorization call, its response and **which field is the
+durable handle**, the status vocabulary and its mapping (with anything unrecognised mapping to
+`FAILED`), the callback payload and where the handle appears in it, **the signature algorithm and
+exactly what bytes it covers**, and which credentials the outbound call needs as against the single
+`secret` modelled for callbacks. Two per-provider questions do not generalise and are recorded
+separately: Hubtel's and MoMo's prompts need a mobile number that `PaymentIntent` deliberately does
+not carry, and MoMo's authentication appears to be a multi-step arrangement whose token is state this
+seam has nowhere to keep.
+
+### The third estate-wide secret
+
+`healthconnect.payments.<provider>.secret` is what a provider signs its callbacks with, and it is
+handled exactly as `JWT_BASE64_SECRET` and `HC_PRIVACY_PEPPER` are: injected by all three compose
+files, **never committed**, because this repository is public. One difference follows from what it is
+for — the other two are required always, this one only where its provider is turned on, so it is
+optional and blank counts as absent, as `PrivacyProperties.controllerRegistration` treats blank.
+
+**Absent means callbacks are refused, never trusted.** That is D35's rule for the pepper applied to a
+provider's key. An enabled provider with no secret is still registered and still offered, and refuses
+every callback with the same flat 401 an unimplemented one gives — identical from outside, because an
+endpoint that distinguishes its refusals is an oracle, and different in the log, because "configure
+the secret" and "write the integration" are two jobs for two people. Dropping it from the registry
+instead was rejected: it presents as "the provider we configured is not offered", with nothing
+anywhere saying why.
+
+No deploy script changed. `deploy-dev.sh` already sources `deploy/.env` with `set -a`, and
+`deploy-prod.sh` already passes `secrets.env` with `--env-file`, so a value put in either reaches the
+container. They are deliberately **not** added to `deploy-prod.sh`'s required-secret list: an estate
+with no provider configured needs none, and making them required would fail every production deploy
+for a value nothing reads.
+
+### Act 987 is not answered, and nothing here pre-empts it
+
+Whether a split-settlement model clears Ghana's Payment Systems and Services Act is a question for a
+person with the standing to answer it. WP-13 did not answer it and could not.
+
+What this package protects is the property that makes the answer cheap either way:
+**`PaymentProvider` still has no method that pays the professional.** D15 recorded that omission as
+the single most important thing about the interface — split-at-capture and reconcile-afterwards are
+the same seam from here — and the temptation to add a settlement or transfer call while writing three
+adapter classes is exactly how it would have been decided by accident, in code. The package
+documentation says so where an implementer will read it.
+
+### Tested, and what the tests still cannot reach
+
+Thirty-one new tests: eleven in a new `PaymentProvidersUnitTest`, ten in a new
+`ProviderAwaitingIntegrationUnitTest`, four in `BookingPaymentsUnitTest`, four replacing the two
+`PaymentConfigurationUnitTest` cases that pinned the deleted condition, six in a new
+`PaymentProviderChoiceIT` — the first test in this repository with **two** providers configured — one
+in `PaymentSeamIT`, and three in a new gateway `PaymentWebhookRouteConfigurationTest`.
+
+Confirmed red against a deliberate mutation before being kept, and the mutations are the plausible
+wrong implementations rather than arbitrary breakage:
+
+- `release` resolving the provider again instead of carrying it: `Wanted but not invoked
+  paymentProvider.voidAuthorization`, the money going back to a provider that never took it;
+- the choice resolved before the zero-amount guard: `PaymentChoiceRefused: this booking has to name a
+  payment provider` on the free booking, at the seam and as a 500 at the endpoint;
+- the platform picking a provider and ignoring the client's name: three ITs red at once —
+  `expected:<201> but was:<500>`, `expected:<409> but was:<500>`, `expected:<400> but was:<500>`;
+- `named()` falling through to the first configured adapter on a miss: `anUnknownNameResolvesToNothing`
+  red at the unit level, and `aCallbackForNobodyIsRefusedUnread` red as `expected:<401> but was:<500>`
+  — a callback for a provider this estate does not run reaching a real adapter;
+- `choices()` including the fallback: "pay through no provider" becoming a choice, three tests red;
+- the gateway permit widened to `/services/healthconnectbooking/**`: the whole of booking's API
+  claimed by an anonymous chain, red on the one assertion that names it.
+
+**Still not run against a live provider, for the fifth package running, and still not run against the
+quality box.** This time the sentence is not a limitation of the tests but the subject of the package:
+what WP-13 delivers is everything that can be true without a provider, and the three classes that
+cannot are marked as such rather than dressed up.

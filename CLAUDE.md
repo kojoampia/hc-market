@@ -176,6 +176,7 @@ regeneration.
 | `application.liquibase.async-start: false` | each `config/application.yml` | Liquibase races the seed loader; service comes up **healthy and empty** |
 | The `healthconnect.privacy.pepper` block | booking, catalog, messaging **`src/test/resources/config/application.yml`** | the ITs fail at the erasure endpoint with a 503 — which reads as a broken test, not a lost config block. The test config is generated too, and it *shadows* the main one |
 | The `healthconnect.privacy.retention` block | booking **`src/test/resources/config/application.yml`** | same shadowing, different symptom: the three periods bind to `null` under test and `PrivacyResourceIT` fails asserting counsel's ratified figures against nothing, which reads as a broken assertion rather than a lost block |
+| The `healthconnect.payments` block | booking `config/application.yml` | **silent, and only on an estate that had a provider.** Every `enabled` flag binds to false, so the three adapters vanish from the registry: a booking naming one is refused 409 as an unknown provider, and every callback addressed to it is 401 — which reads as the provider having changed something. On today's estate, where all three are off anyway, losing it changes nothing at all, so nothing here will tell you |
 | The `healthconnect.privacy` block with its `${HC_RETENTION_*}` placeholders | booking `config/application.yml` | **silent.** The periods bind to `null`, the desk reports `null` for all three, and the estate's answer to "what is your retention policy" becomes "none" — with every test still green, because the test config carries its own copy |
 
 **Per app — generated classes to delete.** Each would otherwise win or tie an ambiguous mapping
@@ -220,8 +221,8 @@ serviceClass` makes JHipster generate `BookingService`, so hand-written logic th
 replaced on the next regeneration and the failure is a wall of "cannot find symbol" on methods that
 existed minutes ago. The booking lifecycle lives in **`BookingWorkflow`** for exactly this reason.
 
-The gateway has one hand-written file too — `MarketplacePublicRouteConfiguration` — but it is a new
-file, so regeneration leaves it alone. Without it, the generated
+The gateway has two hand-written files too — `MarketplacePublicRouteConfiguration` and
+`PaymentWebhookRouteConfiguration` — but both are new files, so regeneration leaves them alone. Without it, the generated
 `.pathMatchers("/services/**").authenticated()` returns 401 for Discover and Browse **before
 routing**, and "public reads need no token" is only true if you bypass the gateway.
 
@@ -671,18 +672,54 @@ time.**
   professional told, no `payment_attempt` row because no handle came back, no money moved, and nothing
   anywhere in the estate disagreeing with anything. The state is also **never on the wire** — a free
   booking is a `REQUESTED` booking like any other, and `PaymentAction` is only ever built for `PENDING`.
-- **`@ConditionalOnMissingBean` in `PaymentConfiguration` is order-sensitive, but not in the direction
-  you would guess** (D44, as reviewed). The annotation is only reliable in an auto-configuration and
-  that class is a user `@Configuration` — but a **component-scanned** `PaymentProvider` is always
-  visible to it, because `ClassPathBeanDefinitionScanner.doScan` registers every scanned definition
-  before parsing recurses, and a `@Bean` method's condition is not evaluated until
-  `ConfigurationClassBeanDefinitionReader` runs after `parser.parse()` has finished. The shape that
-  actually collides is an explicit **`@Bean` in a sibling `@Configuration`**, which is registered in
-  parse order, i.e. the order the scanner found the two classes, i.e. the filesystem's — fallback first
-  gives two beans and a `NoUniqueBeanDefinitionException`, sibling first gives one, on identical code.
-  So a real provider added before WP-13 should be a `@Component`, or carry `@Primary`; never a bare
-  `@Bean` beside `PaymentConfiguration`. WP-13 replaces the condition with a registry keyed by provider
-  name, which is why the caveat is a javadoc and two context tests rather than a fix.
+- **Providers live in a registry keyed by name, and nothing injects a `PaymentProvider` by type** (D45).
+  `PaymentConfiguration` used to supply the fallback under `@ConditionalOnMissingBean`; D37 chose three
+  providers with the customer choosing between them, which one-bean-wins cannot express, so the
+  condition is **gone** and with it D44's whole ordering hazard — two provider beans are two entries,
+  not a collision, whichever order they are parsed in. `PaymentProviders` resolves them: the fallback is
+  injected by **bean name** (`FALLBACK_BEAN`), so nothing here depends on an absent provider being
+  called `none`; it is excluded from `choices()` by identity, so "pay through no provider" is not
+  something a client can ask for; and it stays reachable from `named()`, so a callback addressed to it
+  is refused by its own adapter rather than by a lookup arranged to hide it. Nothing asks `name()`
+  eagerly — four providers is a list to walk, and `nameOf` never throws and never returns null.
+  A real adapter is a `@Bean` under `@ConditionalOnProperty`, which reads the environment and not the
+  bean registry, so no parse order can change its answer.
+- **The customer chooses the provider, and the server refuses names it does not offer** (D45).
+  `CreateBooking.paymentProvider` is the one client-supplied field that decides who ends up holding the
+  money, so it gets D22's suspicion: **409** for a name this estate does not offer, **400** when more
+  than one provider is configured and the request names none, and never a default chosen on the
+  customer's behalf. Nothing configured — today's estate — means an unnamed request behaves exactly as
+  it always has and a *named* one is refused; exactly one configured means it is the default. The
+  refusal lists what is on offer and never echoes what was asked for, and no endpoint publishes the
+  list, deliberately: the 400 is the route to the names until a screen needs one.
+  **The choice is resolved after the zero-amount guard**, or every free booking in the estate becomes a
+  400 the day a second provider is configured. And `BookingPayments.Taken` carries the provider that
+  answered, so a `release` goes back to whoever took the money rather than to whatever a fresh
+  resolution lands on.
+- **The three adapters are seams with their wire formats missing, and that is deliberate** (D45).
+  `PaystackPaymentProvider`, `HubtelPaymentProvider` and `MtnMomoPaymentProvider` extend
+  `ProviderAwaitingIntegration`, which throws `UnsupportedOperationException` from every money call —
+  `BookingPayments` turns that into `FAILED`, a 502 and no booking — and `PaymentCallbackRefused` from
+  `readCallback`, which is the flat 401. WP-13 had **no network access, no provider account and no
+  credentials**, so a signature scheme, a field path or a status mapping written there would have been
+  invention that passes the mocks written to match it, on the path where a customer's money is already
+  committed. What each one still needs from real documentation is on its class, with the shared
+  questions in `net.jojoaddison.service.payment.provider`'s `package-info` — read that before
+  implementing one, and **do not add a settlement or transfer call**: `PaymentProvider` having no method
+  that pays the professional is what lets the seam survive the Act 987 answer either way, and it is
+  unanswered.
+  Each is registered only when `healthconnect.payments.<name>.enabled` is true, and none is anywhere in
+  this repository. Turning one on makes every priced booking naming it a 502; booking says so at WARN at
+  startup.
+- **A provider's signing secret is the estate's third secret, and absent means refused** (D45).
+  `healthconnect.payments.<name>.secret`, injected by all three compose files as `HC_PAYSTACK_SECRET`,
+  `HC_HUBTEL_SECRET`, `HC_MOMO_SECRET`, **never committed** — this repository is public. Optional,
+  unlike `JWT_BASE64_SECRET` and `HC_PRIVACY_PEPPER`, because a provider nobody enabled needs none;
+  blank counts as absent. An enabled provider with no secret is still offered and **refuses every
+  callback with the same flat 401** an unimplemented one gives — identical from outside, because an
+  endpoint that distinguishes its refusals is an oracle, and different in the log. No deploy script
+  changed: `deploy-dev.sh` sources `deploy/.env` with `set -a` and `deploy-prod.sh` passes
+  `secrets.env` with `--env-file`, and they are deliberately not in the required-secret list.
 - **A booking may exist while its payment is pending, and the professional is not told** (D43). All
   three providers D37 chose confirm asynchronously, so `authorize` can answer `PENDING`; the booking is
   written in **`BookingStatus.PENDING_PAYMENT`** and `booking.requested` is **withheld** until a webhook
@@ -691,13 +728,18 @@ time.**
   messaging's is under booking's control. So `BookingCreator` has two ways in and only one of them
   publishes; if you add a third, decide which it is. Nothing enters `PENDING_PAYMENT` again once it has
   left, and only the two payment transitions leave it.
-- **The payment webhook is `POST /webhooks/payments/{provider}`, and no gateway route matches it**
-  (D43). Authentication is the provider's signature over the **raw** body, checked inside
-  `PaymentProvider.readCallback`; an unverified caller gets 401 with no detail, which today is every
-  caller. What keeps it off the internet is D28's property — the four route predicates are
-  `/services/<service>/api/**` and this is not under `/api` — not the `permitAll` in
-  `PaymentWebhookSecurityConfiguration`. Exposing it (WP-13) is **two** changes, a route *and* a
-  gateway security permit; the route alone returns 401 before routing and reads as a broken provider.
+- **The payment webhook is `POST /webhooks/payments/{provider}`, and it is routed now** (D43, exposed
+  by D45). Authentication is the provider's signature over the **raw** body, checked inside
+  `PaymentProvider.readCallback`; an unverified caller gets 401 with no detail, which today is still
+  every caller — from two places, since a name nothing is configured for resolves to no adapter and
+  every adapter that does resolve refuses. Exposing it was **two** changes and both are made: a fifth
+  gateway route, `Path=/services/healthconnectbooking/webhooks/**` with `StripPrefix=2`, in all three
+  compose files, *and* `PaymentWebhookRouteConfiguration` in the gateway permitting **POST** on that
+  path — the generated chain authenticates `/services/**` before routing, so the route alone is a
+  webhook that silently never arrives and reads as a broken provider. CI asserts both halves: the route
+  check now allows exactly one webhook predicate, matched in full, and a second check greps the
+  gateway's permit for the same string. **Widening either to `/services/healthconnectbooking/**` publishes
+  booking's whole API to anonymous callers**, which is D28's defect through the door D45 opened.
   A duplicate callback is 200 and does nothing: idempotency comes from the booking's status under a
   `findByReferenceForUpdate` row lock, never from a seen-set, because what must not happen twice is the
   transition rather than the callback.
@@ -711,8 +753,8 @@ time.**
   omits it and that is deliberate, not an oversight: at that moment the provider holds a live
   authorization the customer can still approve, so cancelling the booking without cancelling the
   payment is money taken for a booking that does not exist. The provider's callback is the only exit —
-  into `REQUESTED` or into `CANCELLED` — until WP-13 brings a provider that can be asked to release
-  one. `cancellation-preview` refuses it with the same 409 `/cancel` gives, because it used to quote a
+  into `REQUESTED` or into `CANCELLED` — until there is a provider that can be asked to release one,
+  which D45 did not deliver: the three adapters refuse `voidAuthorization` like everything else. `cancellation-preview` refuses it with the same 409 `/cancel` gives, because it used to quote a
   late-cancellation fee at full price against a booking whose money had never moved.
 - Review integrity is one-directional: there is **no** endpoint to delete a review. The only
   response is a public reply. `bookingReference` is unique, making "one review per booking" a schema
