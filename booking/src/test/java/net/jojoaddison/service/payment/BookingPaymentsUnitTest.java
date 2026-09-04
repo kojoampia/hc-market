@@ -26,7 +26,19 @@ class BookingPaymentsUnitTest {
 
     private final PaymentProvider provider = mock(PaymentProvider.class);
     private final PaymentRecorder recorder = mock(PaymentRecorder.class);
-    private final BookingPayments payments = new BookingPayments(provider, recorder);
+
+    /**
+     * The registry with one entry, which is the mock — {@code decisions.md} D45.
+     *
+     * <p>Passing the same instance as the fallback is what makes {@code take(booking, null)} reach it:
+     * {@link PaymentProviders#choices()} excludes the fallback, so this stands for today's estate,
+     * where nothing is configured and an unnamed request goes to whatever answers for "no provider".
+     * The choice logic itself is exercised in {@link PaymentProvidersUnitTest}, against a registry
+     * with more than one entry.
+     */
+    private final PaymentProviders providers = new PaymentProviders(java.util.List.of(provider), provider);
+
+    private final BookingPayments payments = new BookingPayments(providers, recorder);
 
     private static Booking booking(long priceMinor) {
         return new Booking()
@@ -54,7 +66,7 @@ class BookingPaymentsUnitTest {
     @Test
     @DisplayName("a free booking asks no provider anything")
     void nothingToPayAsksNobody() {
-        BookingPayments.Taken taken = payments.take(booking(0L));
+        BookingPayments.Taken taken = payments.take(booking(0L), null);
 
         verifyNoInteractions(provider);
         // The state itself cannot be red against the old code — the constant did not exist — so it is
@@ -76,7 +88,7 @@ class BookingPaymentsUnitTest {
         when(provider.name()).thenReturn("stub");
         when(provider.authorize(any())).thenReturn(PaymentOutcome.authorized("prov-1"));
 
-        BookingPayments.Taken taken = payments.take(booking(15000L));
+        BookingPayments.Taken taken = payments.take(booking(15000L), null);
 
         assertThat(taken.outcome().state()).isEqualTo(PaymentState.AUTHORIZED);
         assertThat(taken.intent().amountMinor()).isEqualTo(15000L);
@@ -96,7 +108,7 @@ class BookingPaymentsUnitTest {
         when(provider.name()).thenReturn("stub");
         when(provider.authorize(any())).thenThrow(new IllegalStateException("connect timed out"));
 
-        BookingPayments.Taken taken = payments.take(booking(15000L));
+        BookingPayments.Taken taken = payments.take(booking(15000L), null);
 
         assertThat(taken.outcome().state()).isEqualTo(PaymentState.FAILED);
         assertThat(taken.outcome().state().permitsBooking()).isFalse();
@@ -117,7 +129,7 @@ class BookingPaymentsUnitTest {
         when(provider.name()).thenReturn("stub");
         when(provider.authorize(any())).thenThrow(new IllegalStateException("MTN declined 0244123456 for Ama Mensah"));
 
-        BookingPayments.Taken taken = payments.take(booking(15000L));
+        BookingPayments.Taken taken = payments.take(booking(15000L), null);
 
         assertThat(taken.outcome().reason()).doesNotContain("Ama Mensah").doesNotContain("0244123456");
         assertThat(taken.outcome().reason()).contains("stub").contains("IllegalStateException");
@@ -152,7 +164,7 @@ class BookingPaymentsUnitTest {
         when(provider.name()).thenReturn("stub");
         when(provider.authorize(any())).thenReturn(PaymentOutcome.nothingToPay());
 
-        BookingPayments.Taken taken = payments.take(booking(15000L));
+        BookingPayments.Taken taken = payments.take(booking(15000L), null);
 
         assertThat(taken.outcome().state()).isEqualTo(PaymentState.FAILED);
         assertThat(taken.outcome().state().permitsBooking()).isFalse();
@@ -174,7 +186,7 @@ class BookingPaymentsUnitTest {
         when(provider.name()).thenReturn("stub");
         when(provider.authorize(any())).thenReturn(new PaymentOutcome(PaymentState.NOTHING_TO_PAY, "prov-nt1", null));
 
-        BookingPayments.Taken taken = payments.take(booking(15000L));
+        BookingPayments.Taken taken = payments.take(booking(15000L), null);
 
         assertThat(taken.outcome().state()).isEqualTo(PaymentState.FAILED);
         assertThat(taken.outcome().providerReference()).isEqualTo("prov-nt1");
@@ -194,7 +206,7 @@ class BookingPaymentsUnitTest {
         when(provider.name()).thenThrow(new IllegalStateException("no merchant id configured"));
         when(provider.authorize(any())).thenThrow(new IllegalStateException("connect timed out"));
 
-        BookingPayments.Taken taken = payments.take(booking(15000L));
+        BookingPayments.Taken taken = payments.take(booking(15000L), null);
 
         assertThat(taken.outcome().state()).isEqualTo(PaymentState.FAILED);
         assertThat(taken.outcome().reason()).contains("IllegalStateException");
@@ -215,7 +227,7 @@ class BookingPaymentsUnitTest {
         when(provider.name()).thenThrow(new IllegalStateException("no merchant id configured"));
         when(provider.authorize(any())).thenReturn(PaymentOutcome.authorized("prov-3"));
 
-        BookingPayments.Taken taken = payments.take(booking(15000L));
+        BookingPayments.Taken taken = payments.take(booking(15000L), null);
 
         assertThat(taken.outcome().state()).isEqualTo(PaymentState.AUTHORIZED);
         org.mockito.Mockito.verify(recorder).record(org.mockito.ArgumentMatchers.eq("unnamed"), any(), any());
@@ -236,8 +248,126 @@ class BookingPaymentsUnitTest {
         when(provider.authorize(any())).thenReturn(PaymentOutcome.authorized("prov-2"));
         when(recorder.record(anyString(), any(), any())).thenThrow(new IllegalStateException("the insert failed"));
 
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> payments.take(booking(15000L)))
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> payments.take(booking(15000L), null))
             .isInstanceOf(IllegalStateException.class)
             .hasMessage("the insert failed");
+    }
+    // ------------------------------------------------ three providers, and which one takes the money --
+
+    /**
+     * A registry with two configured providers and the fallback, as an estate running D37's choice
+     * would have. The mocks are named lazily, in each test, because {@link PaymentProviders} asks
+     * {@code name()} at lookup time rather than building an index up front.
+     */
+    private PaymentProviders twoConfigured(PaymentProvider a, String aName, PaymentProvider b, String bName) {
+        when(a.name()).thenReturn(aName);
+        when(b.name()).thenReturn(bName);
+        return new PaymentProviders(java.util.List.of(provider, a, b), provider);
+    }
+
+    /**
+     * The customer's choice reaches exactly one provider — {@code decisions.md} D45.
+     *
+     * <p>The assertion that matters is {@code verifyNoInteractions} on the one that was not chosen: a
+     * registry that asked both, or that asked the wrong one and then relabelled the row, would still
+     * put the right name on {@code payment_attempt} while a real customer's money went somewhere
+     * else.
+     */
+    @Test
+    @DisplayName("the provider the customer named takes the money, and no other is asked")
+    void theChosenProviderIsTheOneAsked() {
+        PaymentProvider paystack = mock(PaymentProvider.class);
+        PaymentProvider hubtel = mock(PaymentProvider.class);
+        when(hubtel.authorize(any())).thenReturn(PaymentOutcome.pendingOnDevice("prov-h1"));
+        BookingPayments seam = new BookingPayments(twoConfigured(paystack, "paystack", hubtel, "hubtel"), recorder);
+
+        BookingPayments.Taken taken = seam.take(booking(15000L), "hubtel");
+
+        assertThat(taken.provider()).isSameAs(hubtel);
+        org.mockito.Mockito.verify(hubtel).authorize(any());
+        org.mockito.Mockito.verify(paystack, org.mockito.Mockito.never()).authorize(any());
+        // And the row says who is holding the money, which is what somebody reconciling it needs.
+        org.mockito.Mockito.verify(recorder).record(org.mockito.ArgumentMatchers.eq("hubtel"), any(), any());
+    }
+
+    /**
+     * The money goes back to whoever took it — {@code decisions.md} D45.
+     *
+     * <p>This is the defect the registry would otherwise have introduced. Before there were three
+     * providers, {@code release} used the single injected provider and was correct by accident; a
+     * {@code release} that resolved the provider again would ask whichever adapter a fresh choice
+     * landed on to void an authorization it never issued — on the one path where money is committed
+     * and the booking does not exist. So the provider is carried on the {@code Taken}.
+     */
+    @Test
+    @DisplayName("a release goes back to the provider that took the money, not to the default")
+    void aReleaseGoesBackToTheSameProvider() {
+        PaymentProvider paystack = mock(PaymentProvider.class);
+        PaymentProvider hubtel = mock(PaymentProvider.class);
+        when(hubtel.authorize(any())).thenReturn(PaymentOutcome.authorized("prov-h2"));
+        when(hubtel.voidAuthorization(anyString(), anyString())).thenReturn(PaymentOutcome.voided("prov-h2"));
+        when(recorder.record(anyString(), any(), any())).thenReturn("attempt-1");
+        BookingPayments seam = new BookingPayments(twoConfigured(paystack, "paystack", hubtel, "hubtel"), recorder);
+
+        seam.release(seam.take(booking(15000L), "hubtel"), "booking b-unit01 could not be created");
+
+        org.mockito.Mockito.verify(hubtel).voidAuthorization("prov-h2", "booking b-unit01 could not be created");
+        // never(), not verifyNoInteractions: twoConfigured stubs name() on both, which is itself an
+        // interaction. What must not have happened is the money moving at the wrong provider.
+        org.mockito.Mockito.verify(paystack, org.mockito.Mockito.never()).voidAuthorization(anyString(), anyString());
+        org.mockito.Mockito.verify(paystack, org.mockito.Mockito.never()).refund(anyString(), org.mockito.ArgumentMatchers.anyLong(), anyString(), anyString());
+        org.mockito.Mockito.verify(paystack, org.mockito.Mockito.never()).authorize(any());
+        org.mockito.Mockito.verify(recorder).resolved("attempt-1", PaymentState.VOIDED);
+    }
+
+    /**
+     * A free booking is not asked to choose — {@code decisions.md} D44 and D45 in the same method.
+     *
+     * <p>The order of the two guards in {@code take} is the whole of this test. Resolving the
+     * provider first would make every free booking in an estate running three providers a 400: the
+     * request named nobody, because there was nobody to name, and D44's guard — which would have
+     * asked no provider anything — never gets to run.
+     */
+    @Test
+    @DisplayName("a free booking needs no provider even where naming one is compulsory")
+    void aFreeBookingNeedsNoChoice() {
+        PaymentProvider paystack = mock(PaymentProvider.class);
+        PaymentProvider hubtel = mock(PaymentProvider.class);
+        BookingPayments seam = new BookingPayments(twoConfigured(paystack, "paystack", hubtel, "hubtel"), recorder);
+
+        BookingPayments.Taken taken = seam.take(booking(0L), null);
+
+        assertThat(taken.outcome().state()).isEqualTo(PaymentState.NOTHING_TO_PAY);
+        assertThat(taken.provider()).isNull();
+        org.mockito.Mockito.verify(paystack, org.mockito.Mockito.never()).authorize(any());
+        org.mockito.Mockito.verify(hubtel, org.mockito.Mockito.never()).authorize(any());
+        verifyNoInteractions(recorder);
+        // Nothing was taken, so releasing must not reach a provider either — the first clause of
+        // release, which now has a null provider to survive as well as a null attempt id.
+        seam.release(taken, "booking b-unit01 could not be created");
+        org.mockito.Mockito.verify(hubtel, org.mockito.Mockito.never()).voidAuthorization(anyString(), anyString());
+    }
+
+    /**
+     * A name this estate does not offer is refused before anybody is asked for money.
+     *
+     * <p>Refusing after authorizing would be the worst of both: a customer charged by a provider the
+     * booking then declines to be made with. It is a thrown {@link PaymentChoiceRefused} rather than
+     * a {@link PaymentState#FAILED} outcome because nothing was attempted — there is no attempt to
+     * record and no handle to keep, and the endpoint answers 409 rather than 502.
+     */
+    @Test
+    @DisplayName("an unoffered provider is refused before any money is asked for")
+    void anUnofferedProviderIsRefusedBeforeAnythingHappens() {
+        PaymentProvider paystack = mock(PaymentProvider.class);
+        PaymentProvider hubtel = mock(PaymentProvider.class);
+        BookingPayments seam = new BookingPayments(twoConfigured(paystack, "paystack", hubtel, "hubtel"), recorder);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> seam.take(booking(15000L), "some-other-wallet"))
+            .isInstanceOf(PaymentChoiceRefused.class);
+
+        org.mockito.Mockito.verify(paystack, org.mockito.Mockito.never()).authorize(any());
+        org.mockito.Mockito.verify(hubtel, org.mockito.Mockito.never()).authorize(any());
+        verifyNoInteractions(recorder);
     }
 }

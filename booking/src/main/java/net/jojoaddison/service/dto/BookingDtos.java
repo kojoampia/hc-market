@@ -64,10 +64,16 @@ public final class BookingDtos {
      *
      * @param state the {@code PaymentState} name, so a client can tell "waiting on you" from
      *     "nothing to pay" without inferring it from the booking's status
+     * @param provider which provider is asking — {@code decisions.md} D45. Added when there could be
+     *     more than one: "a prompt has been sent to your phone" is a wait screen a customer can act
+     *     on only if it names the wallet the prompt is in, and a client that let them choose should
+     *     not have to remember what it asked for. It is the provider that actually took the payment,
+     *     which is not necessarily what the request named — an unnamed choice against a single
+     *     configured provider resolves to that one
      * @param action what to do
      * @param url where to send them, for {@code VISIT_URL} and null otherwise
      */
-    public record PaymentAction(String state, String action, String url) {}
+    public record PaymentAction(String state, String provider, String action, String url) {}
 
     /** The append-only audit — every transition a booking has made, oldest first. */
     public record StatusChangeView(String fromStatus, String toStatus, String actor, Instant occurredAt, String note) {}
@@ -94,7 +100,22 @@ public final class BookingDtos {
         String customerNote,
         String onBehalfOf,
         String visitAddress,
-        Boolean careSummaryShared
+        Boolean careSummaryShared,
+        /**
+         * Which payment provider the customer chose — {@code decisions.md} D45.
+         *
+         * <p>The one field on this request that decides who ends up holding their money, so it gets
+         * D22's treatment rather than being taken on faith: it is checked against the providers this
+         * service is actually configured for and refused otherwise, never defaulted away to whichever
+         * adapter happens to be first. Absent is allowed and means "no preference", which is the only
+         * possible answer while the estate has nothing to choose between — and stops being allowed the
+         * moment more than one provider is configured.
+         *
+         * <p>Unlike {@code priceMinor} and {@code professionalLogin} above, this genuinely is the
+         * client's to say: nothing on the server knows which wallet the customer wants to pay from.
+         * What the server keeps is the right to refuse a name it does not recognise.
+         */
+        String paymentProvider
     ) {}
 
     public record DeclineRequest(String reason) {}

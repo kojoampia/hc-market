@@ -33,11 +33,11 @@ public class BookingPayments {
 
     private static final Logger LOG = LoggerFactory.getLogger(BookingPayments.class);
 
-    private final PaymentProvider provider;
+    private final PaymentProviders providers;
     private final PaymentRecorder recorder;
 
-    public BookingPayments(PaymentProvider provider, PaymentRecorder recorder) {
-        this.provider = provider;
+    public BookingPayments(PaymentProviders providers, PaymentRecorder recorder) {
+        this.providers = providers;
         this.recorder = recorder;
     }
 
@@ -49,10 +49,16 @@ public class BookingPayments {
      *     booking says the service costs
      * @param outcome the provider's answer. The caller decides what it means for the request
      * @param attemptId the {@code payment_attempt} row, or null when the provider gave no handle to
-     *     store — which is every booking in the estate today, because the only configured provider
-     *     reports {@link PaymentState#OFF_PLATFORM} and the platform is not in the money's path
+     *     store — which is every booking in the estate today, because with nothing configured the
+     *     fallback reports {@link PaymentState#OFF_PLATFORM} and the platform is not in the money's
+     *     path
+     * @param provider the adapter that answered, carried so that {@link #release} gives the money
+     *     back through the same one that took it — {@code decisions.md} D45. Null only when nobody
+     *     was asked, which is the free booking. Before there was a registry this was implicit and
+     *     therefore correct by accident; with three providers, re-resolving the default at release
+     *     time would void an authorization at whichever provider happened to be first
      */
-    public record Taken(PaymentIntent intent, PaymentOutcome outcome, String attemptId) {}
+    public record Taken(PaymentIntent intent, PaymentOutcome outcome, String attemptId, PaymentProvider provider) {}
 
     /**
      * Asks the provider to commit the customer's money, and keeps whatever handle comes back.
@@ -79,8 +85,19 @@ public class BookingPayments {
      * {@link #onlyThisMethodDecidesNothingIsOwed}. The guard above is the only thing that may produce
      * {@link PaymentState#NOTHING_TO_PAY}, and this is where that is enforced rather than merely
      * documented.
+     *
+     * <p><strong>Which provider is asked is resolved here too</strong> — {@code decisions.md} D45 —
+     * and it happens <em>after</em> the zero-amount guard, deliberately. A free booking asks nobody,
+     * so it must not be refused for failing to name somebody: an estate running three providers would
+     * otherwise reject every free booking made by a client that had nothing to choose. Resolution can
+     * refuse ({@link PaymentChoiceRefused}), and it refuses before any money moves, which is why it is
+     * the first thing that happens on the priced path rather than the last.
+     *
+     * @param chosenProvider the provider the customer asked for, or null for "no preference". Checked
+     *     against what this service is configured for — never trusted, never defaulted away. See
+     *     {@link PaymentProviders#chosen(String)}
      */
-    public Taken take(Booking booking) {
+    public Taken take(Booking booking, String chosenProvider) {
         PaymentIntent intent = new PaymentIntent(
             booking.getReference(),
             booking.getCustomerLogin(),
@@ -93,13 +110,14 @@ public class BookingPayments {
             // negative amount is a defect in whatever priced it, and quietly treating it as free
             // would be this service deciding that the platform owes the customer money.
             LOG.debug("booking {} costs nothing; no provider is asked to authorize it", intent.bookingReference());
-            return new Taken(intent, PaymentOutcome.nothingToPay(), null);
+            return new Taken(intent, PaymentOutcome.nothingToPay(), null, null);
         }
-        PaymentOutcome outcome = onlyThisMethodDecidesNothingIsOwed(intent, authorize(intent));
+        PaymentProvider provider = providers.chosen(chosenProvider);
+        PaymentOutcome outcome = onlyThisMethodDecidesNothingIsOwed(provider, intent, authorize(provider, intent));
         // Returns null when the outcome carried no reference — the guard lives in the recorder, so the
         // "no handle, no row" invariant cannot be lost by a caller. See PaymentRecorder#record.
-        String attemptId = recorder.record(providerName(), intent, outcome);
-        return new Taken(intent, outcome, attemptId);
+        String attemptId = recorder.record(providers.nameOf(provider), intent, outcome);
+        return new Taken(intent, outcome, attemptId, provider);
     }
 
     /**
@@ -134,11 +152,11 @@ public class BookingPayments {
      * confused about the amount may still be holding a fact about this booking's money, and
      * {@link PaymentOutcome#failed(String)} alone would drop the reference.
      */
-    private PaymentOutcome onlyThisMethodDecidesNothingIsOwed(PaymentIntent intent, PaymentOutcome outcome) {
+    private PaymentOutcome onlyThisMethodDecidesNothingIsOwed(PaymentProvider provider, PaymentIntent intent, PaymentOutcome outcome) {
         if (outcome.state() != PaymentState.NOTHING_TO_PAY) {
             return outcome;
         }
-        String name = providerName();
+        String name = providers.nameOf(provider);
         LOG.error(
             "{} answered NOTHING_TO_PAY for booking {}, which costs {} {} — refused as a provider failure",
             name,
@@ -182,40 +200,13 @@ public class BookingPayments {
      * on the port, on purpose: an adapter is somebody else's code and the seam has no business
      * requiring it to wrap its failures correctly before this platform will behave.
      */
-    private PaymentOutcome authorize(PaymentIntent intent) {
+    private PaymentOutcome authorize(PaymentProvider provider, PaymentIntent intent) {
         try {
             return provider.authorize(intent);
         } catch (RuntimeException e) {
-            String name = providerName();
+            String name = providers.nameOf(provider);
             LOG.error("{} could not be asked to authorize booking {}", name, intent.bookingReference(), e);
             return PaymentOutcome.failed("the %s payment provider could not be asked (%s)".formatted(name, e.getClass().getSimpleName()));
-        }
-    }
-
-    /**
-     * The provider's name, from an adapter that may not be able to give one.
-     *
-     * <p>{@code name()} is somebody else's code exactly as {@code authorize} is, and every call to it
-     * here used to be unwrapped. The worst two were inside the {@code catch} that turns a thrown
-     * authorization into {@link PaymentState#FAILED}: an adapter whose {@code name()} throws re-threw
-     * straight out of the handler and landed back on the 500 that handler exists to remove. On the
-     * success path the money is committed by then, so a name nobody can produce would have cost the
-     * handle D41 exists to keep. And in {@link #release} it is worse again — that runs from the
-     * resource's {@code catch}, so a throw there would replace the exception that failed the booking
-     * with one about a provider's name, on the one path where money is committed and the booking does
-     * not exist.
-     *
-     * <p>Blank and null are treated the same way as a throw, because {@code payment_attempt.provider}
-     * is a not-null column and the row is worth more than the name. A placeholder in that column says
-     * an adapter is misbehaving; a lost row says nothing at all.
-     */
-    private String providerName() {
-        try {
-            String name = provider.name();
-            return name == null || name.isBlank() ? "unnamed" : name;
-        } catch (RuntimeException e) {
-            LOG.error("the configured payment provider could not name itself", e);
-            return "unnamed";
         }
     }
 
@@ -256,13 +247,17 @@ public class BookingPayments {
      */
     public void release(Taken taken, String why) {
         PaymentState state = taken.outcome().state();
-        if (taken.attemptId() == null || !(state.holdsMoney() || state.awaitingCustomer())) {
+        if (taken.provider() == null || taken.attemptId() == null || !(state.holdsMoney() || state.awaitingCustomer())) {
             // Nothing was committed and nothing is on its way — an off-platform booking, or a
             // refusal. There is nothing to give back, and asking the unconfigured provider to give it
             // back throws by design.
             return;
         }
         String reference = taken.outcome().providerReference();
+        // The provider that took the money, carried on the Taken rather than resolved again — D45.
+        // Re-resolving would ask whichever provider a fresh choice landed on to void an authorization
+        // it never issued, on the one path where money is committed and the booking does not exist.
+        PaymentProvider provider = taken.provider();
         try {
             // The amount and currency come from the intent that was authorized, not from the
             // booking: what may be given back is bounded by what the provider agreed to, and the
@@ -275,17 +270,26 @@ public class BookingPayments {
                 : provider.voidAuthorization(reference, why);
             if (released.state() == PaymentState.VOIDED || released.state() == PaymentState.REFUNDED) {
                 recorder.resolved(taken.attemptId(), released.state());
-                LOG.info("released {} payment {} — {}", providerName(), reference, why);
+                LOG.info("released {} payment {} — {}", providers.nameOf(provider), reference, why);
                 return;
             }
             flag(taken, reference, "answered " + released.state());
         } catch (RuntimeException e) {
-            LOG.error("could not release {} payment {} after {} — money is committed and its booking does not exist", providerName(), reference, why, e);
+            LOG.error(
+                "could not release {} payment {} after {} — money is committed and its booking does not exist",
+                providers.nameOf(provider),
+                reference,
+                why,
+                e
+            );
             flag(taken, reference, "threw " + e.getClass().getSimpleName());
         }
     }
 
     private void flag(Taken taken, String reference, String what) {
-        recorder.needsAttention(taken.attemptId(), "release of %s payment %s %s".formatted(providerName(), reference, what));
+        recorder.needsAttention(
+            taken.attemptId(),
+            "release of %s payment %s %s".formatted(providers.nameOf(taken.provider()), reference, what)
+        );
     }
 }
