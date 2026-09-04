@@ -38,6 +38,10 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **NEW-1** | A retry reported rows re-written, not rows that held data | DONE | D39 |
 | **NEW-2** | Catalog's receipt omitted what it deleted | DONE | D39 |
 | **NEW-3** | A privacy test that could not fail, over a leak that was real | DONE | D40 |
+| **NEW-4** | Both end-to-end scripts could only address the dev estate | DONE | D46 |
+| **NEW-5** | A passing `verify-cycle.sh` made `--verify` report a fault | DONE | D46 |
+| **NEW-6** | A refusal that offered the one name it withholds | DONE | D46 |
+| **NEW-7** | "Sessions brokered" was not live, under a LIVE banner | DONE | D46 |
 
 ---
 
@@ -666,10 +670,101 @@ limit is written beside the code.
 
 ---
 
+## The quality run of `1eadc7a`, 2026-09-04
+
+The first quality run since WP-09, five packages back — WP-10, WP-11, WP-12 and WP-13 each closed
+with the sentence "no run against the quality box", and this is what four of those in a row cost.
+**The box had been serving a five-package-old commit for twenty-six hours while reporting healthy**,
+which is not a defect in anything: `quality/startup.sh` defaults `TAG` to the current commit and
+refuses `latest` exactly so a stack cannot run something nobody chose (D13, D14). Nobody had run it.
+*(Recorded as the run reported it; the twenty-six hours were not independently measured here.)*
+
+Brought to `1eadc7a43db09eb8e9928909c2c3494854890cf6` and seed-exact, it then found four defects,
+none of which any test suite could see — the fourth time the standing constraint at the bottom of
+this file has had its count raised. NEW-4 to NEW-7 below; the reasoning is D46.
+
+Two of the four are worth reading together. **NEW-4 and NEW-5 are the reason the other two were
+never going to be found by a test**: one made the end-to-end scripts unable to address the box at
+all, and the other made the box's own verifier report a fault after they had run. The tooling that
+exists to exercise a live estate had quietly stopped being usable against the only live estate there
+is.
+
+## NEW-4 — Both end-to-end scripts could only address the dev estate · DONE
+
+D46. `verify-cycle.sh` pinned `localhost:18201`/`18202` and `healthconnect-dev-<svc>-db-1`;
+`verify-outbox-recovery.sh` pinned 18202/18203 and the same container shape. Quality is 18100–18103
+with `hc-market-quality-*`, so **neither script could run against the box they most need to run
+against**, and with the dev stack in a restart loop they would today have failed against both.
+The pinned ports were not even `deploy-dev.sh`'s defaults — they were `CLAUDE.md`'s *override
+example*, so the scripts had been pinned to one operator's shell since they were written.
+
+Both are parameterised on `deploy-dev.sh`'s own `HC_*_PORT` names and defaults, plus one variable
+per database container; `HC_DEV_BOOKING_CTR` becomes `HC_BOOKING_CTR` with the old spelling still
+honoured. And both now **refuse to run against an inconsistently addressed estate** — a port from
+one and a database from another is silent and produces a page of plausible failures — by comparing
+the compose project label of every container they touch. In `verify-outbox-recovery.sh` that guard
+is load-bearing: the script disconnects a named container from `hcnet`, so the wrong name severs
+somebody else's service and the reconnect trap only restores the one it cut.
+
+Proved the only way it can be: both run against the live quality estate. `CYCLE PASSED`,
+`OUTBOX RECOVERY PASSED`.
+
+## NEW-5 — A passing `verify-cycle.sh` made `--verify` report a fault · DONE
+
+D46. `--verify` asserted `reviews == 63`; the cycle script publishes a review and reviews cannot be
+deleted (spec §7). So a successful cycle left the box at 64 and the next `--verify` printed
+`✗ reviews through the gateway got 64 want 63` and exited failure — two tools each working
+correctly, arranged so one reports the other's success as a defect.
+
+Counts are split by whether anything here writes to them: `professionals` stays **seed-exact**,
+`reviews` becomes **seed plus recorded activity** with the surplus printed (`64 (seed 63 + 1
+recorded)`) rather than swallowed. The exactness given up is replaced by something stronger against
+the failure that mattered — p1's rating and reviewCount, from the `professional_rating` view, must
+equal the average and the count of the reviews the API serves from a different endpoint. "Derived,
+never stored" asserted directly, true whether or not the box has been exercised, and unsatisfiable
+by a sibling app on a stolen hostname. `verify-cycle.sh` also states what it wrote and how to
+reseed, because half of this defect was a tool that changed an estate and did not say so.
+
+**The cost, stated:** `--verify` reports rather than fails when somebody has hand-written reviews
+into the box. The collision check is stronger than before, not weaker — `at least 63` fails on a
+non-number exactly as `== 63` did.
+
+## NEW-6 — A refusal that offered the one name it withholds · DONE
+
+D46. `PaymentChoiceRefused`'s empty-offer sentinel was the literal `"none"`, and
+`UnconfiguredPaymentProvider.name()` is also `"none"`, so `paymentProvider: "none"` answered *"this
+estate does not offer that payment provider; it offers: none"* — pointing a client integrator at the
+one name D45's `choices()` exists to keep off the list. Behaviour correct, prose wrong. The fallback
+keeps its name (a URL segment, a property key, a column value — D45 chose it deliberately); the
+sentinel moved, and the empty case now states the fact instead. Red first, quoting the whole
+sentence.
+
+## NEW-7 — "Sessions brokered" was not live, under a LIVE banner · DONE
+
+D46. Discover's fourth hero stat was `PRO_HISTORY.length + BOOKINGS.length`; `PRO_HISTORY` is never
+repopulated in live mode and `BOOKINGS` only is behind a token, so the closed demo and the live
+estate both displayed **18 / 16 / 63 / 269** while the estate seeds 256 sessions. The `p.rate` /
+`₵NaN` class exactly, except that it renders a plausible number, so nothing looks broken and nobody
+looks twice.
+
+Not made live: that needs a public estate-wide count of bookings, which does not exist and would be
+a disclosure decision taken for a prototype's hero tile — the argument D45 used to not publish the
+provider list. The tile is omitted in live mode instead, through a `sessionsBrokered()` in the third
+script block that live mode replaces exactly as it replaces `confirmBooking`. Block 1 untouched, and
+the seed regenerates byte-identically. Pinned in `verify-prototype-live.mjs` in **both** directions —
+live must not show it, the demo must still show it and still count 269 — because deleting the tile
+outright satisfies the first and quietly changes the acceptance target. Confirmed red before the fix
+and ended in a real browser, both modes.
+
+---
+
 ## Not a package: standing constraints
 
 - **Production is off limits.** The pipeline is not ready; `deploy/deploy-prod.sh --dry-run` is the
   only thing to run against it, and it contacts nothing.
 - **Work goes on a branch with a PR.** Pushing `main` publishes five images to GHCR.
 - **Quality is `jacserver`, which is this workstation** at 127.0.0.1 — `./quality/startup.sh --local`,
-  no ssh. It is the last real gate, and it has now found three defects that every test suite passed.
+  no ssh. It is the last real gate, and it has now found **seven** defects that every test suite
+  passed — three at WP-07/WP-09, four more in the run of `1eadc7a` (D46). Two of that four were in
+  the gate's own tooling, which is the argument for running it every package rather than every fifth:
+  the box cannot find anything while the scripts that exercise it cannot address it.

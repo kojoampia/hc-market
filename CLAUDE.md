@@ -704,6 +704,11 @@ time.**
   it always has and a *named* one is refused; exactly one configured means it is the default. The
   refusal lists what is on offer and never echoes what was asked for, and no endpoint publishes the
   list, deliberately: the 400 is the route to the names until a screen needs one.
+  **The empty offer does not get a name** (D46). The sentinel used to be the literal `"none"`, which
+  is *also* what `UnconfiguredPaymentProvider` calls itself, so an estate with nothing configured
+  answered "it offers: none" — pointing a client at the one name `choices()` exists to withhold. The
+  fallback keeps its name (a URL segment, a property key, a `payment_attempt` value); the empty case
+  states the fact instead. Compose that sentence from `offered()` and never from the request.
   **The choice is resolved after the zero-amount guard**, or every free booking in the estate becomes a
   400 the day a second provider is configured. And `BookingPayments.Taken` carries the provider that
   answered, so a `release` goes back to whoever took the money rather than to whatever a fresh
@@ -777,12 +782,41 @@ time.**
   ```bash
   ./deploy/verify-cycle.sh             # book -> accept -> complete -> review, across 3 services
   ./deploy/verify-outbox-recovery.sh   # disconnects booking from hcnet; the broker is never stopped
+
+  # against the QUALITY box — ports and database containers must be overridden TOGETHER (D46)
+  HC_CATALOG_PORT=18100 HC_BOOKING_PORT=18101 HC_PAYOUT_PORT=18103 \
+  HC_CATALOG_DB_CTR=hc-market-quality-catalog-db HC_PAYOUT_DB_CTR=hc-market-quality-payout-db \
+    ./deploy/verify-cycle.sh
+  HC_BOOKING_PORT=18101 HC_MESSAGING_PORT=18102 HC_BOOKING_CTR=hc-market-quality-booking \
+  HC_BOOKING_DB_CTR=hc-market-quality-booking-db HC_MESSAGING_DB_CTR=hc-market-quality-messaging-db \
+    ./deploy/verify-outbox-recovery.sh
   ```
+  Both were pinned to the dev estate until D46 — and to `CLAUDE.md`'s *override example* ports,
+  18201/18202, rather than to `deploy-dev.sh`'s defaults — so neither could run against the box they
+  exist for. They read the `HC_*_PORT` family with `deploy-dev.sh`'s own defaults now, plus one
+  `HC_*_DB_CTR` per database, because the dev compose names no database container (compose derives
+  `<project>-<service>-1`) and the quality compose names all five. `HC_DEV_BOOKING_CTR` is now
+  `HC_BOOKING_CTR`; the old spelling still works. **Both refuse to start against a half-overridden
+  estate** — they compare the compose *project label* of every container they touch, because a port
+  from one estate beside a database from another is silent and reads as a broken outbox.
   The second one used to stop the broker. It must not, and no longer does — there is one broker and
   four products share it, so stopping it would take the estate down to test one service. It severs
   the **booking container** from `hcnet` instead: the same event from the outbox's point of view,
   and nothing else on the host is affected. Reconnection is on an `EXIT` trap, so a failure
-  part-way through cannot leave booking off the plane.
+  part-way through cannot leave booking off the plane. That is also why its estate check is
+  load-bearing rather than tidy: naming the wrong estate's container severs somebody else's service,
+  and the trap only restores the one it cut.
+- **`verify-cycle.sh` WRITES, and `quality/startup.sh --verify` knows it does** (D46). It leaves a
+  booking, a ledger row and a **review**, and there is no endpoint to delete a review — so a
+  successful cycle used to make the next `--verify` report `✗ reviews through the gateway got 64
+  want 63`, one tool calling the other's success a fault. `--verify` now distinguishes **seed-exact**
+  counts (`professionals` — nothing here creates one) from **seed plus recorded activity**
+  (`reviews` — at least 63, with the surplus printed as `64 (seed 63 + 1 recorded)` rather than
+  swallowed), and the exactness that was given up is replaced by a check no count could give: p1's
+  `rating` and `reviewCount`, from the `professional_rating` view, must equal the average and the
+  number of the reviews the API serves from a different endpoint. `verify-cycle.sh` prints what it
+  wrote and the reseed command at the end. **Do not put `reviews == 63` back** — restore the box
+  instead: `./quality/startup.sh --local --clean` then `TAG=<sha> ./quality/startup.sh --local`.
 - **The prototype has two modes, and the default is still the closed demo.** Opened with no query
   string it behaves exactly as it always did — no network, all state in memory — because it is still
   the acceptance target *and* the seed's source. `?api=` turns on live mode (D29):
@@ -809,7 +843,18 @@ time.**
   ```
   It runs the **shipped** blocks against a live estate rather than restating the mapping, and loads
   *every* script block in document order — `confirmBooking` and `submitReview` live in the third,
-  not the last. Three field names were wrong before it existed and none of them threw.
+  not the last. Three field names were wrong before it existed and none of them threw. It also runs
+  the same blocks a **second** time with no `?api=`, which is the whole of the demo/live seam, so a
+  check can pin what live mode must *not* show against what the demo must still show.
+  **A value block 1 derives once is the recurring defect here, and there are two of them now.**
+  `p.rate` was the first (`₵NaN`). The second was Discover's "Sessions brokered", which was
+  `PRO_HISTORY.length + BOOKINGS.length` — `PRO_HISTORY` is never repopulated in live mode and
+  `BOOKINGS` only is behind a token, so demo and live both showed **269** while the estate seeds
+  **256** sessions (D46). Worse to find than `₵NaN`, because a plausible number looks like it works.
+  Nothing the estate publishes can count bookings for an anonymous reader, so live mode replaces
+  **`sessionsBrokered()`** — declared in the third block beside `viewDiscover` — with one returning
+  `null`, and the tile is omitted rather than invented. **Adding a hero figure means saying which of
+  the two modes it is true in**; if the answer is "the demo", it needs the same treatment.
 - **The quality vhost serves the prototype same-origin** at `http://market.healthconnect.local/prototype`,
   so `?api=` needs no CORS and `/api/stream` works. That location carries a **deliberately weaker
   CSP** than the site's `default-src 'none'` — the page is inline script and style. Scoped to that
@@ -817,4 +862,8 @@ time.**
   the header on an `/api/**` path after touching it.
 - **End in a real browser.** Not optional, and not satisfied by the headless verifier: `p.rate` is
   derived once in block 1 and live mode forgot to recompute it, so every profile and browse card read
-  `₵NaN` while every automated check passed.
+  `₵NaN` while every automated check passed. It is not *sufficient* either — "Sessions brokered"
+  rendered a plausible 269 in a browser for as long as the figure existed, and only comparing it
+  against the estate's own count found it (D46). `google-chrome --headless=new --dump-dom
+  --virtual-time-budget=25000 'http://market.healthconnect.local/prototype?api='` renders the live
+  page here and is enough to read the hero stats out of; a human still has to look at the layout.

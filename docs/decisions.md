@@ -4195,3 +4195,169 @@ over an enumeration adding to thirty-nine against a tree that moved by thirty-se
 agree. And `CLAUDE.md`'s note on the gateway's hand-written files had grown a second file without
 growing a second consequence — "Without **it**" had two antecedents and described one. Both files'
 consequences are stated now, along with where the `@Order` has to sit and why.
+
+---
+
+## D46 — Four defects the quality box found, and the two of them that were decisions
+
+Found 2026-09-04 by the quality run of `1eadc7a` — the first quality run since WP-09, five packages
+back. That gap is the first finding and it is not one of the four: **the box had been serving a
+five-package-old commit for twenty-six hours while every health check, every tile and every
+`--verify` reported it healthy.** `quality/startup.sh` defaults `TAG` to the current commit and
+refuses to fall back to `latest` precisely so a stack cannot run something nobody chose (D13, D14),
+and it did its job — nobody had run it. WP-10 through WP-13 each closed with the sentence "no run
+against the quality box"; four of those in a row is what twenty-six hours of a stale estate looks
+like from the other end.
+
+The four defects below are what the run then found once the box was on the right commit. **Two are
+repairs and two are decisions**, and the difference matters: a repair restores a property the code
+was supposed to have, a decision changes what the tool is for.
+
+### 1 — Both end-to-end scripts could only address the dev estate. A repair.
+
+`verify-cycle.sh` pinned `localhost:18201`, `localhost:18202` and `docker exec
+healthconnect-dev-<svc>-db-1`; `verify-outbox-recovery.sh` pinned 18202/18203 and
+`healthconnect-dev-<svc>-db-1`. Quality publishes 18100–18103 and names its containers
+`hc-market-quality-*` explicitly, so **neither script could run against the box they exist for** —
+and since the dev estate was in a restart loop, they would have failed against both.
+
+Worth noticing what the pinned ports were: 18201/18202 are not `deploy-dev.sh`'s defaults, they are
+the *override example* in `CLAUDE.md`. So the scripts were already pinned to one operator's shell
+rather than to the estate, and had been since they were written.
+
+Both are parameterised now on `deploy-dev.sh`'s own variable names with `deploy-dev.sh`'s own
+defaults — `HC_CATALOG_PORT`, `HC_BOOKING_PORT`, `HC_MESSAGING_PORT`, `HC_PAYOUT_PORT` — plus one
+variable per database container, because the dev compose names none of them (compose derives
+`<project>-<service>-1`) while the quality compose names all five. `HC_DEV_BOOKING_CTR` becomes
+`HC_BOOKING_CTR`, with the old spelling still honoured: the `DEV` in it was a lie the moment the
+script could address a second estate.
+
+**And a guard, because "override them together, never one side only" is a rule nothing enforced.**
+An HTTP port from one estate beside a database container from another is silent: the API answers
+from one place and every count is read from another's tables, and the run reads as a broken outbox
+rather than as a mis-addressed script. Compose labels every container with its project name, so the
+containers behind the ports and the containers holding the rows can be compared without either
+script knowing any estate's naming scheme — which they must not, since the two compose files
+disagree about naming deliberately (the dev one prefixes `dev-` to keep `hcnet`'s aliases apart).
+Both scripts refuse before touching anything. In `verify-outbox-recovery.sh` that check is load
+bearing rather than tidy: it **disconnects a named container from `hcnet`**, so naming the wrong
+estate's container severs a service somebody else is using, and the reconnect trap only restores
+the one it cut. It also asserts that the container it is about to sever is the one answering on the
+booking port, or "the accept still succeeded" is asserted against a service that was never cut off.
+
+Both were then run against the live quality estate, which is the only thing that proves any of it:
+`CYCLE PASSED` and `OUTBOX RECOVERY PASSED`.
+
+### 2 — A successful `verify-cycle.sh` made `startup.sh --verify` report a fault. A decision.
+
+`--verify` asserted `reviews == 63`. `verify-cycle.sh` books, accepts, completes and **reviews**,
+and a review cannot be deleted — deliberately, since review integrity is one-directional (spec §7).
+So a successful cycle left the box at 64 and the next `--verify` printed `✗ reviews through the
+gateway got 64 want 63` and exited failure. **Two tools each working correctly, arranged so that one
+reports the other's success as a defect**, with the next person sent hunting something that is not
+there.
+
+The constraint that could not be weakened is this repository's oldest one: `--verify` exists partly
+to catch a wrong-app or wrong-data collision, and `admin.healthconnect.local` once served the
+patient app with a 200 and a plausible login page. An assertion deleted cannot see that.
+
+**Taken: the counts are split by whether anything in this repository writes to them, and the
+exactness that is given up is replaced by something a count could never have given.**
+
+- **Seed-exact** — `professionals`, and the catalogue's own body. Nothing here creates a
+  professional, so drift is a fault and the assertion stays exact.
+- **Seed plus recorded activity** — `reviews`. At least the seed's figure, with the surplus
+  *printed* rather than swallowed: `64 (seed 63 + 1 recorded)`. A number that has moved is still on
+  the screen, it is just not an exit code.
+- **And a new check that does not depend on the count at all**: p1's `rating` and `reviewCount`,
+  which come from the `professional_rating` view, must equal the average and the number of the
+  reviews the API serves from a different endpoint. That is "derived, never stored" asserted
+  directly, it holds whether the box is seed-exact or has been exercised, and nothing serving
+  somebody else's data can satisfy it.
+
+**What it costs, stated rather than buried:** `--verify` no longer fails when somebody has written
+extra reviews into the box by hand. It reports them. That is a real loss and it is the smaller half
+of the trade — the collision check is *stronger* than it was, because `at least 63` fails on a
+non-number exactly as `== 63` did, and the derivation check is new.
+
+The alternatives weighed. A mode flag (`--verify --exercised`) puts the judgement on whoever
+remembers to pass it, which is the same class of guard as the `@Order` D45's review found nobody was
+reading. Reseeding after every cycle makes the end-to-end check cost four minutes and a data wipe,
+which is how it stops being run. Teaching `--verify` to recognise the cycle script's own review by
+its body couples two tools that should not know about each other and fails the moment anyone books
+by hand.
+
+**`verify-cycle.sh` also says what it wrote now**, whether it passed or failed: the booking
+reference, the ledger row, the review with the resulting count beside the seed's, the messaging
+rows, and the fact that there is no surgical undo because reviews are not deletable — with the
+reseed command spelled out. Half of this defect was a tool that changed an estate and did not say
+so.
+
+**Found in the fix, and it belongs here because it is the same class as the defect:** the first
+version of the derivation check compared a Python `round()` against a rating the view rounds in
+Postgres, reported `rating 4.3 over 8, reviews say 4.2 over 8`, and was **wrong about a correct
+estate** — a 4.25 average, half-to-even against half-away-from-zero. A plausible wrong number
+arriving in the checker rather than in the thing checked. `Decimal` with `ROUND_HALF_UP` now, with
+the reason written where the next person will meet it.
+
+### 3 — A refusal that offered the one name it exists to withhold. A repair.
+
+`PaymentChoiceRefused.message` used the literal `"none"` as its empty-offer sentinel, and
+`UnconfiguredPaymentProvider.name()` is **also** `"none"`. So an estate with nothing configured
+answered `paymentProvider: "none"` with *"this estate does not offer that payment provider; it
+offers: none"* — a sentence that contradicts itself, and whose only actionable reading points a
+client integrator at the one name D45's `choices()` exists to keep off the list. Behaviour was
+correct throughout; the refusal is right and the request is refused. Only the prose was wrong.
+
+**The fallback is not renamed.** `none` is a URL segment on the webhook path, a property key and a
+`payment_attempt` column value, and D45 chose it deliberately. The sentinel is what moves: an empty
+offer now says *"this estate has no payment provider configured, so it cannot take payment for this
+booking"*, which is the fact and is also the client's next move — leave the field off rather than
+guess a better name. Still composed from `offered()` and never echoing the request, which is the
+property D45 and D44 both paid for.
+
+The unreachable case is answered too rather than left to compose nonsense: `CHOICE_REQUIRED` cannot
+arrive with an empty offer through `chosen`, because it needs at least two, but the constructor is
+public. Confirmed red first, quoting the whole defect: *Expecting throwable message "this estate
+does not offer that payment provider; it offers: none" not to contain "it offers: none"*.
+
+### 4 — A headline figure that was not live, under a banner that said LIVE. A decision.
+
+Discover's fourth hero stat, "Sessions brokered", was `PRO_HISTORY.length + BOOKINGS.length`.
+`PRO_HISTORY` is a const in the prototype's first script block that live mode **never** repopulates,
+and `BOOKINGS` only repopulates behind a token — so the closed demo and the live estate displayed
+the identical **18 / 16 / 63 / 269**. The first three coincide only because the seed was extracted
+from the demo. The fourth is fabricated: the estate seeds **256** sessions and 286 bookings in
+total, and neither is 269.
+
+This is the `p.rate` / `₵NaN` defect exactly — a value block 1 derives once that live mode forgot to
+recompute — with one difference that makes it worse to find. `₵NaN` announced itself the moment
+somebody looked at the page. A plausible number does not, and nobody would ever look at it twice.
+
+**Taken: do not show a figure that cannot be true, rather than make it live.** Making it live needs
+a public estate-wide count of bookings, and there is none — booking publishes nothing an anonymous
+reader can count. Adding one is a decision about disclosing volume, taken for the sake of a
+prototype's hero tile, on a service whose every other endpoint is scoped to the caller. That is the
+wrong reason to open an endpoint, and the same argument D45 used to *not* publish the provider list.
+Three figures that are true beat four with one invented.
+
+**Built inside the prototype's constraints, which are strict and easy to break.** The seed is
+extracted from the **first** script block only, in a `vm` sandbox with no `fetch` and no `window`;
+live mode is the **last** block and mutates the data consts in place. So the figure becomes a
+`function sessionsBrokered()` declared in the **third** block beside `viewDiscover`, live mode
+replaces it with one returning `null` exactly as it already replaces `confirmBooking`, `sendMsg` and
+`submitReview`, and `viewDiscover` omits the tile on `null`. Block 1 is untouched, no network call
+moves anywhere near it, and `node deploy/demo/extract-seed.mjs` regenerates `seed-data.json`
+**byte-identically** — asserted, not assumed, and still 18/52/63/256/₵81,620.
+
+**Pinned in `verify-prototype-live.mjs`, in both directions.** Live Discover must not contain
+"Sessions brokered" *and the closed demo must still show it, still counting 269* — because deleting
+the tile outright satisfies the first and quietly changes the acceptance target, which is the
+prototype's other job. The demo half runs the same blocks in a second context with no `?api=`, which
+is the only thing that turns live mode on. Both new checks confirmed red against the old file
+(`live Discover shows no "Sessions brokered" true want false`) with the demo pins already green.
+
+**Ended in a real browser**, which for this defect is not optional and for once was not sufficient
+either — the number looked fine. Chrome, both modes, against the live quality estate: demo renders
+`18 / 16 / 63 / 269`, live renders `18 / 16 / 64` with no fourth tile and no `NaN` anywhere in the
+rendered DOM.
