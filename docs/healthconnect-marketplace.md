@@ -1353,26 +1353,98 @@ apps_up() {
 
 # Compares what the API reports against what the seed file contains. A mismatch fails the run —
 # the same integrity discipline the prototype applied to its charts, applied to the loader.
+#
+# --- SEED-EXACT AND SEED-PLUS-ACTIVITY ARE TWO DIFFERENT ASSERTIONS ------------------------------
+#
+# This function used to assert `reviews == the seed file's count` and then compare the API's rating
+# against an average computed FROM THE SEED FILE. Both are true only of an estate nothing has
+# exercised — and deploy/verify-cycle.sh exists to exercise this one. It books, accepts, completes
+# and REVIEWS, and a review cannot be deleted (spec §7, review integrity is one-directional). So a
+# successful cycle against a dev estate made the next `deploy-dev.sh up` — without --clean — die at
+# `seed counts do not match`, or past that at `derived rating 4.3 disagrees with the seed's own
+# reviews (4.7)`. One tool reporting the other tool's success as a fault, which is exactly the
+# defect the quality run of 1eadc7a found in quality/startup.sh --verify, one script over. It was
+# unreachable until verify-cycle.sh could address more than one estate; making it portable made it
+# reachable here.
+#
+# So the counts are split by whether anything in this repository writes to them, as --verify's are:
+#
+#   SEED-EXACT      professionals. Nothing in this repository creates one, so drift is a real fault
+#                   and the assertion stays exact.
+#   SEED + ACTIVITY reviews. At least the seed's figure, with the surplus PRINTED rather than
+#                   swallowed, so a number that has moved is still on the screen.
+#
+# And the rating check is asked of the API's OWN reviews rather than of the seed file, which is
+# both stronger and independent of how much the estate has been exercised: `professional_rating` is
+# a view over the review table, and the review endpoint reads that same table by another road. That
+# is "derived, never stored" asserted directly. Its arithmetic is integer tenths on purpose — see
+# the note where it is computed.
 verify_seed() {
   step "Seed verification"
+  local api="http://localhost:${PORTS[catalog]}"
   local expect_pro expect_rev
   expect_pro="$(jq '.professionals|length' "$SEED_FILE")"
   expect_rev="$(jq '.reviews|length'       "$SEED_FILE")"
   local got_pro got_rev
-  got_pro="$(curl -fsS "http://localhost:${PORTS[catalog]}/api/professionals/count" || echo 0)"
-  got_rev="$(curl -fsS "http://localhost:${PORTS[catalog]}/api/reviews/count"       || echo 0)"
-  printf '  professionals %s/%s\n  reviews       %s/%s\n' "$got_pro" "$expect_pro" "$got_rev" "$expect_rev"
-  [[ "$got_pro" == "$expect_pro" && "$got_rev" == "$expect_rev" ]] \
-    || die "seed counts do not match $SEED_FILE"
+  got_pro="$(curl -fsS "$api/api/professionals/count" || echo 0)"
+  got_rev="$(curl -fsS "$api/api/reviews/count"       || echo 0)"
+  printf '  professionals %s/%s\n' "$got_pro" "$expect_pro"
+  [[ "$got_pro" == "$expect_pro" ]] || die "professionals: got $got_pro, $SEED_FILE has $expect_pro"
+  [[ "$got_rev" =~ ^[0-9]+$ ]] || die "reviews: the API answered '$got_rev', which is not a number"
+  if (( got_rev > expect_rev )); then
+    printf '  reviews       %s (seed %s + %s recorded)\n' "$got_rev" "$expect_rev" "$(( got_rev - expect_rev ))"
+  elif (( got_rev == expect_rev )); then
+    printf '  reviews       %s (seed-exact)\n' "$got_rev"
+  else
+    die "reviews: got $got_rev, fewer than the $expect_rev in $SEED_FILE"
+  fi
 
-  # The rule the whole design turns on: a rating must equal the average of its own reviews.
-  # Cheap to check, and the only check here that would catch a broken professional_rating view.
-  local ref rating avg
+  # The rule the whole design turns on: a rating must equal the average of its own reviews, as the
+  # API serves them. The only check here that would catch a broken professional_rating view.
+  local ref card rating review_count
   ref="$(jq -r '.professionals[0].ref' "$SEED_FILE")"
-  rating="$(curl -fsS "http://localhost:${PORTS[catalog]}/api/professionals/$ref" | jq -r '.card.rating')"
-  avg="$(jq -r --arg r "$ref" '[.reviews[]|select(.professionalRef==$r)|.stars] | (add/length*10|round)/10' "$SEED_FILE")"
-  printf '  %s rating    %s (seed average %s)\n' "$ref" "$rating" "$avg"
-  [[ "$rating" == "$avg" ]] || die "derived rating $rating disagrees with the seed's own reviews ($avg)"
+  card="$(curl -fsS "$api/api/professionals/$ref" || echo '{}')"
+  rating="$(jq -r '.card.rating // empty' <<<"$card")"
+  review_count="$(jq -r '.card.reviewCount // empty' <<<"$card")"
+  [[ -n "$rating" && -n "$review_count" ]] || die "$ref has no rating or reviewCount — is the professional_rating view there?"
+
+  # Paged, not one big page: /api/professionals/{ref}/reviews passes `size` straight through with no
+  # cap while reviewCount comes from the uncapped view, so asking for one page of 200 and averaging
+  # whatever came back reports a plausible wrong number the day the page truncates. A page that
+  # cannot be completed is refused rather than averaged.
+  # Every jq result is defaulted before it reaches an arithmetic context: a body that is not JSON at
+  # all — a sibling's login page on a stolen port — makes jq print nothing, and `(( got + ))` is a
+  # shell syntax error rather than a verification failure. The refusal below is the intended answer.
+  local page=0 got=0 sum=0 total="" body chunk add
+  while (( page < 50 )); do
+    body="$(curl -fsS "$api/api/professionals/$ref/reviews?page=$page&size=200" || echo '{}')"
+    chunk="$(jq -r '(.content // []) | length'                <<<"$body" 2>/dev/null)"
+    total="$(jq -r '.totalElements // empty'                  <<<"$body" 2>/dev/null)"
+    add="$(  jq -r '[(.content // [])[].stars] | add // 0'    <<<"$body" 2>/dev/null)"
+    sum=$(( sum + ${add:-0} ))
+    got=$(( got + ${chunk:-0} ))
+    page=$(( page + 1 ))
+    [[ "$total" =~ ^[0-9]+$ ]] || break
+    (( ${chunk:-0} == 0 || got >= total )) && break
+  done
+  [[ "$total" =~ ^[0-9]+$ && "$got" == "$total" ]] \
+    || die "$ref: served $got of ${total:-?} reviews — refusing to average a truncated page"
+  [[ "$review_count" == "$total" ]] \
+    || die "$ref: the view counts $review_count reviews, the review endpoint serves $total"
+
+  # Integer tenths, half away from zero, which is what Postgres's round(numeric, 1) does inside the
+  # view. Not `add/length*10|round`: jq's numbers are doubles, and an average that is exactly x.x5
+  # in decimal is not exactly representable — 87/20 becomes 4.34999999999999964, rounds DOWN to 4.3,
+  # and disagrees with the view's 4.4 against an estate that is entirely correct. Same class of
+  # defect as the half-to-even round() the quality box's own check was caught with.
+  #   round(10*sum/total) = floor((2*(10*sum) + total) / (2*total))   for positive integers
+  local want_tenths got_tenths
+  want_tenths=$(( (20 * sum + total) / (2 * total) ))
+  got_tenths="$(jq -r '(.card.rating * 10 | round)' <<<"$card")"
+  printf '  %s rating    %s over %s reviews (their average is %s.%s)\n' \
+    "$ref" "$rating" "$review_count" "$(( want_tenths / 10 ))" "$(( want_tenths % 10 ))"
+  [[ "$got_tenths" == "$want_tenths" ]] \
+    || die "derived rating $rating disagrees with the $total reviews the API serves for $ref"
   ok "seed loaded, counts and derived rating consistent"
 }
 

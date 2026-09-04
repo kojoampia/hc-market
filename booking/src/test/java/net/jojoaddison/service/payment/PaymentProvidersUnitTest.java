@@ -171,6 +171,37 @@ class PaymentProvidersUnitTest {
             .hasMessageNotContaining("script");
     }
 
+    /**
+     * The refusal an estate with nothing configured gives must not read as an offer.
+     *
+     * <p>Found by the quality run of {@code 1eadc7a}. The empty-offer sentinel was the literal
+     * {@code "none"} and {@code UnconfiguredPaymentProvider.name()} is <em>also</em> {@code "none"},
+     * so {@code paymentProvider: "none"} answered <em>"this estate does not offer that payment
+     * provider; it offers: none"</em> — a sentence that contradicts itself, and that a client
+     * integrator reading it can only act on by asking for the one name it appears to be offering,
+     * which is the one name {@link PaymentProviders#choices()} exists to keep out.
+     *
+     * <p>The fallback is <strong>not</strong> renamed: {@code none} is a URL segment, a property key
+     * and a {@code payment_attempt} column value, and D45 chose it deliberately. Only the sentinel
+     * moves, and the empty case now says the thing that is actually true about this estate.
+     */
+    @Test
+    @DisplayName("an estate that offers nothing says so, rather than appearing to offer 'none'")
+    void theEmptyOfferIsNotAProviderName() {
+        assertThatThrownBy(() -> registry().chosen("none"))
+            .isInstanceOf(PaymentChoiceRefused.class)
+            // The whole of the old message, so a regression cannot pass by rewording around it.
+            .hasMessageNotContaining("it offers: none")
+            // Nor by any other spelling that reads as an offer of that name.
+            .hasMessageNotContaining("none")
+            .hasMessageContaining("no payment provider");
+        // Same for a name that is not the fallback's: the sentence is about the offer, not the ask.
+        assertThatThrownBy(() -> registry().chosen("paystack"))
+            .isInstanceOf(PaymentChoiceRefused.class)
+            .hasMessageNotContaining("none")
+            .hasMessageNotContaining("paystack");
+    }
+
     // ------------------------------------------------------------- adapters that will not behave --
 
     /**

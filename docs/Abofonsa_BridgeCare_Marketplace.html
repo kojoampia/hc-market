@@ -1328,6 +1328,23 @@ function toggleArr(key,val){
 }
 
 /* --------------------------------- DISCOVER ----------------------------- */
+
+/* "Sessions brokered" — the one hero figure with no live source, and a function rather than an
+   expression for exactly that reason.
+
+   The demo's answer is p1's six months of completed work plus this customer's own bookings: a
+   narrative number, right for a closed demo and fiction against a real estate. PRO_HISTORY is a
+   const in block 1 that live mode never repopulates, and BOOKINGS only repopulates behind a token,
+   so live mode rendered this same 269 underneath a banner reading LIVE — the p.rate / ₵NaN defect
+   again, except that a plausible number looks like it is working.
+
+   Nothing the estate publishes can answer it. There is no public count of bookings, and adding one
+   is a disclosure decision about estate-wide volume rather than a prototype fix. So the live block
+   replaces this function with one returning null, and the tile below is omitted rather than filled
+   in with a better guess: three figures that are true beat four with one invented. Replaced in
+   place, the way live mode replaces confirmBooking, sendMsg and submitReview. */
+function sessionsBrokered(){ return PRO_HISTORY.length + BOOKINGS.length; }
+
 function viewDiscover(){
   const featured = sorted(PROS.filter(p=>p.verified)).slice(0,4);
   const soon = PROS.slice().sort((a,b)=>{
@@ -1336,7 +1353,7 @@ function viewDiscover(){
   }).slice(0,4);
   const nextBooking = BOOKINGS.filter(b=>b.status!=='completed'&&b.status!=='cancelled'&&b.date>=iso(TODAY))
                               .sort((a,b)=>a.date<b.date?-1:1)[0];
-  const allSessions = PRO_HISTORY.length + BOOKINGS.length;
+  const allSessions = sessionsBrokered();
   return '<main class="main"><div class="wrap">'
   + '<section class="hero sec">'
     + '<div class="eyebrow">Abofonsa BridgeCare · Wellbeing Marketplace</div>'
@@ -1355,7 +1372,10 @@ function viewDiscover(){
       + '<div><b>'+PROS.length+'</b><span>Professionals</span></div>'
       + '<div><b>'+PROS.filter(p=>p.verified).length+'</b><span>Verified</span></div>'
       + '<div><b>'+REVIEWS.length+'</b><span>Reviews</span></div>'
-      + '<div><b>'+allSessions.toLocaleString('en-GB')+'</b><span>Sessions brokered</span></div>'
+      /* null = no live source for it; the tile is omitted rather than showing a number that is not
+         true of the estate on the other end. See sessionsBrokered above. */
+      + (allSessions === null ? ''
+         : '<div><b>'+allSessions.toLocaleString('en-GB')+'</b><span>Sessions brokered</span></div>')
     + '</div>'
   + '</section>'
 
@@ -2655,6 +2675,16 @@ window.addEventListener('resize', ()=>{ clearTimeout(rz); rz = setTimeout(()=>{ 
    words into a real person's mouth in a real conversation, so it is gone and the thread is re-read
    from the server instead.
 
+   THE PROFESSIONAL WORKSPACE IS NOT LIVE, AND THAT IS A KNOWN LIMITATION RATHER THAN AN OVERSIGHT.
+   Everything under #/pro/… — the overview's counters, "Recently completed", "N confirmed sessions
+   ahead · N completed to date", the earnings screen's upcoming total and "% of sessions reviewed" —
+   is computed from PRO_HISTORY and PRO_SCHEDULE, two consts in the first script block that this one
+   never repopulates. So that whole screen renders the demo's figures under the LIVE banner. It is
+   the "Sessions brokered" defect (decisions.md D46) one screen wide instead of one tile, and it is
+   recorded here rather than fixed because the rule that came out of that tile is that a hero figure
+   has to say which mode it is true in — saying so costs a sentence, while making the workspace live
+   needs a professional's token and endpoints this estate does not publish. Backlog: NEW-8.
+
    The writes deliberately do NOT send priceMinor, currency or professionalLogin. The server
    establishes all three (decisions.md D22, D28), and sending them would mean the prototype was
    testing its own arithmetic rather than the estate's.
@@ -2662,6 +2692,22 @@ window.addEventListener('resize', ()=>{ clearTimeout(rz); rz = setTimeout(()=>{ 
 (function live(){
   const params = new URLSearchParams(location.search);
   if(!params.has('api')) return;                       // demo, exactly as before
+
+  /* Discover's "Sessions brokered" tile, switched off before anything else happens.
+
+     It is the only figure on the page with NO live source, and it was the last one still being
+     rendered from the demo's own arrays under a LIVE banner: PRO_HISTORY is never repopulated here
+     and BOOKINGS only is behind a token, so demo and live both showed 269 while the estate holds
+     256 completed sessions and 286 bookings. The p.rate / ₵NaN class exactly, and worse to find,
+     because a plausible number looks like it is working.
+
+     Null, not a fetch. Nothing the estate publishes counts bookings for an anonymous reader, and
+     adding an endpoint that does is a decision about disclosing estate-wide volume — not something
+     a prototype should take on its own. viewDiscover omits the tile on null. Set here, at the top,
+     so the figure is gone from the first live render rather than from the second; the paint before
+     this block is parsed still shows the demo's figures, exactly as every other stat on the page
+     does until load() finishes, and the banner says "Loading …" rather than LIVE for that window. */
+  sessionsBrokered = function(){ return null; };
 
   const BASE    = params.get('api') || '';             // '' = same origin
   const CATALOG = BASE + (params.get('svc') ?? '/services/healthconnectcatalog');

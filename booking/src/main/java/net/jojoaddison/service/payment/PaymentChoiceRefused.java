@@ -60,8 +60,33 @@ public class PaymentChoiceRefused extends RuntimeException {
         return offered;
     }
 
+    /**
+     * The sentence a client integrator reads, composed from {@link #offered()} and nothing else.
+     *
+     * <p><strong>The empty offer does not get a name.</strong> It used to: the sentinel was the
+     * literal {@code "none"}, and {@code UnconfiguredPaymentProvider.name()} is <em>also</em>
+     * {@code "none"}, so an estate with nothing configured answered <em>"this estate does not offer
+     * that payment provider; it offers: none"</em> — which reads as "we do not offer {@code none};
+     * we offer {@code none}", and points a client at the one name {@link PaymentProviders#choices()}
+     * exists to keep off the list. Found by the quality run of {@code 1eadc7a}.
+     *
+     * <p>The fallback keeps its name — it is a URL segment, a property key and a
+     * {@code payment_attempt} column value, and D45 chose it deliberately — so the sentinel is what
+     * moves. An empty offer is now stated as the fact it is, which is also the client's next move:
+     * this estate is not configured to take payment at all, so the field should be left off rather
+     * than filled in with a better guess.
+     */
     private static String message(Reason reason, List<String> offered) {
-        String names = offered.isEmpty() ? "none" : String.join(", ", offered);
+        if (offered.isEmpty()) {
+            // NOT_OFFERED is the only reason `chosen` can raise with an empty offer — CHOICE_REQUIRED
+            // needs at least two. The constructor is public, so the other case is answered here as
+            // well rather than left to compose a sentence that contradicts itself.
+            return switch (reason) {
+                case NOT_OFFERED -> "this estate has no payment provider configured, so it cannot take payment for this booking";
+                case CHOICE_REQUIRED -> "this booking has to name a payment provider and this estate has no payment provider configured";
+            };
+        }
+        String names = String.join(", ", offered);
         return switch (reason) {
             case NOT_OFFERED -> "this estate does not offer that payment provider; it offers: " + names;
             case CHOICE_REQUIRED -> "this booking has to name a payment provider; choose one of: " + names;

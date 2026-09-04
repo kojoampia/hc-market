@@ -87,36 +87,43 @@ const stub = extra =>
 const banner = stub({ textContent: '' });
 const stubbed = stub({ value: 'Published by verify-prototype-live.mjs' });
 
-const sandbox = {
-  console,
-  fetch,
-  URLSearchParams,
-  TextDecoder,
-  Promise,
-  setTimeout,
-  clearTimeout,
-  Date,
-  Math,
-  JSON,
-  location: { search: `?api=${BASE}${TOKEN ? `&token=${TOKEN}` : ''}`, origin: BASE, hash: '#/discover' },
-  document: {
-    querySelector: () => stubbed,
-    querySelectorAll: () => [],
-    getElementById: id => (id === 'liveBanner' ? banner : stubbed),
-    createElement: () => banner,
-    body: { appendChild() {}, removeChild() {}, style: {}, classList: { add() {}, remove() {} } },
-    addEventListener() {},
-  },
-  requestAnimationFrame: cb => setTimeout(cb, 0),
-  getComputedStyle: () => ({}),
-  alert: () => {},
-  addEventListener: () => {},
+/* `search` is the only thing that differs between a live run and a demo run, which is the whole of
+   the prototype's opt-in: the live block returns immediately when there is no `api` parameter. So
+   the demo can be run in a second context out of the same blocks, and the two compared — see the
+   "Sessions brokered" checks below, which is the pair they exist for. */
+const makeSandbox = search => {
+  const sandbox = {
+    console,
+    fetch,
+    URLSearchParams,
+    TextDecoder,
+    Promise,
+    setTimeout,
+    clearTimeout,
+    Date,
+    Math,
+    JSON,
+    location: { search, origin: BASE, hash: '#/discover' },
+    document: {
+      querySelector: () => stubbed,
+      querySelectorAll: () => [],
+      getElementById: id => (id === 'liveBanner' ? banner : stubbed),
+      createElement: () => banner,
+      body: { appendChild() {}, removeChild() {}, style: {}, classList: { add() {}, remove() {} } },
+      addEventListener() {},
+    },
+    requestAnimationFrame: cb => setTimeout(cb, 0),
+    getComputedStyle: () => ({}),
+    alert: () => {},
+    addEventListener: () => {},
+  };
+  sandbox.window = sandbox;
+  sandbox.self = sandbox;
+  sandbox.globalThis = sandbox;
+  return vm.createContext(sandbox);
 };
-sandbox.window = sandbox;
-sandbox.self = sandbox;
-sandbox.globalThis = sandbox;
 
-const ctx = vm.createContext(sandbox);
+const ctx = makeSandbox(`?api=${BASE}${TOKEN ? `&token=${TOKEN}` : ''}`);
 const source = blocks();
 vm.runInContext(source[0], ctx);
 
@@ -199,6 +206,47 @@ const checks = [
   ['review body', !!review.text, true],
   ['some review carries a reply', vm.runInContext('REVIEWS.some(r=>r.reply)', ctx), true],
 ];
+
+/* --- A figure with no live source must not be rendered as if it had one ---------------------- *
+ *
+ * Discover's fourth hero stat was `PRO_HISTORY.length + BOOKINGS.length`, "Sessions brokered".
+ * PRO_HISTORY is a const in block 1 that live mode never repopulates, and BOOKINGS only repopulates
+ * behind a token — so live mode rendered the demo's 269 underneath a banner reading LIVE, and the
+ * closed demo and the live estate displayed the identical 18 / 16 / 63 / 269. The first three
+ * coincide only because the seed was extracted from the demo; the fourth is fabricated, and the
+ * estate seeds 256 sessions and 286 bookings in total, neither of which is 269.
+ *
+ * The same defect class as p.rate / ₵NaN — a value block 1 derives once that live mode forgot to
+ * recompute — except that it renders a plausible number rather than NaN, so nothing looks broken
+ * and no amount of looking at the page finds it. Found by the quality run of 1eadc7a.
+ *
+ * Two checks, because there are two ways to get this wrong and they pull in opposite directions:
+ * live mode must not show it, and the DEMO must still show it. Deleting the tile outright would
+ * satisfy the first and change the acceptance target, which is the file's other job. */
+const shows = ctxt => {
+  try {
+    return /Sessions brokered/.test(vm.runInContext('viewDiscover()', ctxt));
+  } catch (e) {
+    return `viewDiscover() threw: ${e.message}`;
+  }
+};
+checks.push(['live Discover shows no "Sessions brokered"', shows(ctx), false]);
+checks.push([
+  'and the figure itself has no live answer',
+  vm.runInContext('typeof sessionsBrokered === "function" ? sessionsBrokered() : "no sessionsBrokered()"', ctx),
+  null,
+]);
+
+/* The same blocks with no `?api=`, which is the only thing that turns live mode on. The live block
+   returns immediately, nothing is fetched, and this is the closed demo exactly as it ships. */
+const demoCtx = makeSandbox('');
+for (const block of source) vm.runInContext(block, demoCtx);
+checks.push(['the closed demo still shows "Sessions brokered"', shows(demoCtx), true]);
+checks.push([
+  'and the demo still counts it the way it always did',
+  vm.runInContext('typeof sessionsBrokered === "function" ? sessionsBrokered() : PRO_HISTORY.length + BOOKINGS.length', demoCtx),
+  vm.runInContext('PRO_HISTORY.length + BOOKINGS.length', demoCtx),
+]);
 
 if (TOKEN) {
   /* There is deliberately NO assertion here that the bookings "came from the estate", and the two
