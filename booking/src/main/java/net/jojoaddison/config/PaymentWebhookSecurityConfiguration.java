@@ -22,16 +22,24 @@ import org.springframework.security.web.SecurityFilterChain;
  * conclusion: <strong>the security of this path is a signature check in application code, not a rule
  * in this file.</strong>
  *
- * <p>Two further things narrow it, and they are worth knowing before anybody widens the matcher.
- * Nothing routes here <em>through the gateway</em> today — the gateway's four route predicates match
- * {@code /services/<service>/api/**}, and this path is not under {@code /api}, which is the same
- * property that keeps catalog's {@code /internal/**} private (D28). That is a statement about the
- * gateway and not about the host: {@code docker-compose.dev.yml} publishes booking's own port on every
- * interface, so on a development machine this path is reachable directly, exactly as catalog's
- * {@code /internal/**} always has been. And everything that is not a POST
- * is denied, so the prefix cannot quietly acquire a readable endpoint: a {@code GET
+ * <p><strong>This path is routed from outside now — {@code decisions.md} D45.</strong> It was not
+ * when D43 wrote it: the gateway's four route predicates matched {@code /services/<service>/api/**}
+ * and this is not under {@code /api}, which is the same property that keeps catalog's
+ * {@code /internal/**} private (D28). A provider that cannot reach the webhook cannot confirm a
+ * payment, so WP-13 added a fifth route and a matching permit in the gateway
+ * ({@code PaymentWebhookRouteConfiguration}) — two changes, because the generated gateway chain
+ * authenticates {@code /services/**} before routing. The signature check inside
+ * {@code PaymentProvider.readCallback} is what stands in front of it now.
+ *
+ * <p>That was never a statement about the host in any case: {@code docker-compose.dev.yml} publishes
+ * booking's own port on every interface, so on a development machine this path has always been
+ * reachable directly, exactly as catalog's {@code /internal/**} has.
+ *
+ * <p>One narrowing here is unchanged and matters more than before. <strong>Everything that is not a
+ * POST is denied</strong>, so the prefix cannot quietly acquire a readable endpoint: a {@code GET
  * /webhooks/payments/...} that answered anything at all would be an unauthenticated read of what the
- * platform knows about somebody's payment.
+ * platform knows about somebody's payment. The gateway permits only POST as well, so the two agree
+ * rather than one relying on the other.
  *
  * <p>It exists at all for the same reason {@code InternalApiSecurityConfiguration} does in catalog:
  * the generated {@code SecurityConfiguration} matches {@code /api/**}, {@code /v3/api-docs/**} and

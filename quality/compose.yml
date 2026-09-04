@@ -245,6 +245,26 @@ services:
       SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_3_URI: http://payout:8080
       SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_3_PREDICATES_0: Path=/services/healthconnectpayout/api/**
       SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_3_FILTERS_0: StripPrefix=2
+      #
+      # --- ROUTE 4 IS THE ONE EXCEPTION, AND IT IS DELIBERATE (decisions.md D45) -------------
+      #
+      # booking's payment webhook is NOT under /api, on purpose: D43 put it outside so that the
+      # four predicates above would keep it off the internet while there was no provider to call
+      # it. A provider that cannot reach it cannot confirm a payment, so WP-13 routes it -- and
+      # routing it is TWO changes, not one. The gateway's generated security chain ends with
+      # `.pathMatchers("/services/**").authenticated()` and authenticates BEFORE routing, so
+      # without the permit in gateway/config/PaymentWebhookRouteConfiguration.java this route is a
+      # webhook that silently never arrives: 401 at the edge, nothing in booking's log, and a
+      # provider that retries until it files the payment as undelivered.
+      #
+      # Nothing else moves. The path stays /webhooks/** rather than /**, so booking's own API is
+      # not published to anonymous callers, and catalog's /internal/** is untouched. What
+      # authenticates a callback is the provider's signature over the raw body, checked inside
+      # booking -- today every caller gets 401, because no adapter in the estate can verify one.
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_4_ID: healthconnectbooking-webhooks
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_4_URI: http://booking:8080
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_4_PREDICATES_0: Path=/services/healthconnectbooking/webhooks/**
+      SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_ROUTES_4_FILTERS_0: StripPrefix=2
     depends_on:
       gateway-db: { condition: service_healthy }
 
@@ -330,6 +350,36 @@ services:
       # whichever it likes. The two above predate that rule and are load-bearing enough that changing
       # them belongs in its own change; a new one has no reason to be written the risky way.
       HEALTHCONNECT_MESSAGING_BASE_URL: http://hc-market-quality-messaging:8080
+      # --- Payment providers, and the third estate-wide secret (decisions.md D37/D45) -------------
+      #
+      # D37 chose Paystack, Hubtel and MTN MoMo, with the customer choosing between them. Each
+      # adapter is registered only when its own `enabled` flag is true, and ALL THREE ARE OFF here
+      # and everywhere else in this repository -- because none of them is implemented. WP-13 had no
+      # network access, no provider account and no credentials, so writing a signature scheme or a
+      # field path would have been invention on the one path where a customer's money is already
+      # committed. See net.jojoaddison.service.payment.provider's package documentation.
+      #
+      # TURNING ONE ON MAKES EVERY PRICED BOOKING THAT NAMES IT ANSWER 502. That is the honest
+      # behaviour of an adapter that has never spoken to its provider, and booking says so at WARN
+      # once per enabled provider at startup.
+      #
+      # The secret is what the provider signs its callbacks with. It is handled exactly like
+      # JWT_BASE64_SECRET and HC_PRIVACY_PEPPER -- required where it is used, NEVER committed,
+      # because this repository is public -- with one difference: it is optional, because a provider
+      # nobody turned on needs none. Absent, callbacks addressed to that provider are REFUSED rather
+      # than trusted, which is D35's rule for the pepper applied to a provider's key. Blank counts as
+      # absent.
+      #
+      # ON THE QUALITY BOX these come from the environment startup.sh runs in. It does not mint or
+      # persist them the way it does the pepper: a provider secret is issued by somebody else, so
+      # there is nothing to generate, and an absent one costs a refusal rather than an orphaned
+      # alias.
+      HC_PAYSTACK_ENABLED: ${HC_PAYSTACK_ENABLED:-false}
+      HC_PAYSTACK_SECRET: ${HC_PAYSTACK_SECRET:-}
+      HC_HUBTEL_ENABLED: ${HC_HUBTEL_ENABLED:-false}
+      HC_HUBTEL_SECRET: ${HC_HUBTEL_SECRET:-}
+      HC_MOMO_ENABLED: ${HC_MOMO_ENABLED:-false}
+      HC_MOMO_SECRET: ${HC_MOMO_SECRET:-}
       SPRING_LIQUIBASE_CONTEXTS: dev
       HEALTHCONNECT_SEED_ENABLED: "true"
       HEALTHCONNECT_SEED_FILE: /app/seed/seed-data.json

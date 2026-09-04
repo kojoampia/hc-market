@@ -224,25 +224,61 @@ jobs:
       # reached catalog on /services/healthconnectcatalog/internal/professionals/p1/login.
       #
       # So this asserts the shape rather than the count: every route predicate in every compose file
-      # must end in /api/**.
-      - name: Every gateway route must stay narrowed to /api/**
+      # must end in /api/**, with ONE named exception.
+      #
+      # THE EXCEPTION IS booking's PAYMENT WEBHOOK — decisions.md D45. A payment provider cannot hold
+      # a token and cannot reach anything under /api, so WP-13 routes
+      # /services/healthconnectbooking/webhooks/** as well. It is written out in full here rather
+      # than matched loosely, because the dangerous near-miss is
+      # /services/healthconnectbooking/** — one character shorter and it publishes every booking,
+      # dispute and erasure endpoint booking has to anonymous callers, which is D28's defect arriving
+      # through the door D45 opened.
+      - name: Every gateway route must stay narrowed, and the one webhook route must stay exact
         run: |
           fail=0
+          webhook='ROUTES_[0-9]+_PREDICATES_0: *Path=/services/healthconnectbooking/webhooks/\*\*$'
           for f in quality/compose.yml deploy/docker/docker-compose.dev.yml deploy/docker/docker-compose.prod.yml; do
             n=$(grep -cE 'ROUTES_[0-9]+_PREDICATES_0: *Path=/services/[a-z]+/api/\*\*' "$f" || true)
-            bad=$(grep -nE 'ROUTES_[0-9]+_PREDICATES_0: *Path=' "$f" | grep -vE '/api/\*\*$' || true)
+            w=$(grep -cE "$webhook" "$f" || true)
+            bad=$(grep -nE 'ROUTES_[0-9]+_PREDICATES_0: *Path=' "$f" | grep -vE "/api/\*\*$" | grep -vE "$webhook" || true)
             if [ -n "$bad" ]; then
-              echo "::error file=$f::a gateway route is not narrowed to /api/** — this publishes catalog's /internal/** to the internet. See decisions.md D28."
+              echo "::error file=$f::a gateway route is neither /api/** nor the one permitted webhook path — this publishes catalog's /internal/** or booking's whole API to the internet. See decisions.md D28 and D45."
               echo "$bad"
               fail=1
             elif [ "$n" != 4 ]; then
               echo "::error file=$f::expected 4 narrowed gateway routes, found $n"
               fail=1
+            elif [ "$w" != 1 ]; then
+              echo "::error file=$f::expected exactly 1 payment-webhook route, found $w — a provider that cannot reach the webhook cannot confirm a payment. See decisions.md D45."
+              fail=1
             else
-              echo "ok   $f — 4 routes, all /api/**"
+              echo "ok   $f — 4 routes on /api/**, 1 webhook route"
             fi
           done
           exit "$fail"
+
+      # Routing the webhook is TWO changes and the second one is invisible when it is missing.
+      #
+      # The gateway's generated security chain ends with
+      # `.pathMatchers("/services/**").authenticated()` and authenticates BEFORE routing, so a route
+      # without a matching permit is a webhook that returns 401 at the edge: nothing reaches booking,
+      # nothing appears in booking's log, and the provider retries until it files the payment as
+      # undelivered. That reads as a broken provider integration rather than as a missing line, which
+      # is why the pair is asserted here as well as documented in three places (decisions.md D45).
+      #
+      # The path is compared character for character against the compose predicate above.
+      - name: The gateway must permit the webhook route it is asked to carry
+        run: |
+          permit=gateway/src/main/java/net/jojoaddison/config/PaymentWebhookRouteConfiguration.java
+          if ! grep -qF '"/services/healthconnectbooking/webhooks/**"' "$permit"; then
+            echo "::error file=$permit::the gateway does not permit the webhook path the compose files route — every provider callback is 401 at the edge. See decisions.md D45."
+            exit 1
+          fi
+          if ! grep -qF 'HttpMethod.POST' "$permit"; then
+            echo "::error file=$permit::the webhook permit is not restricted to POST — a readable path here is an unauthenticated read of what the platform knows about somebody's payment."
+            exit 1
+          fi
+          echo "ok   $permit"
 
       # The dev estate's topic prefix is written TWICE: the compose file configures the apps with it
       # and deploy-dev.sh creates the topics with it (decisions.md D29). They must agree.
