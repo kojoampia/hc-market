@@ -642,8 +642,17 @@ time.**
   There is no such thing as picking one silently — only picking one and not writing it down, and
   because Ghana is UTC+0 all year `ZoneId.systemDefault()` is right on every machine anybody tests on
   and wrong on the first one with a `TZ`. It is already wrong on this workstation, which runs
-  `Europe/Berlin`. `MarketplaceService.BADGE_ZONE` is the pattern; the four remaining
-  `LocalDate.now()` calls in catalog are the outstanding instances of the same thing.
+  `Europe/Berlin`. `MarketplaceService.BADGE_ZONE` is the pattern; the **five** remaining
+  `LocalDate.now()` calls in catalog are the outstanding instances of the same thing — this said four
+  until the WP-15 review counted them, and the missed one is the consequential one.
+  **Four of the five render; `CatalogSeeder:105` writes.** It decides how far every seeded date is
+  shifted, and the identical line is in `BookingSeeder`, `MessagingSeeder` and `PayoutSeeder`, so on a
+  machine whose zone is ahead of Accra a seed loaded after 22:00 UTC is shifted one day further than
+  one loaded an hour earlier and the estate stops being seed-exact against itself. Quality anchors
+  (`HEALTHCONNECT_SEED_ANCHOR_DATES: "true"`) so the call never runs there, and dev's containers carry
+  no `TZ` so their default is UTC — latent rather than live, and one `TZ:` line from being live.
+  Backlog **NEW-9**; fixing catalog's alone is worse than fixing none, because then two services'
+  seeded dates disagree instead of all four being uniformly offset.
 - **`Professional.verification` is the projection of the latest `VerificationReview`** (D16), and the
   desk writes both in one transaction. This is a deliberate exception to "derived, never stored":
   Browse filters on the column, and the 18 seeded professionals have a state with no history behind
