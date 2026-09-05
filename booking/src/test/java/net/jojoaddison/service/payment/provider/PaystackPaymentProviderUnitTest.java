@@ -37,7 +37,7 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
 
 /**
- * The first adapter in this estate that speaks to its provider — {@code decisions.md} D49.
+ * The first adapter in this estate that speaks to its provider — {@code decisions.md} D50.
  *
  * <h2>Against a real socket, not a mocked client</h2>
  *
@@ -138,7 +138,7 @@ class PaystackPaymentProviderUnitTest {
     }
 
     /**
-     * D49's open decision, and the reason this adapter cannot take a payment on today's estate.
+     * D50's open decision, and the reason this adapter cannot take a payment on today's estate.
      *
      * <p>Paystack's initialize requires an email address; {@code PaymentIntent} carries a login and
      * no contact details, deliberately; and nothing in this repository implements
@@ -152,7 +152,7 @@ class PaystackPaymentProviderUnitTest {
     void authorizeRefusesWhenTheEstateCannotSayWhoIsPaying() {
         assertThatThrownBy(() -> provider(SECRET, CustomerContacts.unanswered()).authorize(intent(15_000L, "GHS")))
             .isInstanceOf(UnsupportedOperationException.class)
-            .hasMessageContaining("D49");
+            .hasMessageContaining("D50");
 
         assertThat(paystack.received()).isEmpty();
     }
@@ -485,7 +485,7 @@ class PaystackPaymentProviderUnitTest {
      *
      * <p>{@code service.payment.provider}'s package documentation states this as the rule for every
      * adapter, on the grounds that mapping an unrecognised status onto "fine" is the quietest failure
-     * available in this seam. The residual it costs is named in D49: an unrelated Paystack event
+     * available in this seam. The residual it costs is named in D50: an unrelated Paystack event
      * quoting a reference this platform issued cancels a booking that is still waiting. That is the
      * recoverable direction — the customer books again — where the other one is money taken for a
      * booking nobody made.
@@ -570,12 +570,12 @@ class PaystackPaymentProviderUnitTest {
     }
 
     /**
-     * Everything that is not the booking path still refuses — {@code decisions.md} D49.
+     * Everything that is not the booking path still refuses — {@code decisions.md} D50.
      *
      * <p>The working evidence for this integration covers {@code initialize} and the webhook, and
      * nothing else. {@code capture}, {@code refund}, {@code voidAuthorization} and {@code status} are
      * therefore left exactly as D45 left them rather than written from what a Paystack API plausibly
-     * looks like. The consequence is stated in D49 and is not silent: a {@code PENDING_PAYMENT}
+     * looks like. The consequence is stated in D50 and is not silent: a {@code PENDING_PAYMENT}
      * booking whose creation then fails cannot have its payment cancelled, so
      * {@code BookingPayments.release} flags the row for a person.
      */

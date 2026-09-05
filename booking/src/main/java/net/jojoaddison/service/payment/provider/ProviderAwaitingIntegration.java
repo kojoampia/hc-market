@@ -57,7 +57,7 @@ import org.slf4j.LoggerFactory;
  * when they throw — so leaving them unimplemented degrades to "somebody must reconcile this by hand"
  * rather than to silence.
  *
- * <p><strong>And override {@link #integratedCalls()} in the same commit.</strong> D49 built the first
+ * <p><strong>And override {@link #integratedCalls()} in the same commit.</strong> D50 built the first
  * of the three, and the estate's startup log went on announcing that every enabled adapter refuses
  * everything — a service taking real money through a working integration while saying in its own
  * first ten lines that it cannot. The account is made from that method now, so it stays true by
@@ -83,7 +83,7 @@ public abstract class ProviderAwaitingIntegration implements PaymentProvider {
     }
 
     /**
-     * Which of this adapter's money calls really speak to the provider — {@code decisions.md} D49.
+     * Which of this adapter's money calls really speak to the provider — {@code decisions.md} D50.
      *
      * <p>Empty is the honest answer for a class that adds nothing but a name, and it is the default
      * so that a new seam cannot claim more than it does by forgetting to say anything. A subclass
@@ -109,7 +109,7 @@ public abstract class ProviderAwaitingIntegration implements PaymentProvider {
      * <p>WARN for a seam, INFO for an integration. The WARN is not pessimism: an adapter that refuses
      * every authorization turns a priced booking naming it into a 502, and an estate that quietly
      * changed what it does with customers' money when somebody set a variable would deserve worse
-     * than a log line. The INFO is the counterpart D49 needed — the same event, reported truthfully
+     * than a log line. The INFO is the counterpart D50 needed — the same event, reported truthfully
      * for an adapter that works, because a WARN nobody can act on is a WARN everybody learns to skip.
      */
     @PostConstruct
@@ -124,7 +124,7 @@ public abstract class ProviderAwaitingIntegration implements PaymentProvider {
             return;
         }
         LOG.info(
-            "payments: the {} adapter is enabled and implements {}; every other money call refuses (decisions.md D49)",
+            "payments: the {} adapter is enabled and implements {}; every other money call refuses (decisions.md D50)",
             name,
             integrated
         );

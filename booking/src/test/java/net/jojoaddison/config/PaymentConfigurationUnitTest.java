@@ -314,7 +314,7 @@ class PaymentConfigurationUnitTest {
     // ------------------------------------------ what an operator is told when they enable Paystack --
 
     /**
-     * The estate's standing state, said at boot rather than discovered by a customer — D49, as
+     * The estate's standing state, said at boot rather than discovered by a customer — D50, as
      * reviewed.
      *
      * <p>{@code ProviderAwaitingIntegration.announceIntegration} now says, at INFO, that the Paystack
@@ -322,7 +322,7 @@ class PaymentConfigurationUnitTest {
      * {@code HC_PAYSTACK_SECRET} reads that and concludes it works. <strong>It does not:</strong>
      * nothing in this repository implements {@link CustomerContacts}, so every priced booking naming
      * Paystack answers 502 without a round trip, and the first anybody hears of it is a customer who
-     * could not pay. That is D49's own defect one level down — the log saying the opposite of the
+     * could not pay. That is D50's own defect one level down — the log saying the opposite of the
      * truth — and it is milder only because half the sentence is right.
      *
      * <p>This is the one place that can see it. {@code PaymentProviderProperties} binds properties and
@@ -345,7 +345,7 @@ class PaymentConfigurationUnitTest {
             .as("an operator enabling paystack is told at boot that this estate cannot name a customer to it")
             .anySatisfy(event -> {
                 assertThat(event.getLevel()).isEqualTo(Level.WARN);
-                assertThat(event.getFormattedMessage()).contains("paystack").contains("502").contains("D49");
+                assertThat(event.getFormattedMessage()).contains("paystack").contains("502").contains("D50");
             });
     }
 
@@ -354,7 +354,7 @@ class PaymentConfigurationUnitTest {
      *
      * <p>Also the assertion that one {@code @Component} really is the whole of the change: the
      * registered implementation is the one the adapter is built with, which is what
-     * {@code PaymentConfiguration}'s javadoc promises whoever answers D49's open question.
+     * {@code PaymentConfiguration}'s javadoc promises whoever answers D50's open question.
      */
     @Test
     @DisplayName("a registered CustomerContacts is used, and silently")
@@ -409,7 +409,7 @@ class PaymentConfigurationUnitTest {
         return List.copyOf(heard.list);
     }
 
-    /** The one `@Component` D49 says closes the open question. */
+    /** The one `@Component` D50 says closes the open question. */
     @Configuration
     static class WithCustomerContacts {
 
@@ -437,7 +437,7 @@ class PaymentConfigurationUnitTest {
     /**
      * Binds {@code healthconnect.payments.*} the way the application does, without the application.
      *
-     * <p>The two beans below are what a real adapter needs and the fallback never did — D49's
+     * <p>The two beans below are what a real adapter needs and the fallback never did — D50's
      * Paystack makes an HTTP call and parses a callback, so a slice that used to need nothing but
      * properties now needs a client and a mapper. They are the plain, unconfigured forms rather than
      * substitutes: nothing in this file makes a request, and a stub here would only be a second thing

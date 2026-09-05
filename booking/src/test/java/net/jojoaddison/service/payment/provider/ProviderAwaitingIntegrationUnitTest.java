@@ -26,7 +26,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  * match it — on the one path where a customer's money is already committed. What can be pinned is
  * that none of them ever answers anything that would let a booking through.
  *
- * <p><strong>Paystack left this file with D49.</strong> Working evidence for its wire format arrived
+ * <p><strong>Paystack left this file with D50.</strong> Working evidence for its wire format arrived
  * — the same estate's crowdfunding platform has had a live Paystack integration for months — so it
  * now implements {@code authorize} and {@code readCallback} and is covered by
  * {@link PaystackPaymentProviderUnitTest}. It stays in {@link #eachAdapterNamesItself} because the

@@ -5283,7 +5283,7 @@ restores `.env.previous` and therefore the previous *tag*, but `remote_deploy` o
 compose change — a route predicate, a variable name, a port — rolls the images back underneath the
 new file. Not fixed here, because it needs a decision about what a deploy should keep and for how
 long; recorded so that "it rolls back by itself" is not read as more than it is.
-## D49 — Paystack, from evidence rather than plausibility, and the one thing the estate cannot tell it
+## D50 — Paystack, from evidence rather than plausibility, and the one thing the estate cannot tell it
 
 WP-13 shipped everything around the three payment adapters and none of the adapters, and said why in
 a sentence worth repeating: nobody here had an account, credentials or documentation, so a signature
@@ -5498,7 +5498,7 @@ nothing here has seen Paystack answer.
 a defect to be fixed by a later commit; it is a decision waiting for somebody with standing, and the
 502 in front of it is the correct behaviour until then.
 
-### Reviewed 2026-09-05 — five findings, and two of them are the "cannot recur" half of what D49 fixed
+### Reviewed 2026-09-05 — five findings, and two of them are the "cannot recur" half of what D50 fixed
 
 The review verified rather than accepted: it counted 180 + 111 out of the XML reports, re-ran the
 digest-forced-true and dropped-`toLowerCase` mutations independently and got the table above, confirmed
@@ -5508,10 +5508,10 @@ matches the source integration on every point. It also confirmed there is **no s
 dropped-handle defect: the other three `PaymentOutcome.failed` call sites are all on the `authorize`
 path, where no `payment_attempt` row exists to be named.
 
-What it found is that **D49 fixed two instances and left both rules unenforced**, and one of those is
+What it found is that **D50 fixed two instances and left both rules unenforced**, and one of those is
 laid squarely in the path of whoever writes Hubtel or MoMo.
 
-**1. The reference invariant was a comment, and the WARN under it blamed the provider.** D49 fixed the
+**1. The reference invariant was a comment, and the WARN under it blamed the provider.** D50 fixed the
 Paystack adapter by using the canonical constructor. The rule — an outcome from `readCallback` must
 name a payment — lived only in `PaymentProvider.readCallback`'s javadoc, and `PaymentConfirmations`
 accepted a null-reference outcome in silence, then logged *"a payment callback named a reference this
@@ -5543,15 +5543,15 @@ stranded before the guard, 401 with the booking untouched after it.
 **2. The startup log told an operator the adapter works.** `announceIntegration` says, at INFO,
 "the paystack adapter is enabled and implements [authorize, readCallback]". True, and read as "it
 works" — while **every priced booking naming it 502s** for want of `CustomerContacts`. That is the
-estate's standing state rather than an edge case, and it is a milder form of the defect D49 itself
-corrected in `PaymentProviderProperties.announce()`. D49 argued that the `pk_` check belongs at boot
+estate's standing state rather than an edge case, and it is a milder form of the defect D50 itself
+corrected in `PaymentProviderProperties.announce()`. D50 argued that the `pk_` check belongs at boot
 "rather than at the first customer who tries to pay" and then did not apply the argument to the larger
 of the two reasons a customer cannot pay.
 
 `PaymentConfiguration.paystackPaymentProvider` is the only place that can see it — `getIfAvailable()`
 answers null there, while the adapter is handed a working `CustomerContacts.unanswered()` and could not
 recognise it by identity if it tried, since that factory returns a fresh lambda per call. One `LOG.warn`
-naming D49, tested by capturing the logger while an `ApplicationContextRunner` builds the bean, and
+naming D50, tested by capturing the logger while an `ApplicationContextRunner` builds the bean, and
 watched failing before it existed. WARN rather than a refusal to start, for D35's standing reason.
 
 Corrected with it: the javadoc promising that registering an implementation "needs no edit" is true of
@@ -5561,9 +5561,9 @@ test so it stays that way.
 
 **3. The reference is per-attempt by accident, and that is recorded rather than changed.**
 
-The integration D49 read from mints `"HC-" + id + "-" + random8`: it **had** the domain identifier and
+The integration D50 read from mints `"HC-" + id + "-" + random8`: it **had** the domain identifier and
 appended fresh randomness anyway, **per attempt**, because a provider will not take one reference twice.
-D49 recorded the reference as "client-generated and sent by us" and did not record that the source was
+D50 recorded the reference as "client-generated and sent by us" and did not record that the source was
 careful about that axis. The table above is corrected.
 
 **The divergence is kept, and the constraint is written down instead.** The reviewer could not verify

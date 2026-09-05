@@ -377,13 +377,13 @@ services:
       HEALTHCONNECT_SEED_ENABLED: 'true'
       HEALTHCONNECT_SEED_FILE: /app/seed/seed-data.json
       HEALTHCONNECT_SEED_ANCHOR_DATES: ${HEALTHCONNECT_SEED_ANCHOR_DATES:-false}
-      # --- Payment providers, and the third estate-wide secret (decisions.md D37/D45/D49) ---------
+      # --- Payment providers, and the third estate-wide secret (decisions.md D37/D45/D50) ---------
       #
       # D37 chose Paystack, Hubtel and MTN MoMo, with the customer choosing between them. Each
       # adapter is registered only when its own `enabled` flag is true, and ALL THREE ARE OFF here
       # and everywhere else in this repository.
       #
-      # PAYSTACK IS IMPLEMENTED (D49); HUBTEL AND MTN MOMO ARE STILL SEAMS. Nobody here has an
+      # PAYSTACK IS IMPLEMENTED (D50); HUBTEL AND MTN MOMO ARE STILL SEAMS. Nobody here has an
       # account or credentials for those two, so writing a signature scheme or a field path for one
       # would be invention on the one path where a customer's money is already committed. See
       # net.jojoaddison.service.payment.provider's package documentation.
@@ -391,7 +391,7 @@ services:
       # TURNING ONE ON TODAY STILL MAKES EVERY PRICED BOOKING THAT NAMES IT ANSWER 502 -- PAYSTACK
       # INCLUDED, for a different reason. Its /transaction/initialize requires the customer's email
       # address; this estate holds none it may hand to a provider, and where one may legitimately
-      # come from is an open disclosure decision (CustomerContacts, D49). Booking says which of the
+      # come from is an open disclosure decision (CustomerContacts, D50). Booking says which of the
       # two situations it is in, per enabled provider, at startup.
       #
       # The secret is what the provider signs its callbacks with. It is handled exactly like

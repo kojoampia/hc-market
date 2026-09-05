@@ -296,7 +296,7 @@ healthconnect:
   # provider and nobody here has read the documentation. Whoever has an account adds the fields
   # their provider actually has, in the same commit as the adapter that reads them.
   payments:
-    # Paystack is the one adapter that is implemented -- decisions.md D49. It still authorizes
+    # Paystack is the one adapter that is implemented -- decisions.md D50. It still authorizes
     # nothing on this estate: initialize requires the customer's email address and nothing here
     # implements CustomerContacts, so a priced booking naming it answers 502 before any round trip.
     paystack:

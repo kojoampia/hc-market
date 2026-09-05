@@ -25,7 +25,7 @@ package net.jojoaddison.service.payment;
  * @param customerLogin who is paying. Not contact details — a provider that needs a phone number to
  *     raise a mobile-money prompt asks for it at its own boundary, because which identifier a
  *     provider needs is exactly the thing this record must not guess.
- *     <p><strong>That boundary is {@link CustomerContacts}, and it is empty</strong> (D49). The
+ *     <p><strong>That boundary is {@link CustomerContacts}, and it is empty</strong> (D50). The
  *     principle survived meeting a real adapter and the estate did not: Paystack needs an email,
  *     Hubtel and MoMo need a phone number, and the account store that holds either belongs to the
  *     gateway with no endpoint to ask. So the boundary is named and unimplemented rather than

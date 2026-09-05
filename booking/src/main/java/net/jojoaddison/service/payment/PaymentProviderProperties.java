@@ -37,7 +37,7 @@ import org.springframework.stereotype.Component;
  * prevent. Whoever has the credentials adds the fields their provider actually has, in the same
  * commit as the adapter that reads them.
  *
- * <p>{@code baseUrl} and {@code timeoutMs} arrived under that rule with D49's Paystack adapter, which
+ * <p>{@code baseUrl} and {@code timeoutMs} arrived under that rule with D50's Paystack adapter, which
  * is the first thing here that makes an outbound call. They are on {@code Provider} rather than
  * private to one adapter because every provider that speaks HTTP has a host and a patience, and
  * because a third party's hostname compiled in as an unoverridable constant is a redeploy the day
@@ -71,7 +71,7 @@ public class PaymentProviderProperties {
      * Says at startup which providers this estate has been switched on for, and which of them cannot
      * verify a callback.
      *
-     * <p><strong>It no longer says whether an adapter is implemented, and that is D49.</strong> It
+     * <p><strong>It no longer says whether an adapter is implemented, and that is D50.</strong> It
      * used to warn that every enabled adapter "is ENABLED and is NOT IMPLEMENTED", which was true of
      * all three when D45 wrote it and became false for Paystack the moment one of them was built —
      * an estate taking real payments through a working integration while its own startup log said it
@@ -133,7 +133,7 @@ public class PaymentProviderProperties {
 
         /**
          * Where this provider's API lives, or blank for the adapter's own default —
-         * {@code decisions.md} D49.
+         * {@code decisions.md} D50.
          *
          * <p>Not a secret and not personal data, so unlike {@code secret} it may carry a committed
          * value; it does not, because the default belongs on the adapter that knows which host it

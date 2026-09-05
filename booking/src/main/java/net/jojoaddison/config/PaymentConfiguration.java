@@ -48,13 +48,13 @@ import org.springframework.web.client.RestClient;
  * provider-specific halves missing — nobody here has an account or credentials for either, and would
  * have to invent the wire format. See {@code net.jojoaddison.service.payment.provider}'s package
  * documentation before implementing one. {@link PaystackPaymentProvider} is no longer among them:
- * D49 built {@code authorize} and {@code readCallback} from a working integration in a sibling
+ * D50 built {@code authorize} and {@code readCallback} from a working integration in a sibling
  * product, and left the other four calls refusing because the evidence does not cover them.
  *
  * <p>Each is registered only when its {@code enabled} property is true, and none is true anywhere in
  * this repository. <strong>Turning one on today still makes every priced booking that names it answer
  * 502</strong> — the two seams because they refuse to authorize anything, and Paystack because its
- * initialize call needs an email address this estate holds none of and may not guess (D49). Which of
+ * initialize call needs an email address this estate holds none of and may not guess (D50). Which of
  * the two it is is said at startup, once each: the seams say it themselves, from
  * {@code integratedCalls()}, and Paystack's second reason is said <em>here</em>, because an adapter
  * handed {@link CustomerContacts#unanswered()} cannot tell it from a real one. That is the honest
@@ -84,7 +84,7 @@ public class PaymentConfiguration {
 
     /**
      * Paystack, when {@code healthconnect.payments.paystack.enabled} is true — {@code decisions.md}
-     * D49. The one adapter here that speaks to its provider.
+     * D50. The one adapter here that speaks to its provider.
      *
      * <p>{@code CustomerContacts} is taken through an {@link ObjectProvider} rather than as a
      * required dependency, and that is the whole of what this estate is missing: nothing here
@@ -98,7 +98,7 @@ public class PaymentConfiguration {
      * <p><strong>One, and exactly one.</strong> Two implementations are not "no edit": {@code
      * getIfAvailable()} answers a {@code NoUniqueBeanDefinitionException} rather than choosing between
      * them, so the context fails at startup. That is the right direction to fail in — nobody's money
-     * goes through whichever bean was parsed first — and it is not what this sentence said before D49's
+     * goes through whichever bean was parsed first — and it is not what this sentence said before D50's
      * review. Whoever adds a second marks one {@code @Primary}.
      */
     @Bean
@@ -114,14 +114,14 @@ public class PaymentConfiguration {
 
     /**
      * The contacts implementation, and the startup line an operator needs when there is not one —
-     * {@code decisions.md} D49, as reviewed.
+     * {@code decisions.md} D50, as reviewed.
      *
      * <p>The adapter announces at INFO that it "is enabled and implements [authorize, readCallback]",
      * which is true and reads as "it works". <strong>It does not work on this estate</strong>, and the
      * reason is not the adapter's: Paystack's initialize needs an email address nobody has decided how
      * to supply, so every priced booking naming Paystack is a 502 before any round trip. Left to
      * itself, the first report of that is a customer who could not pay — the same shape as the
-     * {@code pk_} key check, which D49 put at boot for exactly this argument and then did not apply
+     * {@code pk_} key check, which D50 put at boot for exactly this argument and then did not apply
      * here.
      *
      * <p>This is the only place that can tell. {@code PaymentProviderProperties} binds properties and
@@ -140,7 +140,7 @@ public class PaymentConfiguration {
         LOG.warn(
             "payments: the paystack adapter is enabled and this estate implements no CustomerContacts, so it cannot tell Paystack " +
                 "who is paying — every priced booking naming paystack answers 502 without a round trip. It is a decision waiting " +
-                "for somebody, not a fault: one @Component closes it (decisions.md D49)"
+                "for somebody, not a fault: one @Component closes it (decisions.md D50)"
         );
         return CustomerContacts.unanswered();
     }

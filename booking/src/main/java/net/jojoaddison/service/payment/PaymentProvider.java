@@ -39,7 +39,7 @@ package net.jojoaddison.service.payment;
  * the provider speaks fails closed. WP-13 had no network access, no account and no credentials, so
  * writing those calls would have been invention rather than integration.
  *
- * <p><strong>D49 built the first of the three.</strong> Working evidence for Paystack's wire format
+ * <p><strong>D50 built the first of the three.</strong> Working evidence for Paystack's wire format
  * turned up inside the estate rather than in a specification, so
  * {@link net.jojoaddison.service.payment.provider.PaystackPaymentProvider} really implements
  * {@link #authorize} and {@link #readCallback} — and only those two, because that is the whole of
@@ -154,12 +154,12 @@ public interface PaymentProvider {
      * through it the booking. An outcome without one cannot be applied to anything, so an
      * implementation that cannot extract a reference must refuse rather than return.
      *
-     * <p><strong>This is enforced, and it was not always</strong> — {@code decisions.md} D49, as
+     * <p><strong>This is enforced, and it was not always</strong> — {@code decisions.md} D50, as
      * reviewed. {@code PaymentWebhookResource} refuses an outcome naming no payment with the same 401
      * every other failure to establish the provider gets, and an ERROR naming the adapter. The rule
      * was a sentence here for two packages and the sentence lost: {@link PaymentOutcome#failed(String)}
      * is public, it nulls the reference, and it is the obvious thing to write for a declined payment,
-     * which is exactly what the Paystack adapter did before D49. Every failed payment written that way
+     * which is exactly what the Paystack adapter did before D50. Every failed payment written that way
      * leaves its booking in {@code PENDING_PAYMENT} for ever, under a log line blaming the provider.
      * <strong>Use the canonical {@link PaymentOutcome} constructor for a refusal that came back through
      * a callback</strong> — the state may be anything, the handle may not be null.

@@ -168,10 +168,10 @@ public class PaymentWebhookResource {
      * whichever adapter is configured.
      *
      * <p><strong>And an outcome that names no payment is not an establishment either</strong> —
-     * {@code decisions.md} D49, as reviewed. {@link PaymentProvider#readCallback}'s javadoc has always
+     * {@code decisions.md} D50, as reviewed. {@link PaymentProvider#readCallback}'s javadoc has always
      * said that an implementation which cannot extract a reference must refuse rather than return, and
      * until now nothing enforced it: {@code PaymentOutcome.failed(reason)} nulls the handle, it is
-     * public, and it is the obvious line to write for a declined payment. D49 found exactly that
+     * public, and it is the obvious line to write for a declined payment. D50 found exactly that
      * mistake in the Paystack adapter and fixed the instance; this is the rule. An outcome with no
      * handle finds no {@code payment_attempt} row, so the booking it is about stays in
      * {@code PENDING_PAYMENT} for ever — a state nothing re-enters and nothing sweeps — while the log
@@ -190,7 +190,7 @@ public class PaymentWebhookResource {
             // broken" has told a prober that their signature was fine.
             LOG.error(
                 "the {} adapter returned a verified callback outcome naming no payment — readCallback must refuse rather than return " +
-                    "one, and PaymentOutcome.failed() drops the handle. The callback is refused (decisions.md D49)",
+                    "one, and PaymentOutcome.failed() drops the handle. The callback is refused (decisions.md D50)",
                 // Looked up again rather than threaded out of the call above: this is the one path
                 // that needs it, and the adapter's own name is worth more in the log than the
                 // spelling whoever posted the request happened to use in the URL.

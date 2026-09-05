@@ -789,7 +789,7 @@ time.**
   400 the day a second provider is configured. And `BookingPayments.Taken` carries the provider that
   answered, so a `release` goes back to whoever took the money rather than to whatever a fresh
   resolution lands on.
-- **Paystack is integrated; Hubtel and MoMo are still seams** (D45, D49). `HubtelPaymentProvider` and
+- **Paystack is integrated; Hubtel and MoMo are still seams** (D45, D50). `HubtelPaymentProvider` and
   `MtnMomoPaymentProvider` extend `ProviderAwaitingIntegration`, which throws
   `UnsupportedOperationException` from every money call — `BookingPayments` turns that into `FAILED`, a
   502 and no booking — and `PaymentCallbackRefused` from `readCallback`, which is the flat 401. WP-13
@@ -805,7 +805,7 @@ time.**
   of two reasons it is, at startup, from `integratedCalls()`** — WARN for a seam, INFO for an
   integration. That method is the estate's account of itself and is deliberately not consulted at
   dispatch; a list that is wrong makes a log line wrong, a list that routed would make a payment wrong.
-- **The Paystack adapter is real, and it is two calls out of six** (D49). The wire format came from
+- **The Paystack adapter is real, and it is two calls out of six** (D50). The wire format came from
   `hc-crowdfund-app`'s live integration in this same workspace — a fact about Paystack, not a copied
   file — and it confirms D43's guessed callback scheme word for word: **HMAC-SHA512 over the raw body,
   hex, under the `sk_` key, in `x-paystack-signature`**, compared constant-time with case folded
@@ -817,7 +817,7 @@ time.**
   `PENDING_PAYMENT` for ever. **That is a rule now, not just a fixed instance**: `PaymentWebhookResource`
   refuses an outcome naming no payment with the same flat 401 and an ERROR naming the adapter, because
   `failed(reason)` is public and is the obvious line for whoever writes Hubtel to put in `readCallback`
-  (D49, as reviewed). Use the canonical `PaymentOutcome` constructor for anything coming back through a
+  (D50, as reviewed). Use the canonical `PaymentOutcome` constructor for anything coming back through a
   callback.
   **The reference sent must be unique per attempt, and today it is so structurally rather than by
   construction**: a booking reference is minted per request and nothing here authorizes twice. The
@@ -832,7 +832,7 @@ time.**
   currency field, so the account's currency decides — a silent mis-charge, not a rejected call), a
   secret not starting with `sk_` (refused at both doors and announced at startup; Paystack lists `pk_`
   beside it), and any unrecognised event.
-- **It still cannot take a payment, and that is a decision rather than a bug** (D49). Paystack's
+- **It still cannot take a payment, and that is a decision rather than a bug** (D50). Paystack's
   initialize requires the customer's **email**; `PaymentIntent` carries a login and no contact details,
   deliberately. `CustomerContacts` names the boundary and **has no implementation**, so `authorize`
   refuses before the round trip. Two cheaper sources were rejected and stay rejected: a field on
@@ -840,7 +840,7 @@ time.**
   record, it never asks) and the login when it happens to be email-shaped (works for a subset, fails
   when they pay). The only defensible source is the gateway's account store, and who may ask it is a
   disclosure decision of D38's kind. **Hubtel and MoMo hit the same wall for a phone number.**
-  **It says so at boot** (D49, as reviewed). `announceIntegration`'s INFO — "enabled and implements
+  **It says so at boot** (D50, as reviewed). `announceIntegration`'s INFO — "enabled and implements
   [authorize, readCallback]" — is true and reads as "it works", so `PaymentConfiguration` WARNs beside it
   when `getIfAvailable()` finds no `CustomerContacts`. That bean method is the only place that can tell:
   the adapter is handed a working `CustomerContacts.unanswered()` and cannot compare by identity, since
@@ -856,7 +856,7 @@ time.**
   endpoint that distinguishes its refusals is an oracle, and different in the log. No deploy script
   changed: `deploy-dev.sh` sources `deploy/.env` with `set -a` and `deploy-prod.sh` passes
   `secrets.env` with `--env-file`, and they are deliberately not in the required-secret list.
-  D49 added `HC_PAYSTACK_BASE_URL` and `HC_PAYSTACK_TIMEOUT_MS` beside them, in all three compose
+  D50 added `HC_PAYSTACK_BASE_URL` and `HC_PAYSTACK_TIMEOUT_MS` beside them, in all three compose
   files. Neither is a secret and both have working defaults (`api.paystack.co`, 10 s), so neither needs
   setting — they are passed anyway because a variable this repository documents and no compose file
   carries is a variable that silently does nothing, which is what D46 found in both end-to-end scripts.
@@ -873,7 +873,7 @@ time.**
   `PaymentProvider.readCallback`; an unverified caller gets 401 with no detail, which on an estate
   with nothing enabled is still every caller — from two places, since a name nothing is configured for
   resolves to no adapter and every adapter that does resolve refuses. **Enable Paystack and the third
-  place appears, and it is the real one**: a signature that does not verify (D49). Exposing it was
+  place appears, and it is the real one**: a signature that does not verify (D50). Exposing it was
   **two** changes and both are made: a fifth
   gateway route, `Path=/services/healthconnectbooking/webhooks/**` with `StripPrefix=2`, in all three
   compose files, *and* `PaymentWebhookRouteConfiguration` in the gateway permitting **POST** on that
@@ -886,7 +886,7 @@ time.**
   `findByReferenceForUpdate` row lock, never from a seen-set, because what must not happen twice is the
   transition rather than the callback.
   **Every way of failing to establish the provider gives the same 401** — a refusal, a malformed body,
-  an adapter that throws, and since D49's review **an adapter returning an outcome that names no
+  an adapter that throws, and since D50's review **an adapter returning an outcome that names no
   payment**. A 500 among them is an oracle telling a prober which forgery was structurally
   closer, which is what catching only `PaymentCallbackRefused` produced. The last of the four is our own
   defect rather than a caller's, so it is the same 401 outside and an ERROR in the log; it is checked
@@ -900,8 +900,8 @@ time.**
   authorization the customer can still approve, so cancelling the booking without cancelling the
   payment is money taken for a booking that does not exist. The provider's callback is the only exit —
   into `REQUESTED` or into `CANCELLED` — until there is a provider that can be asked to release one,
-  which neither D45 nor D49 delivered: all three adapters refuse `voidAuthorization`, Paystack
-  included, because the evidence D49 worked from covers `initialize` and the webhook and nothing else.
+  which neither D45 nor D50 delivered: all three adapters refuse `voidAuthorization`, Paystack
+  included, because the evidence D50 worked from covers `initialize` and the webhook and nothing else.
   `cancellation-preview` refuses it with the same 409 `/cancel` gives, because it used to quote a
   late-cancellation fee at full price against a booking whose money had never moved.
 - Review integrity is one-directional: there is **no** endpoint to delete a review. The only

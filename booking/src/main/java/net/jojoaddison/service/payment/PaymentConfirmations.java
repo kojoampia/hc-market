@@ -113,7 +113,7 @@ public class PaymentConfirmations {
      *     been established that this is the provider speaking; nothing here re-checks that, and
      *     nothing here may be called with an unverified outcome. It must also <strong>name a
      *     payment</strong> — {@code PaymentWebhookResource} refuses one that does not with a 401
-     *     before reaching here, which is where that invariant is enforced (D49, as reviewed). The
+     *     before reaching here, which is where that invariant is enforced (D50, as reviewed). The
      *     branch below is the second line of the same defence and answers rather than throws, because
      *     this method is inside the transaction that a webhook's transition shares
      */
@@ -126,7 +126,7 @@ public class PaymentConfirmations {
             // provider's console to look for a reference the provider had in fact sent.
             LOG.error(
                 "a payment callback outcome carried no provider reference, so nothing here can find the payment it is about; " +
-                    "this is an adapter defect rather than an unrecognised callback (decisions.md D49)"
+                    "this is an adapter defect rather than an unrecognised callback (decisions.md D50)"
             );
             return Result.UNKNOWN_PAYMENT;
         }

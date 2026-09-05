@@ -1,10 +1,10 @@
 /**
  * The three payment providers D37 chose, as far as they can honestly be built here —
- * {@code decisions.md} D45, and D49 for the one of them that now is.
+ * {@code decisions.md} D45, and D50 for the one of them that now is.
  *
  * <h2>Read this before implementing any of them</h2>
  *
- * <p><strong>Paystack is implemented; Hubtel and MTN MoMo are not.</strong> D49 built the first one
+ * <p><strong>Paystack is implemented; Hubtel and MTN MoMo are not.</strong> D50 built the first one
  * when working evidence for its wire format turned up in a sibling product, and the rule it followed
  * is the rule below rather than an exception to it: {@code authorize} and {@code readCallback} are
  * written because the evidence covers them, and {@code capture}, {@code refund},
@@ -73,7 +73,7 @@
  * "from a source this estate does not have": Paystack needs an email, both of the others need a phone
  * number, and the account store that holds them belongs to the gateway with no endpoint to ask.
  * {@link net.jojoaddison.service.payment.CustomerContacts} is that boundary, it has no
- * implementation, and giving it one is a disclosure decision rather than a class — D49 sets out the
+ * implementation, and giving it one is a disclosure decision rather than a class — D50 sets out the
  * three candidate sources and why two of them were rejected. Do not solve it by adding a field to the
  * booking request; that is the first of the three and it is rejected on D22's grounds.
  *

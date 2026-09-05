@@ -122,7 +122,7 @@ public record PaymentOutcome(PaymentState state, String providerReference, Strin
 
     /**
      * A failure with no handle — <strong>for the {@code authorize} path, and not for a callback</strong>
-     * ({@code decisions.md} D49, as reviewed).
+     * ({@code decisions.md} D50, as reviewed).
      *
      * <p>This factory <em>nulls the reference</em>, which is right when there is none: an adapter that
      * refused before making a request, or a provider that answered nothing usable, has no handle to
@@ -132,7 +132,7 @@ public record PaymentOutcome(PaymentState state, String providerReference, Strin
      * write there.</strong> A callback always names a payment; the row is found by that handle and by
      * nothing else, so a failure built here answers {@code UNKNOWN_PAYMENT} and leaves the customer's
      * booking in {@code PENDING_PAYMENT} for ever while the provider retries a callback that can never
-     * match. The Paystack adapter had exactly this defect before D49. Use the canonical constructor
+     * match. The Paystack adapter had exactly this defect before D50. Use the canonical constructor
      * with the reference the callback carried; {@code PaymentWebhookResource} refuses the mistake with
      * a 401 rather than letting it strand a booking, so it costs a refused callback rather than a
      * silence.

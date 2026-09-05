@@ -30,7 +30,7 @@ import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
 /**
- * Paystack, integrated — {@code decisions.md} D37/D45/D49.
+ * Paystack, integrated — {@code decisions.md} D37/D45/D50.
  *
  * <p>The first adapter in this estate that speaks to the provider it names. D45 left all three as
  * seams because WP-13 had no network access, no account and no credentials, and said what each one
@@ -46,7 +46,7 @@ import org.springframework.web.client.RestClient;
  * <p>{@code authorize} and {@code readCallback}: the booking path, exactly the two this package's
  * documentation says to do first. The working integration does {@code initialize} plus the webhook
  * and <strong>nothing else</strong>, so {@code capture}, {@code refund}, {@code voidAuthorization}
- * and {@code status} are left refusing. That is not laziness and it is not free — D49 states what it
+ * and {@code status} are left refusing. That is not laziness and it is not free — D50 states what it
  * costs, and the sharpest edge is that a {@code PENDING_PAYMENT} booking whose creation then fails
  * cannot have its live payment cancelled, so {@code BookingPayments.release} flags the attempt row
  * for a person. Writing them from what a Paystack API plausibly looks like would be the invention
@@ -108,7 +108,7 @@ import org.springframework.web.client.RestClient;
  * because the only defensible source is the account store and standing up an endpoint that returns a
  * person's email by login is a disclosure decision the payment seam may not take alone. So on
  * today's estate {@code authorize} refuses <strong>before the round trip</strong>: no request, no
- * reference, no money, and a 502 with an ERROR line naming D49. Read {@link CustomerContacts} for
+ * reference, no money, and a 502 with an ERROR line naming D50. Read {@link CustomerContacts} for
  * the three candidate sources and why two of them were rejected.
  */
 public class PaystackPaymentProvider extends ProviderAwaitingIntegration {
@@ -238,7 +238,7 @@ public class PaystackPaymentProvider extends ProviderAwaitingIntegration {
             .orElseThrow(() ->
                 new UnsupportedOperationException(
                     "paystack needs the customer's email address to start a transaction and this estate holds none it may " +
-                        "give it: no CustomerContacts is implemented. See CustomerContacts (decisions.md D49)"
+                        "give it: no CustomerContacts is implemented. See CustomerContacts (decisions.md D50)"
                 )
             );
 
@@ -298,7 +298,7 @@ public class PaystackPaymentProvider extends ProviderAwaitingIntegration {
         if (!isSecretKey(signingSecret())) {
             throw new PaymentCallbackRefused(
                 "the paystack adapter's configured secret is not a secret key (it must start with 'sk_'), so no callback " +
-                    "signature can be verified — a 'pk_' value is the public key (decisions.md D49)"
+                    "signature can be verified — a 'pk_' value is the public key (decisions.md D50)"
             );
         }
         String presented = callback.header(SIGNATURE_HEADER);
@@ -355,7 +355,7 @@ public class PaystackPaymentProvider extends ProviderAwaitingIntegration {
             throw new IllegalStateException(
                 "the paystack adapter's configured secret is not a secret key — it must start with 'sk_'. A 'pk_' value is " +
                     "the public key, which is meant to be published to browsers and can neither authorize a transaction nor " +
-                    "verify a callback signature (decisions.md D49)"
+                    "verify a callback signature (decisions.md D50)"
             );
         }
     }
@@ -378,7 +378,7 @@ public class PaystackPaymentProvider extends ProviderAwaitingIntegration {
         if (canVerifyCallbacks() && !isSecretKey(signingSecret())) {
             LOG.error(
                 "payments: the paystack secret is not a secret key — it must start with 'sk_'. A 'pk_' value is the public " +
-                    "key. Every authorization and every callback is refused until it is corrected (decisions.md D49)"
+                    "key. Every authorization and every callback is refused until it is corrected (decisions.md D50)"
             );
         }
     }

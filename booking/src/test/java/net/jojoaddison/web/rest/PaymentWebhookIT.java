@@ -293,10 +293,10 @@ class PaymentWebhookIT {
 
     /**
      * The mistake the next adapter's author will make, caught at the endpoint instead of stranding a
-     * booking — {@code decisions.md} D49, as reviewed.
+     * booking — {@code decisions.md} D50, as reviewed.
      *
      * <p>{@code PaymentOutcome.failed(reason)} is public, it is the obvious thing to write for a
-     * declined payment, and it <strong>nulls the reference</strong>. D49 found and fixed that in the
+     * declined payment, and it <strong>nulls the reference</strong>. D50 found and fixed that in the
      * Paystack adapter; nothing stopped it recurring. Whoever writes Hubtel or MoMo writes the same
      * line, and before this guard the consequence was silent and permanent: the confirmation named no
      * payment, matched no {@code payment_attempt} row, answered the provider 404, and left every failed

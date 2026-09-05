@@ -59,7 +59,7 @@ public class PaymentRecorder {
      *     the booking's own, so a second attempt against one booking would be a second attempt under
      *     one reference, which a provider refuses. The column tolerating it is what lets the retry
      *     path be added later, and {@code PaystackPaymentProvider.authorize} says what has to change
-     *     in the same commit (D49, as reviewed; backlog {@code NEW-11})
+     *     in the same commit (D50, as reviewed; backlog {@code NEW-11})
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public String record(String provider, PaymentIntent intent, PaymentOutcome outcome) {

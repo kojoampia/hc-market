@@ -29,7 +29,7 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **WP-10** | Payments: the seam can complete a lifecycle | DONE | D41 |
 | **WP-11** | Payments: asynchronous confirmation | DONE | D43 |
 | **WP-12** | Payments: the zero-amount booking | DONE | D44 — reviewed 2026-09-03, four findings, all fixed |
-| **WP-13** | Payments: provider choice and Act 987 | PARTLY DONE | D45 — registry, choice, route, permit and secrets built; reviewed 2026-09-04, five findings, all fixed. **D49 closed the Paystack adapter**: two of six calls implemented from a sibling product's working integration; reviewed 2026-09-05, five findings, all applied. Hubtel and MoMo are still seams, Act 987 is still a question for a person, and Paystack still cannot take a payment — it needs an email nobody has decided how to supply, and now says so at startup |
+| **WP-13** | Payments: provider choice and Act 987 | PARTLY DONE | D45 — registry, choice, route, permit and secrets built; reviewed 2026-09-04, five findings, all fixed. **D50 closed the Paystack adapter**: two of six calls implemented from a sibling product's working integration; reviewed 2026-09-05, five findings, all applied. Hubtel and MoMo are still seams, Act 987 is still a question for a person, and Paystack still cannot take a payment — it needs an email nobody has decided how to supply, and now says so at startup |
 | **WP-14** | Verification badge | DONE | — |
 | **WP-15** | Badge: date-only on the wire | DONE | D47 — reviewed 2026-09-04, four findings, all applied |
 | **WP-16** | Search performance | WON'T (measured) | — |
@@ -46,7 +46,7 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **NEW-9** | Four seeders shift every date by the JVM's idea of today | DONE | D48 — zone closed in all four; the shared-`today` half deliberately not built, with its triggers named. Reviewed 2026-09-05, nine findings, all applied |
 | **NEW-10** | Payout writes `ledger.earned_on` in the JVM's calendar and the seeder's in Accra's | READY | D47/D48 — three writes to the cross-service pivot, two reads. Opened by the NEW-9 review |
 | **WP-19** | Production deployment configuration, to sibling parity | PARTLY DONE | D49 — `deploy/prod-server/` built, five defects in the deploy path fixed, then reviewed 2026-09-05 and eight more applied, one of them blocking (a failing smoke test triggered an automatic rollback). **Nothing has ever been run against a host**; the fifteen things a person must still do are in that directory's README |
-| **NEW-11** | A second payment attempt for one booking would reuse Paystack's reference | WON'T, until there is a second attempt | D49 — no such path exists; the day one is added the suffix goes in with it. Opened by the D49 review |
+| **NEW-11** | A second payment attempt for one booking would reuse Paystack's reference | WON'T, until there is a second attempt | D50 — no such path exists; the day one is added the suffix goes in with it. Opened by the D50 review |
 
 ---
 
@@ -579,7 +579,7 @@ payload, and the signature algorithm with what bytes it covers. A signature chec
 written from plausibility would have compiled, passed the mocks written to match it, and been fiction
 on the one path where a customer's money is already committed.
 
-**One of the three is now built — D49, on `payments-the-provider-we-can-finally-name`.** Not by
+**One of the three is now built — D50, on `payments-the-provider-we-can-finally-name`.** Not by
 acquiring an account: `hc-crowdfund-app`, a sibling product in this workspace, has run a live Paystack
 integration for months, and its adapter, tests and configuration answer five of D45's six questions
 outright while the sixth turns out not to apply. Nothing was copied — different seam, different
@@ -648,10 +648,10 @@ corrected about their own subject.
   demands a choice names what there is to choose from. Revisit when a payment screen exists;
 - `PENDING_PAYMENT` is still a dead end for the customer's cancel (D43), because releasing a live
   authorization needs a provider that can be asked and none of the three can be — including Paystack,
-  whose `voidAuthorization` D49 deliberately left refusing.
+  whose `voidAuthorization` D50 deliberately left refusing.
 
-**Reviewed 2026-09-05 — five findings, all applied.** Recorded in D49's review section. Two of them are
-the *rule* behind fixes D49 had already made to two *instances*, and one of those was a trap laid for
+**Reviewed 2026-09-05 — five findings, all applied.** Recorded in D50's review section. Two of them are
+the *rule* behind fixes D50 had already made to two *instances*, and one of those was a trap laid for
 whoever writes Hubtel: `PaymentOutcome.failed(reason)` nulls the handle, it is public, and it is the
 obvious line to write in `readCallback` — every failed payment written that way stranded its booking in
 `PENDING_PAYMENT` for ever under a WARN blaming the provider. It is refused at the endpoint now, with
@@ -1126,11 +1126,11 @@ watched hiding an exited container. **A seventh CI check** — `.github/checks/s
 — was added and watched firing three ways.
 ## NEW-11 — A second payment attempt for one booking would reuse Paystack's reference · WON'T, until there is one
 
-Opened by the D49 review, and deliberately **not** built: it is a wall in front of a path nobody has
+Opened by the D50 review, and deliberately **not** built: it is a wall in front of a path nobody has
 laid, and building the road to it early costs something today.
 
 `PaystackPaymentProvider.authorize` sends `intent.bookingReference()` as Paystack's `reference`. The
-integration D49 read the wire format from mints `"HC-" + id + "-" + random8` — it *had* the domain
+integration D50 read the wire format from mints `"HC-" + id + "-" + random8` — it *had* the domain
 identifier and appended fresh randomness anyway, **per attempt**, because a provider will not take one
 reference twice. Assume Paystack rejects a reused one; nobody here has credentials to ask, and the
 review correctly did not call them to find out.
