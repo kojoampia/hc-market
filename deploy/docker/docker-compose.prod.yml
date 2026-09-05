@@ -260,18 +260,22 @@ services:
       # with a token it mints from the estate signing key, so a complete erasure is one operator
       # action rather than three that each look successful on their own.
       HEALTHCONNECT_MESSAGING_BASE_URL: http://${HC_MESSAGING_HOST:-hc-market-messaging}:8080
-      # --- Payment providers, and the third estate-wide secret (decisions.md D37/D45) -------------
+      # --- Payment providers, and the third estate-wide secret (decisions.md D37/D45/D49) ---------
       #
       # D37 chose Paystack, Hubtel and MTN MoMo, with the customer choosing between them. Each
       # adapter is registered only when its own `enabled` flag is true, and ALL THREE ARE OFF here
-      # and everywhere else in this repository -- because none of them is implemented. WP-13 had no
-      # network access, no provider account and no credentials, so writing a signature scheme or a
-      # field path would have been invention on the one path where a customer's money is already
-      # committed. See net.jojoaddison.service.payment.provider's package documentation.
+      # and everywhere else in this repository.
       #
-      # TURNING ONE ON MAKES EVERY PRICED BOOKING THAT NAMES IT ANSWER 502. That is the honest
-      # behaviour of an adapter that has never spoken to its provider, and booking says so at WARN
-      # once per enabled provider at startup.
+      # PAYSTACK IS IMPLEMENTED (D49); HUBTEL AND MTN MOMO ARE STILL SEAMS. Nobody here has an
+      # account or credentials for those two, so writing a signature scheme or a field path for one
+      # would be invention on the one path where a customer's money is already committed. See
+      # net.jojoaddison.service.payment.provider's package documentation.
+      #
+      # TURNING ONE ON STILL MAKES EVERY PRICED BOOKING THAT NAMES IT ANSWER 502 -- PAYSTACK
+      # INCLUDED, for a different reason. Its /transaction/initialize requires the customer's email
+      # address; this estate holds none it may hand to a provider, and where one may legitimately
+      # come from is an open disclosure decision (CustomerContacts, D49). Booking says which of the
+      # two situations it is in, per enabled provider, at startup.
       #
       # The secret is what the provider signs its callbacks with. It is handled exactly like
       # JWT_BASE64_SECRET and HC_PRIVACY_PEPPER -- required where it is used, NEVER committed,
@@ -284,8 +288,15 @@ services:
       # deploy-prod.sh passes with --env-file and never rewrites. They are NOT in that script's
       # required-secret list, deliberately: an estate with no provider configured needs none, and
       # making them required would fail every deploy for a value nothing reads.
+      #
+      # base-url and timeout-ms are Paystack's only other knobs and both have working defaults
+      # (api.paystack.co, 10s), so neither needs setting. They are passed anyway because a variable
+      # this repository documents and no compose file carries is a variable that silently does
+      # nothing, which D46 found the hard way in the two end-to-end scripts.
       HC_PAYSTACK_ENABLED: ${HC_PAYSTACK_ENABLED:-false}
       HC_PAYSTACK_SECRET: ${HC_PAYSTACK_SECRET:-}
+      HC_PAYSTACK_BASE_URL: ${HC_PAYSTACK_BASE_URL:-}
+      HC_PAYSTACK_TIMEOUT_MS: ${HC_PAYSTACK_TIMEOUT_MS:-0}
       HC_HUBTEL_ENABLED: ${HC_HUBTEL_ENABLED:-false}
       HC_HUBTEL_SECRET: ${HC_HUBTEL_SECRET:-}
       HC_MOMO_ENABLED: ${HC_MOMO_ENABLED:-false}

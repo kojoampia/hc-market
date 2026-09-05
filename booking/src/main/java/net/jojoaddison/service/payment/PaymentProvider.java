@@ -29,7 +29,7 @@ package net.jojoaddison.service.payment;
  * implements {@code authorize} as a capture and returns {@link PaymentState#CAPTURED} — nothing here
  * requires two steps or forbids one.
  *
- * <h2>Four implementations, and none of them has ever spoken to a provider</h2>
+ * <h2>Four implementations, and one of them has spoken to a provider</h2>
  *
  * <p>{@link net.jojoaddison.config.PaymentConfiguration.UnconfiguredPaymentProvider} reports
  * {@link PaymentState#OFF_PLATFORM} and refuses everything else, and is still what answers on an
@@ -38,6 +38,16 @@ package net.jojoaddison.service.payment;
  * and dispatched to exactly as a real adapter would be, and every call that would have to know how
  * the provider speaks fails closed. WP-13 had no network access, no account and no credentials, so
  * writing those calls would have been invention rather than integration.
+ *
+ * <p><strong>D49 built the first of the three.</strong> Working evidence for Paystack's wire format
+ * turned up inside the estate rather than in a specification, so
+ * {@link net.jojoaddison.service.payment.provider.PaystackPaymentProvider} really implements
+ * {@link #authorize} and {@link #readCallback} — and only those two, because that is the whole of
+ * what the evidence covers. {@link #capture}, {@link #refund}, {@link #voidAuthorization} and
+ * {@link #status} still refuse there, exactly as they do for Hubtel and MoMo, which is the same rule
+ * applied one level finer: a call nobody has seen the provider answer stays closed whether or not the
+ * class around it is written. It cannot take a payment on today's estate either, for a reason that is
+ * this seam's own — see {@link CustomerContacts}.
  *
  * <p>Which one a booking reaches is {@link PaymentProviders}' decision, from a name the customer sent
  * and the registry checked. <strong>Nothing injects this interface by type any more</strong>, which is

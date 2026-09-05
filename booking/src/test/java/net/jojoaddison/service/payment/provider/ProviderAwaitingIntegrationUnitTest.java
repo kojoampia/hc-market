@@ -16,15 +16,23 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * The three adapters refuse everything, and each refusal is the right shape — {@code decisions.md}
- * D45.
+ * The adapters nobody has read the documentation for refuse everything, and each refusal is the
+ * right shape — {@code decisions.md} D45.
  *
  * <p>These tests assert a <strong>decision</strong> rather than fix a defect, and the decision is
  * that an integration nobody has read the documentation for fails closed. WP-13 had no network
  * access, no provider account and no credentials, so a signature check, a field path or a status
- * mapping written for any of these three would have been invention that passes the mocks written to
+ * mapping written for any of the three would have been invention that passes the mocks written to
  * match it — on the one path where a customer's money is already committed. What can be pinned is
  * that none of them ever answers anything that would let a booking through.
+ *
+ * <p><strong>Paystack left this file with D49.</strong> Working evidence for its wire format arrived
+ * — the same estate's crowdfunding platform has had a live Paystack integration for months — so it
+ * now implements {@code authorize} and {@code readCallback} and is covered by
+ * {@link PaystackPaymentProviderUnitTest}. It stays in {@link #eachAdapterNamesItself} because the
+ * name is a contract with four other places whichever adapter holds it, and it is out of the two
+ * refusal tests because it no longer refuses those two calls. Hubtel and MTN MoMo are unchanged and
+ * are what this file is now about.
  */
 class ProviderAwaitingIntegrationUnitTest {
 
@@ -35,9 +43,9 @@ class ProviderAwaitingIntegrationUnitTest {
         return provider;
     }
 
+    /** The two that are still seams. Everything below holds for exactly these. */
     static List<org.junit.jupiter.params.provider.Arguments> adapters() {
         return List.of(
-            org.junit.jupiter.params.provider.Arguments.of("paystack", (PaymentProvider) new PaystackPaymentProvider(settings("s"))),
             org.junit.jupiter.params.provider.Arguments.of("hubtel", (PaymentProvider) new HubtelPaymentProvider(settings("s"))),
             org.junit.jupiter.params.provider.Arguments.of("momo", (PaymentProvider) new MtnMomoPaymentProvider(settings("s")))
         );
@@ -46,11 +54,26 @@ class ProviderAwaitingIntegrationUnitTest {
     /**
      * The names are the contract with three other places: the value a customer chooses, the segment
      * on {@code /webhooks/payments/{provider}}, and what lands in {@code payment_attempt.provider}.
+     *
+     * <p>All three, including the implemented one — a name is a name whether or not the adapter
+     * behind it can take money, and Paystack's leaving this file must not quietly stop its name being
+     * checked.
      */
     @ParameterizedTest(name = "{0}")
-    @MethodSource("adapters")
+    @org.junit.jupiter.params.provider.CsvSource({ "paystack", "hubtel", "momo" })
     @DisplayName("each adapter answers to the name it is chosen and addressed by")
-    void eachAdapterNamesItself(String name, PaymentProvider adapter) {
+    void eachAdapterNamesItself(String name) {
+        PaymentProvider adapter = switch (name) {
+            case "paystack" -> new PaystackPaymentProvider(
+                settings("sk_test_notarealkey"),
+                org.springframework.web.client.RestClient.builder(),
+                new com.fasterxml.jackson.databind.ObjectMapper(),
+                net.jojoaddison.service.payment.CustomerContacts.unanswered()
+            );
+            case "hubtel" -> new HubtelPaymentProvider(settings("s"));
+            default -> new MtnMomoPaymentProvider(settings("s"));
+        };
+
         assertThat(adapter.name()).isEqualTo(name);
     }
 
@@ -109,9 +132,9 @@ class ProviderAwaitingIntegrationUnitTest {
     @Test
     @DisplayName("an adapter with no signing secret refuses the same way, and says so differently")
     void noSecretIsStillARefusal() {
-        PaymentProvider unconfigured = new PaystackPaymentProvider(settings(null));
-        PaymentProvider blank = new PaystackPaymentProvider(settings("   "));
-        PaymentCallback callback = new PaymentCallback("paystack", Map.of(), "{}");
+        PaymentProvider unconfigured = new HubtelPaymentProvider(settings(null));
+        PaymentProvider blank = new HubtelPaymentProvider(settings("   "));
+        PaymentCallback callback = new PaymentCallback("hubtel", Map.of(), "{}");
 
         assertThatThrownBy(() -> unconfigured.readCallback(callback))
             .isInstanceOf(PaymentCallbackRefused.class)

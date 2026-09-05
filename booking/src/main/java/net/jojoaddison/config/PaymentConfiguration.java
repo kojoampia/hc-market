@@ -1,5 +1,7 @@
 package net.jojoaddison.config;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import net.jojoaddison.service.payment.CustomerContacts;
 import net.jojoaddison.service.payment.PaymentCallback;
 import net.jojoaddison.service.payment.PaymentCallbackRefused;
 import net.jojoaddison.service.payment.PaymentIntent;
@@ -12,9 +14,11 @@ import net.jojoaddison.service.payment.provider.MtnMomoPaymentProvider;
 import net.jojoaddison.service.payment.provider.PaystackPaymentProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.web.client.RestClient;
 
 /**
  * Every {@link PaymentProvider} bean in the estate — {@code decisions.md} D15/D31/D45.
@@ -38,20 +42,23 @@ import org.springframework.context.annotation.Configuration;
  * reads the {@code Environment} and never the bean registry, so no parse order can change its answer.
  * That was the whole of D44's hazard.
  *
- * <h2>Three adapters that refuse everything, and why they are here at all</h2>
+ * <h2>Three adapters: one integrated, two still seams</h2>
  *
- * <p>{@link PaystackPaymentProvider}, {@link HubtelPaymentProvider} and
- * {@link MtnMomoPaymentProvider} are seams with their provider-specific halves missing — WP-13 had no
- * network access, no account and no credentials, and would have had to invent the wire format. See
- * {@code net.jojoaddison.service.payment.provider}'s package documentation before implementing one.
+ * <p>{@link HubtelPaymentProvider} and {@link MtnMomoPaymentProvider} are seams with their
+ * provider-specific halves missing — nobody here has an account or credentials for either, and would
+ * have to invent the wire format. See {@code net.jojoaddison.service.payment.provider}'s package
+ * documentation before implementing one. {@link PaystackPaymentProvider} is no longer among them:
+ * D49 built {@code authorize} and {@code readCallback} from a working integration in a sibling
+ * product, and left the other four calls refusing because the evidence does not cover them.
  *
  * <p>Each is registered only when its {@code enabled} property is true, and none is true anywhere in
- * this repository. <strong>Turning one on today makes every priced booking that names it answer
- * 502</strong>, because the adapter refuses to authorize anything; {@code PaymentProviderProperties}
- * says so at startup, at WARN, once per enabled provider. That is the honest behaviour for an
- * integration nobody has written, and it is preferable to the alternative shape — leaving the classes
- * unregistered — because the wiring between a name, a choice, a route and a callback is exactly what
- * this package could verify, and a bean that no configuration can produce is wiring nobody has run.
+ * this repository. <strong>Turning one on today still makes every priced booking that names it answer
+ * 502</strong> — the two seams because they refuse to authorize anything, and Paystack because its
+ * initialize call needs an email address this estate holds none of and may not guess (D49). The
+ * adapters say which of the two it is at startup, once each. That is the honest behaviour in both
+ * cases, and it is preferable to the alternative shape — leaving the classes unregistered — because
+ * the wiring between a name, a choice, a route and a callback is exactly what can be verified here,
+ * and a bean that no configuration can produce is wiring nobody has run.
  */
 @Configuration
 public class PaymentConfiguration {
@@ -70,11 +77,27 @@ public class PaymentConfiguration {
         return new UnconfiguredPaymentProvider();
     }
 
-    /** Paystack, when {@code healthconnect.payments.paystack.enabled} is true. It refuses everything. */
+    /**
+     * Paystack, when {@code healthconnect.payments.paystack.enabled} is true — {@code decisions.md}
+     * D49. The one adapter here that speaks to its provider.
+     *
+     * <p>{@code CustomerContacts} is taken through an {@link ObjectProvider} rather than as a
+     * required dependency, and that is the whole of what this estate is missing: nothing here
+     * implements it, so the default is {@link CustomerContacts#unanswered()} and every priced booking
+     * naming Paystack answers 502 without a round trip. Required instead, the bean would fail the
+     * context and take booking down for want of a decision nobody has taken; optional, the day
+     * somebody registers one implementation this method needs no edit. See {@code CustomerContacts}
+     * for the three candidate sources and why the account store is the only defensible one.
+     */
     @Bean
     @ConditionalOnProperty(prefix = "healthconnect.payments.paystack", name = "enabled", havingValue = "true")
-    public PaymentProvider paystackPaymentProvider(PaymentProviderProperties settings) {
-        return new PaystackPaymentProvider(settings.getPaystack());
+    public PaymentProvider paystackPaymentProvider(
+        PaymentProviderProperties settings,
+        RestClient.Builder http,
+        ObjectMapper json,
+        ObjectProvider<CustomerContacts> contacts
+    ) {
+        return new PaystackPaymentProvider(settings.getPaystack(), http, json, contacts.getIfAvailable(CustomerContacts::unanswered));
     }
 
     /** Hubtel, when {@code healthconnect.payments.hubtel.enabled} is true. It refuses everything. */

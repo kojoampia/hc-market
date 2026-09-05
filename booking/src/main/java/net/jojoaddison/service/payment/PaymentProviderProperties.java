@@ -25,18 +25,25 @@ import org.springframework.stereotype.Component;
  * because nobody had configured a secret would create bookings for money that never arrived, on the
  * strength of a request anybody on the internet can send.
  *
- * <h2>One field, because the rest is a documentation question</h2>
+ * <h2>Few fields, because the rest is still a documentation question</h2>
  *
  * <p>{@code secret} is "the value this provider signs its callbacks with, whatever their console
  * calls it". <strong>The credentials an outbound authorization call needs are deliberately not
- * modelled</strong>, because their shape differs per provider and nobody here has read the
- * documentation or holds an account: Paystack uses one secret key for both directions, Hubtel
- * authenticates outbound calls with a client id and secret pair, and MTN MoMo wants a subscription
- * key plus an API user and key it issues separately. Inventing three plausible field sets would be
- * this repository asserting a shape it has never seen, which is the one thing
- * {@code service.payment.provider}'s package documentation exists to prevent. Whoever has the
- * credentials adds the fields their provider actually has, in the same commit as the adapter that
- * reads them.
+ * modelled</strong>, because their shape differs per provider and — for two of the three — nobody
+ * here has read the documentation or holds an account: Hubtel authenticates outbound calls with a
+ * client id and secret pair, and MTN MoMo wants a subscription key plus an API user and key it issues
+ * separately. Inventing plausible field sets would be this repository asserting a shape it has never
+ * seen, which is the one thing {@code service.payment.provider}'s package documentation exists to
+ * prevent. Whoever has the credentials adds the fields their provider actually has, in the same
+ * commit as the adapter that reads them.
+ *
+ * <p>{@code baseUrl} and {@code timeoutMs} arrived under that rule with D49's Paystack adapter, which
+ * is the first thing here that makes an outbound call. They are on {@code Provider} rather than
+ * private to one adapter because every provider that speaks HTTP has a host and a patience, and
+ * because a third party's hostname compiled in as an unoverridable constant is a redeploy the day
+ * they move. <strong>Paystack needs no second credential</strong> — the same {@code sk_} key
+ * authenticates {@code /transaction/initialize} and computes the callback HMAC — which is why its
+ * arrival added no key field.
  *
  * <p>{@code enabled} is separate from {@code secret} rather than derived from it. An adapter that is
  * enabled with no secret <em>should</em> appear in the registry and refuse — that is a misconfigured
@@ -61,34 +68,35 @@ public class PaymentProviderProperties {
     private final Provider momo = new Provider();
 
     /**
-     * Says at startup what this estate will and will not do with money.
+     * Says at startup which providers this estate has been switched on for, and which of them cannot
+     * verify a callback.
      *
-     * <p>Every line here is a warning, and that is not pessimism. An enabled provider is an adapter
-     * that has never spoken to the provider it names, so it refuses everything; a booking that costs
-     * something will answer 502 rather than take a payment. Silence about that would be the estate
-     * quietly changing what it does with customers' money at the moment somebody sets a variable.
+     * <p><strong>It no longer says whether an adapter is implemented, and that is D49.</strong> It
+     * used to warn that every enabled adapter "is ENABLED and is NOT IMPLEMENTED", which was true of
+     * all three when D45 wrote it and became false for Paystack the moment one of them was built —
+     * an estate taking real payments through a working integration while its own startup log said it
+     * refuses everything. This class binds properties and cannot see a bean, so it cannot tell the
+     * two apart; the adapter can, so the claim moved to {@code ProviderAwaitingIntegration}, where an
+     * implemented adapter stops making it by construction rather than by somebody remembering.
+     *
+     * <p>What is left here is the half that really is a property question: an enabled provider with
+     * no signing secret refuses every callback, whether or not anybody has written its integration.
      */
     @PostConstruct
     void announce() {
-        each(
-            (name, provider) -> {
-                if (!provider.isEnabled()) {
-                    return;
-                }
+        each((name, provider) -> {
+            if (!provider.isEnabled()) {
+                return;
+            }
+            LOG.info("payments: the {} adapter is enabled", name);
+            if (!provider.hasSecret()) {
                 LOG.warn(
-                    "payments: the {} adapter is ENABLED and is NOT IMPLEMENTED — it refuses every authorization and every " +
-                    "callback, so a priced booking naming it answers 502 (decisions.md D45)",
+                    "payments: the {} adapter has no signing secret; every callback addressed to it is refused. " +
+                        "Set it in the environment, never in this repository — it is public (decisions.md D35/D45)",
                     name
                 );
-                if (!provider.hasSecret()) {
-                    LOG.warn(
-                        "payments: the {} adapter has no signing secret; every callback addressed to it is refused. " +
-                        "Set it in the environment, never in this repository — it is public (decisions.md D35/D45)",
-                        name
-                    );
-                }
             }
-        );
+        });
     }
 
     /** Walks the three, so a fourth cannot be added without appearing in the startup account. */
@@ -123,6 +131,26 @@ public class PaymentProviderProperties {
          */
         private String secret;
 
+        /**
+         * Where this provider's API lives, or blank for the adapter's own default —
+         * {@code decisions.md} D49.
+         *
+         * <p>Not a secret and not personal data, so unlike {@code secret} it may carry a committed
+         * value; it does not, because the default belongs on the adapter that knows which host it
+         * means. Overridable so that a sandbox, a proxy or a provider that has moved does not need a
+         * release, and so that a test can point one at a stub without a network.
+         */
+        private String baseUrl;
+
+        /**
+         * How long the adapter waits on that API, in milliseconds. Zero or less means its default.
+         *
+         * <p>It has one because a payment call happens inside {@code POST /api/bookings}: an
+         * unbounded wait on a third party is the customer's booking request held open, and a
+         * connection pool spent on a provider that has stopped answering.
+         */
+        private int timeoutMs;
+
         public boolean isEnabled() {
             return enabled;
         }
@@ -139,9 +167,35 @@ public class PaymentProviderProperties {
             this.secret = secret;
         }
 
+        public String getBaseUrl() {
+            return baseUrl;
+        }
+
+        public void setBaseUrl(String baseUrl) {
+            this.baseUrl = baseUrl;
+        }
+
+        public int getTimeoutMs() {
+            return timeoutMs;
+        }
+
+        public void setTimeoutMs(int timeoutMs) {
+            this.timeoutMs = timeoutMs;
+        }
+
         /** Whether a callback from this provider could be verified at all. */
         public boolean hasSecret() {
             return secret != null && !secret.isBlank();
+        }
+
+        /** The configured host, or {@code fallback} when none is set. Blank counts as absent. */
+        public String baseUrlOr(String fallback) {
+            return baseUrl == null || baseUrl.isBlank() ? fallback : baseUrl.trim();
+        }
+
+        /** The configured timeout, or {@code fallback} when none is set. Zero and negatives count as absent. */
+        public int timeoutMsOr(int fallback) {
+            return timeoutMs > 0 ? timeoutMs : fallback;
         }
     }
 }

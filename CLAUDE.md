@@ -789,21 +789,49 @@ time.**
   400 the day a second provider is configured. And `BookingPayments.Taken` carries the provider that
   answered, so a `release` goes back to whoever took the money rather than to whatever a fresh
   resolution lands on.
-- **The three adapters are seams with their wire formats missing, and that is deliberate** (D45).
-  `PaystackPaymentProvider`, `HubtelPaymentProvider` and `MtnMomoPaymentProvider` extend
-  `ProviderAwaitingIntegration`, which throws `UnsupportedOperationException` from every money call —
-  `BookingPayments` turns that into `FAILED`, a 502 and no booking — and `PaymentCallbackRefused` from
-  `readCallback`, which is the flat 401. WP-13 had **no network access, no provider account and no
-  credentials**, so a signature scheme, a field path or a status mapping written there would have been
-  invention that passes the mocks written to match it, on the path where a customer's money is already
-  committed. What each one still needs from real documentation is on its class, with the shared
-  questions in `net.jojoaddison.service.payment.provider`'s `package-info` — read that before
-  implementing one, and **do not add a settlement or transfer call**: `PaymentProvider` having no method
-  that pays the professional is what lets the seam survive the Act 987 answer either way, and it is
-  unanswered.
+- **Paystack is integrated; Hubtel and MoMo are still seams** (D45, D49). `HubtelPaymentProvider` and
+  `MtnMomoPaymentProvider` extend `ProviderAwaitingIntegration`, which throws
+  `UnsupportedOperationException` from every money call — `BookingPayments` turns that into `FAILED`, a
+  502 and no booking — and `PaymentCallbackRefused` from `readCallback`, which is the flat 401. WP-13
+  had **no network access, no provider account and no credentials**, so a signature scheme, a field path
+  or a status mapping written there would have been invention that passes the mocks written to match
+  it, on the path where a customer's money is already committed. What each one still needs from real
+  documentation is on its class, with the shared questions in
+  `net.jojoaddison.service.payment.provider`'s `package-info` — read that before implementing one, and
+  **do not add a settlement or transfer call**: `PaymentProvider` having no method that pays the
+  professional is what lets the seam survive the Act 987 answer either way, and it is unanswered.
   Each is registered only when `healthconnect.payments.<name>.enabled` is true, and none is anywhere in
-  this repository. Turning one on makes every priced booking naming it a 502; booking says so at WARN at
-  startup.
+  this repository. Turning one on makes every priced booking naming it a 502; **the adapter says which
+  of two reasons it is, at startup, from `integratedCalls()`** — WARN for a seam, INFO for an
+  integration. That method is the estate's account of itself and is deliberately not consulted at
+  dispatch; a list that is wrong makes a log line wrong, a list that routed would make a payment wrong.
+- **The Paystack adapter is real, and it is two calls out of six** (D49). The wire format came from
+  `hc-crowdfund-app`'s live integration in this same workspace — a fact about Paystack, not a copied
+  file — and it confirms D43's guessed callback scheme word for word: **HMAC-SHA512 over the raw body,
+  hex, under the `sk_` key, in `x-paystack-signature`**, compared constant-time with case folded
+  *before* the comparison rather than during. `authorize` posts `/transaction/initialize` with
+  `{email, amount, reference}`, **amount in pesewas unchanged** and **`reference` ours and sent** —
+  Paystack does not issue it — and answers `PENDING` with the `authorization_url` as a scheme-checked
+  redirect. `charge.success` is `CAPTURED`; everything else is `FAILED` **carrying the reference**,
+  because `PaymentOutcome.failed()` drops it and a failure naming no payment leaves the booking in
+  `PENDING_PAYMENT` for ever.
+  **`capture`, `refund`, `voidAuthorization` and `status` still refuse**, because the working
+  integration does `initialize` plus the webhook and nothing else — an adapter is six calls, each
+  either sourced or guessed, and a guessed one inside a class that otherwise works is worse than a
+  class that refuses everything. Cost: a `PENDING_PAYMENT` booking whose creation fails cannot have its
+  payment cancelled, so the attempt row is flagged for a person.
+  Three things are refused rather than guessed: a currency other than **GHS** (the evidence sends no
+  currency field, so the account's currency decides — a silent mis-charge, not a rejected call), a
+  secret not starting with `sk_` (refused at both doors and announced at startup; Paystack lists `pk_`
+  beside it), and any unrecognised event.
+- **It still cannot take a payment, and that is a decision rather than a bug** (D49). Paystack's
+  initialize requires the customer's **email**; `PaymentIntent` carries a login and no contact details,
+  deliberately. `CustomerContacts` names the boundary and **has no implementation**, so `authorize`
+  refuses before the round trip. Two cheaper sources were rejected and stay rejected: a field on
+  `CreateBooking` (D22 verbatim — and the prototype renders the email read-only from the BridgeCare
+  record, it never asks) and the login when it happens to be email-shaped (works for a subset, fails
+  when they pay). The only defensible source is the gateway's account store, and who may ask it is a
+  disclosure decision of D38's kind. **Hubtel and MoMo hit the same wall for a phone number.**
 - **A provider's signing secret is the estate's third secret, and absent means refused** (D45).
   `healthconnect.payments.<name>.secret`, injected by all three compose files as `HC_PAYSTACK_SECRET`,
   `HC_HUBTEL_SECRET`, `HC_MOMO_SECRET`, **never committed** — this repository is public. Optional,
@@ -813,6 +841,10 @@ time.**
   endpoint that distinguishes its refusals is an oracle, and different in the log. No deploy script
   changed: `deploy-dev.sh` sources `deploy/.env` with `set -a` and `deploy-prod.sh` passes
   `secrets.env` with `--env-file`, and they are deliberately not in the required-secret list.
+  D49 added `HC_PAYSTACK_BASE_URL` and `HC_PAYSTACK_TIMEOUT_MS` beside them, in all three compose
+  files. Neither is a secret and both have working defaults (`api.paystack.co`, 10 s), so neither needs
+  setting — they are passed anyway because a variable this repository documents and no compose file
+  carries is a variable that silently does nothing, which is what D46 found in both end-to-end scripts.
 - **A booking may exist while its payment is pending, and the professional is not told** (D43). All
   three providers D37 chose confirm asynchronously, so `authorize` can answer `PENDING`; the booking is
   written in **`BookingStatus.PENDING_PAYMENT`** and `booking.requested` is **withheld** until a webhook
@@ -823,9 +855,11 @@ time.**
   left, and only the two payment transitions leave it.
 - **The payment webhook is `POST /webhooks/payments/{provider}`, and it is routed now** (D43, exposed
   by D45). Authentication is the provider's signature over the **raw** body, checked inside
-  `PaymentProvider.readCallback`; an unverified caller gets 401 with no detail, which today is still
-  every caller — from two places, since a name nothing is configured for resolves to no adapter and
-  every adapter that does resolve refuses. Exposing it was **two** changes and both are made: a fifth
+  `PaymentProvider.readCallback`; an unverified caller gets 401 with no detail, which on an estate
+  with nothing enabled is still every caller — from two places, since a name nothing is configured for
+  resolves to no adapter and every adapter that does resolve refuses. **Enable Paystack and the third
+  place appears, and it is the real one**: a signature that does not verify (D49). Exposing it was
+  **two** changes and both are made: a fifth
   gateway route, `Path=/services/healthconnectbooking/webhooks/**` with `StripPrefix=2`, in all three
   compose files, *and* `PaymentWebhookRouteConfiguration` in the gateway permitting **POST** on that
   path — the generated chain authenticates `/services/**` before routing, so the route alone is a
@@ -847,7 +881,9 @@ time.**
   authorization the customer can still approve, so cancelling the booking without cancelling the
   payment is money taken for a booking that does not exist. The provider's callback is the only exit —
   into `REQUESTED` or into `CANCELLED` — until there is a provider that can be asked to release one,
-  which D45 did not deliver: the three adapters refuse `voidAuthorization` like everything else. `cancellation-preview` refuses it with the same 409 `/cancel` gives, because it used to quote a
+  which neither D45 nor D49 delivered: all three adapters refuse `voidAuthorization`, Paystack
+  included, because the evidence D49 worked from covers `initialize` and the webhook and nothing else.
+  `cancellation-preview` refuses it with the same 409 `/cancel` gives, because it used to quote a
   late-cancellation fee at full price against a booking whose money had never moved.
 - Review integrity is one-directional: there is **no** endpoint to delete a review. The only
   response is a public reply. `bookingReference` is unique, making "one review per booking" a schema

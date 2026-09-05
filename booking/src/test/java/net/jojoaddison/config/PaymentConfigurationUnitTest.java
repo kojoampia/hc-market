@@ -48,7 +48,9 @@ class PaymentConfigurationUnitTest {
     @Test
     @DisplayName("moving money that was never taken fails loudly")
     void everythingElseThrows() {
-        assertThatThrownBy(() -> provider.capture("prov-1", 100L, "GHS")).isInstanceOf(IllegalStateException.class).hasMessageContaining("D15");
+        assertThatThrownBy(() -> provider.capture("prov-1", 100L, "GHS"))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("D15");
         assertThatThrownBy(() -> provider.refund("prov-1", 100L, "GHS", "changed mind")).isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(() -> provider.status("prov-1")).isInstanceOf(IllegalStateException.class);
     }
@@ -303,10 +305,29 @@ class PaymentConfigurationUnitTest {
             });
     }
 
-    /** Binds {@code healthconnect.payments.*} the way the application does, without the application. */
+    /**
+     * Binds {@code healthconnect.payments.*} the way the application does, without the application.
+     *
+     * <p>The two beans below are what a real adapter needs and the fallback never did — D49's
+     * Paystack makes an HTTP call and parses a callback, so a slice that used to need nothing but
+     * properties now needs a client and a mapper. They are the plain, unconfigured forms rather than
+     * substitutes: nothing in this file makes a request, and a stub here would only be a second thing
+     * to keep in step with {@code PaymentConfiguration}.
+     */
     @Configuration
     @EnableConfigurationProperties(PaymentProviderProperties.class)
-    static class WithProviderSettings {}
+    static class WithProviderSettings {
+
+        @Bean
+        org.springframework.web.client.RestClient.Builder restClientBuilder() {
+            return org.springframework.web.client.RestClient.builder();
+        }
+
+        @Bean
+        com.fasterxml.jackson.databind.ObjectMapper objectMapper() {
+            return new com.fasterxml.jackson.databind.ObjectMapper();
+        }
+    }
 
     /**
      * A real provider declared as a bare {@code @Bean} beside {@code PaymentConfiguration} — the one

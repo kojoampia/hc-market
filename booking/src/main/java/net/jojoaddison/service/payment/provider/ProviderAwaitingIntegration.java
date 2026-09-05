@@ -1,5 +1,7 @@
 package net.jojoaddison.service.payment.provider;
 
+import jakarta.annotation.PostConstruct;
+import java.util.List;
 import net.jojoaddison.service.payment.PaymentCallback;
 import net.jojoaddison.service.payment.PaymentCallbackRefused;
 import net.jojoaddison.service.payment.PaymentIntent;
@@ -7,6 +9,8 @@ import net.jojoaddison.service.payment.PaymentOutcome;
 import net.jojoaddison.service.payment.PaymentProvider;
 import net.jojoaddison.service.payment.PaymentProviderProperties;
 import net.jojoaddison.service.payment.PaymentState;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * A named provider whose wire protocol nobody here has read — {@code decisions.md} D45.
@@ -53,6 +57,13 @@ import net.jojoaddison.service.payment.PaymentState;
  * when they throw — so leaving them unimplemented degrades to "somebody must reconcile this by hand"
  * rather than to silence.
  *
+ * <p><strong>And override {@link #integratedCalls()} in the same commit.</strong> D49 built the first
+ * of the three, and the estate's startup log went on announcing that every enabled adapter refuses
+ * everything — a service taking real money through a working integration while saying in its own
+ * first ten lines that it cannot. The account is made from that method now, so it stays true by
+ * construction: an adapter that implements a call and does not list it understates itself in a log
+ * nobody would think to disbelieve, which is the cheaper direction of the same mistake.
+ *
  * <p>Two rules that are not obvious from the port and are easy to get wrong once, expensively:
  * verify the callback <em>before</em> parsing it and over the bytes as received (see
  * {@link PaymentCallback}), and never copy the provider's own words into an outcome's reason — they
@@ -61,12 +72,62 @@ import net.jojoaddison.service.payment.PaymentState;
  */
 public abstract class ProviderAwaitingIntegration implements PaymentProvider {
 
+    private static final Logger LOG = LoggerFactory.getLogger(ProviderAwaitingIntegration.class);
+
     private final String name;
     private final PaymentProviderProperties.Provider settings;
 
     protected ProviderAwaitingIntegration(String name, PaymentProviderProperties.Provider settings) {
         this.name = name;
         this.settings = settings;
+    }
+
+    /**
+     * Which of this adapter's money calls really speak to the provider — {@code decisions.md} D49.
+     *
+     * <p>Empty is the honest answer for a class that adds nothing but a name, and it is the default
+     * so that a new seam cannot claim more than it does by forgetting to say anything. A subclass
+     * that overrides {@code authorize} or {@code readCallback} lists them here.
+     *
+     * <p>It exists for the startup account and for nothing else. It is deliberately <em>not</em>
+     * consulted at dispatch time: what happens when an unimplemented call is reached is decided by
+     * the call throwing, in one place, rather than by a list that could disagree with the code
+     * beneath it. A list that is wrong makes a log line wrong; a list that routes would make a
+     * payment wrong.
+     */
+    protected List<String> integratedCalls() {
+        return List.of();
+    }
+
+    /**
+     * Says at startup what this adapter can actually do with money.
+     *
+     * <p>Only enabled adapters are constructed at all — {@code PaymentConfiguration} registers each
+     * under {@code @ConditionalOnProperty} — so reaching this method is itself the news, and there is
+     * no {@code isEnabled()} test here for that reason.
+     *
+     * <p>WARN for a seam, INFO for an integration. The WARN is not pessimism: an adapter that refuses
+     * every authorization turns a priced booking naming it into a 502, and an estate that quietly
+     * changed what it does with customers' money when somebody set a variable would deserve worse
+     * than a log line. The INFO is the counterpart D49 needed — the same event, reported truthfully
+     * for an adapter that works, because a WARN nobody can act on is a WARN everybody learns to skip.
+     */
+    @PostConstruct
+    void announceIntegration() {
+        List<String> integrated = integratedCalls();
+        if (integrated.isEmpty()) {
+            LOG.warn(
+                "payments: the {} adapter is ENABLED and is NOT IMPLEMENTED — it refuses every authorization and every " +
+                    "callback, so a priced booking naming it answers 502 (decisions.md D45)",
+                name
+            );
+            return;
+        }
+        LOG.info(
+            "payments: the {} adapter is enabled and implements {}; every other money call refuses (decisions.md D49)",
+            name,
+            integrated
+        );
     }
 
     /**
@@ -149,11 +210,11 @@ public abstract class ProviderAwaitingIntegration implements PaymentProvider {
     protected final UnsupportedOperationException notIntegrated(String call) {
         return new UnsupportedOperationException(
             "the %s payment adapter does not implement %s: nothing here has ever spoken to %s. See the package documentation in %s (decisions.md D45)".formatted(
-                    name,
-                    call,
-                    name,
-                    ProviderAwaitingIntegration.class.getPackageName()
-                )
+                name,
+                call,
+                name,
+                ProviderAwaitingIntegration.class.getPackageName()
+            )
         );
     }
 }

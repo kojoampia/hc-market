@@ -29,7 +29,7 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **WP-10** | Payments: the seam can complete a lifecycle | DONE | D41 |
 | **WP-11** | Payments: asynchronous confirmation | DONE | D43 |
 | **WP-12** | Payments: the zero-amount booking | DONE | D44 — reviewed 2026-09-03, four findings, all fixed |
-| **WP-13** | Payments: provider choice and Act 987 | PARTLY DONE | D45 — registry, choice, route, permit and secrets built; the three adapters are seams awaiting real documentation, and Act 987 is a question for a person. Reviewed 2026-09-04, five findings, all fixed |
+| **WP-13** | Payments: provider choice and Act 987 | PARTLY DONE | D45 — registry, choice, route, permit and secrets built; reviewed 2026-09-04, five findings, all fixed. **D49 closed the Paystack adapter**: two of six calls implemented from a sibling product's working integration. Hubtel and MoMo are still seams, Act 987 is still a question for a person, and Paystack still cannot take a payment — it needs an email nobody has decided how to supply |
 | **WP-14** | Verification badge | DONE | — |
 | **WP-15** | Badge: date-only on the wire | DONE | D47 — reviewed 2026-09-04, four findings, all applied |
 | **WP-16** | Search performance | WON'T (measured) | — |
@@ -569,14 +569,51 @@ is the package's honest boundary rather than an unfinished afternoon.
   are refused, not trusted**, and an enabled-but-secretless provider refuses with the same flat 401 an
   unimplemented one gives.
 
-**Deliberately not built: the three adapters' wire formats.** WP-13 had no network access, no provider
-account and no credentials, so Paystack's, Hubtel's and MTN MoMo's documentation could not be read and
-none could be called. The classes exist, extend `ProviderAwaitingIntegration`, fail closed on every
-call, and carry a documented list of exactly what each still needs — the authorization call and its
-response, which field is the durable handle, the status vocabulary and its mapping, the callback
+**Deliberately not built by WP-13: the three adapters' wire formats.** WP-13 had no network access, no
+provider account and no credentials, so Paystack's, Hubtel's and MTN MoMo's documentation could not be
+read and none could be called. The classes exist, extend `ProviderAwaitingIntegration`, fail closed on
+every call, and carry a documented list of exactly what each still needs — the authorization call and
+its response, which field is the durable handle, the status vocabulary and its mapping, the callback
 payload, and the signature algorithm with what bytes it covers. A signature check or a status mapping
 written from plausibility would have compiled, passed the mocks written to match it, and been fiction
 on the one path where a customer's money is already committed.
+
+**One of the three is now built — D49, on `payments-the-provider-we-can-finally-name`.** Not by
+acquiring an account: `hc-crowdfund-app`, a sibling product in this workspace, has run a live Paystack
+integration for months, and its adapter, tests and configuration answer five of D45's six questions
+outright while the sixth turns out not to apply. Nothing was copied — different seam, different
+domain, different Jackson — but the wire format is a fact about Paystack rather than a property of
+that codebase. D43's guessed callback scheme is **confirmed** word for word, header spelling and
+digest encoding included, and the hedging is removed where the claim is now known.
+
+**Two of the six calls, and the other four still refuse.** `authorize` and `readCallback` are the
+booking path. The working integration does `initialize` plus the webhook and nothing else, so the
+evidence runs out exactly where `capture`, `refund`, `voidAuthorization` and `status` begin — and an
+invented call inside a class that otherwise works is worse than a class that refuses everything,
+because it looks like an integration. Stated cost, not discovered later: a `PENDING_PAYMENT` booking
+whose creation then fails cannot have its live payment cancelled, so the attempt row is flagged for a
+person. **D43's dead-end cancel is therefore still a dead end.**
+
+**And Paystack still cannot take a payment on this estate, for a reason that is a decision rather
+than an omission.** Its initialize requires the customer's **email address**; `PaymentIntent` carries
+a login and no contact details, deliberately; and the only defensible source is the gateway's account
+store, which has no endpoint to ask. Two cheaper sources were considered and rejected — a field on the
+booking request (D22's rule verbatim, and the prototype renders the email read-only from the BridgeCare
+record rather than asking for one) and the login when it happens to be email-shaped (works for a subset
+of users and fails at the moment they pay). So `CustomerContacts` names the boundary, has **no
+implementation**, and `authorize` refuses before the round trip: 502 and no booking, which is what a
+priced booking naming Paystack did before this package anyway. **Whoever may decide who reads the
+account store closes it with one `@Component`.**
+
+Three further things are refused rather than guessed: a currency other than GHS (the evidence sends no
+currency field, so the amount is denominated by the merchant account — a silent mis-charge rather than
+a rejected call), a secret that does not start with `sk_` (Paystack lists `pk_` beside it and pasting
+the wrong one 401s only when a customer first pays), and any callback event that is not
+`charge.success`.
+
+Corrected in passing, because it had become false: the startup log and all three compose files
+announced that **every** enabled adapter is unimplemented. That claim now comes from
+`integratedCalls()` on the adapter itself, so an implemented one stops making it by construction.
 
 **Act 987 is unanswered and was not answerable here.** Whether a split-settlement model clears it is a
 question for a person with standing. What the package protects is the property that keeps the answer
@@ -594,13 +631,23 @@ corrected about their own subject.
 
 **Still open:**
 
-- an implementer with credentials, per adapter, working from the lists on the three classes;
+- **the email, and it is a decision rather than an implementation.** Who may ask the gateway's account
+  store for a person's contact details, under what authority, and whether the answer is routable —
+  the same shape D38 answered for the erasure fan-out. Until somebody with standing answers it,
+  Paystack is configured, offered, chosen and then 502s. Hubtel and MoMo hit the identical wall from
+  the other side: both need a **phone number**;
+- an implementer with credentials for **Hubtel and MTN MoMo**, working from the lists on those two
+  classes. `hc-crowdfund-app` has a Hubtel adapter too, which is where its evidence will come from;
+- **Paystack's other four calls**, which need documentation the sibling product does not exercise.
+  `refund` and `voidAuthorization` are the ones with a caller;
 - Act 987 itself, and with it whether settlement is split-at-capture or reconciled afterwards;
-- no run against the quality box, and no live provider — the fifth package in a row to say so;
+- no run against the quality box, and no live provider — the sixth package in a row to say so, though
+  Paystack is the first adapter for which a sandbox run is something somebody could actually do;
 - no endpoint publishes the provider list. Deliberate (D45): no screen asks for one, and the 400 that
   demands a choice names what there is to choose from. Revisit when a payment screen exists;
 - `PENDING_PAYMENT` is still a dead end for the customer's cancel (D43), because releasing a live
-  authorization needs a provider that can be asked and none of the three can be.
+  authorization needs a provider that can be asked and none of the three can be — including Paystack,
+  whose `voidAuthorization` D49 deliberately left refusing.
 
 ## WP-14 — Verification badge · DONE
 
