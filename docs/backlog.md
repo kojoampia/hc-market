@@ -29,7 +29,7 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **WP-10** | Payments: the seam can complete a lifecycle | DONE | D41 |
 | **WP-11** | Payments: asynchronous confirmation | DONE | D43 |
 | **WP-12** | Payments: the zero-amount booking | DONE | D44 — reviewed 2026-09-03, four findings, all fixed |
-| **WP-13** | Payments: provider choice and Act 987 | PARTLY DONE | D45 — registry, choice, route, permit and secrets built; reviewed 2026-09-04, five findings, all fixed. **D49 closed the Paystack adapter**: two of six calls implemented from a sibling product's working integration. Hubtel and MoMo are still seams, Act 987 is still a question for a person, and Paystack still cannot take a payment — it needs an email nobody has decided how to supply |
+| **WP-13** | Payments: provider choice and Act 987 | PARTLY DONE | D45 — registry, choice, route, permit and secrets built; reviewed 2026-09-04, five findings, all fixed. **D49 closed the Paystack adapter**: two of six calls implemented from a sibling product's working integration; reviewed 2026-09-05, five findings, all applied. Hubtel and MoMo are still seams, Act 987 is still a question for a person, and Paystack still cannot take a payment — it needs an email nobody has decided how to supply, and now says so at startup |
 | **WP-14** | Verification badge | DONE | — |
 | **WP-15** | Badge: date-only on the wire | DONE | D47 — reviewed 2026-09-04, four findings, all applied |
 | **WP-16** | Search performance | WON'T (measured) | — |
@@ -46,6 +46,7 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **NEW-9** | Four seeders shift every date by the JVM's idea of today | DONE | D48 — zone closed in all four; the shared-`today` half deliberately not built, with its triggers named. Reviewed 2026-09-05, nine findings, all applied |
 | **NEW-10** | Payout writes `ledger.earned_on` in the JVM's calendar and the seeder's in Accra's | READY | D47/D48 — three writes to the cross-service pivot, two reads. Opened by the NEW-9 review |
 | **WP-19** | Production deployment configuration, to sibling parity | PARTLY DONE | D49 — `deploy/prod-server/` built, five defects in the deploy path fixed, then reviewed 2026-09-05 and eight more applied, one of them blocking (a failing smoke test triggered an automatic rollback). **Nothing has ever been run against a host**; the fifteen things a person must still do are in that directory's README |
+| **NEW-11** | A second payment attempt for one booking would reuse Paystack's reference | WON'T, until there is a second attempt | D49 — no such path exists; the day one is added the suffix goes in with it. Opened by the D49 review |
 
 ---
 
@@ -649,6 +650,18 @@ corrected about their own subject.
   authorization needs a provider that can be asked and none of the three can be — including Paystack,
   whose `voidAuthorization` D49 deliberately left refusing.
 
+**Reviewed 2026-09-05 — five findings, all applied.** Recorded in D49's review section. Two of them are
+the *rule* behind fixes D49 had already made to two *instances*, and one of those was a trap laid for
+whoever writes Hubtel: `PaymentOutcome.failed(reason)` nulls the handle, it is public, and it is the
+obvious line to write in `readCallback` — every failed payment written that way stranded its booking in
+`PENDING_PAYMENT` for ever under a WARN blaming the provider. It is refused at the endpoint now, with
+the same flat 401 and an ERROR naming the adapter. Also: the startup log said the adapter was enabled
+and implemented while every priced booking naming it 502s for want of an email, so the missing
+`CustomerContacts` is a WARN at boot; two loose `RuntimeException` assertions were narrowed and two
+signature shapes added; and `PaymentCallback`'s "bytes as received" now names the Boot charset default
+it depends on. The reference divergence from the source integration is **kept and documented** rather
+than closed — NEW-11.
+
 ## WP-14 — Verification badge · DONE
 
 D16, D31, D33. The profile states what the badge means and carries `verifiedOn`; the reviewer login and
@@ -1111,6 +1124,39 @@ Three of the eight were found by *running* something for the first time: `backup
 containers, first execution in its life), the nginx files under a real nginx, and `docker compose ps`
 watched hiding an exited container. **A seventh CI check** — `.github/checks/signing-key-severance.sh`
 — was added and watched firing three ways.
+## NEW-11 — A second payment attempt for one booking would reuse Paystack's reference · WON'T, until there is one
+
+Opened by the D49 review, and deliberately **not** built: it is a wall in front of a path nobody has
+laid, and building the road to it early costs something today.
+
+`PaystackPaymentProvider.authorize` sends `intent.bookingReference()` as Paystack's `reference`. The
+integration D49 read the wire format from mints `"HC-" + id + "-" + random8` — it *had* the domain
+identifier and appended fresh randomness anyway, **per attempt**, because a provider will not take one
+reference twice. Assume Paystack rejects a reused one; nobody here has credentials to ask, and the
+review correctly did not call them to find out.
+
+**Harmless today, and not by luck that could quietly run out.** `CustomerBookingResource.create` mints a
+fresh `b-<8 hex>` on every request and the authorization happens once, before the booking row exists.
+There is no "retry the payment for booking X" endpoint, no path that authorizes twice, and nothing that
+re-authorizes on failure. Uniqueness per attempt therefore holds structurally.
+
+**And the divergence pays for itself while it holds.** Sending our own reference makes Paystack a second
+check on a `b-` collision — 2^32 of them, so a birthday event rather than an impossibility — and it
+checks *before* the money moves: a 502 and no booking. A per-attempt suffix makes every reference unique
+at Paystack, so the same collision would surface only at the unique constraint when the booking is
+written, which is D41's expensive path: money committed, booking gone, and `voidAuthorization` still
+refusing.
+
+**What to do when it stops holding.** The trigger is any path that authorizes twice for one booking —
+the obvious companion to D43's dead-end cancel, "pay again". The failure is a wall rather than a
+degradation: Paystack refuses the reference, the customer gets a 502 that retrying cannot escape, and
+the only mention of a reference is inside a `RestClientResponseException` message that happens to quote
+the response body. The fix goes in **the same commit as the path**: `bookingReference` plus a
+per-attempt suffix, prefix kept so the booking is recoverable from the handle. `payment_attempt` is
+already built for it — `PaymentRecorder.record`'s javadoc says two attempts against one booking may
+legitimately carry the same reference, which today describes a world no adapter here can produce.
+
+Written on `PaystackPaymentProvider.authorize`, where whoever adds that path will be standing.
 
 ---
 

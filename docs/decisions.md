@@ -5304,7 +5304,7 @@ D45's per-adapter list had six items. Five of the six are answered:
 | --- | --- |
 | the authorization call | `POST /transaction/initialize`, `Authorization: Bearer sk_…`, JSON `{email, amount, reference}` |
 | the amount's unit | **minor units** — which is what this estate already stores, so pesewas go on the wire unchanged |
-| the platform's own reference | `reference`, **client-generated and sent by us**. Paystack does not issue it |
+| the platform's own reference | `reference`, **client-generated and sent by us**. Paystack does not issue it — and the source mints it **fresh per attempt** (`"HC-" + id + "-" + random8`) rather than sending the domain identifier it already had. This adapter sends `bookingReference`; see the review below for why the divergence is kept and what it constrains |
 | the response | `data.authorization_url` is the redirect, `data.reference` is the durable handle, `data.access_code` is for an inline checkout this estate does not use |
 | the callback payload | `{event, data:{reference}}`; `charge.success` is the success and everything else is not |
 | the signature | **HMAC-SHA512 of the raw body, hex, under the secret key**, in `x-paystack-signature` |
@@ -5497,3 +5497,140 @@ nothing here has seen Paystack answer.
 **And the estate cannot take a Paystack payment today regardless**, because of the email. That is not
 a defect to be fixed by a later commit; it is a decision waiting for somebody with standing, and the
 502 in front of it is the correct behaviour until then.
+
+### Reviewed 2026-09-05 — five findings, and two of them are the "cannot recur" half of what D49 fixed
+
+The review verified rather than accepted: it counted 180 + 111 out of the XML reports, re-ran the
+digest-forced-true and dropped-`toLowerCase` mutations independently and got the table above, confirmed
+the stub is a real JDK `HttpServer` with no Mockito in the file, confirmed no gateway route or permit
+moved, no secret was committed, `integratedCalls()` is not consulted at dispatch, and the wire format
+matches the source integration on every point. It also confirmed there is **no second instance** of the
+dropped-handle defect: the other three `PaymentOutcome.failed` call sites are all on the `authorize`
+path, where no `payment_attempt` row exists to be named.
+
+What it found is that **D49 fixed two instances and left both rules unenforced**, and one of those is
+laid squarely in the path of whoever writes Hubtel or MoMo.
+
+**1. The reference invariant was a comment, and the WARN under it blamed the provider.** D49 fixed the
+Paystack adapter by using the canonical constructor. The rule — an outcome from `readCallback` must
+name a payment — lived only in `PaymentProvider.readCallback`'s javadoc, and `PaymentConfirmations`
+accepted a null-reference outcome in silence, then logged *"a payment callback named a reference this
+service has never issued"*. In that case the callback **had** named one and our own adapter had dropped
+it, so the one line anybody would read sent them to the provider's console.
+
+The next adapter's author writes `PaymentOutcome.failed("declined")` in `readCallback` — the factory is
+public and it is the obvious line — and every failed payment strands its booking in `PENDING_PAYMENT`
+for ever, with every test green. **The estate has already promoted this exact rule out of a comment
+once:** `PaymentOutcome`'s compact constructor refuses a `PENDING` outcome with no handle, because "a
+pending outcome with no handle describes a payment the estate can never find again". That argument
+applies verbatim to any outcome reaching `confirm`, and it is applied now:
+
+- `PaymentWebhookResource` refuses an outcome naming no payment with the **same flat 401** every other
+  failure to establish the provider gets, plus an **ERROR naming the adapter**. Same answer outside, so
+  no new oracle; the distinction is drawn only in the log, where it belongs. It is checked *outside* the
+  try/catch — inside it, the `ResponseStatusException` would be caught by the `RuntimeException` arm and
+  logged as an adapter that threw, which is the opposite of what happened;
+- `PaymentConfirmations.confirm` keeps a second branch for it and now says which case it is. The old
+  WARN is unchanged and is finally true: the reference really is the provider's by the time it fires;
+- the rule moved from "should refuse" to "**must** refuse, and here is what enforces it" on the port,
+  and `PaymentOutcome.failed` — the place the mistake is actually made — now says in its own javadoc
+  that it is for `authorize` and not for a callback.
+
+Red first: `PaymentWebhookIT.anOutcomeThatNamesNoPaymentIsRefused` constructs the next adapter's
+mistake against a booking in `PENDING_PAYMENT` and was watched answering **404** with the booking
+stranded before the guard, 401 with the booking untouched after it.
+
+**2. The startup log told an operator the adapter works.** `announceIntegration` says, at INFO,
+"the paystack adapter is enabled and implements [authorize, readCallback]". True, and read as "it
+works" — while **every priced booking naming it 502s** for want of `CustomerContacts`. That is the
+estate's standing state rather than an edge case, and it is a milder form of the defect D49 itself
+corrected in `PaymentProviderProperties.announce()`. D49 argued that the `pk_` check belongs at boot
+"rather than at the first customer who tries to pay" and then did not apply the argument to the larger
+of the two reasons a customer cannot pay.
+
+`PaymentConfiguration.paystackPaymentProvider` is the only place that can see it — `getIfAvailable()`
+answers null there, while the adapter is handed a working `CustomerContacts.unanswered()` and could not
+recognise it by identity if it tried, since that factory returns a fresh lambda per call. One `LOG.warn`
+naming D49, tested by capturing the logger while an `ApplicationContextRunner` builds the bean, and
+watched failing before it existed. WARN rather than a refusal to start, for D35's standing reason.
+
+Corrected with it: the javadoc promising that registering an implementation "needs no edit" is true of
+**one** and not of two — `getIfAvailable` answers `NoUniqueBeanDefinitionException` rather than
+choosing. Loud and at startup, which is the right direction, and now what the sentence says. Pinned by a
+test so it stays that way.
+
+**3. The reference is per-attempt by accident, and that is recorded rather than changed.**
+
+The integration D49 read from mints `"HC-" + id + "-" + random8`: it **had** the domain identifier and
+appended fresh randomness anyway, **per attempt**, because a provider will not take one reference twice.
+D49 recorded the reference as "client-generated and sent by us" and did not record that the source was
+careful about that axis. The table above is corrected.
+
+**The divergence is kept, and the constraint is written down instead.** The reviewer could not verify
+whether Paystack rejects a reused reference — no credentials, and it correctly did not call them — so
+assume it does. Three things decide it:
+
+- **it buys nothing today.** `CustomerBookingResource.create` mints a fresh `b-<8 hex>` per request and
+  there is no "retry the payment for booking X" path anywhere in this estate. The invariant Paystack
+  cares about is satisfied by the shape of the domain, not by a suffix;
+- **it costs something today.** Sending our own reference makes Paystack a second check on a `b-`
+  collision, and it checks *before* the money moves — a 502 and no booking. With a per-attempt suffix
+  every reference is unique at Paystack, so a collision is caught only by the unique constraint when the
+  booking is written, which is D41's expensive path: money committed, booking gone, `voidAuthorization`
+  still refusing. `b-` plus 8 hex is a 2^32 space, so this is a real if distant event rather than a
+  theoretical one;
+- **the shape of the source is evidence about the source.** Crowdfund had a stable pledge id that one
+  person may pay against repeatedly, so it *needed* per-attempt randomness. Adopting its answer to a
+  problem this domain does not have is the D45 mistake with the sign reversed — building from
+  plausibility rather than from what the evidence covers.
+
+So the invariant is stated where it can be met: **the reference sent must be unique per attempt**, it
+is satisfied structurally today, and the day anything authorizes twice for one booking the suffix goes
+in **in the same commit**, `bookingReference` staying as the prefix so the booking is recoverable from
+the handle. Written on `PaystackPaymentProvider.authorize`, where whoever adds that path will be
+standing, and opened as **NEW-11** so it is tracked rather than only prose. `PaymentRecorder.record`'s
+javadoc — "two attempts against one booking may legitimately carry the same" reference — now says that
+no adapter here can produce that world yet, and that the column tolerating it is what lets the retry
+path exist later.
+
+The failure it protects against is worth naming precisely, since it is the reason not to leave this
+implicit: Paystack refuses the reference, the customer gets a 502 that retrying cannot escape, and the
+only mention of a reference anywhere is inside a `RestClientResponseException` message that happens to
+quote the response body.
+
+**4. Two loose test assertions and two missing signature shapes.** `aNonWebRedirectIsRefused` and
+`aProviderErrorIsNotABooking` asserted `isInstanceOf(RuntimeException.class)` — which **every**
+exception this adapter throws satisfies, the no-email `UnsupportedOperationException` and the
+not-a-secret-key `IllegalStateException` included — so each would have gone on passing if the thing it
+names stopped happening and something else threw instead. `IllegalArgumentException` and
+`RestClientResponseException` now.
+
+A wrong-length (`deadbeef`) and a non-hex (`zz` × 64) signature had no test: missing and two wrong
+signatures were covered, and both of these are refused correctly today **by construction**, which D45
+says not to settle for. Either a later length check or a `HexFormat.parseHex` before the comparison
+would reintroduce a short-circuit or a new exception type escaping as a 500. Both added, and both are
+red under the digest-forced-true mutation alongside the forged and tampered pair.
+
+And `authorizeRefusesACurrencyItCannotVouchFor` would have passed vacuously on its first assertion,
+since the stub's default `{}` body yields `FAILED` too. The stub is primed with a **usable** answer now,
+so deleting the currency guard makes the outcome `PENDING` and the test red on the state line —
+confirmed by mutation, which reports the failure at that line rather than at the two that were carrying
+it.
+
+**5. "The bytes as received" rests on a Boot default.** `PaymentCallback`'s javadoc promises the raw
+body; `hmacSha512Hex` re-encodes it as UTF-8, so it is a bytes → String → bytes round trip. It is
+lossless **only** because `spring.http.converters.string-encoding-charset` defaults to UTF-8 in Boot,
+overriding Spring Framework's ISO-8859-1 `StringHttpMessageConverter` default — verified against the
+jars this service builds against (Boot 4.0.7 `spring-boot-http-converter`, Framework 7). Setting that
+property, or a provider declaring a non-UTF-8 charset on its `Content-Type`, breaks it, and the symptom
+is *every callback rejected*, which this class's own comment says "reads as a wrong secret rather than
+as a wrong body". Named in the javadoc, with the fix if it ever fires: take the body as `byte[]`.
+
+`clean verify` on booking after the five: **184 unit + 112 IT**, from 180 + 111. Four unit tests added
+(three about the startup account and the contacts boundary, one about malformed signatures) and one IT
+(the next adapter's mistake).
+
+**Unchanged, and worth saying:** the review's judgement was accepted on all five. Nothing here widens a
+route or a permit, nothing calls a real Paystack endpoint, and the estate still cannot take a Paystack
+payment — the email is still a decision waiting for somebody with standing, and it now says so in its
+own first ten lines instead of announcing that the adapter is enabled and implemented.

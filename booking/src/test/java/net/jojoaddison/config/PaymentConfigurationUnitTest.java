@@ -3,10 +3,15 @@ package net.jojoaddison.config;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import net.jojoaddison.service.payment.CustomerContacts;
 import net.jojoaddison.service.payment.PaymentCallback;
 import net.jojoaddison.service.payment.PaymentCallbackRefused;
 import net.jojoaddison.service.payment.PaymentIntent;
@@ -17,6 +22,7 @@ import net.jojoaddison.service.payment.PaymentProviders;
 import net.jojoaddison.service.payment.PaymentState;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
@@ -303,6 +309,129 @@ class PaymentConfigurationUnitTest {
                     .isInstanceOf(PaymentCallbackRefused.class)
                     .hasMessageContaining("no signing secret");
             });
+    }
+
+    // ------------------------------------------ what an operator is told when they enable Paystack --
+
+    /**
+     * The estate's standing state, said at boot rather than discovered by a customer — D49, as
+     * reviewed.
+     *
+     * <p>{@code ProviderAwaitingIntegration.announceIntegration} now says, at INFO, that the Paystack
+     * adapter "is enabled and implements [authorize, readCallback]". An operator who has just set
+     * {@code HC_PAYSTACK_SECRET} reads that and concludes it works. <strong>It does not:</strong>
+     * nothing in this repository implements {@link CustomerContacts}, so every priced booking naming
+     * Paystack answers 502 without a round trip, and the first anybody hears of it is a customer who
+     * could not pay. That is D49's own defect one level down — the log saying the opposite of the
+     * truth — and it is milder only because half the sentence is right.
+     *
+     * <p>This is the one place that can see it. {@code PaymentProviderProperties} binds properties and
+     * cannot see a bean; the adapter is handed a working {@link CustomerContacts#unanswered()} and
+     * cannot tell it from a real one, and could not compare by identity if it tried, since that factory
+     * returns a fresh lambda per call. The bean method knows, because {@code getIfAvailable()} answered
+     * null.
+     */
+    @Test
+    @DisplayName("enabling paystack with nobody to ask for an email says so at startup")
+    void anAdapterThatCannotNameTheCustomerSaysSoAtStartup() {
+        List<ILoggingEvent> heard = whileListening(() ->
+            new ApplicationContextRunner()
+                .withUserConfiguration(WithProviderSettings.class, PaymentConfiguration.class, PaymentProviders.class)
+                .withPropertyValues("healthconnect.payments.paystack.enabled=true")
+                .run(context -> assertThat(context.getBean(PaymentProviders.class).named("paystack")).isPresent())
+        );
+
+        assertThat(heard)
+            .as("an operator enabling paystack is told at boot that this estate cannot name a customer to it")
+            .anySatisfy(event -> {
+                assertThat(event.getLevel()).isEqualTo(Level.WARN);
+                assertThat(event.getFormattedMessage()).contains("paystack").contains("502").contains("D49");
+            });
+    }
+
+    /**
+     * And it says nothing when the decision has been taken, or the WARN becomes noise to skip past.
+     *
+     * <p>Also the assertion that one {@code @Component} really is the whole of the change: the
+     * registered implementation is the one the adapter is built with, which is what
+     * {@code PaymentConfiguration}'s javadoc promises whoever answers D49's open question.
+     */
+    @Test
+    @DisplayName("a registered CustomerContacts is used, and silently")
+    void anAnsweredBoundaryIsNotWarnedAbout() {
+        List<ILoggingEvent> heard = whileListening(() ->
+            new ApplicationContextRunner()
+                .withUserConfiguration(WithProviderSettings.class, WithCustomerContacts.class, PaymentConfiguration.class)
+                .withPropertyValues("healthconnect.payments.paystack.enabled=true")
+                .run(context -> assertThat(context.getBean("paystackPaymentProvider")).isNotNull())
+        );
+
+        assertThat(heard).noneMatch(event -> event.getLevel() == Level.WARN);
+    }
+
+    /**
+     * Two implementations are a startup failure, which is the direction to fail in and not what
+     * {@code PaymentConfiguration}'s javadoc used to claim.
+     *
+     * <p>It promised that registering an implementation "needs no edit", which is true of the first
+     * one and not of the second: {@code ObjectProvider.getIfAvailable()} raises
+     * {@code NoUniqueBeanDefinitionException} rather than choosing. Loud, and at startup, so nobody
+     * pays through whichever bean happened to be parsed first — but a sentence saying "one" where the
+     * code means "exactly one" is the kind of half-correctness this repository keeps finding in its own
+     * documents. Pinned here so the corrected sentence stays true.
+     */
+    @Test
+    @DisplayName("two CustomerContacts implementations fail the context rather than one quietly winning")
+    void twoAnswersAreRefusedAtStartup() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(WithProviderSettings.class, WithTwoCustomerContacts.class, PaymentConfiguration.class)
+            .withPropertyValues("healthconnect.payments.paystack.enabled=true")
+            .run(context -> assertThat(context).hasFailed());
+    }
+
+    /**
+     * Collects what {@code PaymentConfiguration} logs while the given work runs.
+     *
+     * <p>The appender is attached to that one logger and detached in a {@code finally}, so a failure
+     * inside the block cannot leave it attached for the rest of the suite.
+     */
+    private static List<ILoggingEvent> whileListening(Runnable work) {
+        Logger logger = (Logger) LoggerFactory.getLogger(PaymentConfiguration.class);
+        ListAppender<ILoggingEvent> heard = new ListAppender<>();
+        heard.start();
+        logger.addAppender(heard);
+        try {
+            work.run();
+        } finally {
+            logger.detachAppender(heard);
+            heard.stop();
+        }
+        return List.copyOf(heard.list);
+    }
+
+    /** The one `@Component` D49 says closes the open question. */
+    @Configuration
+    static class WithCustomerContacts {
+
+        @Bean
+        CustomerContacts accountStoreContacts() {
+            return login -> java.util.Optional.of(login + "@example.test");
+        }
+    }
+
+    /** Two of them, which is not "no edit" — see {@link #twoAnswersAreRefusedAtStartup}. */
+    @Configuration
+    static class WithTwoCustomerContacts {
+
+        @Bean
+        CustomerContacts accountStoreContacts() {
+            return login -> java.util.Optional.of(login + "@example.test");
+        }
+
+        @Bean
+        CustomerContacts crmContacts() {
+            return login -> java.util.Optional.of(login + "@example.invalid");
+        }
     }
 
     /**

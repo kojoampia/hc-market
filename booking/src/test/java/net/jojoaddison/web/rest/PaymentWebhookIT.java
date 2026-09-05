@@ -292,6 +292,42 @@ class PaymentWebhookIT {
     }
 
     /**
+     * The mistake the next adapter's author will make, caught at the endpoint instead of stranding a
+     * booking — {@code decisions.md} D49, as reviewed.
+     *
+     * <p>{@code PaymentOutcome.failed(reason)} is public, it is the obvious thing to write for a
+     * declined payment, and it <strong>nulls the reference</strong>. D49 found and fixed that in the
+     * Paystack adapter; nothing stopped it recurring. Whoever writes Hubtel or MoMo writes the same
+     * line, and before this guard the consequence was silent and permanent: the confirmation named no
+     * payment, matched no {@code payment_attempt} row, answered the provider 404, and left every failed
+     * payment's booking in {@code PENDING_PAYMENT} for ever — under a WARN blaming the provider for
+     * naming a reference this service never issued, when the callback had named one and the adapter
+     * had dropped it.
+     *
+     * <p>401, because the invariant belongs to {@link net.jojoaddison.service.payment.PaymentProvider}
+     * {@code #readCallback} and its own javadoc already said an implementation that cannot extract a
+     * reference must refuse rather than return. An adapter that returns one anyway has not established
+     * the provider, so it gets the endpoint's one answer — and its author sees it on the first callback
+     * rather than in a report about bookings that never left {@code PENDING_PAYMENT}.
+     */
+    @Test
+    @Transactional
+    @DisplayName("an adapter that returns an outcome naming no payment is refused, not applied to nothing")
+    void anOutcomeThatNamesNoPaymentIsRefused() throws Exception {
+        String reference = bookPending("prov-w12");
+        when(payments.readCallback(any())).thenReturn(PaymentOutcome.failed("the customer's card was declined"));
+
+        mockMvc
+            .perform(post(WEBHOOK).with(csrf()).contentType(MediaType.APPLICATION_JSON).content(BODY))
+            .andExpect(status().isUnauthorized())
+            .andExpect(result -> assertThat(result.getResponse().getContentAsString()).doesNotContain("declined"));
+
+        // The booking is untouched, which is the half that was permanent: nothing else ever revisits
+        // PENDING_PAYMENT, so a booking left there by a dropped handle is left there for good.
+        assertThat(statusOf(reference)).isEqualTo("PENDING_PAYMENT");
+    }
+
+    /**
      * A handle this service never issued. 404, so a provider replaying against a rebuilt database
      * eventually stops, and a log line for the operator.
      */

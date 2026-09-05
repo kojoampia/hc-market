@@ -54,7 +54,12 @@ public class PaymentRecorder {
      *
      * @return the row's id, which is how the caller comes back to it — not the provider's reference,
      *     because two attempts against one booking may legitimately carry the same one; or
-     *     <strong>null</strong> when the outcome carried no reference and nothing was written
+     *     <strong>null</strong> when the outcome carried no reference and nothing was written.
+     *     <p>No adapter here produces that case yet, and one of them cannot: Paystack's reference is
+     *     the booking's own, so a second attempt against one booking would be a second attempt under
+     *     one reference, which a provider refuses. The column tolerating it is what lets the retry
+     *     path be added later, and {@code PaystackPaymentProvider.authorize} says what has to change
+     *     in the same commit (D49, as reviewed; backlog {@code NEW-11})
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public String record(String provider, PaymentIntent intent, PaymentOutcome outcome) {

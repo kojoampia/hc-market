@@ -814,7 +814,15 @@ time.**
   Paystack does not issue it — and answers `PENDING` with the `authorization_url` as a scheme-checked
   redirect. `charge.success` is `CAPTURED`; everything else is `FAILED` **carrying the reference**,
   because `PaymentOutcome.failed()` drops it and a failure naming no payment leaves the booking in
-  `PENDING_PAYMENT` for ever.
+  `PENDING_PAYMENT` for ever. **That is a rule now, not just a fixed instance**: `PaymentWebhookResource`
+  refuses an outcome naming no payment with the same flat 401 and an ERROR naming the adapter, because
+  `failed(reason)` is public and is the obvious line for whoever writes Hubtel to put in `readCallback`
+  (D49, as reviewed). Use the canonical `PaymentOutcome` constructor for anything coming back through a
+  callback.
+  **The reference sent must be unique per attempt, and today it is so structurally rather than by
+  construction**: a booking reference is minted per request and nothing here authorizes twice. The
+  source integration appended per-attempt randomness because it had to; this one does not, and the day
+  anything adds a "pay again" path the suffix goes in with it — backlog NEW-11.
   **`capture`, `refund`, `voidAuthorization` and `status` still refuse**, because the working
   integration does `initialize` plus the webhook and nothing else — an adapter is six calls, each
   either sourced or guessed, and a guessed one inside a class that otherwise works is worse than a
@@ -832,6 +840,13 @@ time.**
   record, it never asks) and the login when it happens to be email-shaped (works for a subset, fails
   when they pay). The only defensible source is the gateway's account store, and who may ask it is a
   disclosure decision of D38's kind. **Hubtel and MoMo hit the same wall for a phone number.**
+  **It says so at boot** (D49, as reviewed). `announceIntegration`'s INFO — "enabled and implements
+  [authorize, readCallback]" — is true and reads as "it works", so `PaymentConfiguration` WARNs beside it
+  when `getIfAvailable()` finds no `CustomerContacts`. That bean method is the only place that can tell:
+  the adapter is handed a working `CustomerContacts.unanswered()` and cannot compare by identity, since
+  that factory returns a fresh lambda per call. **Exactly one implementation** — two make
+  `getIfAvailable` answer `NoUniqueBeanDefinitionException` and fail the context, which is the right
+  direction and not what "one `@Component` and no edit" used to imply.
 - **A provider's signing secret is the estate's third secret, and absent means refused** (D45).
   `healthconnect.payments.<name>.secret`, injected by all three compose files as `HC_PAYSTACK_SECRET`,
   `HC_HUBTEL_SECRET`, `HC_MOMO_SECRET`, **never committed** — this repository is public. Optional,
@@ -871,8 +886,12 @@ time.**
   `findByReferenceForUpdate` row lock, never from a seen-set, because what must not happen twice is the
   transition rather than the callback.
   **Every way of failing to establish the provider gives the same 401** — a refusal, a malformed body,
-  an adapter that throws. A 500 among them is an oracle telling a prober which forgery was structurally
-  closer, which is what catching only `PaymentCallbackRefused` produced. And "off the internet" is
+  an adapter that throws, and since D49's review **an adapter returning an outcome that names no
+  payment**. A 500 among them is an oracle telling a prober which forgery was structurally
+  closer, which is what catching only `PaymentCallbackRefused` produced. The last of the four is our own
+  defect rather than a caller's, so it is the same 401 outside and an ERROR in the log; it is checked
+  *outside* the try/catch, because inside it the `ResponseStatusException` would be caught by the
+  `RuntimeException` arm and logged as an adapter that threw. And "off the internet" is
   about the *gateway*: `docker-compose.dev.yml` publishes booking's own port on every interface, so on
   a dev host the endpoint is reachable directly — the same property catalog's `/internal/**` has always
   had.

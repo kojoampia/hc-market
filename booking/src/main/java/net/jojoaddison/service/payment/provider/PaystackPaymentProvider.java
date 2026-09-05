@@ -68,6 +68,9 @@ import org.springframework.web.client.RestClient;
  *       nonetheless the one in Paystack's <em>response</em>, not the one that was sent: they are the
  *       same value today and the provider's account of its own identifier is the one that will
  *       appear on the callback if they ever stop being.
+ *       <p><strong>What that reference has to be is unique per attempt, and today it is unique per
+ *       attempt by accident.</strong> See {@link #authorize} — the source this integration was read
+ *       from was careful about exactly this axis and this adapter does not have to be yet.
  *   <li><strong>The answer is {@link PaymentState#PENDING}</strong> and can be nothing else. What
  *       comes back is a page for the customer to visit, so at the moment this returns nobody has
  *       paid anything — which is precisely the case D43 built {@code PENDING} and
@@ -188,6 +191,35 @@ public class PaystackPaymentProvider extends ProviderAwaitingIntegration {
      * {@link PaymentState#FAILED} with the whole exception at ERROR — which is the shape D44 built
      * for a real adapter, and better than a composed {@code failed} because it carries a stack trace
      * to the one line an operator will read.
+     *
+     * <h2>The reference sent is the booking's, and that is a decision with a date on it</h2>
+     *
+     * <p>The integration this was read from mints {@code "HC-" + id + "-" + random8}: it <em>had</em>
+     * the domain identifier and appended fresh randomness anyway, <strong>per attempt</strong>, because
+     * a payment provider will not take the same reference twice. That is not this adapter's shape and
+     * the difference is deliberate rather than overlooked — but it holds for one reason only.
+     *
+     * <p><strong>A booking reference is already per-attempt here.</strong> {@code
+     * CustomerBookingResource.create} mints a fresh {@code b-<8 hex>} on every request, and there is no
+     * "retry the payment for booking X" path anywhere in this estate — the authorization happens once,
+     * before the booking row exists. So the invariant Paystack cares about is satisfied today by the
+     * shape of the domain rather than by a suffix, and adding one would buy nothing while giving
+     * something up: sending our own reference makes Paystack a second check on a reference collision,
+     * and it checks <em>before</em> the money moves. A suffix makes every reference unique at Paystack,
+     * so a {@code b-} collision would be caught only by the unique constraint when the booking is
+     * written — which is D41's expensive path, money committed and the booking gone, with {@code
+     * voidAuthorization} still refusing here.
+     *
+     * <p><strong>The day it becomes a wall, and what to do then.</strong> Add any path that authorizes
+     * twice for one booking — the obvious companion to D43's dead-end cancel, "pay again" — and Paystack
+     * refuses the second reference. The customer gets a 502 that retrying cannot escape, and nothing in
+     * the failure names a reference: it arrives as a {@code RestClientResponseException} whose message
+     * happens to quote the response body, and no more. Whoever adds that path adds a per-attempt suffix
+     * <strong>in the same commit</strong>, keeping {@code bookingReference} as the prefix so the booking
+     * stays recoverable from the handle. {@code payment_attempt} is already built for it —
+     * {@code PaymentRecorder.record}'s javadoc says two attempts against one booking may legitimately
+     * carry the same reference, which describes a world this adapter cannot currently produce.
+     * Backlog {@code NEW-11}.
      */
     @Override
     public PaymentOutcome authorize(PaymentIntent intent) {
@@ -211,7 +243,9 @@ public class PaystackPaymentProvider extends ProviderAwaitingIntegration {
             );
 
         // The reference sent is this platform's own booking reference — Paystack does not issue one,
-        // and this is what comes back on the callback.
+        // and this is what comes back on the callback. It is unique per attempt only because a booking
+        // reference is minted per request and nothing here authorizes twice; see the method comment
+        // before adding anything that does.
         InitializeResponse answered = http
             .post()
             .uri(INITIALIZE)

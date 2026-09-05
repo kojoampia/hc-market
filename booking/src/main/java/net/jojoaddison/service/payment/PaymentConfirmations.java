@@ -111,15 +111,31 @@ public class PaymentConfirmations {
      *
      * @param outcome what {@link PaymentProvider#readCallback} made of the request. It has already
      *     been established that this is the provider speaking; nothing here re-checks that, and
-     *     nothing here may be called with an unverified outcome
+     *     nothing here may be called with an unverified outcome. It must also <strong>name a
+     *     payment</strong> — {@code PaymentWebhookResource} refuses one that does not with a 401
+     *     before reaching here, which is where that invariant is enforced (D49, as reviewed). The
+     *     branch below is the second line of the same defence and answers rather than throws, because
+     *     this method is inside the transaction that a webhook's transition shares
      */
     @Transactional
     public Result confirm(PaymentOutcome outcome) {
+        if (outcome.providerReference() == null || outcome.providerReference().isBlank()) {
+            // NOT the WARN below, and the difference is the whole point of having two. This is an
+            // adapter of ours returning something inapplicable — no callback said anything wrong —
+            // and the message underneath used to be given for it, sending whoever read it to the
+            // provider's console to look for a reference the provider had in fact sent.
+            LOG.error(
+                "a payment callback outcome carried no provider reference, so nothing here can find the payment it is about; " +
+                    "this is an adapter defect rather than an unrecognised callback (decisions.md D49)"
+            );
+            return Result.UNKNOWN_PAYMENT;
+        }
         List<PaymentAttempt> found = attempts.findByProviderReferenceOrderByRecordedAtDesc(outcome.providerReference());
         if (found.isEmpty()) {
             // Not necessarily an attack: a provider replaying a callback from a database that has
             // since been rebuilt looks exactly like this. Logged without the handle's contents on the
-            // grounds that it is a stranger's string until an attempt matches it.
+            // grounds that it is a stranger's string until an attempt matches it. It really is the
+            // provider's reference now — the branch above takes the case where there was none.
             LOG.warn("a payment callback named a reference this service has never issued; nothing to apply");
             return Result.UNKNOWN_PAYMENT;
         }

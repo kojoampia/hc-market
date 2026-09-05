@@ -34,6 +34,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientResponseException;
 
 /**
  * The first adapter in this estate that speaks to its provider — {@code decisions.md} D49.
@@ -211,10 +212,19 @@ class PaystackPaymentProviderUnitTest {
      * integration sends no currency field at all. A booking denominated in something else would
      * therefore be charged as that many pesewas of whatever the merchant account settles in, which
      * is a silent mis-charge rather than a rejected call. {@code FAILED} and no round trip.
+     *
+     * <p>The stub is primed with a <strong>usable</strong> answer, and that is what makes the first
+     * assertion mean anything. Against the default {@code {}} body the adapter answers {@code FAILED}
+     * anyway — no {@code data}, nothing to complete — so a version of this test that let the round trip
+     * happen would have passed on {@code isEqualTo(FAILED)} alone with the guard deleted, on the
+     * strength of the wrong failure. Primed this way, deleting the guard makes the outcome
+     * {@code PENDING} and every line here red.
      */
     @Test
     @DisplayName("a currency this adapter cannot vouch for is FAILED, not guessed at")
     void authorizeRefusesACurrencyItCannotVouchFor() {
+        paystack.willAnswer(200, initialized("https://checkout.paystack.com/abc", BOOKING_REF));
+
         PaymentOutcome outcome = provider(SECRET, contactsFor("ama@example.test")).authorize(intent(15_000L, "NGN"));
 
         assertThat(outcome.state()).isEqualTo(PaymentState.FAILED);
@@ -265,20 +275,29 @@ class PaystackPaymentProviderUnitTest {
      * javascript:} one would make the outcome a redirect gadget. {@code PaymentNextAction} refuses to
      * be constructed with it; what this pins is that the adapter does not catch that and turn it into
      * something bookable instead.
+     *
+     * <p>The type is named rather than left at {@code RuntimeException}. Every exception this adapter
+     * can throw is one — the no-email {@code UnsupportedOperationException} and the not-a-secret-key
+     * {@code IllegalStateException} among them — so the loose form would go on passing if the scheme
+     * check were deleted and something else threw for an unrelated reason.
      */
     @Test
     @DisplayName("a relayed javascript: url never becomes a bookable outcome")
     void aNonWebRedirectIsRefused() {
         paystack.willAnswer(200, initialized("javascript:alert(document.cookie)", BOOKING_REF));
 
-        assertThatThrownBy(() -> provider(SECRET, contactsFor("ama@example.test")).authorize(intent(15_000L, "GHS"))).isInstanceOf(
-            RuntimeException.class
-        );
+        assertThatThrownBy(() -> provider(SECRET, contactsFor("ama@example.test")).authorize(intent(15_000L, "GHS")))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("http");
     }
 
     /**
      * An unreachable provider throws, which {@code BookingPayments} turns into {@code FAILED} and a
      * 502 — the shape D44 built for exactly this.
+     *
+     * <p>{@code RestClientResponseException} rather than {@code RuntimeException}, for the reason on
+     * the test above: the loose form is satisfied by any failure at all, including the ones that happen
+     * before a request is made, so it would still pass if this adapter stopped calling Paystack.
      */
     @Test
     @DisplayName("a provider that answers with an error throws rather than answering something bookable")
@@ -286,7 +305,7 @@ class PaystackPaymentProviderUnitTest {
         paystack.willAnswer(500, "{\"status\":false}");
 
         assertThatThrownBy(() -> provider(SECRET, contactsFor("ama@example.test")).authorize(intent(15_000L, "GHS"))).isInstanceOf(
-            RuntimeException.class
+            RestClientResponseException.class
         );
     }
 
@@ -364,6 +383,33 @@ class PaystackPaymentProviderUnitTest {
         assertThatThrownBy(() -> provider(SECRET, CustomerContacts.unanswered()).readCallback(tampered)).isInstanceOf(
             PaymentCallbackRefused.class
         );
+    }
+
+    /**
+     * <strong>Malformed.</strong> A signature that is not the right length, and one that is not hex at
+     * all — the two shapes a prober reaches for after "none" and "wrong", and the two this file did not
+     * have.
+     *
+     * <p>Both are refused correctly today and would be refused by a great many wrong implementations
+     * too, since {@code MessageDigest.isEqual} over the two byte arrays cannot match either. That is
+     * exactly the "refused by construction" D45 says not to settle for: the property is not enforced
+     * anywhere, so it survives only as long as nobody adds a length check or a
+     * {@code HexFormat.parseHex} in front of the comparison. Either would reintroduce something this
+     * pair notices — a short-circuit that answers before the digest is computed, or a
+     * {@code NumberFormatException} escaping as a 500 where a 401 belongs, which is the oracle the
+     * unparseable-body test guards from the other side.
+     */
+    @Test
+    @DisplayName("a signature of the wrong length and one that is not hex are both refused, and refused the same way")
+    void aMalformedSignatureIsRefused() {
+        String body = """
+            {"event":"charge.success","data":{"reference":"%s"}}""".formatted(BOOKING_REF);
+        PaystackPaymentProvider adapter = provider(SECRET, CustomerContacts.unanswered());
+
+        // Right alphabet, far too short: a SHA-512 digest is 128 hex characters.
+        assertThatThrownBy(() -> adapter.readCallback(withSignature("deadbeef", body))).isInstanceOf(PaymentCallbackRefused.class);
+        // Right length, not hex at all — the input a parse-then-compare implementation would throw on.
+        assertThatThrownBy(() -> adapter.readCallback(withSignature("zz".repeat(64), body))).isInstanceOf(PaymentCallbackRefused.class);
     }
 
     @Test
@@ -576,7 +622,12 @@ class PaystackPaymentProviderUnitTest {
 
     /** A callback carrying the signature Paystack would compute over exactly these bytes. */
     private static PaymentCallback signed(String body, String withSecret) {
-        return new PaymentCallback("paystack", Map.of("x-paystack-signature", hmacSha512Hex(withSecret, body)), body);
+        return withSignature(hmacSha512Hex(withSecret, body), body);
+    }
+
+    /** A callback carrying whatever is handed to it, for the signatures nobody could have computed. */
+    private static PaymentCallback withSignature(String presented, String body) {
+        return new PaymentCallback("paystack", Map.of("x-paystack-signature", presented), body);
     }
 
     private static String hmacSha512Hex(String secret, String data) {

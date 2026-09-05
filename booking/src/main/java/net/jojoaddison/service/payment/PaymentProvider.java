@@ -149,10 +149,20 @@ public interface PaymentProvider {
      * signature covers what was sent, so a body round-tripped through a parser is a different body.
      * See {@link PaymentCallback}.
      *
-     * <p>The outcome's {@code providerReference} is the whole point of the return value: it is how the
-     * platform finds the {@code payment_attempt} row, and through it the booking. An outcome without
-     * one cannot be applied to anything, so an implementation that cannot extract a reference should
-     * refuse rather than return.
+     * <p><strong>The outcome must name a payment.</strong> Its {@code providerReference} is the whole
+     * point of the return value: it is how the platform finds the {@code payment_attempt} row, and
+     * through it the booking. An outcome without one cannot be applied to anything, so an
+     * implementation that cannot extract a reference must refuse rather than return.
+     *
+     * <p><strong>This is enforced, and it was not always</strong> — {@code decisions.md} D49, as
+     * reviewed. {@code PaymentWebhookResource} refuses an outcome naming no payment with the same 401
+     * every other failure to establish the provider gets, and an ERROR naming the adapter. The rule
+     * was a sentence here for two packages and the sentence lost: {@link PaymentOutcome#failed(String)}
+     * is public, it nulls the reference, and it is the obvious thing to write for a declined payment,
+     * which is exactly what the Paystack adapter did before D49. Every failed payment written that way
+     * leaves its booking in {@code PENDING_PAYMENT} for ever, under a log line blaming the provider.
+     * <strong>Use the canonical {@link PaymentOutcome} constructor for a refusal that came back through
+     * a callback</strong> — the state may be anything, the handle may not be null.
      *
      * <p>An implementation must be prepared for the <em>same</em> callback more than once — every one
      * of these providers retries until it gets a 2xx, and some send a duplicate for good measure. It
