@@ -1,14 +1,21 @@
 /**
  * The three payment providers D37 chose, as far as they can honestly be built here —
- * {@code decisions.md} D45.
+ * {@code decisions.md} D45, and D50 for the one of them that now is.
  *
  * <h2>Read this before implementing any of them</h2>
  *
- * <p>Everything in this package is a <strong>seam with the provider-specific parts missing</strong>:
- * a name, its settings, and a refusal in place of every call that would need to know how the provider
- * actually speaks. That is not an unfinished afternoon's work. It is the deliberate limit of what
- * WP-13 could produce, and the reason is worth keeping when somebody arrives with credentials and is
- * tempted to delete this comment.
+ * <p><strong>Paystack is implemented; Hubtel and MTN MoMo are not.</strong> D50 built the first one
+ * when working evidence for its wire format turned up in a sibling product, and the rule it followed
+ * is the rule below rather than an exception to it: {@code authorize} and {@code readCallback} are
+ * written because the evidence covers them, and {@code capture}, {@code refund},
+ * {@code voidAuthorization} and {@code status} still refuse because it does not. An adapter is not a
+ * thing that is finished or unfinished — it is six calls, each of which is either sourced or guessed.
+ *
+ * <p>What remains here for the other two is a <strong>seam with the provider-specific parts
+ * missing</strong>: a name, its settings, and a refusal in place of every call that would need to
+ * know how the provider actually speaks. That is not an unfinished afternoon's work. It is the
+ * deliberate limit of what WP-13 could produce, and the reason is worth keeping when somebody arrives
+ * with credentials and is tempted to delete this comment.
  *
  * <p>WP-13 was built with <strong>no network access, no provider account and no credentials</strong>.
  * Paystack's, Hubtel's and MTN MoMo's documentation could not be read and none of the three could be
@@ -26,7 +33,7 @@
  *
  * <h2>What is built, and is verifiable here</h2>
  *
- * <p>Everything around the adapters, which is most of WP-13: the registry that keys them by name
+ * <p>Everything around the adapters, which was most of WP-13: the registry that keys them by name
  * ({@link net.jojoaddison.service.payment.PaymentProviders}), the customer's choice and its
  * validation against what this service is actually configured for, the gateway route and the gateway
  * permit that expose the webhook, the per-provider secret and the refusal when it is absent, and the
@@ -60,6 +67,15 @@
  * <strong>login and no contact details</strong>, deliberately: a provider that needs a phone number
  * or an email fetches it at its own boundary, because which identifier a provider needs is the thing
  * {@link net.jojoaddison.service.payment.PaymentIntent} must not guess.
+ *
+ * <p><strong>That second one is now a known cost rather than a principle</strong>, and whoever
+ * implements Hubtel or MoMo meets it before anything else. "At its own boundary" turned out to mean
+ * "from a source this estate does not have": Paystack needs an email, both of the others need a phone
+ * number, and the account store that holds them belongs to the gateway with no endpoint to ask.
+ * {@link net.jojoaddison.service.payment.CustomerContacts} is that boundary, it has no
+ * implementation, and giving it one is a disclosure decision rather than a class — D50 sets out the
+ * three candidate sources and why two of them were rejected. Do not solve it by adding a field to the
+ * booking request; that is the first of the three and it is rejected on D22's grounds.
  *
  * <h2>Act 987 is not answered here, and this package must not pre-empt it</h2>
  *

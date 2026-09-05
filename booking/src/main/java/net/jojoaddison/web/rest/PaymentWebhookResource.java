@@ -166,8 +166,50 @@ public class PaymentWebhookResource {
      * the difference between the two, which tells a prober which of their attempts is structurally
      * closer to one this service would accept. The 401 belongs to the endpoint, not to the manners of
      * whichever adapter is configured.
+     *
+     * <p><strong>And an outcome that names no payment is not an establishment either</strong> —
+     * {@code decisions.md} D50, as reviewed. {@link PaymentProvider#readCallback}'s javadoc has always
+     * said that an implementation which cannot extract a reference must refuse rather than return, and
+     * until now nothing enforced it: {@code PaymentOutcome.failed(reason)} nulls the handle, it is
+     * public, and it is the obvious line to write for a declined payment. D50 found exactly that
+     * mistake in the Paystack adapter and fixed the instance; this is the rule. An outcome with no
+     * handle finds no {@code payment_attempt} row, so the booking it is about stays in
+     * {@code PENDING_PAYMENT} for ever — a state nothing re-enters and nothing sweeps — while the log
+     * blames the provider for naming a reference this service never issued. Refused here instead, with
+     * the same 401 and an ERROR naming the adapter, so the next adapter's author meets it on their
+     * first callback.
      */
     private PaymentOutcome verified(String named, Map<String, String> headers, String body) {
+        PaymentOutcome outcome = established(named, headers, body);
+        if (outcome.providerReference() == null || outcome.providerReference().isBlank()) {
+            // ERROR rather than the WARN above it, and worded at the adapter rather than at the
+            // caller: nothing a stranger can post produces this. It is this estate's own code
+            // returning something that cannot be applied to anything, and the log line is the only
+            // place that distinction can be drawn — from outside it is the same 401 as a forgery,
+            // deliberately, because an endpoint that says "your signature was fine but our adapter is
+            // broken" has told a prober that their signature was fine.
+            LOG.error(
+                "the {} adapter returned a verified callback outcome naming no payment — readCallback must refuse rather than return " +
+                    "one, and PaymentOutcome.failed() drops the handle. The callback is refused (decisions.md D50)",
+                // Looked up again rather than threaded out of the call above: this is the one path
+                // that needs it, and the adapter's own name is worth more in the log than the
+                // spelling whoever posted the request happened to use in the URL.
+                providers.nameOf(providers.named(named).orElse(null))
+            );
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED);
+        }
+        return outcome;
+    }
+
+    /**
+     * The adapter's own answer, or 401 — everything up to and not including what the answer says.
+     *
+     * <p>Split from {@link #verified} so that the contract check above runs <em>outside</em> this
+     * try/catch. Inside it, the {@link ResponseStatusException} it throws would be caught by the
+     * {@code RuntimeException} arm and logged as an adapter that threw, which is the opposite of what
+     * happened.
+     */
+    private PaymentOutcome established(String named, Map<String, String> headers, String body) {
         // Declared out here so the second catch can name the adapter that broke. It is null only on
         // the path that throws PaymentCallbackRefused, which the first catch takes.
         PaymentProvider provider = null;

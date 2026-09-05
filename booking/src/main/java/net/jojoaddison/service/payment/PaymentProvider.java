@@ -29,7 +29,7 @@ package net.jojoaddison.service.payment;
  * implements {@code authorize} as a capture and returns {@link PaymentState#CAPTURED} — nothing here
  * requires two steps or forbids one.
  *
- * <h2>Four implementations, and none of them has ever spoken to a provider</h2>
+ * <h2>Four implementations, and one of them has spoken to a provider</h2>
  *
  * <p>{@link net.jojoaddison.config.PaymentConfiguration.UnconfiguredPaymentProvider} reports
  * {@link PaymentState#OFF_PLATFORM} and refuses everything else, and is still what answers on an
@@ -38,6 +38,16 @@ package net.jojoaddison.service.payment;
  * and dispatched to exactly as a real adapter would be, and every call that would have to know how
  * the provider speaks fails closed. WP-13 had no network access, no account and no credentials, so
  * writing those calls would have been invention rather than integration.
+ *
+ * <p><strong>D50 built the first of the three.</strong> Working evidence for Paystack's wire format
+ * turned up inside the estate rather than in a specification, so
+ * {@link net.jojoaddison.service.payment.provider.PaystackPaymentProvider} really implements
+ * {@link #authorize} and {@link #readCallback} — and only those two, because that is the whole of
+ * what the evidence covers. {@link #capture}, {@link #refund}, {@link #voidAuthorization} and
+ * {@link #status} still refuse there, exactly as they do for Hubtel and MoMo, which is the same rule
+ * applied one level finer: a call nobody has seen the provider answer stays closed whether or not the
+ * class around it is written. It cannot take a payment on today's estate either, for a reason that is
+ * this seam's own — see {@link CustomerContacts}.
  *
  * <p>Which one a booking reaches is {@link PaymentProviders}' decision, from a name the customer sent
  * and the registry checked. <strong>Nothing injects this interface by type any more</strong>, which is
@@ -139,10 +149,20 @@ public interface PaymentProvider {
      * signature covers what was sent, so a body round-tripped through a parser is a different body.
      * See {@link PaymentCallback}.
      *
-     * <p>The outcome's {@code providerReference} is the whole point of the return value: it is how the
-     * platform finds the {@code payment_attempt} row, and through it the booking. An outcome without
-     * one cannot be applied to anything, so an implementation that cannot extract a reference should
-     * refuse rather than return.
+     * <p><strong>The outcome must name a payment.</strong> Its {@code providerReference} is the whole
+     * point of the return value: it is how the platform finds the {@code payment_attempt} row, and
+     * through it the booking. An outcome without one cannot be applied to anything, so an
+     * implementation that cannot extract a reference must refuse rather than return.
+     *
+     * <p><strong>This is enforced, and it was not always</strong> — {@code decisions.md} D50, as
+     * reviewed. {@code PaymentWebhookResource} refuses an outcome naming no payment with the same 401
+     * every other failure to establish the provider gets, and an ERROR naming the adapter. The rule
+     * was a sentence here for two packages and the sentence lost: {@link PaymentOutcome#failed(String)}
+     * is public, it nulls the reference, and it is the obvious thing to write for a declined payment,
+     * which is exactly what the Paystack adapter did before D50. Every failed payment written that way
+     * leaves its booking in {@code PENDING_PAYMENT} for ever, under a log line blaming the provider.
+     * <strong>Use the canonical {@link PaymentOutcome} constructor for a refusal that came back through
+     * a callback</strong> — the state may be anything, the handle may not be null.
      *
      * <p>An implementation must be prepared for the <em>same</em> callback more than once — every one
      * of these providers retries until it gets a 2xx, and some send a duplicate for good measure. It
