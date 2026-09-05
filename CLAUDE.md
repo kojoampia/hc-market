@@ -493,7 +493,18 @@ application stack.** `deploy-prod.sh` ships `deploy/docker/docker-compose.prod.y
 `prod-server/` holds what is installed once and does not roll — the data tier, the nginx vhost and
 its snippet, `infra.sh`, `backup.sh`, `start`, and `secrets.env.example`. There is exactly one place
 in this repository where a production gateway route is written, and it is not in `prod-server/`.
-**Nothing there has ever been run.** Read `deploy/prod-server/README.md` before believing otherwise.
+**Nothing there has ever been run against a host.** Read `deploy/prod-server/README.md` before
+believing otherwise. `backup.sh` has now been run once on this workstation, against five throwaway
+containers, and that run found it leaking both database passwords into world-readable host argv under
+a comment claiming the opposite (D49's review) — which is the general lesson: everything in that
+directory is unexecuted configuration, and the first execution of each piece is where its defects
+are.
+
+**A failing smoke test rolls the deployment back**, so `deploy-prod.sh`'s catalogue check requires a
+*number*, not a positive one. Production never seeds; `0` is the honest answer on a fresh estate and
+is warned about rather than refused. `HC_SMOKE_MIN_PROFESSIONALS` raises the floor once there is real
+data. It required `> 0` until 2026-09-05, which meant the first production deploy would have ended in
+`no previous deployment recorded` and the second would have *successfully* rolled back a healthy one.
 
 **Production is API-only: the prototype is NOT served on `market.abofonsa.com`.** Quality serves it
 at `/prototype`, same-origin, with a relaxed CSP; production has no such location and must not grow

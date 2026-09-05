@@ -338,6 +338,22 @@ jobs:
           [ "$fail" = 0 ] && echo "ok   every secret in the template is empty"
           exit "$fail"
 
+      # THE MOST SERIOUS OF WP-19's FIVE DEFECTS WAS THE ONLY ONE WITH NO MECHANICAL GUARD, which is
+      # this one — decisions.md D37, D49.
+      #
+      # deploy-prod.sh's own hint told the operator to install the PLATFORM's signing key, the one
+      # hc-admin, hc-patient and hc-professional share. Nothing running could ever have caught it:
+      # there is no `iss` and no `aud` validation anywhere in this estate, so a token minted with
+      # that key is accepted here and a token minted here is accepted there, silently and for ever.
+      # The estate would have come up perfectly, every test green, with a capability boundary the
+      # repository documents in two places quietly dissolved.
+      #
+      # So the guard is on the WORDS, because the words are the only artefact. Watched firing against
+      # the original hint (four ways), against a compose message restored to "platform JWT secret is
+      # required", and against a runbook line telling somebody to paste the value in.
+      - name: No deploy path may point the signing key at the platform's shared key
+        run: ./.github/checks/signing-key-severance.sh
+
       # The OpenTelemetry wiring lives in pom.xml, and pom.xml is GENERATED — it carries no
       # jhipster-needle markers, so `jhipster jdl` with the force flag rewrites it wholesale and
       # drops every line of this. Losing it is completely silent: the build succeeds, the image is

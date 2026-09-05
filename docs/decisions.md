@@ -5163,6 +5163,9 @@ The data tier is deliberately **not** added to the three gateway-route loops, wh
 list of three compose files. It declares no route and would fail "expected 4 narrowed gateway routes,
 found 0" — and the reason it would is the reason the split exists.
 
+**There is a seventh now.** The review below found that the most serious of the five defects was the
+only one with no mechanical guard at all, and it is the one nothing running could catch.
+
 ### A seventh finding, in the file that was being read
 
 `--help` was `sed -n '2,66p'`, with a comment beside it saying that was "the whole header block, up
@@ -5192,23 +5195,91 @@ computed now: skip the shebang and the opening rule, print until the closing one
 - **No `observability/` directory.** hc-market already has `deploy/observability/hc-market-rules.yaml`
   and CI parses it; moving it would break that path for no gain.
 - **No expiry, no schema-rollback path, no restore rehearsal.** All three are named in the README's
-  outstanding list rather than sketched. The backup script has never been run and no dump has ever
-  been restored, which makes the backups a belief rather than a backup — and that is written where an
-  operator reads it before trusting a `backups/` directory.
+  outstanding list rather than sketched. No dump has ever been restored, which makes the backups a
+  belief rather than a backup — and that is written where an operator reads it before trusting a
+  `backups/` directory. (The backup *script* had never been run either, until the review below ran
+  it; that found a defect and proves nothing about restoring.)
+
+### The review, and the eight things it found
+
+**Reviewed 2026-09-05**, the same day. The review verified all five defects above independently
+against `main` rather than taking them from a commit message, watched all six checks fire on
+constructed reintroductions, and confirmed the security posture. It then found eight more, one of
+them blocking. All eight are applied.
+
+**The blocking one was that this decision's own closing paragraph described behaviour the code did
+not have.** It said the smoke test would "warn" on an empty catalogue, and so did `README.md`. A
+failing smoke test does not warn — `deploy-prod.sh` ends `if health_gate && smoke_test; then …
+else … rollback`. So requiring `> 0` on an estate that never seeds meant: the **first** deploy ends
+in `die "no previous deployment recorded"`, with the stack up, correct, and never written to
+`deployments.log`, and the operator's first experience of production is a red failure; the **second**
+finds `.env.previous` and therefore *succeeds* at rolling back a deployment that had just come up
+healthy. The estate could not have shipped again until it had data.
+
+The fix separates the two answers the check was conflating, and the argument for that shape over
+putting `> 0` behind a flag is that **`0` is not a weaker answer than `18`**. Getting a number back
+from `https://market.abofonsa.com/services/healthconnectcatalog/api/professionals/count` exercises
+DNS, TLS, nginx, the gateway's route predicates and a round trip to catalog's PostgreSQL — every one
+of them identically at `0`. What distinguishes a healthy empty estate from a broken one is not the
+magnitude, it is whether a number arrives at all: a catalog that cannot reach its database answers
+nothing. So no number is a failure, `0` is warned about loudly and passes, and the `> 0` requirement
+survives as `HC_SMOKE_MIN_PROFESSIONALS`, opt-in, validated in preflight. Once there is real data an
+estate answering `0` **is** a failure and should roll back — but only an operator knows when that day
+is, and defaulting to it costs a rollback of a working stack. Exercised against a local server in
+five states: `0`, `18`, `0` with the floor at 1, an HTML body, and nothing listening.
+
+The other seven, in the order they matter:
+
+| # | what was wrong | why it survived |
+|---|---|---|
+| 2 | every remote `docker compose` relied on implicit file discovery, and this branch put a **second** compose file in that directory | it was one file for as long as the script existed. Compose prefers `compose.yml` over `docker-compose.yml`, so an operator copying the data tier under its repository name captured every later `pull`, `up`, `exec` and `ps`. Fails loudly, which is the only reason it was not worse. `-f docker-compose.yml`, one word |
+| 3 | `prod-server/start` printed **"all five stores healthy" when the stores had exited** | `docker compose ps` lists only *running* containers; `-a` is needed for the rest. Filtering that output for "not healthy" finds nothing, and an empty result reads as nothing wrong. Reproduced: a two-service project with one exited container listed one service without `-a` and two with it. It asserts five present and five healthy now |
+| 4 | `backup.sh` put **both database passwords in world-readable host argv**, under a comment saying that was exactly what the `-e` form prevented | `docker exec -e PGPASSWORD=<value>` is the client's own argv. Measured: `ps -eo args` showed the value for the length of every nightly dump. The name-only form does not, and one residue is now stated rather than denied — `mongodump` has no password variable and no `--password-file`, so its value is in the *container's* argv |
+| 5 | the `:?` message an operator meets at the moment of failure still said **"platform JWT secret is required"** | four other copies of defect 5 were corrected and this one was quoted approvingly in two comments. It is the only one of the five that a person reads while something is already broken |
+| 6 | the most serious defect was the **only one with no CI check** | there is no `iss` and no `aud` anywhere in this estate, so a pasted platform key interoperates silently and for ever. Nothing running can catch it; the guard has to be on the words. Now `.github/checks/signing-key-severance.sh` |
+| 7 | `/srv/healthconnect` was justified as "the code was followed" | there is a much stronger reason. The siblings' `start` scripts read `--env-file ../.env` — the platform key file one directory above `~/webroot/01-healthconnect/<product>/`. The conventional path would put hc-market directly below the file D37 spends a page keeping it away from, with the pattern that consumes it one directory over. Also recorded: both compose files pin `name:`, so a later move is copying files rather than migrating data |
+| 8 | runbook details: a `deploy@` ssh user that is probably fiction, brace expansion in a remote `dash`, `/srv` write access, no check that the **open** endpoints are the intended ones, `add_header Content-Type` in the robots.txt location, and one `▸` printed without a `[dry-run]` marker | each small, and the first and fourth are the interesting ones. The siblings ssh to the alias `webserver` as root; and `/api/register` is `permitAll` on the gateway, so **open self-registration is public on `market.abofonsa.com`** from the first deploy — presumably intended, and unrecorded until now in a file that curls three things to prove the closed things are closed |
+
+The robots.txt one is worth one more line because it was measured rather than reasoned. `add_header
+Content-Type text/plain` does not set the content type; served under a real nginx the response
+carried **two** `Content-Type` headers, `application/octet-stream` first from `default_type` and
+`text/plain` appended beside it — and, because a location declaring any `add_header` inherits none of
+the server's, no CSP, no `X-Frame-Options`, no `X-Content-Type-Options` and no `Referrer-Policy`.
+That is the replacement semantics the file's own CSP comment warns about, firing in the file that
+warns about it. `default_type` and no `add_header` at all fixes both halves.
+
+### A seventh CI check — the guard the fifth defect never had
+
+`.github/checks/signing-key-severance.sh`, guarding the one defect of the five that nothing running
+could ever catch. Three arms, each watched refusing a real state:
+
+| arm | mutation it was watched refusing |
+|---|---|
+| `secret_hint`'s advice must still say what to generate, and may name the platform key file only to forbid it | `main`'s original hint restored — refused four ways at once |
+| every mention of `~/webroot/01-healthconnect/.env` under `deploy/` and `quality/` must carry a refusal within two lines | a runbook line saying to paste the value in |
+| no compose file's `:?` message may describe the estate key as the platform's | `main`'s "platform JWT secret is required" restored |
+
+The first arm is the sharp one and the second is deliberately coarse. `main`'s original hint said
+"never generate a fresh one here", so it *contains* a negation and would have passed arm 2 — which is
+why arm 1 asserts the presence of the generation command and the exact phrase `Do NOT copy it from`
+rather than the absence of something. Its job is that the original wording fails, not that every
+conceivable rewrite does.
 
 ### What could not be verified, and is therefore a guess
 
 `8086` for the gateway's loopback port: chosen in the family the siblings occupy (hc-admin 8083,
 hc-patient 8085, hc-professional 5503) and **not known to be free on `webserver`**. `/srv/healthconnect`
-as the stack directory: it is `deploy-prod.sh`'s default and was followed because the code wins, but
-**it disagrees with the host convention** every sibling uses, `~/webroot/01-healthconnect/<product>/`.
-Both are the first two items in the README's outstanding list. So is backlog **WP-18**, unchanged:
-whether `gateway`, `catalog` or `booking` is already a DNS alias on `infranet` still cannot be
-answered from a workstation — largely defused, since every service is `hc-market-*` with an explicit
-`container_name`, and still unanswered.
+as the stack directory: `deploy-prod.sh`'s default, and now argued on its merits rather than on the
+code's precedence (see finding 7 above) — still not known to exist or to be writable there, and still
+one `--path` flag. The ssh target `webserver` and a root account there: taken from what every sibling
+does rather than checked. Both are the first items in the README's outstanding list. So is backlog
+**WP-18**, unchanged: whether `gateway`, `catalog` or `booking` is already a DNS alias on `infranet`
+still cannot be answered from a workstation — largely defused, since every service is `hc-market-*`
+with an explicit `container_name`, and still unanswered.
 
-And the smoke test's catalogue check will **fail on a healthy fresh production estate**, because
-production does not seed and the honest count is `0` while the check requires `> 0`. Left in place
-deliberately: a catalogue answering `0` and a catalogue that cannot reach its database are different
-things, and the refusal is correct until there is real data. The README says to read the number
-rather than the tick.
+And one thing this package **cannot** do, which the review's first finding made visible: a rollback
+restores `.env.previous` and therefore the previous *tag*, but `remote_deploy` overwrites
+`docker-compose.yml` and keeps no previous copy of it. So a deploy that breaks the estate through a
+compose change — a route predicate, a variable name, a port — rolls the images back underneath the
+new file. Not fixed here, because it needs a decision about what a deploy should keep and for how
+long; recorded so that "it rolls back by itself" is not read as more than it is.

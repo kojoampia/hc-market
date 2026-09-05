@@ -45,7 +45,7 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **NEW-8** | The prototype's professional workspace is demo-only in live mode | WON'T (documented) | D46 §5 |
 | **NEW-9** | Four seeders shift every date by the JVM's idea of today | DONE | D48 — zone closed in all four; the shared-`today` half deliberately not built, with its triggers named. Reviewed 2026-09-05, nine findings, all applied |
 | **NEW-10** | Payout writes `ledger.earned_on` in the JVM's calendar and the seeder's in Accra's | READY | D47/D48 — three writes to the cross-service pivot, two reads. Opened by the NEW-9 review |
-| **WP-19** | Production deployment configuration, to sibling parity | PARTLY DONE | D49 — `deploy/prod-server/` built and five defects in the deploy path fixed. **Nothing has ever been run against a host**; the fifteen things a person must still do are in that directory's README |
+| **WP-19** | Production deployment configuration, to sibling parity | PARTLY DONE | D49 — `deploy/prod-server/` built, five defects in the deploy path fixed, then reviewed 2026-09-05 and eight more applied, one of them blocking (a failing smoke test triggered an automatic rollback). **Nothing has ever been run against a host**; the fifteen things a person must still do are in that directory's README |
 
 ---
 
@@ -1038,6 +1038,32 @@ makes them beliefs), and verify the OTel agent is instrumenting rather than mere
 
 **WP-18 is unchanged and is one of the fifteen**: whether `gateway`, `catalog` or `booking` is
 already a DNS alias on `infranet` still cannot be answered from a workstation.
+
+**Reviewed 2026-09-05; eight findings, all applied.** One blocking: **a failing smoke test triggers an
+automatic rollback**, and the smoke test required a catalogue count `> 0` on an estate that never
+seeds. So the first production deploy would have ended in `no previous deployment recorded` with the
+stack up and correct, and the second would have *successfully* rolled back a deployment that had just
+come up healthy. Both this file and D49 described that as a warning. It now distinguishes **no number
+at all** (a failure — the edge, the route or the datasource) from **`0`** (warned loudly, passed),
+with `> 0` surviving as opt-in `HC_SMOKE_MIN_PROFESSIONALS`.
+
+The other seven: the remote compose invocations named no `-f` while this branch added a second
+compose file; `prod-server/start` reported "all five stores healthy" when stores had **exited**,
+because `docker compose ps` hides stopped containers without `-a`; `backup.sh` put both database
+passwords in world-readable host argv under a comment claiming the opposite; the `:?` message an
+operator meets at the moment of failure still said "platform JWT secret is required"; the signing-key
+severance — **the most serious of the original five** — had no CI check, and cannot have a runtime one
+because this estate validates no `iss` and no `aud`; `/srv/healthconnect` deserved a better argument
+than "the code was followed", and has one (the siblings' `start` reads `--env-file ../.env`, the
+platform key, one directory above the conventional path); and six runbook details, of which the two
+worth naming are that the ssh target is the alias `webserver` as root rather than an invented
+`deploy@` user, and that **open self-registration is public on `market.abofonsa.com`** — `/api/register`
+is `permitAll` on the gateway, presumably intended and previously unrecorded.
+
+Three of the eight were found by *running* something for the first time: `backup.sh` (five throwaway
+containers, first execution in its life), the nginx files under a real nginx, and `docker compose ps`
+watched hiding an exited container. **A seventh CI check** — `.github/checks/signing-key-severance.sh`
+— was added and watched firing three ways.
 
 ---
 

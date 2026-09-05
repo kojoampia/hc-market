@@ -10,8 +10,16 @@
 #
 #   0 3 * * * /srv/healthconnect/backup.sh >> /var/log/hc-market-backup.log 2>&1
 #
-# NOT INSTALLED. Nothing in this repository writes a crontab, and this script has never been run on
-# any host. The README says so where an operator will read it before trusting a backups/ directory.
+# NOT INSTALLED. Nothing in this repository writes a crontab, and this script has never run on a
+# production host. The README says so where an operator will read it before trusting a backups/
+# directory.
+#
+# It has now run ONCE, on 2026-09-05, on the workstation against five throwaway containers carrying
+# the production names — the first execution in its life, and the review that prompted it found the
+# credential handling below wrong. All five dumps came back non-empty and the mongo archive was
+# readable. That is evidence about this script, and none at all about a production host or about
+# whether any dump can be RESTORED, which is still the highest-value item in the README's
+# outstanding list.
 #
 # `docker exec` rather than a published port: the databases deliberately publish none (see
 # compose.yml), and the credentials in secrets.env are what authenticates here.
@@ -61,6 +69,12 @@ secret() {
   [[ -n "$v" ]] || { echo "ERROR: $1 is not set in $SECRETS_FILE" >&2; exit 1; }
   printf '%s' "$v"
 }
+# `secret` exits the script when a key is missing — but only when it is called DIRECTLY. In the
+# command-prefix form used below (`PGPASSWORD="$(secret …)" docker exec …`) it runs in a substitution
+# whose failure `set -e` does not propagate, so a missing key would hand the database an empty
+# password and surface as an authentication error from pg_dump rather than as the name of the line
+# somebody forgot. Called once here for the message, and again below for the value.
+require_secret() { secret "$1" >/dev/null; }
 
 mkdir -p backups
 chmod 700 backups
@@ -72,22 +86,52 @@ nonempty() {
   [[ -s "$1" ]] || { echo "ERROR: $1 is empty" >&2; exit 1; }
 }
 
+# --- WHERE THE PASSWORDS ARE VISIBLE, WHICH IS NOT NOWHERE ---------------------------------------
+#
+# `docker exec -e NAME=value` puts the value in the argv of the HOST's docker client, and
+# /proc/<pid>/cmdline is world-readable — so every dump below used to be a window in which any local
+# user could read the credential out of `ps`. The comment beside it asserted the opposite ("so it
+# does not appear in ps on the host"), which is worse than no comment: it is a protection somebody
+# would rely on. The window is the nightly cron run, every night.
+#
+# Both forms below pass the NAME only and let the value travel in an environment:
+#
+#   PGPASSWORD=… docker exec -e PGPASSWORD …   value is in the docker client's ENVIRONMENT, and
+#                                              /proc/<pid>/environ is readable by the owner and root
+#                                              only — not by `ps`, and not by another local user.
+#   docker exec -e MONGO_PASSWORD … bash -c …  same on the host. mongodump has no password
+#                                              environment variable and no --password-file, and its
+#                                              interactive prompt needs a TTY that would corrupt the
+#                                              archive on stdout — so the value is expanded by a
+#                                              shell INSIDE the container and does appear in that
+#                                              container's own argv for the duration. Stated rather
+#                                              than claimed away: reading it needs root on the host
+#                                              or a process already inside the database container,
+#                                              and anything with either already has the database.
+#
+# The values are attached as a COMMAND PREFIX rather than exported, so each one is in the environment
+# of exactly one `docker` process and not of this script, its gzip, or its find. That is the same
+# reason `secret` reads the file instead of sourcing it.
+#
 # --- MongoDB first: the user store ---------------------------------------------------------------
-MONGO_USER="$(secret HC_MONGO_ROOT_USERNAME)"
-MONGO_PASS="$(secret HC_MONGO_ROOT_PASSWORD)"
+require_secret HC_MONGO_ROOT_USERNAME
+require_secret HC_MONGO_ROOT_PASSWORD
 out="backups/healthconnectGateway-${STAMP}.archive.gz"
 echo "==> dumping healthconnectGateway (user store) -> $out"
 # --archive to stdout, gzipped on the host: no temporary file inside the container, and the dump
 # never touches the container's writable layer.
-docker exec hc-market-gateway-db mongodump \
-  --username "$MONGO_USER" --password "$MONGO_PASS" --authenticationDatabase admin \
-  --db healthconnectGateway --archive --quiet | gzip > "$out"
+MONGO_USERNAME="$(secret HC_MONGO_ROOT_USERNAME)" MONGO_PASSWORD="$(secret HC_MONGO_ROOT_PASSWORD)" \
+  docker exec -e MONGO_USERNAME -e MONGO_PASSWORD hc-market-gateway-db \
+    bash -c 'exec mongodump --username "$MONGO_USERNAME" --password "$MONGO_PASSWORD" \
+               --authenticationDatabase admin --db healthconnectGateway --archive --quiet' \
+  | gzip > "$out"
 nonempty "$out"
 
 # --- The four PostgreSQL instances ---------------------------------------------------------------
 #
-# One instance per service, so one pg_dump per container. PGPASSWORD is passed with `docker exec -e`
-# rather than on the command line so it does not appear in `ps` on the host.
+# One instance per service, so one pg_dump per container. PGPASSWORD is passed BY NAME — see the note
+# above on where each password is visible; `docker exec -e PGPASSWORD=<value>` would put it in the
+# host's world-readable argv, which is what the comment here used to deny.
 #
 # --clean --if-exists so a restore into a non-empty database replaces rather than collides, and
 # --no-owner because the role names are the same in every environment but the OIDs are not.
@@ -97,9 +141,10 @@ for pair in \
     "hc-market-messaging-db:healthconnectMessaging:HC_MESSAGING_DB_PASSWORD" \
     "hc-market-payout-db:healthconnectPayout:HC_PAYOUT_DB_PASSWORD"; do
   ctr="${pair%%:*}"; rest="${pair#*:}"; db="${rest%%:*}"; key="${rest#*:}"
+  require_secret "$key"
   out="backups/${db}-${STAMP}.sql.gz"
   echo "==> dumping $db -> $out"
-  docker exec -e PGPASSWORD="$(secret "$key")" "$ctr" \
+  PGPASSWORD="$(secret "$key")" docker exec -e PGPASSWORD "$ctr" \
     pg_dump --username "$db" --dbname "$db" --clean --if-exists --no-owner | gzip > "$out"
   nonempty "$out"
 done

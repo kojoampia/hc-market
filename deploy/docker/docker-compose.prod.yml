@@ -29,7 +29,14 @@ x-service-base: &service-base
     # see the note on the pepper below, which applies to both. Until 2026-09-02 nothing supplied it
     # at all: render_env emitted neither secret and the deploy ran `docker compose up` with no
     # environment, so every production deploy would have died right here on the :? message.
-    JHIPSTER_SECURITY_AUTHENTICATION_JWT_BASE64_SECRET: ${JWT_BASE64_SECRET:?platform JWT secret is required}
+    #
+    # THAT MESSAGE SAID "platform JWT secret is required" UNTIL 2026-09-05, and it is the one string
+    # an operator meets at the moment of failure — so it was the last copy of the defect D49 records,
+    # sending whoever hit it looking for "the platform" key. That key is the one hc-admin, hc-patient
+    # and hc-professional share, and hc-market is deliberately not in that set (decisions.md D37);
+    # every other hint was corrected while this one was left pointing the wrong way. It now says what
+    # to generate, and says what not to copy, in the place the question is actually asked.
+    JHIPSTER_SECURITY_AUTHENTICATION_JWT_BASE64_SECRET: ${JWT_BASE64_SECRET:?this estate's own signing key is required — generate one fresh with `head -c 64 /dev/urandom | base64 -w0` into secrets.env. It is NOT the platform key in ~/webroot/01-healthconnect/.env, which hc-market does not share — decisions.md D37}
     # The erasure pepper — decisions.md D35. Keys the HMAC behind an erased customer's alias, and is
     # required for the same reason the signing key is: a committed default in a public repository is
     # not a secret, and here it is the only thing standing between a database dump and re-identifying

@@ -23,6 +23,13 @@ written on `jacserver` from the three sibling stacks and from `deploy-prod.sh`, 
 `--dry-run` (which contacts nothing), `docker compose config`, `bash -n` and the repository's CI —
 and that is the whole of its evidence.
 
+It was then **reviewed**, on 2026-09-05, and eight things were wrong. Four of them were in this file.
+The review's evidence is a little better than the first pass's, because three of the eight were found
+by *running* something for the first time rather than by reading it: `backup.sh` executed against
+five throwaway containers, the nginx files served by a real nginx, and `docker compose ps` watched
+reporting five healthy stores while two of them had exited. The state of the far side is unchanged —
+still nothing on a host — and everything below about what could not be verified still holds.
+
 So this is a plan, not a record. Read it as one:
 
 - **Every port, path and hostname on the far side is unverified.** `8086` is not known to be free on
@@ -64,6 +71,32 @@ production gateway route is written**, and it is not in this directory.
 Two compose projects, then: `healthconnect` (the apps) and `hc-market-data` (the stores). They meet
 on `hcmarketnet`, which is why that network is created by `infra.sh` rather than by either of them —
 a compose-created network is named after its project, and there are two projects.
+
+### `/srv/healthconnect`, and why it is not `~/webroot/01-healthconnect/hc-market`
+
+The siblings all live under `~/webroot/01-healthconnect/<product>/` and this stack does not, which
+looked at first like the code's default winning over a host convention by accident. It is worth more
+than that, and this is the argument:
+
+**The siblings' `start` scripts acquire the platform signing key by being one directory below it.**
+`hc-professional/deploy/prod-server/start` is `ENV_FILES=(--env-file ../.env --env-file .env)`, and
+`../.env` from `~/webroot/01-healthconnect/hc-professional/` is `~/webroot/01-healthconnect/.env` —
+the file holding the key those three products share and hc-market must **not** use (`decisions.md`
+D37). hc-patient and hc-admin read it the same way. So placing
+hc-market at the conventional path would put it **directly below the one file `decisions.md` D37 and
+D49 spend a page keeping it away from**, with the sibling pattern that consumes it sitting one
+directory over as the obvious thing to copy. `/srv/healthconnect` makes that mistake require intent
+rather than a habit; this stack's `start` names `secrets.env` and nothing above itself.
+
+**And moving later is cheap, because neither project's identity comes from the directory.**
+`docker-compose.prod.yml` pins `name: healthconnect` and `compose.yml` pins `name: hc-market-data`,
+so the project names and the five named volumes (`hc-market-data_gateway-data` and its four
+siblings) are the same wherever the files sit. A move is copying four files and re-running `./start`
+— not a data migration, and not a `docker compose down -v` under any circumstances.
+
+It is still true that nothing has confirmed `/srv/healthconnect` exists or is writable on the host,
+and it is still one `--path` flag if the convention should win. What has changed is that following
+the convention now has a cost attached to it, and the cost is a signing key.
 
 ### Three networks, and only one of them is ours
 
@@ -183,12 +216,25 @@ ssh webserver 'mkdir -p /srv/healthconnect'
 scp deploy/prod-server/compose.yml webserver:/srv/healthconnect/data-compose.yml
 scp deploy/prod-server/infra.sh deploy/prod-server/backup.sh deploy/prod-server/start \
     webserver:/srv/healthconnect/
-ssh webserver 'chmod +x /srv/healthconnect/{infra.sh,backup.sh,start}'
+ssh webserver 'chmod +x /srv/healthconnect/infra.sh /srv/healthconnect/backup.sh /srv/healthconnect/start'
 ```
+
+**`/srv` is root-owned**, so `mkdir -p /srv/healthconnect` needs root — which the ssh target here is
+(see [step 7](#7-deploy) on why `webserver` and not a `deploy` user). If it is ever not, this is the
+line that fails first, and the answer is to create the directory with sudo once and `chown` it.
+
+The three paths are written out rather than braced: `{infra.sh,backup.sh,start}` is a bashism, the
+remote login shell is not guaranteed to be bash, and under `dash` it expands to nothing and `chmod`
+fails on a literal `/srv/healthconnect/{infra.sh,backup.sh,start}`.
 
 `data-compose.yml`, not `compose.yml`: `deploy-prod.sh` writes `docker-compose.yml` into the same
 directory on every deploy, and two files whose names differ by a hyphen in one directory is a mistake
-waiting for a tired evening.
+waiting for a tired evening. **The rename is load-bearing and no longer only by convention** —
+compose prefers `compose.yml` over `docker-compose.yml` when it discovers a file itself, so a data
+tier copied under its repository name would have captured every later `pull`, `up`, `exec` and `ps`.
+`deploy-prod.sh` now names `-f docker-compose.yml` on every remote invocation, so the wrong file
+cannot be picked up silently; keep the rename anyway, because two compose files in one directory with
+one of them named by discovery is a trap waiting for the next script.
 
 ### 2. Create `secrets.env`
 
@@ -246,6 +292,22 @@ cd /srv/healthconnect
 
 `./start` exits cleanly at that point and tells you to deploy. That is correct: there is no
 `docker-compose.yml` and no `.env` yet.
+
+**The health wait asserts five, and looks at stopped containers too.** `docker compose ps` lists only
+*running* containers — `-a` is needed for the rest — so a store that has **exited** appeared in no
+listing, a filter for "not healthy" found nothing, and the script printed `all five stores healthy`
+and started the applications against dead databases. If all five had exited the output was empty and
+the gate was unanimous about it. The likeliest way to reach that state is the one this file documents
+under [Rotating a credential](#rotating-a-credential): a Mongo datadir whose credentials no longer
+match. It now requires five services present and all five healthy, so an exited store is reported and
+a *removed* one — which appears in no listing at all, with or without `-a` — is caught by the count.
+
+`./start` also **pulls nothing**. Its header always said so; a `pull` of the application stack had
+crept in beneath it, which matters in exactly the case [step 7](#7-deploy) creates —
+`deploy-prod.sh --build` overwrites what CI published at a tag, after which a post-reboot `./start`
+would silently fetch different bytes for the same tag. Bringing back exactly what was running is the
+contract. (`up -d` still fetches an image that is not on the host at all; that is a pruned image,
+not a re-pushed tag.)
 
 ### 4. DNS — someone else's console, not this repository's
 
@@ -326,8 +388,17 @@ the token-then-manifest handshake for each, and re-running the workflow is the f
 
 From a **workstation**, not from the server:
 
+**`webserver`, as root.** Every sibling deploys to the ssh alias `webserver`
+(`hc-professional/deploy/deploy.sh`: `SSH_HOST="${SSH_HOST:-webserver}"`), and `hc-professional`'s
+own `backup.sh` gives its installed cron path as `/root/webroot/…`, so `~` there is `/root` and the
+account is root. The alias also picks up whatever `~/.ssh/config` says about port, key and user,
+which an IP literal does not. This line named a `deploy@` user until 2026-09-05 — a copy-pasteable
+assumption in a file that is otherwise scrupulous about listing what it could not check. **The ssh
+user is still unverified from here**; what changed is that it is now the same guess every other
+stack on that host makes rather than a new one.
+
 ```bash
-export HC_PROD_HOST=deploy@199.247.5.252        # or whatever the ssh target is
+export HC_PROD_HOST=webserver                   # the ~/.ssh/config alias, and root there
 export GHCR_OWNER=kojoampia GHCR_TOKEN=…        # a PAT with read:packages
 
 ./deploy/deploy-prod.sh --channel github \
@@ -350,9 +421,20 @@ skips (`○ [dry-run] … NOT contacted`) rather than printing a tick beside a c
 touching the host, and no longer does.
 
 What the deploy does, in order: preflight (registry login, ssh, **all eleven `secrets.env` keys by
-name**, all three networks) → verify the images are in the registry → upload the compose file and
-generate `.env`, keeping the old one as `.env.previous` → pull → `up -d` → health gate → smoke test.
-If the gates fail it **rolls back by itself** and exits non-zero.
+name**, all three networks, **and the five stores running**) → verify the images are in the registry
+→ upload the compose file and generate `.env`, keeping the old one as `.env.previous` → pull →
+`up -d` → health gate → smoke test. If the gates fail it **rolls back by itself** and exits non-zero.
+
+The data-tier check is the newest of the preflight's and it closes a gap the network check could not
+see: `hcmarketnet` existing says nothing about anything being **on** it. A deploy rolled while the
+stores were down passed preflight in full, rotated `.env`, pulled, rolled, failed Liquibase in all
+five services and then rolled back — a five-service outage caused by the deploy, over a condition
+that was true before it started. It counts `docker compose ... ps -a` rather than listing what is
+unhealthy, for the reason in [step 3](#3-create-the-network-and-bring-the-stores-up).
+
+**On the first deploy there is nothing to roll back to**, and the script now says so: if the gates
+fail it reports that the stack is still running the tag just deployed and was not reverted, rather
+than only that `.env.previous` is missing.
 
 It does **not** build. `DO_BUILD` defaults to 0: images are built by CI, tagged by commit, and a
 deploy chooses one. `--build` exists for an unreleased tag CI has never seen and overwrites what CI
@@ -368,9 +450,28 @@ Production does not seed (double-locked: the `test & dev` profile pair *and*
 `healthconnect.seed.enabled`, and `deploy-prod.sh` writes `HEALTHCONNECT_SEED_ENABLED=false` into
 every `.env`), so on a fresh estate **the honest answer is `0`** — which is also what a catalog
 talking to an empty database says, and what a catalog that cannot reach its database does not say at
-all. `deploy-prod.sh`'s smoke test requires `> 0` and will therefore **fail on a genuinely empty
-production estate**, and that is the correct refusal to leave in place until there is real data:
-until then, expect it to warn, and read the number rather than the tick.
+all.
+
+**That last distinction is the whole of the smoke test, and until 2026-09-05 it did not make it.**
+The check required `> 0`, and a failing smoke test does not warn — it falls through to `rollback`. So
+the first deploy would have ended in `no previous deployment recorded`, with the stack up, correct
+and never written to `deployments.log`; and the second, still empty, would have **successfully rolled
+back a deployment that had just come up healthy**. The estate could not have shipped again until it
+had data. This file said "expect it to warn", and that was not what the code did.
+
+It now separates the two answers it was conflating: **no number at all** is a failure (the edge, the
+route, the gateway or catalog's datasource), and **`0`** is warned about loudly and passed. A count of
+`0` exercises DNS, TLS, nginx, D28's route predicates and a round trip to PostgreSQL exactly as a
+count of 18 would.
+
+The `> 0` requirement is still available, as the floor it always was:
+
+```bash
+HC_SMOKE_MIN_PROFESSIONALS=1 ./deploy/deploy-prod.sh --channel github --tag <sha>
+```
+
+Set it once there is real data. From that day an estate answering `0` **is** a failure and should
+roll back; only an operator knows when that day is, which is why it is opt-in rather than default.
 
 Check the headers as well as the status, because a wrong-app collision answers 200:
 
@@ -395,6 +496,24 @@ curl -s -o /dev/null -w '%{http_code}\n' \
 **The last one is the important one.** catalog's `/internal/**` authenticates nobody, and the only
 thing keeping it off the internet is that no gateway route matches it (`decisions.md` D28). If it
 answers anything but 404, stop and read the route predicates.
+
+And confirm the **open** things are the ones meant to be open, which is the same check pointed the
+other way. The gateway's `SecurityConfiguration` permits four paths anonymously — `/api/register`,
+`/api/activate` and both halves of the password reset — so **self-registration is public on
+`market.abofonsa.com` from the first deploy**:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' -X POST https://market.abofonsa.com/api/register  # NOT 401
+```
+
+That is JHipster's generated posture and is presumably what a two-sided marketplace wants: a customer
+who cannot create an account cannot book. It is written down here because it is the one surface on
+this hostname that a stranger can *write* to without a signature, it is open by inheritance rather
+than by a decision anybody recorded, and three lines above this one we curl three things to prove the
+closed things are closed. If open registration is **not** wanted, that is a change to the gateway's
+`SecurityConfiguration` and a decision in `decisions.md`, not an nginx rule — a `location` blocking it
+would put a security control in two files that have to agree, which is exactly what
+`hc-market-app.conf` refuses to do for the routed paths.
 
 The two end-to-end scripts — `deploy/verify-cycle.sh` and `deploy/verify-outbox-recovery.sh` — are
 **not** for this estate. They create data and one of them severs a container from its network; both
@@ -488,6 +607,19 @@ and there is no undo. Take a dump first, every time.
 reads credentials out of `secrets.env` **without sourcing it** — sourcing would execute the file's
 contents and leave every secret in the shell's environment.
 
+**Where the passwords are visible while a dump runs**, because the script used to claim they were
+nowhere. `docker exec -e PGPASSWORD=<value>` puts the value in the argv of the *host's* docker
+client, and `/proc/<pid>/cmdline` is world-readable — so for the length of each nightly dump any
+local user could read the credential out of `ps`, under a comment saying that was exactly what the
+`-e` form prevented. Both engines now pass the **name** and let the value travel in an environment
+(`/proc/<pid>/environ`, owner and root only), attached as a command prefix so it is in one `docker`
+process and not in the script's own environment. One residue is stated rather than claimed away:
+`mongodump` has no password environment variable, no `--password-file`, and an interactive prompt
+that needs a TTY which would corrupt the archive on stdout — so its value is expanded by a shell
+*inside* the gateway's database container and is in **that container's** argv for the duration.
+Reading it needs root on the host or a process already inside that container, and either of those
+already has the database.
+
 **It is not installed.** Nothing here writes a crontab. The sibling stacks sit in a staggered nightly
 ladder (hc-professional at 01:00); 03:00 is free of them:
 
@@ -509,9 +641,12 @@ The Mongo dump is taken first because it is the one database whose contents cann
 from anything else: erasure does not touch the gateway's user store (`decisions.md` D40), so that is
 where the accounts live.
 
-Restoring has never been tried on this host, which means **the backups are unproven**. Proving one is
-in the outstanding list below, and it is the highest-value item on it: an unrestored backup is a
-belief, not a backup.
+**The script now runs; the backups are still unproven.** It was executed for the first time on
+2026-09-05, on the workstation, against five throwaway containers carrying the production names —
+five non-empty archives, the mongo one readable, `backups/` at 0700 and each file at 0600 — and that
+run is what found the credential handling above. What it says nothing about is a production host, and
+nothing at all about **restoring**, which has never been tried anywhere. That is still the
+highest-value item in the outstanding list below: an unrestored backup is a belief, not a backup.
 
 ---
 
@@ -548,10 +683,14 @@ None of this has been done, and none of it can be done from a workstation.
 
 **Before a first deploy could succeed at all**
 
-1. Confirm `/srv/healthconnect` is the right path on `webserver`, and that the ssh target and the
-   deploy user exist. `deploy-prod.sh` defaults to `/srv/healthconnect`; the siblings all live under
-   `~/webroot/01-healthconnect/<product>/`, and **the two conventions disagree**. The code was
-   followed here. If the host convention should win, it is one `--path` flag and this whole README.
+1. Confirm `/srv/healthconnect` exists on `webserver` and is writable, and that `webserver` resolves
+   to a root account in `~/.ssh/config`. The two path conventions disagree and **the disagreement is
+   now argued rather than merely noted** — see
+   [`/srv/healthconnect`, and why it is not `~/webroot/01-healthconnect/hc-market`](#srvhealthconnect-and-why-it-is-not-webroot01-healthconnecthc-market).
+   The short version: the conventional path sits directly below the platform signing key this product
+   must not use, with a sibling `start` pattern that reads `../.env` one directory over. Still one
+   `--path` flag if the convention should win, and still a cheap move either way, because both
+   compose files pin `name:`.
 2. Confirm **8086** is free on the host, and change it in **two** files if not.
 3. Confirm `infranet` and `monitoring` exist and that the broker and Consul are actually on them.
    `deploy-prod.sh` checks the networks; nothing checks that anything is listening.

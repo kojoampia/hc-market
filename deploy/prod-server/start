@@ -33,6 +33,8 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 SECRETS_FILE="${SECRETS_FILE:-secrets.env}"
 DATA_COMPOSE="${DATA_COMPOSE:-data-compose.yml}"
 APP_COMPOSE="${APP_COMPOSE:-docker-compose.yml}"
+# How many stores data-compose.yml declares. Asserted rather than assumed — see the health wait.
+EXPECTED_STORES="${EXPECTED_STORES:-5}"
 
 if [[ ! -s "$SECRETS_FILE" ]]; then
   echo "error: $PWD/$SECRETS_FILE is missing or empty." >&2
@@ -56,17 +58,38 @@ echo "==> data tier ($DATA_COMPOSE)"
 docker compose --env-file "$SECRETS_FILE" -f "$DATA_COMPOSE" up -d
 
 echo "==> waiting for the stores to report healthy"
+# --- `ps -a`, AND A COUNT, BECAUSE THE ABSENCE OF A STORE IS NOT THE ABSENCE OF A PROBLEM ---------
+#
+# THIS GATE PASSED WHEN THE STORES WERE GONE. `docker compose ps` lists only RUNNING containers —
+# `-a` is needed for stopped ones — so a store that EXITS is not in the output at all: a corrupt
+# volume, or a Mongo datadir whose credentials no longer match (the rotation trap in README.md's
+# "Rotating a credential", which is the likeliest way this happens). Filtering that output for
+# services that are not healthy then found nothing, printed "all five stores healthy", and started
+# the five applications against dead databases. If all five had exited, the output was empty and the
+# gate was unanimous about it.
+#
+# Waiting for this is the script's entire reason to exist, so it now asserts a positive: FIVE
+# services, all healthy. `-a` makes an exited store visible (State `exited`, Health empty, so it is
+# reported rather than skipped) and the count catches the case -a cannot — a container removed
+# altogether, which appears in no listing of any kind.
 waited=0
 while :; do
-  # `ps` with a status filter rather than parsing health strings: compose knows what healthy means
-  # for a project and this cannot drift with the format.
-  unhealthy="$(docker compose --env-file "$SECRETS_FILE" -f "$DATA_COMPOSE" ps \
-                 --format '{{.Service}} {{.Health}}' | awk '$2 != "healthy" {print $1}')"
-  [[ -z "$unhealthy" ]] && { echo "    all five stores healthy"; break; }
+  status="$(docker compose --env-file "$SECRETS_FILE" -f "$DATA_COMPOSE" ps -a \
+              --format '{{.Service}} {{.State}} {{.Health}}')"
+  seen="$(printf '%s\n' "$status" | grep -c '[^[:space:]]' || true)"
+  notready="$(printf '%s\n' "$status" | awk '$3 != "healthy" {print $1"  ("$2" "$3")"}')"
+  if (( seen == EXPECTED_STORES )) && [[ -z "$notready" ]]; then
+    echo "    all $EXPECTED_STORES stores healthy"
+    break
+  fi
   (( waited += 5 ))
   if (( waited >= 180 )); then
-    echo "error: still not healthy after ${waited}s:" >&2
-    echo "$unhealthy" | sed 's/^/       /' >&2
+    echo "error: the data tier is not ready after ${waited}s — $seen of $EXPECTED_STORES services present." >&2
+    [[ -n "$notready" ]] && echo "$notready" | sed 's/^/       /' >&2
+    if (( seen != EXPECTED_STORES )); then
+      echo "       $((EXPECTED_STORES - seen)) service(s) have no container at all, which is not a" >&2
+      echo "       slow start — check that $PWD/$DATA_COMPOSE is the whole data tier." >&2
+    fi
     echo "       The applications were NOT started. Look at the store logs before going further:" >&2
     echo "         docker compose --env-file $SECRETS_FILE -f $DATA_COMPOSE logs --tail=50" >&2
     exit 1
@@ -89,7 +112,18 @@ echo "==> application stack ($APP_COMPOSE, tag $(grep -m1 '^HC_TAG=' .env | cut 
 # --remove-orphans is safe because docker-compose.prod.yml pins `name: healthconnect`, so it can only
 # ever touch this project's own containers. NOT --force-recreate: this is a restart, and recreating
 # five JVMs that are already running correctly is a two-minute outage for nothing.
-docker compose --env-file .env --env-file "$SECRETS_FILE" -f "$APP_COMPOSE" pull
+#
+# AND NO `pull`. There was one, and it contradicted this file's own header three lines from the top
+# ("pulls no application image"). Harmless while every tag is a commit SHA and therefore immutable —
+# and README.md documents the case that is not: `deploy-prod.sh --build` "overwrites what CI
+# published at that tag", after which a post-reboot ./start silently fetched different bytes for the
+# same tag and this script chose something nobody chose. Bringing back exactly what was running is
+# the whole contract.
+#
+# `up -d` still fetches an image that is not on this host at all — the default pull policy is
+# `missing` — which is the one case where these bytes come from a registry, and it is unavoidable
+# without refusing to start. That case is a pruned image rather than a re-pushed tag, so it fetches
+# the tag it already had.
 docker compose --env-file .env --env-file "$SECRETS_FILE" -f "$APP_COMPOSE" up -d --remove-orphans
 
 echo ""
