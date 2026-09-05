@@ -16,6 +16,15 @@ deploy/.env
 deploy/.env.*
 !deploy/.env.example
 
+# The production host's long-lived values (decisions.md D35, D49). `.env.*` above does NOT cover this
+# name — that pattern matches files literally called `.env.something` — and the file holds the
+# signing key, the erasure pepper and five database passwords. It is created on the server, by hand,
+# and should never exist in a checkout at all; this is here for the case where somebody copies one
+# back to look at it.
+secrets.env
+**/secrets.env
+!deploy/prod-server/secrets.env.example
+
 # Leftover output from running the estate
 *.log
 !deploy/**/*.log

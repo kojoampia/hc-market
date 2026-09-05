@@ -110,9 +110,17 @@ x-service-base: &service-base
   logging:
     driver: json-file
     options: { max-size: '10m', max-file: '3' }
-  # `default` is infranet (Kafka, Consul, the databases); `monitoring` reaches the shared
-  # otel-collector. Both are host-wide and external -- see the note above the networks block.
-  networks: [default, monitoring]
+  # `default` is infranet (Kafka and Consul); `hcmarketnet` reaches this product's five databases;
+  # `monitoring` reaches the shared otel-collector. All three are external -- see the note above the
+  # networks block.
+  #
+  # hcmarketnet was added on 2026-09-05 with deploy/prod-server/. Until then this comment said
+  # infranet carried "the databases" and no compose file in this repository declared a production
+  # database at all, so every HC_*_DB_URL was a `:?` variable pointing at a hostname nothing on the
+  # host provided. The stores are now a second compose project on this network, and they are NOT on
+  # infranet: three sibling products share that one, and a database another product can resolve is
+  # exactly what decisions.md D27 keeps off a shared network.
+  networks: [default, hcmarketnet, monitoring]
 
 services:
   hc-market-gateway:
@@ -120,7 +128,24 @@ services:
     <<: *service-base
     image: ${HC_IMAGE_PREFIX}${HC_IMAGE_SEP}gateway:${HC_TAG}
     ports:
-      - '${HC_GATEWAY_PORT:-8080}:8080'
+      # LOOPBACK ONLY, and 8086 rather than 8080. Both halves changed on 2026-09-05.
+      #
+      # `'${HC_GATEWAY_PORT:-8080}:8080'` binds 0.0.0.0, so on the production host the gateway would
+      # have answered the internet directly on port 8080, beside the nginx that terminates TLS. That
+      # is not a routing hole — D28's four route predicates are the control and they apply either way
+      # — but it bypasses TLS, the security headers, the CSP, the robots policy and the webhook rate
+      # limit, all of which live at the edge. Every sibling binds 127.0.0.1 for exactly this reason,
+      # and quality/README.md states the property this restores: the vhost is the only way in.
+      #
+      # 8086 because 8080 is the most contested port on a host running six products, and a collision
+      # here presents as a gateway that will not start with a message about an address, not about a
+      # plan. It sits in the same family as the siblings' loopback ports (hc-admin 8083, hc-patient
+      # 8085, hc-professional 5503). NOT VERIFIED FREE ON webserver — nothing in this repository has
+      # ever contacted that host — so confirming it is the operator's first step in the README.
+      #
+      # Written twice, here and in prod-server/hc-market-app.conf, because nginx cannot read the
+      # environment. CI checks the two agree rather than letting them drift into a 502.
+      - '127.0.0.1:${HC_GATEWAY_PORT:-8086}:8080'
     environment:
       <<: *service-env
       # The identity label every dashboard and recording rule groups by, so it must stay stable
@@ -288,14 +313,26 @@ services:
       SPRING_DATASOURCE_USERNAME: ${HC_PAYOUT_DB_USER:-healthconnectPayout}
       SPRING_DATASOURCE_PASSWORD: ${HC_PAYOUT_DB_PASSWORD:?payout datasource password is required}
 
-# Kafka, Consul and the databases are HOST-WIDE infrastructure borrowed over an external network,
-# not bundled here — the same convention every other product in this workspace follows. A missing
+# Kafka and Consul are HOST-WIDE infrastructure borrowed over an external network, not bundled here —
+# the same convention every other product in this workspace follows (decisions.md D27). A missing
 # broker is silent: the app starts, serves, and reports healthy while everything produced goes
 # nowhere, which is why deploy-prod.sh checks reachability explicitly rather than relying on
 # depends_on (which cannot express a host-wide container).
+#
+# The DATABASES are not in that sentence any more, and were never true in it. There is no host-wide
+# PostgreSQL for four products to share; hc-market owns its schema, and D27's own closing paragraph
+# keeps the databases off every shared network so no other product can reach them. They are declared
+# in deploy/prod-server/compose.yml as a second compose project on hcmarketnet — bundled,
+# deliberately, which is the opposite call from the broker and for the opposite reason.
 networks:
   default:
     name: ${HC_NETWORK:-infranet}
+    external: true
+  # This product's own, created by deploy/prod-server/infra.sh — NOT by compose, because two
+  # separate projects attach to it and a compose-created network would give each of them a different
+  # one. `external: true` also means a missing network fails loudly at `up`.
+  hcmarketnet:
+    name: ${HC_DATA_NETWORK:-hcmarketnet}
     external: true
   # The host's observability stack (~/webroot/02-monitoring/services). External for the same reason
   # infranet is: it is shared with every other product on the box and is not this stack's to create.
