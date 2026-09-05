@@ -1,12 +1,12 @@
 package net.jojoaddison.web.rest;
 
-import java.time.LocalDate;
 import net.jojoaddison.security.SecurityUtils;
 import net.jojoaddison.service.EarningsService;
 import java.util.List;
 import net.jojoaddison.repository.EarningsRepository;
 import net.jojoaddison.repository.PayoutQueryRepository;
 import net.jojoaddison.service.BookingScheduleClient;
+import net.jojoaddison.service.MarketCalendar;
 import net.jojoaddison.service.dto.EarningsDtos.Earnings;
 import net.jojoaddison.service.dto.EarningsDtos.NextUp;
 import net.jojoaddison.service.dto.EarningsDtos.Overview;
@@ -34,6 +34,14 @@ import org.springframework.http.HttpStatus;
  * true by construction rather than by a check someone can forget to write. There is deliberately no
  * {@code ?professionalRef=} override, not even an admin one — that would reintroduce exactly the
  * parameter this design removes.
+ *
+ * <h2>The "today" the month-to-date slice is measured from</h2>
+ *
+ * <p>{@link MarketCalendar}, not {@code LocalDate.now()} — decisions.md D51. It has to be the
+ * marketplace's calendar because it is a bound on {@code ledger.earned_on}, which is written in that
+ * calendar: a window read in one calendar over rows dated in another is the same disagreement on the
+ * read side, and near a month boundary it drops or adds a day of earnings from the tile without
+ * moving the lifetime total that would have made it visible.
  */
 @RestController
 @RequestMapping("/api/pro")
@@ -43,17 +51,20 @@ public class ProEarningsResource {
     private final EarningsRepository ledger;
     private final PayoutQueryRepository payouts;
     private final BookingScheduleClient schedule;
+    private final MarketCalendar calendar;
 
     public ProEarningsResource(
         EarningsService earnings,
         EarningsRepository ledger,
         PayoutQueryRepository payouts,
-        BookingScheduleClient schedule
+        BookingScheduleClient schedule,
+        MarketCalendar calendar
     ) {
         this.earnings = earnings;
         this.ledger = ledger;
         this.payouts = payouts;
         this.schedule = schedule;
+        this.calendar = calendar;
     }
 
     /**
@@ -66,7 +77,7 @@ public class ProEarningsResource {
         if (months < 1 || months > 60) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "months must be between 1 and 60");
         }
-        return ResponseEntity.ok(earnings.forProfessional(login, months, LocalDate.now()));
+        return ResponseEntity.ok(earnings.forProfessional(login, months, calendar.today()));
     }
 
     /**
@@ -83,7 +94,7 @@ public class ProEarningsResource {
         @RequestHeader(HttpHeaders.AUTHORIZATION) String authorization
     ) {
         String login = currentLogin();
-        Earnings e = earnings.forProfessional(login, months, LocalDate.now());
+        Earnings e = earnings.forProfessional(login, months, calendar.today());
 
         var day = schedule.nextConfirmedDay(authorization);
         NextUp nextUp = day

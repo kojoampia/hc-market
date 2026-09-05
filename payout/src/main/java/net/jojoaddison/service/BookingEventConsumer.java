@@ -3,7 +3,6 @@ package net.jojoaddison.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
-import java.time.LocalDate;
 import java.util.Comparator;
 import java.util.List;
 import net.jojoaddison.domain.BrokerageConfig;
@@ -49,6 +48,14 @@ import org.springframework.transaction.annotation.Transactional;
  * versioned by {@code effectiveFrom} so that a booking prices against the rate in force when it
  * completed. Booking has no business knowing the rate, and a booking service that computed
  * commission would have to be redeployed every time the brokerage changed its terms.
+ *
+ * <h2>Which day a row is earned on</h2>
+ *
+ * <p>{@link MarketCalendar}, never {@code LocalDate.now()} — decisions.md D51. {@code earned_on} is
+ * the column the seeders write in {@code Africa/Accra} (D48) and this listener wrote in whatever
+ * calendar the container was started in, in the same table. Every date this class stores comes from
+ * the injected calendar and nothing here reads a clock for one; CI enforces that across the whole
+ * service rather than trusting this paragraph.
  */
 @Component
 public class BookingEventConsumer {
@@ -60,19 +67,22 @@ public class BookingEventConsumer {
     private final BrokerageConfigRepository brokerage;
     private final ProcessedEventRepository processed;
     private final ObjectMapper mapper;
+    private final MarketCalendar calendar;
 
     public BookingEventConsumer(
         LedgerRepository ledger,
         EarningsRepository ledgerQueries,
         BrokerageConfigRepository brokerage,
         ProcessedEventRepository processed,
-        ObjectMapper mapper
+        ObjectMapper mapper,
+        MarketCalendar calendar
     ) {
         this.ledger = ledger;
         this.ledgerQueries = ledgerQueries;
         this.brokerage = brokerage;
         this.processed = processed;
         this.mapper = mapper;
+        this.calendar = calendar;
     }
 
     @KafkaListener(
@@ -140,7 +150,9 @@ public class BookingEventConsumer {
                 .deliveryMode(deliveryModeOf(p))
                 .serviceRef(p.path("serviceRef").asText(null))
                 .serviceName(p.path("serviceName").asText(null))
-                .earnedOn(LocalDate.now())
+                // The marketplace's calendar, not the container's — decisions.md D51. A session
+                // completed at 23:30 UTC is earned that day wherever this JVM happens to be started.
+                .earnedOn(calendar.today())
         );
         LOG.info("ledger entry for {} — gross {} commission {}", bookingRef, gross, commission);
     }
@@ -243,7 +255,10 @@ public class BookingEventConsumer {
                 .deliveryMode(deliveryModeOf(p))
                 .serviceRef(p.path("serviceRef").asText(null))
                 .serviceName("Late cancellation fee")
-                .earnedOn(LocalDate.now())
+                // Same calendar as the completed-booking row above, and for the same reason — the
+                // two land in one table and a fee dated a day later than the session it belongs to
+                // would move between months without moving a total. decisions.md D51.
+                .earnedOn(calendar.today())
         );
         LOG.info("late cancellation fee for {} — {} of {}", bookingRef, fee, full);
     }

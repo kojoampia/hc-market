@@ -63,7 +63,7 @@ class BookingEventConsumerDeliveryModeTest {
 
     @BeforeEach
     void setUp() {
-        consumer = new BookingEventConsumer(ledger, ledgerQueries, brokerage, processed, new ObjectMapper());
+        consumer = new BookingEventConsumer(ledger, ledgerQueries, brokerage, processed, new ObjectMapper(), new MarketCalendar());
         when(brokerage.findAll()).thenReturn(List.of(ghsConfig()));
         when(ledgerQueries.existsByBookingReference(anyString())).thenReturn(false);
         when(processed.existsById(anyString())).thenReturn(false);

@@ -44,9 +44,10 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **NEW-7** | "Sessions brokered" was not live, under a LIVE banner | DONE | D46 |
 | **NEW-8** | The prototype's professional workspace is demo-only in live mode | WON'T (documented) | D46 §5 |
 | **NEW-9** | Four seeders shift every date by the JVM's idea of today | DONE | D48 — zone closed in all four; the shared-`today` half deliberately not built, with its triggers named. Reviewed 2026-09-05, nine findings, all applied |
-| **NEW-10** | Payout writes `ledger.earned_on` in the JVM's calendar and the seeder's in Accra's | READY | D47/D48 — three writes to the cross-service pivot, two reads. Opened by the NEW-9 review |
+| **NEW-10** | Payout writes `ledger.earned_on` in the JVM's calendar and the seeder's in Accra's | DONE | D51 — all six closed, three writes and three renders, across payout and booking. The data question is **answered**: no stored row anywhere was written outside Accra's calendar, so no migration. Catalog's four are NEW-12 |
 | **WP-19** | Production deployment configuration, to sibling parity | PARTLY DONE | D49 — `deploy/prod-server/` built, five defects in the deploy path fixed, then reviewed 2026-09-05 and eight more applied, one of them blocking (a failing smoke test triggered an automatic rollback). **Nothing has ever been run against a host**; the fifteen things a person must still do are in that directory's README |
 | **NEW-11** | A second payment attempt for one booking would reuse Paystack's reference | WON'T, until there is a second attempt | D50 — no such path exists; the day one is added the suffix goes in with it. Opened by the D50 review |
+| **NEW-12** | Catalog's four implicit-zone reads, one of which stores a date | READY | D47/D51 — `ReviewWriteResource:115` writes `Review.publishedOn` and carries its own data question; three rendered window defaults beside it. The CI check D51 added is widened to catalog the day this closes |
 
 ---
 
@@ -1015,12 +1016,13 @@ the only estate that evaluates the shift is dev. And the four *rendering* `Local
 D47 inventoried in catalog are untouched; this package was scoped to the one that writes. Payout's
 five are **NEW-10**, opened by the review.
 
-## NEW-10 — Payout writes the cross-service pivot in the JVM's calendar · READY
+## NEW-10 — Payout writes the cross-service pivot in the JVM's calendar · DONE
 
-Opened by the NEW-9 review, and deliberately not fixed there: it is outside that package's scope, but
-it undermines D48's thesis and nothing recorded it. `ledger.earned_on` is the column D48 names as the
-pivot between payout's seeded data and booking's `completed_at` — and after D48 the **seeder** writes
-it in `Africa/Accra` while the **consumer** writes it in the JVM's zone, in the same table:
+**D51.** Opened by the NEW-9 review, and deliberately not fixed there: it was outside that package's
+scope, but it undermined D48's thesis and nothing recorded it. `ledger.earned_on` is the column D48
+names as the pivot between payout's seeded data and booking's `completed_at` — and after D48 the
+**seeder** wrote it in `Africa/Accra` while the **consumer** wrote it in the JVM's zone, in the same
+table:
 
 | Where | What it decides | Shape |
 | --- | --- | --- |
@@ -1041,15 +1043,30 @@ comment reasons carefully about *which day* a reversal belongs to ("dated today,
 silently rewrite a month that has already been reported") and never names a zone. The decision was
 taken; the calendar it was taken in was not.
 
-**The shape of the fix is known and cheap** — a named constant, as D47 did for the badge and D48 for
-the seed — but the *stored* rows make it a data question rather than a rename, exactly as
-`ReviewWriteResource:115` is in catalog. Whether existing rows need correcting is the part that needs
-a decision, not the constant. Note there is no `SeedCalendar` to reuse: it is package-private in
-`service.seed` and this is the runtime path, so a shared estate-wide `LocalDate today()` is the
-question the package opens.
+**Done as D51**, with `booking` `ProBookingResource:111` folded in — the same implicit-zone default for
+a rendered window, one line, and leaving it would have meant a second package for one call site.
+`MarketCalendar` is the named constant plus a `today()` on an injectable clock, copied byte-identically
+into payout and booking with CI diffing the copies. It is a **third** named zone rather than an
+estate-wide one, beside `SeedCalendar.SEED_ZONE` and catalog's `MarketplaceService.BADGE_ZONE`: three
+questions, three arguments, one answer, and merging them would leave two of the three arguments written
+down nowhere. D51 argues it.
 
-Related and outside it: `booking` `ProBookingResource:111` is the same implicit-zone default for a
-rendered window, and catalog's remaining four stand as D47 recorded them.
+**The data question is answered, and the answer is that there was nothing to correct.** Established
+rather than assumed: production has never been deployed, no compose file in the repository sets `TZ`
+on any service, the payout image's own default is `Etc/UTC` (measured, not inferred), and the one
+estate holding real rows — the quality box — holds 256 seeded rows plus exactly one written by the
+consumer, dated correctly. No dev volume exists at all. So every `earned_on` ever stored was written in
+UTC, which is Accra. **No migration, and it has an expiry**: the answer holds because nothing is
+deployed and nothing sets `TZ`, and `ledger` carries no instant beside the date, so a row written in the
+wrong calendar could never be told from a right one afterwards.
+
+**Also closed:** a CI grep, D48's widened from a seed package to payout's and booking's whole `src/main`
+trees, watched firing against six constructed reintroductions including the exact stand-in D48's own
+first check missed. And one new fail-open of its own found and closed — a `while read` over an empty
+`find` is one empty line, not none.
+
+**Not closed:** catalog's four, which are **NEW-12**, and which is why the new check does not scan
+catalog. And nothing was run against a live estate: the quality box was read, not rebuilt.
 
 ## WP-19 — Production deployment configuration · PARTLY DONE
 
@@ -1157,6 +1174,34 @@ already built for it — `PaymentRecorder.record`'s javadoc says two attempts ag
 legitimately carry the same reference, which today describes a world no adapter here can produce.
 
 Written on `PaystackPaymentProvider.authorize`, where whoever adds that path will be standing.
+
+## NEW-12 — Catalog's four implicit-zone reads, one of which stores a date · READY
+
+Opened by D51 rather than by a review, and separate from NEW-10 for two reasons: it is a different
+service, and one of the four is a **stored** date whose correction is a data question of its own rather
+than a rename. D47 inventoried them and they stand exactly as it recorded them.
+
+| Where | What it decides | Shape |
+| --- | --- | --- |
+| `ReviewWriteResource:115` | `Review.publishedOn` on a new review | **writes, stored** |
+| `MarketplaceResource:132` | the default start of a public availability window | renders |
+| `ProWorkspaceResource:228` | the default start of the professional's own window | renders |
+| `ProWorkspaceResource:337` | the same, on the second window endpoint | renders |
+
+All four are `LocalDate.now()`. **The shape of the fix is settled and cheap** — a fourth copy of
+`MarketCalendar` (D51), byte-identical, added to the CI diff beside payout's and booking's, plus the
+one line each. Catalog already carries `MarketplaceService.BADGE_ZONE`, which stays separate for the
+reason D47 and D51 both give: it is the verification desk's calendar and answers a different question.
+
+**Two things make it more than a rename.** `Review.publishedOn` is on a *public* review, and catalog's
+quality database holds seeded reviews plus whatever `verify-cycle.sh` has left there, so D51's "no
+stored row needed correcting" **must be re-established rather than cited** — the four checks it used
+(nothing deployed, no `TZ` in any compose file, the image's own default zone, and reading the one
+database that holds real rows) are the method, not the answer.
+
+And the CI check D51 added deliberately **does not scan catalog** while these are open, because a check
+with these three files exempted would claim to cover the service while being blind in exactly the files
+most likely to acquire the next one. Widening it to catalog is part of this package, not a follow-up.
 
 ---
 

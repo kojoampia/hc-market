@@ -631,6 +631,13 @@ time.**
   - `SeedCalendar.java` + `SeedCalendarUnitTest.java` — **catalog, booking, messaging, payout** (D48).
     How far every seeded date moves, and in whose calendar. Diverge and two services' seeded data stop
     lining up, with no count moving and nothing going red.
+  - `MarketCalendar.java` + `MarketCalendarUnitTest.java` + `SeedAndMarketCalendarsAgreeUnitTest.java`
+    — **payout, booking** (D51). What day it is at *run* time: `ledger.earned_on` on all three paths
+    that write it, the "today" the month-to-date slice is bounded by, and the schedule window's first
+    day. The third file is not merely a third copy — **both diffs stay green while `SEED_ZONE` says
+    one thing and `MARKET_ZONE` says another**, which is a service whose seeded rows and whose live
+    rows are dated in two calendars, and only a test comparing the two constants in one build can see
+    it. A fourth copy goes into catalog the day NEW-12 closes.
 - **The scripts and the spec appendices are the same bytes in two places.** Appendix A is
   `deploy/deploy-dev.sh`, Appendix B is `deploy/deploy-prod.sh`. This is enforced mechanically —
   after editing either script, re-embed; before trusting the spec, check:
@@ -684,22 +691,36 @@ time.**
   and wrong on the first one with a `TZ`. It is already wrong on this workstation, which runs
   `Europe/Vienna` — D47 and CLAUDE.md both said `Europe/Berlin`, which is the same offset and the same
   DST rules, so every claim about the behaviour held and only the name was wrong.
-  `MarketplaceService.BADGE_ZONE` is the pattern.
-  **The one that WROTE is fixed; ten that render or write elsewhere are not.** D47's inventory found
-  five implicit-zone `LocalDate.now()` calls in catalog — it said four until the WP-15 review counted
-  them — and the missed one was the consequential one. `CatalogSeeder`'s decided how far every seeded
-  date moves, and the identical line was in `BookingSeeder`, `MessagingSeeder` and `PayoutSeeder`.
-  **NEW-9 / D48 replaced all four with `SeedCalendar`**, one file copied byte-identically into the four
-  seeded services with CI diffing the copies, plus a CI grep that nothing in a `service.seed` package
-  reads a clock or the JVM's zone — the whole package, `SeedCalendar` excepted, because
-  `SeedDataLoader` is in it too. Catalog's remaining four are `ReviewWriteResource:115` (which stores
-  `Review.publishedOn`, so correcting it is a data question), `MarketplaceResource:132` and
-  `ProWorkspaceResource` twice — all defaults for a rendered availability window.
-  **D47's inventory was catalog-only and read as estate-wide; it is not.** Six more are open outside
-  catalog, and **`payout` writes `ledger.earned_on` from `LocalDate.now()` in three places** —
-  `BookingEventConsumer:143` and `:246`, `DisputeEventConsumer:142` — so after D48 that column is
-  written in Accra's calendar by the seeder and the JVM's by the consumer, in one table. That is
-  **NEW-10**, open, tabulated in D47.
+  **There are now THREE named zone constants and they stay three** — `SeedCalendar.SEED_ZONE` (the
+  seed's shift, D48), `MarketplaceService.BADGE_ZONE` (the verification desk's day, D47/D33) and
+  `MarketCalendar.MARKET_ZONE` (everything at run time, D51). All `Africa/Accra`, all always will be.
+  One estate-wide constant was considered and rejected: three different questions with three different
+  arguments for the same answer, and merging them leaves two of the arguments written down nowhere.
+  There is also nowhere to put it — five standalone Maven projects, no aggregator pom, so "shared"
+  means a copied file either way. `MarketCalendar` is the pattern for a runtime date; `BADGE_ZONE` for
+  a rendered one that is nobody else's business.
+  **The estate-wide inventory is now four, all in catalog.** D47's original inventory was catalog-only
+  and read as estate-wide; it never was. **NEW-9 / D48 closed the four seeders** with `SeedCalendar`,
+  copied byte-identically with CI diffing the copies plus a grep that nothing in a `service.seed`
+  package reads a clock or the JVM's zone — the whole package, `SeedCalendar` excepted, because
+  `SeedDataLoader` is in it too. **NEW-10 / D51 closed the six outside it**: payout's three writes to
+  `ledger.earned_on` (`BookingEventConsumer:143`, `:246`, `DisputeEventConsumer:142` — one table
+  written in Accra's calendar by the seeder and the JVM's by the consumer), payout's two rendered
+  "today"s and booking's `ProBookingResource:111`. Its CI check is D48's grep widened from a package to
+  payout's and booking's **whole** `src/main` trees.
+  **It deliberately does not scan catalog**, whose four are open as **NEW-12** —
+  `ReviewWriteResource:115` (which stores `Review.publishedOn`, so correcting it is a data question),
+  `MarketplaceResource:132` and `ProWorkspaceResource` twice. Exempting three files would give a check
+  that claims to cover the service while being blind in exactly the files most likely to acquire the
+  next one; it is widened the day NEW-12 closes.
+  **D51's data answer was "nothing to correct", and it is not transferable.** No stored `earned_on`
+  was ever written outside Accra's calendar — production has never been deployed, no compose file sets
+  `TZ` on any service, the payout image's own zone is `Etc/UTC` (measured), and the quality box holds
+  256 seeded rows plus one consumer-written row, dated correctly. That holds *because* nothing is
+  deployed and nothing sets `TZ`; the day either changes it stops holding, and `ledger` carries no
+  instant beside the date, so a row written in the wrong calendar can never be told from a right one
+  afterwards. NEW-12 must re-establish the same four facts for `Review.publishedOn` rather than cite
+  this one.
   D48 closes the zone half only, deliberately: the four services still evaluate the shift
   independently, seconds apart on one `compose up` (**measured: 7.1s**), so a boot straddling Accra
   midnight can still split them. That residual is dev-only (quality anchors, production never seeds)

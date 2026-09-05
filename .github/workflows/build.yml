@@ -672,6 +672,101 @@ jobs:
           done
           exit "$fail"
 
+      # The RUNTIME calendar is the same arrangement again, two services wide — decisions.md D51.
+      #
+      # SeedCalendar says what day it is for the seed. MarketCalendar says what day it is for
+      # everything else: payout's ledger.earned_on on all three paths that write it, the "today" its
+      # month-to-date slice is bounded by, and booking's default first day of the schedule window.
+      # Copied byte-identically into payout and booking and diffed here, same reason as
+      # SubjectPseudonym and SeedCalendar — no shared library, and a constant duplicated with nothing
+      # comparing the copies is how the next divergence arrives in silence.
+      #
+      # SeedAndMarketCalendarsAgreeUnitTest goes with them and is not merely a third copy. Both diffs
+      # stay green while one FAMILY says Africa/Accra and the other says UTC — that is a service whose
+      # seeded rows and whose live rows are dated in two calendars, which is NEW-10 itself and is what
+      # this estate actually had for a week. Neither this check nor the one above can see it; the test
+      # can, because it compares the two constants in one build.
+      - name: The runtime calendar must be identical in both services that keep one
+        run: |
+          fail=0
+          for f in src/main/java/net/jojoaddison/service/MarketCalendar.java \
+                   src/test/java/net/jojoaddison/service/MarketCalendarUnitTest.java \
+                   src/test/java/net/jojoaddison/service/seed/SeedAndMarketCalendarsAgreeUnitTest.java; do
+            if ! diff -u "payout/$f" "booking/$f"; then
+              echo "::error::$f differs between services — payout and booking must agree on what day it is. See decisions.md D51."
+              fail=1
+            else
+              echo "ok   $f — identical in both"
+            fi
+          done
+          exit "$fail"
+
+      # …and nothing else in payout or booking may read a date from an implicit zone.
+      #
+      # This is D48's seed-package grep widened from a package to two whole services, because NEW-10
+      # was five of these outside any seed package: three writes to ledger.earned_on and two rendered
+      # "today"s in payout, plus one rendered window default in booking. All five read LocalDate.now(),
+      # which takes the JVM's zone — correct in a container with no TZ, correct in CI, and wrong on the
+      # workstation this was written on for two hours every summer evening. A stored date that is wrong
+      # is wrong for ever, and nothing about it looks wrong: the row is ordinary, no count moves, and
+      # lifetime gross — the one figure anybody has an independent copy of — does not budge.
+      #
+      # The regex and the comment filter are D48's, verbatim, including the three fixes its review
+      # made: it bans the ZONE that interprets a clock and not merely the TYPE that reads one, so
+      # LocalDate.ofInstant(Instant.now(), ZoneId.systemDefault()) does not sail through; it drops
+      # comment lines from a full-line match rather than anchoring past them, so a division or a slash
+      # in a log string cannot hide the rest of the line; and it scans directories with the count of
+      # files asserted, so a moved package fails rather than reporting ok on nothing.
+      #
+      # Instant.now() is deliberately NOT banned, exactly as in D48. An Instant carries no calendar and
+      # cannot be read in the wrong one — ProcessedEvent, AbstractAuditingEntity and
+      # BookingEventConsumer's own effective-dating of the brokerage config all use one correctly.
+      # ZoneOffset.UTC is likewise absent from the list: BrokerageResource names its zone, and a named
+      # zone is a decision somebody can disagree with rather than a defect.
+      #
+      # CATALOG IS DELIBERATELY NOT SCANNED, and that is a scope statement rather than an oversight.
+      # Four implicit-zone reads are still open there — ReviewWriteResource:115, MarketplaceResource:132
+      # and ProWorkspaceResource twice — inventoried in D47 and carried as backlog NEW-12. Adding
+      # catalog with those three files exempted would produce a check that claims to cover the service
+      # while being blind in exactly the files most likely to acquire the next one. It is added the day
+      # NEW-12 closes.
+      - name: No runtime class in payout or booking may read a date in an implicit zone
+        run: |
+          fail=0
+          for svc in payout booking; do
+            dir="$svc/src/main/java/net/jojoaddison"
+            if [ ! -d "$dir" ]; then
+              echo "::error::$dir does not exist — this check would scan nothing and pass. See decisions.md D51."
+              fail=1
+              continue
+            fi
+            scanned=0
+            while IFS= read -r f; do
+              # A `while read` over an empty find is one EMPTY line, not none — grep would then be
+              # handed "" , error, and the pipeline's exit status would come from the filter and read
+              # as "no match". Same fail-open D48's review found in an unexpanded glob, one shell
+              # construct along, so the empty name is dropped before it can be counted as scanned.
+              [ -z "$f" ] && continue
+              # The two calendars are the files that MAY read a clock: SeedCalendar for the seed's
+              # shift, MarketCalendar for everything at run time. Everything else goes through one of
+              # them.
+              case "$f" in */SeedCalendar.java|*/MarketCalendar.java) continue ;; esac
+              scanned=$((scanned + 1))
+              if grep -nE '(LocalDate|LocalDateTime|LocalTime|ZonedDateTime|OffsetDateTime|Year|YearMonth)\.now\(|Clock\.system|ZoneId\.systemDefault|TimeZone\.getDefault|systemDefaultZone' "$f" \
+                   | grep -vE '^[0-9]+:[[:space:]]*(//|\*|/\*)'; then
+                echo "::error file=$f::this reads a date in whatever calendar the container was started in — use MarketCalendar, or an Instant if it is a moment rather than a day. See decisions.md D51."
+                fail=1
+              fi
+            done <<< "$(find "$dir" -name '*.java' -type f | sort)"
+            if [ "$scanned" -eq 0 ]; then
+              echo "::error::$dir matched no scannable file — this check is now blind. See decisions.md D51."
+              fail=1
+            else
+              echo "ok   $svc — $scanned files scanned, none reads an implicit zone"
+            fi
+          done
+          exit "$fail"
+
       # And the pepper that keys it must be injected everywhere the three services run, and committed
       # nowhere a real deployment reads. Same shape as the JWT signing key, same reason: this
       # repository is public, so a default that works is a secret that does not.

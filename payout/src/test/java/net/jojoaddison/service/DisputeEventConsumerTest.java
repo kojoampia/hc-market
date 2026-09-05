@@ -84,7 +84,7 @@ class DisputeEventConsumerTest {
 
     @BeforeEach
     void setUp() {
-        consumer = new DisputeEventConsumer(ledger, ledgerQueries, processed, new ObjectMapper());
+        consumer = new DisputeEventConsumer(ledger, ledgerQueries, processed, new ObjectMapper(), new MarketCalendar());
         when(processed.existsById(anyString())).thenReturn(false);
         when(ledgerQueries.findByBookingReference("d-abc")).thenReturn(Optional.empty());
         when(ledgerQueries.findByBookingReference("b-1")).thenReturn(Optional.of(original()));

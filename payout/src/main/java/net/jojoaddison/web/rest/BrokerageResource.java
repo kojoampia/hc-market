@@ -2,12 +2,12 @@ package net.jojoaddison.web.rest;
 
 import java.time.Instant;
 import java.time.LocalDate;
-import java.time.ZoneOffset;
 import java.util.Comparator;
 import java.util.List;
 import net.jojoaddison.domain.BrokerageConfig;
 import net.jojoaddison.repository.BrokerageConfigRepository;
 import net.jojoaddison.service.Commission;
+import net.jojoaddison.service.MarketCalendar;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -59,16 +59,29 @@ public class BrokerageResource {
 
     /**
      * @param amountMinor the price the caller is asking about, in minor units
-     * @param on          the date the split should be struck at — defaults to today. A receipt for a
+     * @param on          the date the split should be struck at — defaults to now. A receipt for a
      *                    session completed last year must use last year's rate, which is why this is
      *                    a parameter rather than "now".
+     *                    <p>A date is not a moment, so turning one into an instant needs a calendar,
+     *                    and it is the marketplace's — {@code decisions.md} D51. This read
+     *                    {@code ZoneOffset.UTC}, which was never the NEW-10 defect: a named zone is a
+     *                    decision somebody can disagree with, and the whole of that defect was
+     *                    calendars that were never named. It is {@link MarketCalendar#MARKET_ZONE}
+     *                    now because "which of the brokerage's terms were in force on this day" is a
+     *                    <em>marketplace</em> day, and because one service answering the same
+     *                    question two ways is noise a reader has to rule out. <strong>No test can go
+     *                    red on this change</strong> and none was written: Ghana is UTC+0 all year,
+     *                    so the two spellings have never produced a different instant and never can
+     *                    while the estate's calendar is Accra's. It is a consolidation, not a fix.
+     *                    The {@code Instant.now()} beside it is untouched and correct — "now" is a
+     *                    moment and carries no calendar at all.
      */
     @GetMapping("/api/internal/brokerage/split")
     public Split split(@RequestParam long amountMinor, @RequestParam(required = false) LocalDate on) {
         if (amountMinor < 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "amountMinor cannot be negative");
         }
-        BrokerageConfig config = inForce(on == null ? Instant.now() : on.atStartOfDay().toInstant(ZoneOffset.UTC));
+        BrokerageConfig config = inForce(on == null ? Instant.now() : on.atStartOfDay(MarketCalendar.MARKET_ZONE).toInstant());
         long commission = Commission.on(amountMinor, config.getCommissionRate());
         return new Split(
             amountMinor,
