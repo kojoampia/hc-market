@@ -5014,3 +5014,272 @@ copies are two checksums across eight files.
 **One thing the review reported that was re-measured here rather than taken on trust**, since it is
 the number the whole residual argument rests on: the four seeder log lines on the running quality box
 are `payout 19:00:52.988` → `catalog 19:01:00.121`, a spread of **7.13 s**. Confirmed.
+
+---
+
+## D49 — Production is API-only, its databases are bundled and private, and none of it has been run
+
+**Decided 2026-09-05**, building `deploy/prod-server/` to the shape the three sibling stacks share.
+This is configuration and documentation only: nothing here has contacted `webserver`, and the whole
+of its evidence is `deploy-prod.sh --dry-run` (which contacts nothing), `docker compose config`,
+`bash -n`, seven watched mutations against the new CI checks, and reading the siblings.
+
+That is stated first because it is the most useful thing about this decision. The package's value is
+not that production now works; it is that the *questions* production asks are written down, and that
+five of them turned out to have answers the repository already believed it had.
+
+### The five things that were not true
+
+Each of these would have stopped or silently damaged a first deploy, and each was invisible for the
+same reason: **no path in this repository had ever been executed against a host.**
+
+**1. No production database was declared anywhere.** `docker-compose.prod.yml` requires nine
+connection values with `:?` — a Mongo URI, four JDBC URLs, four passwords — and `render_env` emits
+none of them, so they had to be in `secrets.env`. Nothing said so, and nothing said where the stores
+those URLs address were supposed to come from. `deploy-prod.sh`'s own preflight comment asserted that
+`infranet` carried "Kafka, Consul and the databases", which was true of the first two and had never
+been true of the third. The answer to "where does production's catalog database live?" was written
+down nowhere at all.
+
+**2. The preflight checked two of the eleven required values.** That check exists precisely so a
+missing value is refused *before* `.env` is overwritten and `.env.previous` rotated. With nine of
+eleven unchecked, a host holding the two secrets passed preflight and then died at `up` on "catalog
+datasource url is required" — a stack half-rolled over a variable nothing in the pipeline supplied,
+which is the defect the check was built to prevent, nine keys wide.
+
+**3. The smoke test could not pass, in two independent ways.** It asked for
+`$base/api/professionals/count`, and the gateway routes `/services/<service>/api/**` and nothing else
+— that narrowing **is** D28's security control, so `/api/**` at the edge matches no route and never
+will. And its default base was `https://health.jojoaddison.net`, a hostname this product does not
+serve. A deploy that reached its own verification step would have reported a failure it caused.
+
+**4. The gateway published on every interface.** `'${HC_GATEWAY_PORT:-8080}:8080'` binds `0.0.0.0`,
+so on the production host the gateway would have answered the internet directly on 8080, beside the
+nginx that terminates TLS. **This is not a routing hole** — D28's predicates apply on both paths, so
+`/internal/**` stays unreachable either way — and that is exactly why it is worth recording: every
+functional check passes, the site works, and the only consequence is a second front door with no TLS,
+no security headers, no CSP, no robots policy and no webhook rate limit. Every sibling binds
+`127.0.0.1`; `quality/README.md` states the property this restores ("the vhost is the only way in")
+and the production file did not have it.
+
+**5. `deploy-prod.sh` told the operator to install the wrong signing key.** Its `secret_hint` and its
+header both said to take `JWT_BASE64_SECRET` from `~/webroot/01-healthconnect/.env`. That file holds
+the key `hc-admin`, `hc-patient` and `hc-professional` share, and **hc-market is deliberately not in
+that set** — D37 says so at length, having corrected the same misreading once already when it was
+offered as the reason to sequence erasure from the admin desk.
+
+This is the one of the five with a security shape, and its shape is unusual: **nothing would have
+failed.** HS512 does not care which random bytes it is, so the estate would have come up perfectly.
+What would have changed is that any of hc-market's five services — each of which holds the key and
+can therefore mint a token for any subject with any authority — would have been minting tokens the
+other three products accept, and an `hc-admin` token would have carried authority here. A capability
+boundary the repository documents in two places would have been dissolved by a hint, silently, on
+first deploy. The hint is now the opposite instruction with the reason attached, in both places.
+
+Findings 1, 2 and 3 also share a shape worth naming: **`--dry-run` cannot see any of them.** It is a
+faithful printer of a plan, and a plan can be wrong. What found them was writing down what the plan
+would meet on the far side.
+
+### The decision the user took, and the one the package took
+
+**Production is API-only. The prototype is not served on `market.abofonsa.com`, and there is no
+`/prototype` location in either nginx file.**
+
+Quality serves `docs/Abofonsa_BridgeCare_Marketplace.html` same-origin at
+`http://market.healthconnect.local/prototype`, with a deliberately relaxed CSP, so `?api=` reaches
+the estate without CORS. The page is populated with the seed: 18 invented professionals presented as
+real people, with names, credentials, association registration numbers, prices and reviews. On a
+private LAN box, plaintext, reachable from one office, that is a demo. On a public health-services
+domain under the BridgeCare brand it is eighteen fabricated practitioner listings published to the
+internet — findable, quotable, and indistinguishable from the real thing to whoever arrives.
+
+The interesting part is not the decision but **how it is kept**. A comment would not have held it:
+the plausible way it comes back is somebody noticing the two edges differ and restoring parity, which
+is a reasonable-sounding motive and a wrong one — quality exists to rehearse production, not the
+reverse. So the reason is written in the vhost's own header where an editor meets it, *and* CI
+asserts the absence, refusing a `/prototype` location, an `alias` to that HTML, and the
+`unsafe-inline` the page needs. All three were watched firing.
+
+The consequence is a good one and is now shared: the only surface offered to a browser on that
+hostname is a JSON API, so its CSP is `default-src 'none'` — the truthful policy for something that
+only returns JSON, and character-for-character the policy quality carries at site level.
+`host-site.conf` claimed to be "STRICTER THAN PRODUCTION, WHICH SENDS NO CSP AT ALL"; that stopped
+being true the moment this file existed and is corrected in place. **The differences now run the
+other way, and there is exactly one of them.**
+
+**The package's own decision was the databases, and it is the opposite call from D27's.**
+
+D27's rule is borrow, never bundle, and it is about what the host already runs once for everybody: one
+broker, one Consul, one collector, on networks this stack declares `external` and never creates. That
+is upheld unchanged — nothing here declares a broker or a registry.
+
+A database is the other kind of thing. There is no host-wide PostgreSQL for four products to share,
+hc-market owns its schema, and D27's own closing paragraph keeps the databases off `hcnet` so that
+another product cannot reach them. So they are **bundled and private**: five stores in a second
+compose project, `hc-market-data`, on this product's own `hcmarketnet`, which the application stack
+joins as a third network. Not `infranet` — three sibling products share that one, and a database
+another product can resolve is precisely what D27 refused.
+
+Two compose projects rather than one file, and that is the second decision. The siblings each keep a
+single `prod-server/compose.yml` because their `deploy.sh` ships that file and nothing else;
+hc-market's `deploy-prod.sh` already ships `docker-compose.prod.yml`. **A second copy of the five
+services is the "written twice" failure this repository has paid for three times** — the vhost port
+against the compose port, the topic prefix against the script that creates the topics, the webhook
+route against the gateway permit. So the split is by responsibility: the applications roll on every
+deploy, the stores are installed once and do not roll, and **nothing appears in both**. There remains
+exactly one place in this repository where a production gateway route is written.
+
+The cost is that the two projects must agree on the network and on five container names, and the
+container names are only visible to CI through `secrets.env.example` — the values themselves live on
+the host. That pair is checked; a rename in one and not the other is a five-service outage from a
+one-word edit, reported as `UnknownHostException`, which points at DNS rather than at either file.
+
+### Six new CI checks, all watched firing
+
+The repository's rule is that a check nobody has seen fail is a check nobody should trust, so each was
+run against a constructed reintroduction:
+
+| check | mutation it was watched refusing |
+|---|---|
+| the production vhost and its compose agree on a port | `proxy_pass` moved to 8087 |
+| the gateway publishes on loopback only | the `127.0.0.1:` prefix deleted |
+| the vhost's webhook location matches the routed path | `webhooks/` renamed to `webhook/` |
+| the production vhost does not serve the prototype | a `/prototype` location added; and separately, only the relaxed CSP added |
+| the data tier's container names match the connection template | `hc-market-catalog-db` renamed in the compose alone |
+| the connection template carries no filled-in secret | a plausible base64 pepper pasted into it |
+
+The port check needed one correction before it was kept, and it is the same class of fail-open the
+NEW-9 review found twice: a loose `HC_GATEWAY_PORT:-[0-9]+` reads **two** values out of
+`docker-compose.prod.yml`, because the comment above the publish line quotes the old `0.0.0.0` form
+verbatim. It matches the publish line itself now. **A check a comment can break is a check somebody
+eventually deletes.**
+
+The webhook-location check is the subtlest of the six and the only one whose failure changes nothing
+visible: `location /` proxies the callback regardless, so a drifted path leaves the site working, the
+provider answered, and the rate limit, the 64k body cap and the POST restriction silently not
+applying to the estate's one unauthenticated public write path.
+
+The data tier is deliberately **not** added to the three gateway-route loops, which iterate a fixed
+list of three compose files. It declares no route and would fail "expected 4 narrowed gateway routes,
+found 0" — and the reason it would is the reason the split exists.
+
+**There is a seventh now.** The review below found that the most serious of the five defects was the
+only one with no mechanical guard at all, and it is the one nothing running could catch.
+
+### A seventh finding, in the file that was being read
+
+`--help` was `sed -n '2,66p'`, with a comment beside it saying that was "the whole header block, up
+to but not including its closing rule" and recording that it had been extended from line 40 when the
+host-secrets section was added, "at which point `--help` stopped printing the one thing a first-time
+deployer has to do before deploying at all". The header ran to line 78 by then. So `--help` printed
+everything except lines 67–78, and **lines 68–74 are the `cat > secrets.env` command** — the omission
+the comment was written to record having fixed, arriving a second time by the same road. It is
+computed now: skip the shebang and the opening rule, print until the closing one.
+
+### What is deliberately not built
+
+- **No script installs anything into `/etc/nginx`.** That belongs to the architect on both machines,
+  and being on the box is not the same as being authorised to reconfigure its edge. The README prints
+  the sudo lines and runs none of them, following `quality/startup.sh`. It also says to read the
+  installed file first, because the installed copy drifts from the repository's and sometimes
+  deliberately. `hc-admin`'s `update-nginx.sh` is not copied for the same reason, plus a narrower
+  one: it exists to stop that product's own `deploy.sh --with-nginx` destroying certbot's TLS block,
+  and hc-market's deploy script installs no nginx at all.
+- **No credential-rotation script.** `hc-admin`'s covers one Mongo database; hc-market has five
+  stores across two engines and the same initialise-only-on-an-empty-volume trap applies to all five.
+  A script covering a fifth of the problem invites the belief that the rest is covered. The trap is
+  documented per engine instead, and writing the script is named as the first thing to do when there
+  is a rotation to perform.
+- **No browser-RUM ingest and no `/v1/traces` location.** Those exist to accept spans from an Angular
+  SPA. There is none here, so it would be a new public unauthenticated endpoint bought with nothing.
+- **No `observability/` directory.** hc-market already has `deploy/observability/hc-market-rules.yaml`
+  and CI parses it; moving it would break that path for no gain.
+- **No expiry, no schema-rollback path, no restore rehearsal.** All three are named in the README's
+  outstanding list rather than sketched. No dump has ever been restored, which makes the backups a
+  belief rather than a backup — and that is written where an operator reads it before trusting a
+  `backups/` directory. (The backup *script* had never been run either, until the review below ran
+  it; that found a defect and proves nothing about restoring.)
+
+### The review, and the eight things it found
+
+**Reviewed 2026-09-05**, the same day. The review verified all five defects above independently
+against `main` rather than taking them from a commit message, watched all six checks fire on
+constructed reintroductions, and confirmed the security posture. It then found eight more, one of
+them blocking. All eight are applied.
+
+**The blocking one was that this decision's own closing paragraph described behaviour the code did
+not have.** It said the smoke test would "warn" on an empty catalogue, and so did `README.md`. A
+failing smoke test does not warn — `deploy-prod.sh` ends `if health_gate && smoke_test; then …
+else … rollback`. So requiring `> 0` on an estate that never seeds meant: the **first** deploy ends
+in `die "no previous deployment recorded"`, with the stack up, correct, and never written to
+`deployments.log`, and the operator's first experience of production is a red failure; the **second**
+finds `.env.previous` and therefore *succeeds* at rolling back a deployment that had just come up
+healthy. The estate could not have shipped again until it had data.
+
+The fix separates the two answers the check was conflating, and the argument for that shape over
+putting `> 0` behind a flag is that **`0` is not a weaker answer than `18`**. Getting a number back
+from `https://market.abofonsa.com/services/healthconnectcatalog/api/professionals/count` exercises
+DNS, TLS, nginx, the gateway's route predicates and a round trip to catalog's PostgreSQL — every one
+of them identically at `0`. What distinguishes a healthy empty estate from a broken one is not the
+magnitude, it is whether a number arrives at all: a catalog that cannot reach its database answers
+nothing. So no number is a failure, `0` is warned about loudly and passes, and the `> 0` requirement
+survives as `HC_SMOKE_MIN_PROFESSIONALS`, opt-in, validated in preflight. Once there is real data an
+estate answering `0` **is** a failure and should roll back — but only an operator knows when that day
+is, and defaulting to it costs a rollback of a working stack. Exercised against a local server in
+five states: `0`, `18`, `0` with the floor at 1, an HTML body, and nothing listening.
+
+The other seven, in the order they matter:
+
+| # | what was wrong | why it survived |
+|---|---|---|
+| 2 | every remote `docker compose` relied on implicit file discovery, and this branch put a **second** compose file in that directory | it was one file for as long as the script existed. Compose prefers `compose.yml` over `docker-compose.yml`, so an operator copying the data tier under its repository name captured every later `pull`, `up`, `exec` and `ps`. Fails loudly, which is the only reason it was not worse. `-f docker-compose.yml`, one word |
+| 3 | `prod-server/start` printed **"all five stores healthy" when the stores had exited** | `docker compose ps` lists only *running* containers; `-a` is needed for the rest. Filtering that output for "not healthy" finds nothing, and an empty result reads as nothing wrong. Reproduced: a two-service project with one exited container listed one service without `-a` and two with it. It asserts five present and five healthy now |
+| 4 | `backup.sh` put **both database passwords in world-readable host argv**, under a comment saying that was exactly what the `-e` form prevented | `docker exec -e PGPASSWORD=<value>` is the client's own argv. Measured: `ps -eo args` showed the value for the length of every nightly dump. The name-only form does not, and one residue is now stated rather than denied — `mongodump` has no password variable and no `--password-file`, so its value is in the *container's* argv |
+| 5 | the `:?` message an operator meets at the moment of failure still said **"platform JWT secret is required"** | four other copies of defect 5 were corrected and this one was quoted approvingly in two comments. It is the only one of the five that a person reads while something is already broken |
+| 6 | the most serious defect was the **only one with no CI check** | there is no `iss` and no `aud` anywhere in this estate, so a pasted platform key interoperates silently and for ever. Nothing running can catch it; the guard has to be on the words. Now `.github/checks/signing-key-severance.sh` |
+| 7 | `/srv/healthconnect` was justified as "the code was followed" | there is a much stronger reason. The siblings' `start` scripts read `--env-file ../.env` — the platform key file one directory above `~/webroot/01-healthconnect/<product>/`. The conventional path would put hc-market directly below the file D37 spends a page keeping it away from, with the pattern that consumes it one directory over. Also recorded: both compose files pin `name:`, so a later move is copying files rather than migrating data |
+| 8 | runbook details: a `deploy@` ssh user that is probably fiction, brace expansion in a remote `dash`, `/srv` write access, no check that the **open** endpoints are the intended ones, `add_header Content-Type` in the robots.txt location, and one `▸` printed without a `[dry-run]` marker | each small, and the first and fourth are the interesting ones. The siblings ssh to the alias `webserver` as root; and `/api/register` is `permitAll` on the gateway, so **open self-registration is public on `market.abofonsa.com`** from the first deploy — presumably intended, and unrecorded until now in a file that curls three things to prove the closed things are closed |
+
+The robots.txt one is worth one more line because it was measured rather than reasoned. `add_header
+Content-Type text/plain` does not set the content type; served under a real nginx the response
+carried **two** `Content-Type` headers, `application/octet-stream` first from `default_type` and
+`text/plain` appended beside it — and, because a location declaring any `add_header` inherits none of
+the server's, no CSP, no `X-Frame-Options`, no `X-Content-Type-Options` and no `Referrer-Policy`.
+That is the replacement semantics the file's own CSP comment warns about, firing in the file that
+warns about it. `default_type` and no `add_header` at all fixes both halves.
+
+### A seventh CI check — the guard the fifth defect never had
+
+`.github/checks/signing-key-severance.sh`, guarding the one defect of the five that nothing running
+could ever catch. Three arms, each watched refusing a real state:
+
+| arm | mutation it was watched refusing |
+|---|---|
+| `secret_hint`'s advice must still say what to generate, and may name the platform key file only to forbid it | `main`'s original hint restored — refused four ways at once |
+| every mention of `~/webroot/01-healthconnect/.env` under `deploy/` and `quality/` must carry a refusal within two lines | a runbook line saying to paste the value in |
+| no compose file's `:?` message may describe the estate key as the platform's | `main`'s "platform JWT secret is required" restored |
+
+The first arm is the sharp one and the second is deliberately coarse. `main`'s original hint said
+"never generate a fresh one here", so it *contains* a negation and would have passed arm 2 — which is
+why arm 1 asserts the presence of the generation command and the exact phrase `Do NOT copy it from`
+rather than the absence of something. Its job is that the original wording fails, not that every
+conceivable rewrite does.
+
+### What could not be verified, and is therefore a guess
+
+`8086` for the gateway's loopback port: chosen in the family the siblings occupy (hc-admin 8083,
+hc-patient 8085, hc-professional 5503) and **not known to be free on `webserver`**. `/srv/healthconnect`
+as the stack directory: `deploy-prod.sh`'s default, and now argued on its merits rather than on the
+code's precedence (see finding 7 above) — still not known to exist or to be writable there, and still
+one `--path` flag. The ssh target `webserver` and a root account there: taken from what every sibling
+does rather than checked. Both are the first items in the README's outstanding list. So is backlog
+**WP-18**, unchanged: whether `gateway`, `catalog` or `booking` is already a DNS alias on `infranet`
+still cannot be answered from a workstation — largely defused, since every service is `hc-market-*`
+with an explicit `container_name`, and still unanswered.
+
+And one thing this package **cannot** do, which the review's first finding made visible: a rollback
+restores `.env.previous` and therefore the previous *tag*, but `remote_deploy` overwrites
+`docker-compose.yml` and keeps no previous copy of it. So a deploy that breaks the estate through a
+compose change — a route predicate, a variable name, a port — rolls the images back underneath the
+new file. Not fixed here, because it needs a decision about what a deploy should keep and for how
+long; recorded so that "it rolls back by itself" is not read as more than it is.

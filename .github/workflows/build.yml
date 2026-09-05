@@ -169,13 +169,33 @@ jobs:
               HC_MESSAGING_DB_URL=jdbc:x HC_MESSAGING_DB_PASSWORD=x \
               HC_PAYOUT_DB_URL=jdbc:x HC_PAYOUT_DB_PASSWORD=x \
             docker compose -f deploy/docker/docker-compose.prod.yml config >/dev/null
+          # The production DATA TIER — the four PostgreSQL instances and the gateway's MongoDB,
+          # installed on the host once and never rolled by a deploy. A fourth compose file, and the
+          # only one that is not a copy of another: nothing in it appears in the application stack
+          # and nothing in the application stack appears in it (decisions.md D49).
+          #
+          # Deliberately NOT added to the gateway-route checks below, which iterate a fixed list of
+          # three. It declares no route, no cross-service base URL and no application secret, so it
+          # would fail "expected 4 narrowed gateway routes, found 0" — and the reason it would is the
+          # reason the split exists: there is exactly ONE place in this repository where a production
+          # gateway route is written.
+          env HC_MONGO_ROOT_USERNAME=x HC_MONGO_ROOT_PASSWORD=x \
+              HC_CATALOG_DB_PASSWORD=x HC_BOOKING_DB_PASSWORD=x \
+              HC_MESSAGING_DB_PASSWORD=x HC_PAYOUT_DB_PASSWORD=x \
+            docker compose -f deploy/prod-server/compose.yml config >/dev/null
 
       # The scripts are the deployment. A syntax error in one is only discovered when somebody tries
       # to deploy, which is the worst possible moment to discover it.
       - name: Shell scripts must parse
         run: |
+          # deploy/prod-server/start has NO .sh extension, matching the sibling stacks' `start`
+          # scripts, so it has to be named rather than globbed — a glob on *.sh would skip it and
+          # report success having checked four of five. It is also the one script here that only
+          # ever runs on a host nothing in this workflow can reach, which is precisely why parsing
+          # it in CI is the only gate it will ever get.
           for s in deploy/deploy-dev.sh deploy/deploy-prod.sh deploy/sync-appendices.sh \
                    deploy/verify-cycle.sh deploy/verify-outbox-recovery.sh quality/startup.sh \
+                   deploy/prod-server/infra.sh deploy/prod-server/backup.sh deploy/prod-server/start \
                    .github/checks/*.sh; do
             bash -n "$s" && echo "ok   $s"
           done
@@ -189,6 +209,150 @@ jobs:
           compose=$(grep -oE 'GATEWAY_PORT:-[0-9]+' quality/compose.yml | grep -oE '[0-9]+$' | sort -u)
           echo "vhost=$conf compose=$compose"
           test "$conf" = "$compose"
+
+      # The identical hazard, one environment over, and it arrived with deploy/prod-server/.
+      #
+      # The production edge proxies to the gateway's loopback-published port, written in
+      # hc-market-app.conf and in docker-compose.prod.yml because nginx cannot read the environment.
+      # When they disagree the site returns 502 for every path and nothing else complains — and on
+      # production, unlike quality, nobody is watching a terminal when it happens.
+      #
+      # `sort -u` on the vhost side is load-bearing: that file names the port TWICE, once in the
+      # webhook location and once in `location /`. If those two ever differ this collapses to two
+      # values and the comparison fails, which is the right answer — half the site on the wrong
+      # upstream is worse than all of it.
+      - name: The production vhost and its compose must agree on a port
+        run: |
+          conf=$(grep -oE 'proxy_pass +http://127\.0\.0\.1:[0-9]+' deploy/prod-server/hc-market-app.conf | grep -oE '[0-9]+$' | sort -u)
+          # Matched against the PUBLISH LINE, not against the variable name. The comment above that
+          # line quotes the old 0.0.0.0 form verbatim, so a loose `HC_GATEWAY_PORT:-[0-9]+` reads two
+          # values out of this file — one of them from prose. A check that a comment can break is a
+          # check somebody eventually deletes.
+          compose=$(sed -nE "s/^ *- *'127\.0\.0\.1:\\\$\{HC_GATEWAY_PORT:-([0-9]+)\}:8080'.*/\1/p" \
+                      deploy/docker/docker-compose.prod.yml | sort -u)
+          echo "vhost=$conf compose=$compose"
+          test -n "$conf" && test -n "$compose" && test "$conf" = "$compose"
+
+      # And the gateway must be published on LOOPBACK on the production host.
+      #
+      # `'${HC_GATEWAY_PORT:-8086}:8080'` binds 0.0.0.0, which puts the gateway on the internet
+      # beside the nginx that terminates TLS — bypassing TLS, the security headers, the CSP, the
+      # robots policy and the webhook rate limit, all of which live at the edge. It is not a routing
+      # hole (D28's predicates apply either way) and that is exactly why it is worth a check: every
+      # functional test passes, the site works, and the only symptom is that a second, unprotected
+      # front door exists. It was written that way in this file until 2026-09-05 (decisions.md D49).
+      - name: The production gateway must publish on loopback only
+        run: |
+          line=$(grep -E "^ *- *'[^']*:8080'" deploy/docker/docker-compose.prod.yml)
+          echo "$line"
+          if ! printf '%s' "$line" | grep -q "127\.0\.0\.1:"; then
+            echo "::error file=deploy/docker/docker-compose.prod.yml::the gateway publishes on every interface — on the production host that is a second, unprotected front door beside nginx. See decisions.md D49."
+            exit 1
+          fi
+          echo "ok   gateway published on 127.0.0.1 only"
+
+      # The webhook location in the production vhost must name the SAME path the gateway routes.
+      #
+      # This one is silent in the worst way and does not break anything when it drifts: `location /`
+      # proxies the callback regardless, so the site keeps working, the provider keeps being
+      # answered, and the rate limit, the 64k body cap and the POST restriction have simply stopped
+      # applying to the estate's one unauthenticated public write path (decisions.md D43, D45).
+      #
+      # Compared as a PREFIX of the compose predicate — the vhost has a trailing slash where the
+      # predicate has `**` — so a rename of either end fails here rather than in six months.
+      - name: The production vhost's webhook location must match the routed path
+        run: |
+          predicate=$(grep -oE 'Path=/services/healthconnectbooking/webhooks/\*\*' deploy/docker/docker-compose.prod.yml | head -1)
+          want="${predicate#Path=}"; want="${want%\*\*}"
+          echo "route prefix: $want"
+          test -n "$want"
+          if ! grep -qF "location $want {" deploy/prod-server/hc-market-app.conf; then
+            echo "::error file=deploy/prod-server/hc-market-app.conf::no 'location $want {' — the webhook's rate limit, body cap and POST restriction silently stop applying while the callback keeps being proxied by 'location /'. See decisions.md D45 and D49."
+            exit 1
+          fi
+          echo "ok   location $want matches the routed path"
+
+      # PRODUCTION IS API-ONLY. The prototype is NOT served on the production hostname, and this is
+      # the check that stops it coming back — decisions.md D49.
+      #
+      # quality/host-site.conf serves docs/Abofonsa_BridgeCare_Marketplace.html at /prototype,
+      # same-origin, with a deliberately weaker CSP. That page is populated with the seed: 18
+      # invented professionals presented as real people, with credentials, association registration
+      # numbers and reviews. On a private LAN box that is a demo. On a public health-services domain
+      # it is eighteen fabricated practitioner listings published to the internet.
+      #
+      # The failure this guards is a specific and plausible one: somebody notices the two vhosts
+      # differ and "restores parity with quality". Parity is the wrong target — quality exists to
+      # rehearse production, not the other way round — so the difference is asserted rather than
+      # left to a comment nobody has to read.
+      - name: The production vhost must not serve the prototype
+        run: |
+          fail=0
+          for f in deploy/prod-server/market.abofonsa.com.conf deploy/prod-server/hc-market-app.conf; do
+            # `location ... /prototype`, an alias to the HTML, or the weaker CSP that page needs.
+            if grep -nE "^[^#]*(location[^#]*/prototype|alias[^#]*Abofonsa_BridgeCare_Marketplace\.html|unsafe-inline)" "$f"; then
+              echo "::error file=$f::the production edge serves the prototype, or carries the relaxed CSP it needs. It is API-only on purpose — 18 invented professionals must not be published on a public health-services domain. See decisions.md D49."
+              fail=1
+            else
+              echo "ok   $f"
+            fi
+          done
+          exit "$fail"
+
+      # The application stack's datasource URLs name the data tier's containers, and the two files
+      # are written by different hands at different times: compose.yml declares the container, and
+      # the URL an operator pastes into secrets.env is templated in secrets.env.example.
+      #
+      # A rename in one and not the other is a five-service outage from a one-word edit, and the
+      # error it produces ("UnknownHostException") points at DNS rather than at either file. The
+      # values themselves live only on the host, so the template is the only copy CI can see — which
+      # makes this the only place the pair can be compared at all.
+      - name: The data tier's container names must match the connection template
+        run: |
+          fail=0
+          for ctr in $(grep -oE '^ +container_name: hc-market-[a-z]+-db$' deploy/prod-server/compose.yml \
+                       | awk '{print $2}'); do
+            if grep -q "$ctr" deploy/prod-server/secrets.env.example; then
+              echo "ok   $ctr"
+            else
+              echo "::error file=deploy/prod-server/secrets.env.example::$ctr is declared in the data tier but appears in no connection string here — an operator would paste a URL naming a host that resolves nowhere. See decisions.md D49."
+              fail=1
+            fi
+          done
+          exit "$fail"
+
+      # And nothing in prod-server/ may carry a filled-in secret. This repository is PUBLIC.
+      #
+      # The template's rule is that every required value is EMPTY, with a generation command beside
+      # it — a placeholder that looks real is how a plausible value ends up pasted into production,
+      # and a real one is a published secret. secrets.env itself is gitignored; this is the check for
+      # the file that is not.
+      - name: The connection template must carry no value for any secret
+        run: |
+          fail=0
+          while IFS= read -r line; do
+            echo "::error file=deploy/prod-server/secrets.env.example::'$line' has a value. Every secret in the template must be empty. See decisions.md D35 and D49."
+            fail=1
+          done < <(grep -E '^(JWT_BASE64_SECRET|HC_PRIVACY_PEPPER|HC_MONGO_ROOT_PASSWORD|HC_[A-Z]+_DB_PASSWORD|HC_GATEWAY_MONGODB_URI|HC_[A-Z]+_SECRET)=.+' \
+                     deploy/prod-server/secrets.env.example || true)
+          [ "$fail" = 0 ] && echo "ok   every secret in the template is empty"
+          exit "$fail"
+
+      # THE MOST SERIOUS OF WP-19's FIVE DEFECTS WAS THE ONLY ONE WITH NO MECHANICAL GUARD, which is
+      # this one — decisions.md D37, D49.
+      #
+      # deploy-prod.sh's own hint told the operator to install the PLATFORM's signing key, the one
+      # hc-admin, hc-patient and hc-professional share. Nothing running could ever have caught it:
+      # there is no `iss` and no `aud` validation anywhere in this estate, so a token minted with
+      # that key is accepted here and a token minted here is accepted there, silently and for ever.
+      # The estate would have come up perfectly, every test green, with a capability boundary the
+      # repository documents in two places quietly dissolved.
+      #
+      # So the guard is on the WORDS, because the words are the only artefact. Watched firing against
+      # the original hint (four ways), against a compose message restored to "platform JWT secret is
+      # required", and against a runbook line telling somebody to paste the value in.
+      - name: No deploy path may point the signing key at the platform's shared key
+        run: ./.github/checks/signing-key-severance.sh
 
       # The OpenTelemetry wiring lives in pom.xml, and pom.xml is GENERATED — it carries no
       # jhipster-needle markers, so `jhipster jdl` with the force flag rewrites it wholesale and

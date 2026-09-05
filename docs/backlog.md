@@ -45,6 +45,7 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **NEW-8** | The prototype's professional workspace is demo-only in live mode | WON'T (documented) | D46 §5 |
 | **NEW-9** | Four seeders shift every date by the JVM's idea of today | DONE | D48 — zone closed in all four; the shared-`today` half deliberately not built, with its triggers named. Reviewed 2026-09-05, nine findings, all applied |
 | **NEW-10** | Payout writes `ledger.earned_on` in the JVM's calendar and the seeder's in Accra's | READY | D47/D48 — three writes to the cross-service pivot, two reads. Opened by the NEW-9 review |
+| **WP-19** | Production deployment configuration, to sibling parity | PARTLY DONE | D49 — `deploy/prod-server/` built, five defects in the deploy path fixed, then reviewed 2026-09-05 and eight more applied, one of them blocking (a failing smoke test triggered an automatic rollback). **Nothing has ever been run against a host**; the fifteen things a person must still do are in that directory's README |
 
 ---
 
@@ -990,12 +991,90 @@ question the package opens.
 Related and outside it: `booking` `ProBookingResource:111` is the same implicit-zone default for a
 rendered window, and catalog's remaining four stand as D47 recorded them.
 
+## WP-19 — Production deployment configuration · PARTLY DONE
+
+D49. `deploy/prod-server/` built to the shape `hc-admin`, `hc-patient` and `hc-professional` share:
+the data tier, the nginx vhost and its snippet, the http-scope rate-limit zone, `infra.sh`,
+`backup.sh`, `start`, `secrets.env.example`, and a runbook. **Configuration and documentation only.
+Nothing in it has contacted `webserver`**, and the whole of its evidence is `--dry-run` (which
+contacts nothing), `docker compose config`, `bash -n`, seven watched mutations against six new CI
+checks, and reading the siblings.
+
+**The package's value is the five things that turned out not to be true**, each of which would have
+stopped or silently damaged a first deploy and each invisible for the same reason — no path in this
+repository had ever been executed against a host:
+
+- **no production database was declared anywhere.** Nine `:?` connection values pointing at hostnames
+  nothing on the host provided, and `deploy-prod.sh`'s own comment asserting `infranet` carried "the
+  databases", which had never been true;
+- **the preflight checked two of the eleven required values**, which is the defect that check exists
+  to prevent, nine keys wide: a host holding the two secrets passed, had `.env` rotated, and then
+  died at `up`;
+- **the smoke test could not pass, two independent ways** — it asked for `/api/**` at the edge, which
+  D28's narrowing makes unroutable by design, against a hostname this product does not serve;
+- **the gateway published on `0.0.0.0`.** Not a routing hole (D28's predicates apply either way), and
+  that is why it is worth recording: a second front door with no TLS, no headers, no CSP and no rate
+  limit, with every functional check green;
+- **`deploy-prod.sh` told the operator to install the wrong signing key** — the platform key
+  hc-admin, hc-patient and hc-professional share, which D37 says at length hc-market is not part of.
+  The only one with a security shape, and its shape is that **nothing would have failed**: these five
+  services would have acquired the ability to mint tokens the other three products accept, silently,
+  on first deploy.
+
+**Two decisions taken.** Production is API-only — no `/prototype`, kept by CI rather than by a
+comment, because the plausible way it returns is somebody "restoring parity with quality". And the
+databases are **bundled and private**, in a second compose project on hc-market's own `hcmarketnet`:
+the opposite call from D27's broker, for the reason D27 itself gives, and a second copy of the five
+services deliberately not written.
+
+**Still open, and none of it is engineering.** Fifteen items, listed in
+`deploy/prod-server/README.md`. The ones that block a first deploy: confirm `/srv/healthconnect` and
+the ssh target, confirm port **8086** is free (a guess, in the siblings' family, unverified), confirm
+`infranet` and `monitoring` exist with something listening on them, create `secrets.env` with a
+freshly generated key and an escrowed pepper, point DNS, and install nginx and run certbot — which
+needs sudo and which nothing here does. Then the two that make it trustworthy rather than merely
+running: **restore a dump and confirm it comes back** (no backup here has ever been restored, which
+makes them beliefs), and verify the OTel agent is instrumenting rather than merely loading.
+
+**WP-18 is unchanged and is one of the fifteen**: whether `gateway`, `catalog` or `booking` is
+already a DNS alias on `infranet` still cannot be answered from a workstation.
+
+**Reviewed 2026-09-05; eight findings, all applied.** One blocking: **a failing smoke test triggers an
+automatic rollback**, and the smoke test required a catalogue count `> 0` on an estate that never
+seeds. So the first production deploy would have ended in `no previous deployment recorded` with the
+stack up and correct, and the second would have *successfully* rolled back a deployment that had just
+come up healthy. Both this file and D49 described that as a warning. It now distinguishes **no number
+at all** (a failure — the edge, the route or the datasource) from **`0`** (warned loudly, passed),
+with `> 0` surviving as opt-in `HC_SMOKE_MIN_PROFESSIONALS`.
+
+The other seven: the remote compose invocations named no `-f` while this branch added a second
+compose file; `prod-server/start` reported "all five stores healthy" when stores had **exited**,
+because `docker compose ps` hides stopped containers without `-a`; `backup.sh` put both database
+passwords in world-readable host argv under a comment claiming the opposite; the `:?` message an
+operator meets at the moment of failure still said "platform JWT secret is required"; the signing-key
+severance — **the most serious of the original five** — had no CI check, and cannot have a runtime one
+because this estate validates no `iss` and no `aud`; `/srv/healthconnect` deserved a better argument
+than "the code was followed", and has one (the siblings' `start` reads `--env-file ../.env`, the
+platform key, one directory above the conventional path); and six runbook details, of which the two
+worth naming are that the ssh target is the alias `webserver` as root rather than an invented
+`deploy@` user, and that **open self-registration is public on `market.abofonsa.com`** — `/api/register`
+is `permitAll` on the gateway, presumably intended and previously unrecorded.
+
+Three of the eight were found by *running* something for the first time: `backup.sh` (five throwaway
+containers, first execution in its life), the nginx files under a real nginx, and `docker compose ps`
+watched hiding an exited container. **A seventh CI check** — `.github/checks/signing-key-severance.sh`
+— was added and watched firing three ways.
+
 ---
 
 ## Not a package: standing constraints
 
 - **Production is off limits.** The pipeline is not ready; `deploy/deploy-prod.sh --dry-run` is the
-  only thing to run against it, and it contacts nothing.
+  only thing to run against it, and it contacts nothing. It is now *configured* — `deploy/prod-server/`,
+  WP-19, D49 — and configured is not deployed: **not one command in that directory has been run on a
+  host**, and its README says so before it says anything else. `--dry-run` is a faithful printer of a
+  plan, and three of WP-19's five findings were things `--dry-run` prints correctly and reality
+  refuses.
 - **Work goes on a branch with a PR.** Pushing `main` publishes five images to GHCR.
 - **Quality is `jacserver`, which is this workstation** at 127.0.0.1 — `./quality/startup.sh --local`,
   no ssh. It is the last real gate, and it has now found **seven** defects that every test suite

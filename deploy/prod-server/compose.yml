@@ -1,0 +1,190 @@
+# ==============================================================================
+#  HealthConnect Marketplace — the PRODUCTION DATA TIER
+#
+#  Installed on webserver as /srv/healthconnect/data-compose.yml. Brought up once by ./start (or by
+#  hand) and then left alone: a deploy rolls the five application containers and never touches this.
+#
+#  THIS IS NOT A SECOND COPY OF THE APPLICATION STACK, AND THAT IS THE FIRST THING TO KNOW ABOUT IT.
+#
+#  The siblings put everything in one prod-server/compose.yml because their deploy.sh ships that file
+#  and nothing else. hc-market's deploy-prod.sh already ships ../docker/docker-compose.prod.yml, which
+#  declares the five services, their routes, their secrets and their telemetry. Restating any of that
+#  here would be the "written twice" failure this repository has paid for three times already — the
+#  vhost port against the compose port, the topic prefix against the script that creates the topics,
+#  the webhook route against the gateway permit. So the split is by RESPONSIBILITY, not by taste:
+#
+#      ../docker/docker-compose.prod.yml   the five apps.   Uploaded on EVERY deploy. Rolls.
+#      this file                           the five stores. Installed ONCE. Does not roll.
+#
+#  Nothing appears in both. There is exactly one gateway route definition in this repository's
+#  production configuration, exactly one place each application secret is read, and exactly one
+#  declaration of each database. The one thing the two files must agree on is the network below and
+#  the container names of these five stores, which is what the application stack's datasource URLs
+#  resolve — those URLs live in secrets.env on the host, and secrets.env.example beside this file is
+#  the template CI diffs the names against.
+#
+#  --- Why the databases are here at all, when Kafka and Consul are not (decisions.md D27) ----------
+#
+#  D27's rule is "borrow, never bundle", and it is about the things the HOST already runs once for
+#  every product: one broker at kafka:9092, one Consul at consul:8500, one otel-collector, all on
+#  networks this stack declares `external` and never creates. That rule is upheld exactly as before —
+#  nothing here declares a broker or a registry, and nothing ever should.
+#
+#  A database is the other kind of thing. There is no host-wide PostgreSQL for four products to
+#  share, hc-market owns its schema, and D27's closing paragraph says the databases deliberately stay
+#  OFF the shared network so another product cannot reach them. So they are bundled, deliberately,
+#  and kept on hc-market's own `hcmarketnet` where nothing else on the box can resolve them.
+#
+#  ../deploy-prod.sh's preflight comment used to read "infranet carries Kafka, Consul and the
+#  databases". The first two are true and the third never was: no compose file in this repository has
+#  ever declared a production database, and every HC_*_DB_URL is a `:?` variable pointing at a
+#  hostname nothing on the host provides. That is the gap this file closes, and until it did, the
+#  answer to "where does production's catalog database live?" was written down nowhere.
+#
+#  --- No published ports, on purpose ---------------------------------------------------------------
+#
+#  Not one of these five publishes anything. The application containers reach them over hcmarketnet
+#  by container name, and ./backup.sh reaches them with `docker exec` — which is why the credentials
+#  below are the only thing authenticating access, and why they are real credentials rather than the
+#  `POSTGRES_HOST_AUTH_METHOD: trust` that quality/compose.yml and the dev stack use. Trust is
+#  correct for a box whose whole security story is "one private LAN"; on the production host it would
+#  mean any container that finds its way onto hcmarketnet is a superuser on four databases.
+#
+#  --- Image tags -----------------------------------------------------------------------------------
+#
+#  postgres:17 and mongo:8, matching quality/compose.yml exactly, so the engine production runs is the
+#  engine the seeded estate was verified against. Both are floating minors and that is a stated trade:
+#  pinning to a patch nobody here has run would be inventing a version, and matching quality is worth
+#  more than pinning to a guess. `docker compose pull` is therefore a change to production and belongs
+#  in a maintenance window, not in a deploy — which is one reason ./start does not pull this file.
+# ==============================================================================
+name: hc-market-data
+
+# Every store is `unless-stopped` and carries a memory ceiling: the production host is shared with
+# five other products and one runaway process must not be able to take it down. Same reasoning as
+# every sibling prod-server/compose.yml, applied to five containers rather than one.
+x-store-base: &store-base
+  restart: unless-stopped
+  networks: [hcmarketnet]
+  logging:
+    driver: json-file
+    options: { max-size: '10m', max-file: '3' }
+
+x-postgres: &postgres
+  <<: *store-base
+  image: postgres:17
+  # 256m each, four of them. These hold an 18-professional catalogue and its bookings; the ceiling is
+  # here to bound a runaway, not to size the workload.
+  mem_limit: ${HC_DB_MEM_LIMIT:-256m}
+  healthcheck:
+    # $$ escapes the compose interpolation so the shell inside the container expands it, not compose.
+    test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+    interval: 10s
+    timeout: 5s
+    retries: 20
+    start_period: 20s
+
+services:
+  # --- The gateway's MongoDB ------------------------------------------------------------------
+  #
+  # Mongo rather than PostgreSQL, and that is load-bearing rather than a preference: JHipster 9.2.0
+  # decides the Spring Boot generation with `springBoot4 = !(databaseTypeSql && reactive)`, and a
+  # JHipster gateway is always reactive, so a SQL gateway drops silently to Boot 3.5.15 while the
+  # four microservices get 4.0.7. See decisions.md D1.
+  #
+  # It holds the user store, which is what makes it the one database here whose loss is not
+  # recoverable from a replay: erasure does not touch it (decisions.md D40), so this is where the
+  # accounts live. backup.sh dumps it first for that reason.
+  hc-market-gateway-db:
+    <<: *store-base
+    image: mongo:8
+    container_name: hc-market-gateway-db
+    environment:
+      # The image reads these ONLY when it initialises an empty data directory. Changing them later
+      # does not change the account — it only makes the connection string in secrets.env stop
+      # authenticating, and the gateway comes back unhealthy with no clue as to why. hc-admin hit
+      # this and wrote a whole script about it; see the README's rotation section.
+      MONGO_INITDB_ROOT_USERNAME: ${HC_MONGO_ROOT_USERNAME:?gateway mongo root username is required — see secrets.env.example}
+      MONGO_INITDB_ROOT_PASSWORD: ${HC_MONGO_ROOT_PASSWORD:?gateway mongo root password is required — see secrets.env.example}
+    volumes:
+      - gateway-data:/data/db
+    mem_limit: ${HC_MONGO_MEM_LIMIT:-512m}
+    healthcheck:
+      test: ['CMD', 'mongosh', '--quiet', '--eval', "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  # --- The four PostgreSQL instances -----------------------------------------------------------
+  #
+  # Four INSTANCES, not four schemas in one server. That is the whole point of the arrangement: a
+  # service owning its own instance can move hosts without a migration, and nothing can write a join
+  # across two services' data even by accident. It is also why the seed calendar has to be kept in
+  # step by a CI diff rather than by a query — nothing joins catalog's slot_date to booking's
+  # scheduled_date and nothing can (decisions.md D48).
+  #
+  # The database and role names match what the JDL generates and what every other environment uses,
+  # so a dump taken here restores into a dev or quality stack unchanged.
+  hc-market-catalog-db:
+    <<: *postgres
+    container_name: hc-market-catalog-db
+    environment:
+      POSTGRES_USER: healthconnectCatalog
+      POSTGRES_DB: healthconnectCatalog
+      POSTGRES_PASSWORD: ${HC_CATALOG_DB_PASSWORD:?catalog datasource password is required — the SAME value the application stack reads}
+    volumes:
+      - catalog-data:/var/lib/postgresql/data
+
+  hc-market-booking-db:
+    <<: *postgres
+    container_name: hc-market-booking-db
+    environment:
+      POSTGRES_USER: healthconnectBooking
+      POSTGRES_DB: healthconnectBooking
+      POSTGRES_PASSWORD: ${HC_BOOKING_DB_PASSWORD:?booking datasource password is required — the SAME value the application stack reads}
+    volumes:
+      - booking-data:/var/lib/postgresql/data
+
+  hc-market-messaging-db:
+    <<: *postgres
+    container_name: hc-market-messaging-db
+    environment:
+      POSTGRES_USER: healthconnectMessaging
+      POSTGRES_DB: healthconnectMessaging
+      POSTGRES_PASSWORD: ${HC_MESSAGING_DB_PASSWORD:?messaging datasource password is required — the SAME value the application stack reads}
+    volumes:
+      - messaging-data:/var/lib/postgresql/data
+
+  hc-market-payout-db:
+    <<: *postgres
+    container_name: hc-market-payout-db
+    environment:
+      POSTGRES_USER: healthconnectPayout
+      POSTGRES_DB: healthconnectPayout
+      POSTGRES_PASSWORD: ${HC_PAYOUT_DB_PASSWORD:?payout datasource password is required — the SAME value the application stack reads}
+    volumes:
+      - payout-data:/var/lib/postgresql/data
+
+# hcmarketnet is created by ./infra.sh, NOT by compose, for the reason every sibling infra.sh gives:
+# a name created out of band is predictable, survives a --force-recreate, and is the same object both
+# compose projects attach to. Compose-created networks are named after the project, and there are two
+# projects here — `hc-market-data` and `healthconnect` — so letting compose create it would give each
+# of them its own network and the application stack would resolve none of these hostnames.
+#
+# `external: true` also means a missing network fails LOUDLY at `up` rather than being silently
+# invented, which is the same trade the application stack takes for infranet and monitoring.
+networks:
+  hcmarketnet:
+    name: ${HC_DATA_NETWORK:-hcmarketnet}
+    external: true
+
+# Named volumes, in the `hc-market-data_*` namespace compose derives from the project name above.
+# `docker compose down` does not remove them and `down -v` does; the README says which of those is
+# ever the right command on this host (neither, without a dump first).
+volumes:
+  gateway-data:
+  catalog-data:
+  booking-data:
+  messaging-data:
+  payout-data:
