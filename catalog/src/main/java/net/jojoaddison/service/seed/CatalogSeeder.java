@@ -1,8 +1,6 @@
 package net.jojoaddison.service.seed;
 
 import java.time.Instant;
-import java.time.LocalDate;
-import java.time.temporal.ChronoUnit;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -102,9 +100,31 @@ public class CatalogSeeder {
 
     @Transactional
     public void load(SeedFile seed, boolean anchorDates) {
-        long shiftDays = anchorDates ? 0 : ChronoUnit.DAYS.between(seed.meta().demoToday(), LocalDate.now());
+        // decisions.md D48. Not LocalDate.now(): the calendar is the estate's, and the four seeded
+        // services have to arrive at the same number or their dates stop lining up with each other.
+        long shiftDays = SeedCalendar.shiftDays(seed.meta().demoToday(), anchorDates);
         if (shiftDays != 0) {
-            LOG.info("shifting every seed date by {} days (anchor is {})", shiftDays, seed.meta().demoToday());
+            // The day is DERIVED from the shift rather than read from the clock a second time: two
+            // reads either side of Accra midnight would print a date the seed was not loaded against,
+            // in the one log line whose job is to explain a disagreement between services.
+            LOG.info(
+                "shifting every seed date by {} days: {} -> {} in {}",
+                shiftDays,
+                seed.meta().demoToday(),
+                seed.meta().demoToday().plusDays(shiftDays),
+                SeedCalendar.SEED_ZONE
+            );
+        } else {
+            // A run that shifts nothing used to log nothing at all, and "no line" is ambiguous between
+            // the two ways of getting here. The quality box is always the first of them, so the one
+            // estate anybody audits said nothing whatever about its own calendar. One line, naming
+            // which case and the zone, is enough to read it off the log.
+            LOG.info(
+                "seed dates unshifted ({}): loading them as written against {} in {}",
+                anchorDates ? "anchored" : "today IS the demo day",
+                seed.meta().demoToday(),
+                SeedCalendar.SEED_ZONE
+            );
         }
 
         Map<String, Category> categoriesByCode = new HashMap<>();

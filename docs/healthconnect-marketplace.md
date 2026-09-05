@@ -1046,7 +1046,7 @@ with the `diff` one-liner in `../CLAUDE.md`.*
 #     ./deploy-dev.sh up                      # build, start everything, seed
 #     ./deploy-dev.sh up --no-build           # start from existing images
 #     ./deploy-dev.sh up --services catalog,booking
-#     ./deploy-dev.sh reseed                  # wipe + reload seed-data.json only
+#     ./deploy-dev.sh reseed                  # wipe + reload seed-data.json only, ALL seeded services
 #     ./deploy-dev.sh status | logs | restart | down
 #     ./deploy-dev.sh down --clean            # also drop volumes (data loss)
 #
@@ -1057,7 +1057,16 @@ with the `diff` one-liner in `../CLAUDE.md`.*
 #     --no-build          Skip the Maven/Jib build
 #     --with-tests        Run `clean verify` before each image (slow: Testcontainers per app)
 #     --clean             Remove volumes on down / rebuild from scratch on up
+#     --force             Allow `reseed --services <subset>` — see below before you use it
 #     --timeout <secs>    Per-service health gate   (default: 180)
+#
+#  RESEED IS ALL-OR-NOTHING BY DEFAULT (decisions.md D48). Each seeded service shifts every date it
+#  writes by `today - $meta.demoToday`, computed when that service seeds, and the four are supposed to
+#  agree. `reseed --services catalog` reseeds catalog alone, so catalog is dated today and the other
+#  three keep whatever day they were seeded on — days apart, not seconds. Nothing fails: no query
+#  spans two services, so the estate simply stops being seed-exact against itself while every check
+#  stays green. It is refused unless you pass --force, which is the fast loop when you are working on
+#  one seeder and know the others are stale.
 #
 #  Layout note (decisions.md D6): the five apps are SIBLING DIRECTORIES of this script's parent,
 #  each a standalone Maven project with its own ./mvnw — there is no aggregator pom and no Maven
@@ -1111,6 +1120,7 @@ SERVICES=("${ALL_SERVICES[@]}")
 DO_BUILD=1
 DO_CLEAN=0
 RUN_TESTS=0
+FORCE=0
 TIMEOUT=180
 # Java 25 needs a JDK with a compiler. /usr/lib/jvm/java-25-openjdk-amd64 is a JRE and its failure
 # mode is an incremental build that silently passes — see the workspace guide.
@@ -1120,7 +1130,7 @@ JAVA_HOME="${JAVA_HOME:-/usr/lib/jvm/jdk-25.0.2-oracle-x64}"
 # (./deploy/deploy-dev.sh --help, which is how the header itself spells it) leaves $0 pointing at a
 # path that no longer resolves, and --help fails with a sed error instead of printing the help.
 SELF="$DEPLOY_DIR/$(basename "${BASH_SOURCE[0]}")"
-case "${1:-}" in -h|--help) sed -n '2,43p' "$SELF"; exit 0 ;; esac
+case "${1:-}" in -h|--help) sed -n '2,52p' "$SELF"; exit 0 ;; esac
 # the first bare word is the command; anything starting with "-" is an option
 if [[ $# -gt 0 && "$1" != -* ]]; then COMMAND="$1"; shift; else COMMAND="up"; fi
 
@@ -1178,8 +1188,9 @@ while [[ $# -gt 0 ]]; do
     --no-build)   DO_BUILD=0; shift ;;
     --with-tests) RUN_TESTS=1; shift ;;
     --clean)     DO_CLEAN=1; shift ;;
+    --force)     FORCE=1; shift ;;
     --timeout)   TIMEOUT="$2"; shift 2 ;;
-    -h|--help)   sed -n '2,43p' "$SELF"; exit 0 ;;
+    -h|--help)   sed -n '2,52p' "$SELF"; exit 0 ;;
     *)           die "unknown option: $1 (try --help)" ;;
   esac
 done
@@ -1481,6 +1492,41 @@ case "$COMMAND" in
     banner
     ;;
   reseed)
+    # Ahead of preflight deliberately: this refusal needs no docker, no jq and no shared plane, and a
+    # refusal that first spends thirty seconds proving the estate is healthy reads as a broken estate.
+    #
+    # A PARTIAL reseed dates one service to today and leaves the others on whatever day they were
+    # seeded — decisions.md D48. Every seeded date in a service moves by ONE number, `today -
+    # $meta.demoToday`, computed when that service seeds; the four are supposed to arrive at the same
+    # one. D48 accepted the residual that they compute it independently, and it argued that from `up`,
+    # where the four are started by a single `compose up` and are seconds apart. `--services` makes it
+    # something else entirely: `reseed --services catalog` reseeds catalog ALONE, and the gap is then
+    # however many days have passed since the others were seeded — three for an estate left up over a
+    # weekend.
+    #
+    # Nothing fails when it happens, which is the whole reason for a refusal here rather than a note
+    # somewhere. Booking never asks catalog about a slot and payout's aggregates read only payout's own
+    # ledger, so a three-day gap means every seeded booking falls on a day the professional's calendar
+    # shows no slot, and `verify_seed` — which counts professionals and reviews — stays green.
+    #
+    # --force is the escape hatch, because reseeding one service IS the fast loop when you are working
+    # on that service's seeder. It is a refusal, not a prohibition.
+    seeded=(); for s in "${SERVICES[@]}"; do [[ $s == gateway ]] || seeded+=("$s"); done
+    all_seeded=(); for s in "${ALL_SERVICES[@]}"; do [[ $s == gateway ]] || all_seeded+=("$s"); done
+    if (( ${#seeded[@]} < ${#all_seeded[@]} )) && (( ! FORCE )); then
+      die "refusing to reseed a subset (${seeded[*]}) — the others keep the day they were seeded on, and
+    a seeded estate that disagrees with itself about what day it is fails nothing and is caught by
+    nothing (decisions.md D48). Reseed all of them (drop --services), or pass --force if you meant it."
+    fi
+    # An `if`, not a `&&` chain: this script runs under `set -e` with an ERR trap, so a chain whose
+    # first test is false returns 1 and kills the run at the line that was supposed to say nothing.
+    if (( FORCE )) && (( ${#seeded[@]} < ${#all_seeded[@]} )); then
+      # Name the ones left BEHIND, not the whole list — the operator already knows what they asked
+      # for, and what they need on the screen afterwards is which services are now stale.
+      stale=(); for s in "${all_seeded[@]}"; do [[ " ${seeded[*]} " == *" $s "* ]] || stale+=("$s"); done
+      warn "--force: reseeding ${seeded[*]} only — ${stale[*]} keep the day they were seeded on (D48)"
+    fi
+
     preflight
     step "Reseed"
     for s in "${SERVICES[@]}"; do

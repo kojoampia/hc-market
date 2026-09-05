@@ -401,6 +401,113 @@ jobs:
           done
           exit "$fail"
 
+      # The seed calendar is the same arrangement, one service wider — decisions.md D48.
+      #
+      # Every seeded date in catalog, booking, messaging and payout is moved by ONE number per
+      # service, `today - $meta.demoToday`, and the four have to arrive at the same number. Nothing
+      # joins them and nothing can: each service owns its own database INSTANCE, so payout's earnings
+      # aggregates read payout's own Ledger and nothing else, and booking never asks catalog about a
+      # slot. The agreement is enforced by no query and shows up only on a screen — the professional's
+      # overview puts sessions read from booking beside earnings read from payout, and a profile shows
+      # catalog's availability_slot.slot_date beside the scheduled_date booking holds. A uniform offset
+      # in all four is what anchor-dates=false MEANS and is harmless. A one-day disagreement between
+      # two of them is corruption nothing here detects, because no count moves and no query spans the
+      # pair — which is why fixing one service alone would have been worse than fixing none.
+      #
+      # So SeedCalendar.java and its known-answer test are copied byte-identically into all four and
+      # diffed here. Same reason as SubjectPseudonym: no shared library, and a constant duplicated
+      # with nothing comparing the copies is how the next divergence arrives in silence.
+      - name: The seed calendar must be identical in all four seeded services
+        run: |
+          fail=0
+          for f in src/main/java/net/jojoaddison/service/seed/SeedCalendar.java \
+                   src/test/java/net/jojoaddison/service/seed/SeedCalendarUnitTest.java; do
+            ok=1
+            for svc in booking messaging payout; do
+              diff -u "catalog/$f" "$svc/$f" || ok=0
+            done
+            if [ "$ok" = 0 ]; then
+              echo "::error::$f differs between services — catalog, booking, messaging and payout must agree, or their seeded dates stop lining up. See decisions.md D48."
+              fail=1
+            else
+              echo "ok   $f — identical in all four"
+            fi
+          done
+          exit "$fail"
+
+      # …and nothing in a seed package may read the clock itself.
+      #
+      # The defect this replaced was a LocalDate.now() in each of the four load() methods — one line,
+      # four times, taking the JVM default zone. SeedCalendar is now the only place in any of them
+      # that reads the time at all, which is what makes this a grep rather than an argument.
+      #
+      # It matters more than it looks. Re-reading the clock is not only a zone question: the log line
+      # that explains a shift derives the day from the shift for exactly this reason, because two
+      # reads either side of Accra midnight print a date the seed was never loaded against.
+      #
+      # THREE THINGS THE FIRST VERSION OF THIS CHECK GOT WRONG, each found by the NEW-9 review and
+      # each a way of failing open — which is the only way a check like this can fail:
+      #
+      #   1. It banned the TYPE that reads the clock and not the ZONE that interprets one. So
+      #      `ChronoUnit.DAYS.between(demoToday, LocalDate.ofInstant(Instant.now(), ZoneId.systemDefault()))`
+      #      passed — and that is, character for character, the stand-in D48 quotes as reproducing the
+      #      defect. The zone forms are in the list now. Instant.now() ALONE is still legal and still
+      #      deliberately so (below); Instant.now() plus an implicit zone is not.
+      #   2. The `^[^/*]*` anchor could not cross a `/` or a `*`, so any earlier division, comment
+      #      marker inside a string, or multiplication hid the rest of the line. `long pct = amount /
+      #      100; LocalDate d = LocalDate.now();` was invisible, and PayoutSeeder does commission
+      #      arithmetic. Comment lines are now DROPPED from a full-line match rather than the match
+      #      being anchored past them: the filter keeps grep -n's original line numbers and errs
+      #      towards reporting, not towards silence.
+      #   3. It named the four *Seeder.java files. SeedDataLoader is in the same package, is the
+      #      ApplicationRunner that calls load(SeedFile, boolean), and was not covered — and D48's own
+      #      named future work (a shared HC_SEED_TODAY) would compute its LocalDate exactly there. So
+      #      the check scans the whole package and exempts only SeedCalendar, which is the one file
+      #      that is SUPPOSED to read a clock.
+      #
+      # Instant.now() is deliberately NOT in this list. An Instant carries no calendar, so on its own
+      # it cannot be read in the wrong one — CatalogSeeder stamps Favourite.addedAt with one, which is
+      # the D21 "when did this happen" category and not a date to be shifted at all (the seed's
+      # `favourites` are bare professional refs carrying no date to shift). What is banned is the types
+      # that need a zone to mean anything, and every spelling of "and take the JVM's".
+      - name: No seed package may read the clock directly
+        run: |
+          fail=0
+          for svc in catalog booking messaging payout; do
+            dir="$svc/src/main/java/net/jojoaddison/service/seed"
+            # A moved or renamed package would leave the glob unexpanded, grep would error on a
+            # literal path, and every file would report "ok" — this check passing on a tree it never
+            # looked at is the same failure it was widened to stop. So the directory and the count of
+            # files actually scanned are both asserted.
+            if [ ! -d "$dir" ]; then
+              echo "::error::$dir does not exist — this check would scan nothing and pass. See decisions.md D48."
+              fail=1
+              continue
+            fi
+            scanned=0
+            for f in "$dir"/*.java; do
+              # SeedCalendar is the one file that may: it holds SEED_ZONE and is the seam the tests
+              # inject a Clock through. Everything else in the package goes through it.
+              case "$f" in */SeedCalendar.java) continue ;; esac
+              scanned=$((scanned + 1))
+              # Comments may name LocalDate.now() — they explain why it is not there. Code may not.
+              # Filtering AFTER the match keeps the real line numbers, and a line that is not a
+              # comment survives the filter, so an unusual layout over-reports instead of passing.
+              if grep -nE '(LocalDate|LocalDateTime|LocalTime|ZonedDateTime|OffsetDateTime|Year|YearMonth)\.now\(|Clock\.system|ZoneId\.systemDefault|TimeZone\.getDefault|systemDefaultZone' "$f" \
+                   | grep -vE '^[0-9]+:[[:space:]]*(//|\*|/\*)'; then
+                echo "::error file=$f::a seed class reads the clock or the JVM's zone directly — the shift belongs to SeedCalendar, in the estate's calendar, or the four services stop agreeing on what day it is. See decisions.md D48."
+                fail=1
+              else
+                echo "ok   $f"
+              fi
+            done
+            if [ "$scanned" -eq 0 ]; then
+              echo "::error::$dir matched no scannable file — the seeder has moved and this check is now blind. See decisions.md D48."
+              fail=1
+            fi
+          done
+          exit "$fail"
+
       # And the pepper that keys it must be injected everywhere the three services run, and committed
       # nowhere a real deployment reads. Same shape as the JWT signing key, same reason: this
       # repository is public, so a default that works is a secret that does not.

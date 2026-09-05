@@ -4,7 +4,6 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.ZoneOffset;
-import java.time.temporal.ChronoUnit;
 import java.util.List;
 import net.jojoaddison.service.SlotTime;
 import net.jojoaddison.domain.Booking;
@@ -58,7 +57,34 @@ public class BookingSeeder {
 
     @Transactional
     public void load(SeedFile seed, boolean anchorDates) {
-        long shift = anchorDates ? 0 : ChronoUnit.DAYS.between(seed.meta().demoToday(), LocalDate.now());
+        // decisions.md D48. Not LocalDate.now(): the calendar is the estate's, and the four seeded
+        // services have to arrive at the same number or their dates stop lining up with each other.
+        // This one is the pivot — catalog's slot dates and payout's ledger rows are both read against
+        // what this shift writes.
+        long shift = SeedCalendar.shiftDays(seed.meta().demoToday(), anchorDates);
+        if (shift != 0) {
+            // The day is DERIVED from the shift rather than read from the clock a second time: two
+            // reads either side of Accra midnight would print a date the seed was not loaded against,
+            // in the one log line whose job is to explain a disagreement between services.
+            LOG.info(
+                "shifting every seed date by {} days: {} -> {} in {}",
+                shift,
+                seed.meta().demoToday(),
+                seed.meta().demoToday().plusDays(shift),
+                SeedCalendar.SEED_ZONE
+            );
+        } else {
+            // A run that shifts nothing used to log nothing at all, and "no line" is ambiguous between
+            // the two ways of getting here. The quality box is always the first of them, so the one
+            // estate anybody audits said nothing whatever about its own calendar. One line, naming
+            // which case and the zone, is enough to read it off the log.
+            LOG.info(
+                "seed dates unshifted ({}): loading them as written against {} in {}",
+                anchorDates ? "anchored" : "today IS the demo day",
+                seed.meta().demoToday(),
+                SeedCalendar.SEED_ZONE
+            );
+        }
 
         int n = 0;
         for (SeedFile.SeedRequest r : orEmpty(seed.requests())) {

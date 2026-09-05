@@ -587,10 +587,15 @@ time.**
   has to compare before it counts. And **every row the sweep touches gets a number on the receipt** —
   catalog deleted favourites and reported nothing about them for a week. The nine counters and which
   two were wrong are tabulated in D39.
-- **`SubjectPseudonym.java` and `SubjectPseudonymUnitTest.java` are copied verbatim into booking,
-  catalog and messaging, and CI diffs the three copies.** There is no shared library here, so the
-  derivation is duplicated; edit one and you must edit all three identically, comments included. They
-  are new files, so a regeneration leaves them alone.
+- **Two families of file are copied verbatim across services, and CI diffs the copies.** There is no
+  shared library here, so a derivation whose answers must match across services is duplicated instead;
+  edit one copy and you must edit them all identically, **comments included**. Both are new files, so a
+  regeneration leaves them alone.
+  - `SubjectPseudonym.java` + `SubjectPseudonymUnitTest.java` — **booking, catalog, messaging** (D35).
+    The erasure alias. Diverge and one person acquires two irreconcilable aliases.
+  - `SeedCalendar.java` + `SeedCalendarUnitTest.java` — **catalog, booking, messaging, payout** (D48).
+    How far every seeded date moves, and in whose calendar. Diverge and two services' seeded data stop
+    lining up, with no count moving and nothing going red.
 - **The scripts and the spec appendices are the same bytes in two places.** Appendix A is
   `deploy/deploy-dev.sh`, Appendix B is `deploy/deploy-prod.sh`. This is enforced mechanically —
   after editing either script, re-embed; before trusting the spec, check:
@@ -642,17 +647,31 @@ time.**
   There is no such thing as picking one silently — only picking one and not writing it down, and
   because Ghana is UTC+0 all year `ZoneId.systemDefault()` is right on every machine anybody tests on
   and wrong on the first one with a `TZ`. It is already wrong on this workstation, which runs
-  `Europe/Berlin`. `MarketplaceService.BADGE_ZONE` is the pattern; the **five** remaining
-  `LocalDate.now()` calls in catalog are the outstanding instances of the same thing — this said four
-  until the WP-15 review counted them, and the missed one is the consequential one.
-  **Four of the five render; `CatalogSeeder:105` writes.** It decides how far every seeded date is
-  shifted, and the identical line is in `BookingSeeder`, `MessagingSeeder` and `PayoutSeeder`, so on a
-  machine whose zone is ahead of Accra a seed loaded after 22:00 UTC is shifted one day further than
-  one loaded an hour earlier and the estate stops being seed-exact against itself. Quality anchors
-  (`HEALTHCONNECT_SEED_ANCHOR_DATES: "true"`) so the call never runs there, and dev's containers carry
-  no `TZ` so their default is UTC — latent rather than live, and one `TZ:` line from being live.
-  Backlog **NEW-9**; fixing catalog's alone is worse than fixing none, because then two services'
-  seeded dates disagree instead of all four being uniformly offset.
+  `Europe/Vienna` — D47 and CLAUDE.md both said `Europe/Berlin`, which is the same offset and the same
+  DST rules, so every claim about the behaviour held and only the name was wrong.
+  `MarketplaceService.BADGE_ZONE` is the pattern.
+  **The one that WROTE is fixed; ten that render or write elsewhere are not.** D47's inventory found
+  five implicit-zone `LocalDate.now()` calls in catalog — it said four until the WP-15 review counted
+  them — and the missed one was the consequential one. `CatalogSeeder`'s decided how far every seeded
+  date moves, and the identical line was in `BookingSeeder`, `MessagingSeeder` and `PayoutSeeder`.
+  **NEW-9 / D48 replaced all four with `SeedCalendar`**, one file copied byte-identically into the four
+  seeded services with CI diffing the copies, plus a CI grep that nothing in a `service.seed` package
+  reads a clock or the JVM's zone — the whole package, `SeedCalendar` excepted, because
+  `SeedDataLoader` is in it too. Catalog's remaining four are `ReviewWriteResource:115` (which stores
+  `Review.publishedOn`, so correcting it is a data question), `MarketplaceResource:132` and
+  `ProWorkspaceResource` twice — all defaults for a rendered availability window.
+  **D47's inventory was catalog-only and read as estate-wide; it is not.** Six more are open outside
+  catalog, and **`payout` writes `ledger.earned_on` from `LocalDate.now()` in three places** —
+  `BookingEventConsumer:143` and `:246`, `DisputeEventConsumer:142` — so after D48 that column is
+  written in Accra's calendar by the seeder and the JVM's by the consumer, in one table. That is
+  **NEW-10**, open, tabulated in D47.
+  D48 closes the zone half only, deliberately: the four services still evaluate the shift
+  independently, seconds apart on one `compose up` (**measured: 7.1s**), so a boot straddling Accra
+  midnight can still split them. That residual is dev-only (quality anchors, production never seeds)
+  and D48 names the three triggers that would make a shared `HC_SEED_TODAY` worth its cost.
+  **The one case that was days wide rather than seconds is guarded**: `deploy-dev.sh reseed
+  --services <subset>` reseeds part of the estate against the rest's older day, so it is refused
+  without `--force`.
 - **`Professional.verification` is the projection of the latest `VerificationReview`** (D16), and the
   desk writes both in one transaction. This is a deliberate exception to "derived, never stored":
   Browse filters on the column, and the 18 seeded professionals have a state with no history behind
