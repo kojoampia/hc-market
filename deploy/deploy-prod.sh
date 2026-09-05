@@ -41,9 +41,18 @@
 #     HC_REGISTRY_USER / HC_REGISTRY_TOKEN     for docker.jojoaddison.net
 #     GHCR_OWNER / GHCR_TOKEN                  for the github channel
 #
-#  Required ON THE HOST, in $REMOTE_PATH/secrets.env, and NOT here:
-#     JWT_BASE64_SECRET  the platform signing key   (one value across the estate)
-#     HC_PRIVACY_PEPPER  the erasure pepper          (decisions.md D35)
+#  Required ON THE HOST, in $REMOTE_PATH/secrets.env, and NOT here. ELEVEN values, all of them `:?`
+#  in docker-compose.prod.yml, all of them checked in preflight by name before the stack is touched:
+#     JWT_BASE64_SECRET       this ESTATE's signing key   (decisions.md D37 — NOT the platform key)
+#     HC_PRIVACY_PEPPER       the erasure pepper           (decisions.md D35)
+#     HC_GATEWAY_MONGODB_URI  the gateway's user store
+#     HC_{CATALOG,BOOKING,MESSAGING,PAYOUT}_DB_URL       the four PostgreSQL instances
+#     HC_{CATALOG,BOOKING,MESSAGING,PAYOUT}_DB_PASSWORD  and their credentials
+#
+#  The template, with a generation command beside every line and a real value on none of them, is
+#  deploy/prod-server/secrets.env.example. The five stores those last nine address are declared in
+#  deploy/prod-server/compose.yml and installed on the host once — this script deploys applications
+#  and never provisions a database.
 #
 #  Optional in the same file, and NOT a secret:
 #     HC_DPC_REGISTRATION  the Data Protection Commission registration number (decisions.md D42)
@@ -56,7 +65,7 @@
 #  counsel's ratified figures are the committed fallback (HC_RETENTION_FINANCIAL_DAYS and its two
 #  siblings override them only if a deployment has to be corrected without cutting a release).
 #
-#  Those two are the stack's long-lived secrets and this script never sees them. It generates .env
+#  Those eleven are the stack's long-lived values and this script never sees them. It generates .env
 #  on every deploy and overwrites what was there, so anything kept in .env survives exactly until
 #  the next deploy — which is why docker-compose.prod.yml's two `:?` variables lived in a file that
 #  could not hold them, and why every production `up` would have died on
@@ -65,13 +74,23 @@
 #  platform's long-lived secrets, not in a per-deploy .env that deploy-prod.sh regenerates"; this
 #  is the file that makes that sentence true.
 #
-#  secrets.env is created once, out of band, and never written by this script:
+#  secrets.env is created once, out of band, and never written by this script. Create it ON the
+#  server rather than piping it there, so no value ever exists in a local shell history:
 #
-#      ssh $HC_PROD_HOST 'mkdir -p /srv/healthconnect && umask 077 && cat > /srv/healthconnect/secrets.env' <<'EOF'
-#      JWT_BASE64_SECRET=<the platform key, from ~/webroot/01-healthconnect/.env>
-#      HC_PRIVACY_PEPPER=<the estate pepper — see decisions.md D35 before ever changing it>
-#      HC_DPC_REGISTRATION=<the DPC registration number — optional, see D42>
-#      EOF
+#      ssh $HC_PROD_HOST
+#      mkdir -p /srv/healthconnect && cd /srv/healthconnect
+#      umask 077 && cat > secrets.env      # paste all eleven, filled in, then Ctrl-D
+#      chmod 600 secrets.env
+#
+#  JWT_BASE64_SECRET IS GENERATED FRESH — `head -c 64 /dev/urandom | base64 -w0` — AND IS NOT THE
+#  PLATFORM KEY. This block said "<the platform key, from ~/webroot/01-healthconnect/.env>" until
+#  2026-09-05, and that file holds the key hc-admin, hc-patient and hc-professional share; hc-market
+#  is deliberately not in that set (decisions.md D37). Nothing would have failed — HS512 does not
+#  care which random bytes it is — while these five services acquired the ability to mint tokens the
+#  other three products accept, and an hc-admin token acquired authority here.
+#
+#  Full template, with the other ten and a generation command for each:
+#      deploy/prod-server/secrets.env.example
 #
 #  Both files are passed to compose explicitly (--env-file .env --env-file secrets.env), because
 #  naming any --env-file stops compose auto-loading .env, and because the `:?` checks are evaluated
@@ -116,6 +135,28 @@ HEALTH_TIMEOUT=240
 # file is there and to hand its name to compose.
 SECRETS_FILE="secrets.env"
 SECRET_KEYS=(JWT_BASE64_SECRET HC_PRIVACY_PEPPER)
+# ...and the nine connection values that are ALSO `:?` in docker-compose.prod.yml and were also
+# emitted by nothing.
+#
+# THE PREFLIGHT CHECKED TWO OF THE ELEVEN UNTIL 2026-09-05, which is the same defect it was built to
+# fix, nine keys wide. A host whose secrets.env held the two secrets passed preflight, had .env
+# overwritten and .env.previous rotated, and then died at `up` on
+# "catalog datasource url is required" — a stack half-rolled over a variable nothing in the pipeline
+# ever supplied. It was invisible because no production database was declared anywhere in this
+# repository until deploy/prod-server/ existed, so there was no obvious place for these to come from
+# and nothing noticed they came from nowhere.
+#
+# Kept as a second array rather than folded into SECRET_KEYS because they are not secrets and the
+# messages differ: the URLs are topology and can be reconstructed from prod-server/compose.yml, while
+# a lost pepper cannot be reconstructed from anything. Presence and non-emptiness only, for both —
+# the values stay on the host, nothing here reads them, so nothing here can print them.
+CONNECTION_KEYS=(
+  HC_GATEWAY_MONGODB_URI
+  HC_CATALOG_DB_URL   HC_CATALOG_DB_PASSWORD
+  HC_BOOKING_DB_URL   HC_BOOKING_DB_PASSWORD
+  HC_MESSAGING_DB_URL HC_MESSAGING_DB_PASSWORD
+  HC_PAYOUT_DB_URL    HC_PAYOUT_DB_PASSWORD
+)
 # Every remote compose invocation goes through this. Two --env-file arguments, in this order: the
 # later file wins, and the generated .env must never be able to override a secret. Naming any
 # --env-file disables compose's automatic .env loading, so both have to be listed.
@@ -150,10 +191,16 @@ while [[ $# -gt 0 ]]; do
     --rollback)  DO_ROLLBACK=1; shift ;;
     --dry-run)   DRY_RUN=1; shift ;;
     --yes|-y)    ASSUME_YES=1; shift ;;
-    # 2,66: the whole header block, up to but not including its closing rule. It ran to line 40
-    # until the host-secrets section was added below it, at which point --help stopped printing the
-    # one thing a first-time deployer has to do before deploying at all.
-    -h|--help)   sed -n '2,66p' "$SELF"; exit 0 ;;
+    # The whole header block, COMPUTED rather than numbered: skip the shebang and the opening rule,
+    # print until the closing one.
+    #
+    # It was `sed -n '2,66p'` and the comment beside it said that was "the whole header block, up to
+    # but not including its closing rule" — which had stopped being true. The header ran to line 78
+    # by then, so --help printed everything EXCEPT lines 67-78, and lines 68-74 are the `cat >
+    # secrets.env` command a first-time deployer has to run before deploying at all. That is exactly
+    # the omission the comment was written to record having fixed, arriving a second time by the same
+    # road: a hardcoded line number in a file that grows.
+    -h|--help)   awk 'NR<=2 {next} /^# ={20,}$/ {exit} {print}' "$SELF"; exit 0 ;;
     *)           die "unknown option: $1 (try --help)" ;;
   esac
 done
@@ -214,10 +261,24 @@ require() { command -v "$1" >/dev/null 2>&1 || die "$1 is required but not on PA
 secret_hint() {
   case "$1" in
     JWT_BASE64_SECRET)
-      printf 'One key across the whole platform — take it from ~/webroot/01-healthconnect/.env on the host, never generate a fresh one here: a token issued by any of the three sibling stacks is accepted by the others only while it matches.' ;;
+      # THIS ADVICE WAS WRONG UNTIL 2026-09-05, and it was wrong in the direction that widens a blast
+      # radius rather than the one that breaks a deploy. It said to take the key from
+      # ~/webroot/01-healthconnect/.env, which is the PLATFORM key shared by hc-admin, hc-patient and
+      # hc-professional — and hc-market is not in that set (decisions.md D37). Any service holding a
+      # key can mint a token for any subject with any authority, so following the old hint would
+      # silently have given hc-market's five services the ability to mint tokens the other three
+      # products accept, and given an hc-admin token authority here. Nothing would have failed: HS512
+      # does not care which random bytes it is, so the estate would have come up perfectly.
+      printf 'ONE KEY FOR THIS ESTATE, GENERATED FRESH: `head -c 64 /dev/urandom | base64 -w0`. Do NOT copy it from ~/webroot/01-healthconnect/.env — that is the key hc-admin, hc-patient and hc-professional share, and hc-market is deliberately not in that set (decisions.md D37). Sharing it would let these five services mint tokens the other three products accept.' ;;
     HC_PRIVACY_PEPPER)
       printf 'The erasure pepper (decisions.md D35). If this host has never been deployed, generate one once with `head -c 32 /dev/urandom | base64 -w0` and keep it forever; if it HAS, the old value is the only correct one — a new pepper leaves every erased subject unrecognisable and nothing reports it.' ;;
-    *) printf 'See the header.' ;;
+    HC_GATEWAY_MONGODB_URI)
+      printf 'mongodb://<user>:<pass>@hc-market-gateway-db:27017/healthconnectGateway?authSource=admin — the store declared in deploy/prod-server/compose.yml. Use a HEX password: base64 (+ / =) is not legal unescaped in a URI and the driver rejects the rest as an invalid host:port.' ;;
+    HC_*_DB_URL)
+      printf 'jdbc:postgresql://hc-market-<service>-db:5432/healthconnect<Service> — the stores declared in deploy/prod-server/compose.yml, reachable over hcmarketnet. See deploy/prod-server/secrets.env.example.' ;;
+    HC_*_DB_PASSWORD)
+      printf 'The SAME value the store reads in deploy/prod-server/compose.yml — written once in secrets.env and read by both compose projects, which is why they cannot drift. See deploy/prod-server/secrets.env.example.' ;;
+    *) printf 'See the header, and deploy/prod-server/secrets.env.example.' ;;
   esac
 }
 java_major() {                       # robust: ignores "Picked up JAVA_TOOL_OPTIONS" noise
@@ -295,30 +356,47 @@ preflight() {
   # nothing here can print them, and --dry-run cannot leak what it never fetched.
   log "checking $REMOTE_PATH/$SECRETS_FILE on $HOST"
   if (( DRY_RUN )); then
-    skipped "would confirm $REMOTE_PATH/$SECRETS_FILE holds ${SECRET_KEYS[*]} — NOT contacted"
+    skipped "would confirm $REMOTE_PATH/$SECRETS_FILE holds all ${#SECRET_KEYS[@]} secrets and ${#CONNECTION_KEYS[@]} connection values — NOT contacted"
+    for v in "${SECRET_KEYS[@]}" "${CONNECTION_KEYS[@]}"; do skipped "  $v"; done
   else
     ssh -o BatchMode=yes "$HOST" "test -s '$REMOTE_PATH/$SECRETS_FILE'" \
-      || die "$HOST:$REMOTE_PATH/$SECRETS_FILE is missing or empty. It holds the estate's long-lived secrets (${SECRET_KEYS[*]}), it is created once by hand, and this script deliberately never writes it — see the header for the exact command. Without it every service refuses to start on the compose file's own :? checks."
-    for v in "${SECRET_KEYS[@]}"; do
+      || die "$HOST:$REMOTE_PATH/$SECRETS_FILE is missing or empty. It holds the estate's long-lived secrets (${SECRET_KEYS[*]}) and the five stores' connection values, it is created once by hand, and this script deliberately never writes it — see the header for the exact command and deploy/prod-server/secrets.env.example for the template. Without it every service refuses to start on the compose file's own :? checks."
+    for v in "${SECRET_KEYS[@]}" "${CONNECTION_KEYS[@]}"; do
       ssh -o BatchMode=yes "$HOST" "grep -qE '^[[:space:]]*$v=.' '$REMOTE_PATH/$SECRETS_FILE'" \
         || die "$v is not set in $HOST:$REMOTE_PATH/$SECRETS_FILE. $(secret_hint "$v")"
       ok "$v present"
     done
   fi
 
-  # Both networks are declared `external: true`, so compose will not create them and `up` fails
-  # outright if either is absent. They belong to the host, not to this stack: infranet carries
-  # Kafka, Consul and the databases (~/webroot/00-infrastructure), monitoring carries the shared
-  # otel-collector (~/webroot/02-monitoring).
+  # All three networks are declared `external: true`, so compose will not create them and `up` fails
+  # outright if any is absent.
+  #
+  # TWO belong to the host, not to this stack: infranet carries Kafka and Consul
+  # (~/webroot/00-infrastructure), monitoring carries the shared otel-collector
+  # (~/webroot/02-monitoring). This comment used to say infranet carried "the databases" too, and it
+  # never did — no compose file here declared a production database at all until
+  # deploy/prod-server/ did.
+  #
+  # THE THIRD IS THIS PRODUCT'S OWN. hcmarketnet carries the five stores, is created by
+  # deploy/prod-server/infra.sh, and is deliberately NOT infranet: three sibling products share that
+  # one, and a database another product can resolve is what decisions.md D27 keeps off a shared
+  # network. It is checked here rather than created here for the same reason as the other two — this
+  # script deploys applications and does not provision a host.
   #
   # Checked here rather than discovered at `up`, because the tempting fix at that point is to
   # delete the network line -- and for `monitoring` that "fix" is silent: the stack comes up
-  # healthy, serves correctly, and never reports another span.
+  # healthy, serves correctly, and never reports another span. For hcmarketnet it is not silent at
+  # all, which is the easier failure: five services that cannot resolve a datasource host.
   log "checking host networks"
-  for net in "${HC_NETWORK:-infranet}" "${HC_MONITORING_NETWORK:-monitoring}"; do
+  for net in "${HC_NETWORK:-infranet}" "${HC_DATA_NETWORK:-hcmarketnet}" "${HC_MONITORING_NETWORK:-monitoring}"; do
     (( DRY_RUN )) && { printf '%s  [dry-run] docker network inspect %s%s\n' "$c_dim" "$net" "$c_reset"; continue; }
+    if [[ "$net" == "${HC_DATA_NETWORK:-hcmarketnet}" ]]; then
+      net_hint="It is hc-market's own and carries the five databases. Create it once on the host with \`cd $REMOTE_PATH && ./infra.sh\` — see deploy/prod-server/README.md."
+    else
+      net_hint="It is host-wide and this stack does not create it — start the owning stack first (~/webroot/00-infrastructure for infranet, ~/webroot/02-monitoring for monitoring)."
+    fi
     ssh -o BatchMode=yes "$HOST" "docker network inspect $net >/dev/null 2>&1" \
-      || die "the '$net' network does not exist on $HOST. It is host-wide and this stack does not create it — start the owning stack first. Do NOT drop it from docker-compose.prod.yml."
+      || die "the '$net' network does not exist on $HOST. $net_hint Do NOT drop it from docker-compose.prod.yml."
     ok "network $net present"
   done
 }
@@ -477,13 +555,43 @@ health_gate() {
 smoke_test() {
   step "Smoke test"
   if (( DRY_RUN )); then printf '%s  [dry-run] skipped%s\n' "$c_dim" "$c_reset"; return 0; fi
-  local base="${HC_PUBLIC_URL:-https://health.jojoaddison.net}"
+  local base="${HC_PUBLIC_URL:-https://market.abofonsa.com}"
+
+  # --- BOTH HALVES OF THIS TEST WERE UNPASSABLE UNTIL 2026-09-05 ---------------------------------
+  #
+  # THE PATH. It asked for `$base/api/professionals/count`, and the gateway routes
+  # `/services/<service>/api/**` and nothing else (decisions.md D28) — that narrowing IS the security
+  # control, so /api/** at the edge matches no route and never will. The URL below is the one
+  # quality/README.md documents and the one quality/startup.sh checks; it is the estate's actual
+  # public read.
+  #
+  # THE HOST. The default was https://health.jojoaddison.net, a name this product does not serve.
+  # market.abofonsa.com is the hostname deploy/prod-server/market.abofonsa.com.conf bootstraps.
+  #
+  # Neither had been noticed because a deploy that reaches its smoke test has never happened. This is
+  # the class of defect the whole prod-server package exists to flush out: paths that only run on a
+  # host nothing has ever run against.
   local n
-  n="$(curl -fsS --max-time 10 "$base/api/professionals/count" || echo "")"
-  [[ "$n" =~ ^[0-9]+$ && "$n" -gt 0 ]] || { warn "catalogue smoke test failed (got '${n:-nothing}')"; return 1; }
+  n="$(curl -fsS --max-time 10 "$base/services/healthconnectcatalog/api/professionals/count" || echo "")"
+  [[ "$n" =~ ^[0-9]+$ && "$n" -gt 0 ]] || { warn "catalogue smoke test failed (got '${n:-nothing}') — GET $base/services/healthconnectcatalog/api/professionals/count"; return 1; }
   ok "catalogue answering — $n published professionals"
-  curl -fsS --max-time 10 "$base/management/info" | grep -q "$TAG" \
-    && ok "gateway reports version $TAG" || warn "gateway did not report $TAG in /management/info"
+
+  # The version comes from the CONTAINER, not from the edge, and that is deliberate.
+  #
+  # /management is 404 at the public edge on purpose (prod-server/hc-market-app.conf): actuator
+  # carries health detail, metrics, env, loggers and the build's git SHA, and `info` in particular
+  # hands a stranger the exact build a CVE would be matched against. So this asks the gateway itself,
+  # over the same bash /dev/tcp channel the health gate already uses — the Jib images ship no curl.
+  #
+  # Strictly better than the old form as well as merely possible: it reports what the DEPLOYED
+  # container believes it is, rather than what the edge happens to route.
+  if ssh "$HOST" "cd '$REMOTE_PATH' && $REMOTE_COMPOSE exec -T $(compose_name gateway) bash -c \
+       'exec 3<>/dev/tcp/localhost/8080 && printf \"GET /management/info HTTP/1.0\\r\\n\\r\\n\" >&3 && cat <&3'" \
+       2>/dev/null | grep -q "$TAG"; then
+    ok "gateway container reports version $TAG"
+  else
+    warn "the gateway container did not report $TAG in /management/info"
+  fi
 }
 
 rollback() {
