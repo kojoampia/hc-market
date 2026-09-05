@@ -4618,11 +4618,15 @@ list, in this section and in `CLAUDE.md`, missed the one that matters most, and 
 
 | Where | What it decides | Shape |
 | --- | --- | --- |
-| `CatalogSeeder:105` | how far **every seeded date** is shifted | writes |
+| `CatalogSeeder:105` | how far **every seeded date** is shifted | writes — **fixed by D48** |
 | `ReviewWriteResource:115` | `Review.publishedOn` on a new review | writes, stored |
 | `MarketplaceResource:132` | the default start of a public availability window | renders |
 | `ProWorkspaceResource:228` | the default start of the professional's own window | renders |
 | `ProWorkspaceResource:337` | the same, on the second window endpoint | renders |
+
+The first row is closed — **D48**, with the identical line in `BookingSeeder`, `MessagingSeeder` and
+`PayoutSeeder` closed in the same commit, because closing catalog's alone would have been worse than
+closing none. The other four stand exactly as described below.
 
 `CatalogSeeder`'s is `anchorDates ? 0 : ChronoUnit.DAYS.between(seed.meta().demoToday(), LocalDate.now())`,
 so one JVM-default call moves availability slots, review dates and — through the identical line in
@@ -4647,6 +4651,11 @@ none**: a uniform one-day offset in all four becomes a one-day disagreement betw
 seeded data. There is no shared library here, so it is four edits plus whatever seam makes it
 provable red, which is a package rather than a rider on a rendering package.
 
+**Done as D48.** `SeedCalendar`, copied byte-identically into all four with CI diffing the copies; the
+zone half closed, the "four evaluate independently" half deliberately left open with its triggers
+named. Both narrowing facts above were re-measured there rather than inherited from here, and both
+still hold.
+
 The four rendering sites stay as they were: same class of latent defect, none of them WP-15's, and
 `Review.publishedOn` is a stored date rather than a rendered one, so correcting that one is a data
 question and not a serialisation one.
@@ -4670,3 +4679,166 @@ the served date asserted `isBetween` them, and the "date, not instant" half move
 raw body (`"verifiedOn":"\d{4}-\d{2}-\d{2}"`), which is a stronger statement of the shape than an
 equality against a rendered string. Confirmed it did not weaken: reverting `verifiedOn` to `Instant`
 turns it red quoting the original defect, `"verifiedOn":"2026-09-04T20:26:24.623041711Z"`.
+
+## D48 — The four seeders keep the estate's calendar, and one of two failure modes is closed on purpose
+
+NEW-9, opened by the WP-15 review (D47) and deliberately not folded into it. Four near-identical
+lines, one per seeded service:
+
+```java
+long shift = anchorDates ? 0 : ChronoUnit.DAYS.between(seed.meta().demoToday(), LocalDate.now());
+```
+
+`LocalDate.now()` takes the JVM default zone. Under `anchor-dates=false` that single call decides how
+far **every** seeded date in that service moves — availability slots and review dates in catalog,
+every booking's schedule and its `raisedAt`/`completedAt` in booking, conversations and notifications
+in messaging, `ledger.earned_on` in payout.
+
+### The two failure modes, named separately, because only one of them is closed here
+
+**1. The zone is implicit.** The shift is measured against whatever calendar the container happens to
+be started in. This is the implementation D47 rejected for the badge, arriving on the one call in
+catalog that D47's first inventory missed and the only one of the five that *writes*.
+
+**2. The four evaluate independently.** Even with an identical zone, four services seeding either
+side of midnight compute two different shifts, and there is no barrier between them — they start when
+they start.
+
+Mode 1 is closed. Mode 2 is not, and that is a decision rather than an omission; the argument is
+below.
+
+### Both narrowing facts still hold, re-checked rather than inherited
+
+D47 recorded two and this package re-measured both against the tree at `18d86c8`:
+
+- `quality/compose.yml` sets `HEALTHCONNECT_SEED_ANCHOR_DATES: "true"` on **all four** seeded
+  services, so the ternary short-circuits and the call is never evaluated on the box;
+- **no compose file in this repository sets `TZ` on any service** — `grep -rn 'TZ:' deploy/docker/*.yml
+  quality/compose.yml` returns nothing — so a dev container's JVM default is UTC, which is Accra.
+
+So the defect was latent, not live: what was exposed was a seeder run by hand with
+`anchor-dates=false` on a workstation, and one `TZ:` line away from being neither.
+
+One correction to D47 in passing, and it changes nothing: this workstation runs **`Europe/Vienna`**,
+not `Europe/Berlin`. Same offset, same DST rules, same two-hour window every summer evening in which
+its date runs ahead of Accra's — so every claim D47 made about the behaviour holds, and only the name
+was wrong.
+
+### Africa/Accra, in a file copied four times
+
+`SeedCalendar`, in `net.jojoaddison.service.seed`, holding `SEED_ZONE = Africa/Accra` and the shift
+itself. Same zone as D47's `BADGE_ZONE` and the same argument: Ghana is UTC+0 all year, so the value
+has not changed — what changed is that it is written down and can no longer be moved by an
+environment variable set by somebody who was not thinking about the seed.
+
+**It is a file rather than a constant because a constant duplicated four times with nothing comparing
+the copies is how the next divergence arrives in silence.** There is no shared library here, so this
+is the `SubjectPseudonym` arrangement (D35) applied to the same class of problem, one service wider:
+the file and its known-answer test are **copied byte-identically into catalog, booking, messaging and
+payout**, and CI diffs the four copies. Comments included — a comment true in one service and stale in
+another is its own defect, which D35 established and this inherits.
+
+A second check goes with it: **no seeder may read the clock directly**, a grep over the four `load()`
+methods. `SeedCalendar` is now the only place in any of them that reads the time, which is what makes
+that a grep rather than an argument. `Instant.now()` is deliberately not in the banned list — an
+`Instant` carries no calendar and cannot be read in the wrong one, and `CatalogSeeder` stamps
+`Favourite.addedAt` with one, which is D21's "when did this happen" category and not a date to be
+shifted at all. Both checks were watched firing before being kept: the grep against the four lines as
+they stood at `18d86c8`, and the diff against a `payout` copy with `UTC` substituted for
+`Africa/Accra`.
+
+### Why NOT a single explicit "today", which was the other candidate
+
+The obvious way to close mode 2 as well is one `HC_SEED_TODAY` computed once by `deploy-dev.sh` and
+handed to all four containers, defaulting to unset. It was designed and rejected, and the reasons are
+worth writing down because the trigger to revisit is specific.
+
+**What it buys.** Mode 2 closed outright, and a reproducible seed — `HC_SEED_TODAY=2026-08-10` becomes
+a second spelling of `anchor-dates=true`, and any day can be replayed.
+
+**What it costs.**
+
+- **A fifth place a value has to agree with a sixth.** This repository has been burnt by exactly that
+  shape more than once: the dev topic prefix in the compose file and in `deploy-dev.sh` (D29), the
+  quality vhost's upstream port in `host-site.conf` and in `compose.yml`, the webhook route and its
+  gateway permit (D45). Each of those now needs a CI check to hold it together. This would be another,
+  guarding a window measured in seconds.
+- **`deploy-dev.sh` is Appendix A**, so touching it means re-embedding the spec.
+- **Container churn.** A value that changes daily is a changed environment, so `deploy-dev.sh up` on a
+  running estate would recreate all four app containers once a day for no reason the operator asked
+  for. Persisting it to a gitignored file instead — the shape `quality/startup.sh` uses for the
+  pepper — avoids that and buys a new question: how does one deliberately move the estate's calendar
+  forward, and the answer "delete the file" is a secret's idiom applied to something that is not a
+  secret.
+- **An optional knob that is only correct when the deploy script sets it** is safe when unset (it
+  falls back to exactly what this package builds) and therefore also silently absent when somebody
+  runs `docker compose up` by hand — which is precisely the hand-run case that was the defect's only
+  live exposure in the first place.
+
+**And what the residual actually is, measured rather than feared.** The four apps are started by one
+`compose up -d` in `apps_up`, each `depends_on` its own database and nothing else, so they boot in
+parallel and each evaluates the shift when its own context is ready — seconds apart, not minutes. The
+window in which two of them can land on different Accra days is that spread, once a day, on the dev
+estate only, since quality anchors and production never seeds. `deploy-dev.sh reseed` is the same
+shape: four sequential `curl`s, seconds apart.
+
+Set against that, mode 1 was wrong for **two hours every day** on the machine this was written on, in
+every environment, including hand-runs, and one `TZ:` line from being wrong on all of them.
+
+**The trigger to revisit is named, so this is a decision and not a shrug.** Add `HC_SEED_TODAY` the
+day any of the following becomes true: a `TZ:` line is added to a compose file (the whole reason mode
+1 mattered, and it makes the spread wider than the boot window if it differs per service); the four
+services stop being started together, by a staggered `deploy-dev.sh` or by a dependency ordering that
+puts minutes between them; or a seeded date acquires a consumer that fails loudly rather than
+silently, at which point reproducibility is worth a variable on its own.
+
+**Diagnosability was taken instead, at no cost.** Each seeder's log line now names the day it shifted
+to as well as the shift — `shifting every seed date by 26 days: 2026-08-10 -> 2026-09-05 in
+Africa/Accra` — so if two services ever do disagree, the record of why is in both logs. The day is
+**derived from the shift** (`demoToday.plusDays(shift)`) rather than read from the clock a second
+time: two reads either side of Accra midnight would print a date the seed was not loaded against, in
+the one line whose job is to explain a disagreement.
+
+### The seam, and what was watched go red
+
+The seeders took a boolean and no clock, so there was no way to stand at 23:59 in Accra while the JVM
+thought it was tomorrow. `SeedCalendar.shiftDays(demoToday, anchorDates, Clock)` is that seam:
+package-private, taking the **instant** from the clock and the **calendar** from `SEED_ZONE`, which is
+why the production overload passes `Clock.systemUTC()` rather than `systemDefaultZone()` — a clock
+carrying the JVM's zone would put the defect straight back. The test's fixed clocks deliberately carry
+a *non*-Accra zone for the same reason: a clock already holding the right zone could not tell an
+implementation that names one from an implementation that does not.
+
+`SeedCalendarUnitTest` is six tests, and **three of them were confirmed red** against a stand-in whose
+only difference from the line it replaces is that the instant is injectable — `LocalDate.ofInstant(clock.instant(), ZoneId.systemDefault())`,
+which is `LocalDate.now()` exactly:
+
+```
+theSameDayShiftsTheSameWhateverHourTheSeedIsLoadedAt
+  [a seed loaded at 23:40 in Accra is the same day as one loaded at noon]
+  expected: 26L but was: 27L
+lateEveningIsStillAccrasDay   expected: 2026-09-05 but was: 2026-09-06
+earlyMorningIsStillAccrasDay
+```
+
+The first is NEW-9 itself printed by the test that fixes it: two instants twelve hours apart on one
+Accra day, under a default zone east of UTC, producing shifts that differ by one — which is a
+one-day disagreement between whichever two services seeded either side of 22:00 UTC.
+
+The two zone tests bracket the day from both ends, as D47's badge pair does, and they are **two tests
+rather than two assertions in one** because the first assertion to fail hides the second: written as
+one test, the westward half would never have been watched firing. That is the class of finding the
+WP-15 review spent its time on.
+
+The remaining three assert what cannot be made red by the old code, and each says so: anchoring
+ignores the clock entirely (a decision, not a fix); the no-clock overload really routes through the
+seam, read either side and asserted `isBetween` so a test about midnight does not contain one; and
+`SEED_ZONE` is spelled `Africa/Accra`, which is honestly a spelling check — nothing can distinguish
+Accra from UTC by observation and nothing ever will.
+
+### What did not change
+
+The seeders' signature is still `load(SeedFile, boolean)`, the property is still
+`healthconnect.seed.anchor-dates`, and no compose file, deploy script or spec appendix was touched —
+which is why this package needed no re-embedding and no new variable. The seed regenerates
+byte-identically; nothing about the seed *file* is involved, only the arithmetic applied to it.

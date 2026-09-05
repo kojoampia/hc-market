@@ -43,7 +43,7 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **NEW-6** | A refusal that offered the one name it withholds | DONE | D46 |
 | **NEW-7** | "Sessions brokered" was not live, under a LIVE banner | DONE | D46 |
 | **NEW-8** | The prototype's professional workspace is demo-only in live mode | WON'T (documented) | D46 §5 |
-| **NEW-9** | Four seeders shift every date by the JVM's idea of today | READY | D47 — found by the WP-15 review; four services, not one |
+| **NEW-9** | Four seeders shift every date by the JVM's idea of today | DONE | D48 — zone closed in all four; the shared-`today` half deliberately not built, with its triggers named |
 
 ---
 
@@ -849,9 +849,10 @@ edit.
 **When it comes back:** the day a professional-side screen is driven from the estate, this is the
 work, and the endpoints it needs are the same ones `/api/pro/**` already has behind a token.
 
-## NEW-9 — Four seeders shift every date by the JVM's idea of today · READY
+## NEW-9 — Four seeders shift every date by the JVM's idea of today · DONE
 
-D47, found by the WP-15 review. Each of the four seeders opens with the same line:
+D47, found by the WP-15 review; built and reasoned as **D48**. Each of the four seeders opened with
+the same line:
 
 ```java
 long shiftDays = anchorDates ? 0 : ChronoUnit.DAYS.between(seed.meta().demoToday(), LocalDate.now());
@@ -886,6 +887,45 @@ no zone, only a boolean.
 cheap answer and is enough, since `demoToday` is a demo calendar and Accra is the estate's; a `Clock`
 is the thorough one and buys a red-first test. Then four edits in one commit, and a line in CI's
 consistency job if the four are to be kept identical.
+
+**Built as D48, and it took both halves of that choice rather than either.** `SeedCalendar` holds
+`SEED_ZONE = Africa/Accra` *and* a package-private `Clock` overload, because the constant is what
+fixes the defect and the clock is the only way to watch it fixed — the seeders take a boolean, so
+without a seam a date fix at a date boundary can only be tested by being run at the right hour. It is
+one file **copied byte-identically into catalog, booking, messaging and payout** with its
+known-answer test beside it, and CI diffs the four copies: a duplicated constant with nothing
+comparing the copies is how the next divergence arrives in silence, which is the `SubjectPseudonym`
+argument (D35) one service wider. A second CI check greps the four `load()` methods for a direct clock
+read, and both checks were watched firing — the grep against the four lines as they stood at
+`18d86c8`, the diff against a `payout` copy with `UTC` substituted in.
+
+**Three of six tests confirmed red first**, against a stand-in differing from the old line only in
+that the instant is injectable. The one that is the defect itself:
+`[a seed loaded at 23:40 in Accra is the same day as one loaded at noon] expected: 26L but was: 27L`
+— two instants twelve hours apart on one Accra day, under a default zone east of UTC, giving shifts
+that differ by one. The two zone tests bracket the day from both ends and are two tests rather than
+two assertions in one, because the first assertion to fail hides the second.
+
+**Half the package was deliberately not built, and it is the half the entry above asked about.**
+Pinning the zone makes the four agree on *which* calendar; it does not make them read it at the same
+moment. A shared `HC_SEED_TODAY` computed once by `deploy-dev.sh` would close that, and was rejected:
+it is a fifth value that has to agree with a sixth (the shape that has already cost this repository
+the topic prefix, the vhost port and the webhook permit), it means re-embedding Appendix A, a
+daily-changing environment recreates all four containers on every `up`, and being optional it is
+absent in exactly the hand-run case that was the defect's only live exposure. Against that, the
+residual is the seconds of spread between four services started in parallel by one `compose up`,
+once a day, on the dev estate only — quality anchors and production never seeds. D48 names three
+triggers that would flip the answer. What was taken instead, at no cost: the shift's log line now
+names the day it shifted **to**, derived from the shift rather than read from the clock again, so a
+disagreement leaves a record of why in both services' logs.
+
+**Both narrowing facts re-measured rather than inherited, and both still hold**: `quality/compose.yml`
+sets `HEALTHCONNECT_SEED_ANCHOR_DATES: "true"` on all four seeded services, and no compose file in
+this repository sets `TZ` on any service.
+
+**Not done:** no run against the quality box, which anchors and therefore cannot exercise this at all —
+the only estate that evaluates the shift is dev. And the four *rendering* `LocalDate.now()` calls
+D47 inventoried in catalog are untouched; this package was scoped to the one that writes.
 
 ---
 

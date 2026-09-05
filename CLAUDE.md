@@ -642,17 +642,22 @@ time.**
   There is no such thing as picking one silently — only picking one and not writing it down, and
   because Ghana is UTC+0 all year `ZoneId.systemDefault()` is right on every machine anybody tests on
   and wrong on the first one with a `TZ`. It is already wrong on this workstation, which runs
-  `Europe/Berlin`. `MarketplaceService.BADGE_ZONE` is the pattern; the **five** remaining
-  `LocalDate.now()` calls in catalog are the outstanding instances of the same thing — this said four
-  until the WP-15 review counted them, and the missed one is the consequential one.
-  **Four of the five render; `CatalogSeeder:105` writes.** It decides how far every seeded date is
-  shifted, and the identical line is in `BookingSeeder`, `MessagingSeeder` and `PayoutSeeder`, so on a
-  machine whose zone is ahead of Accra a seed loaded after 22:00 UTC is shifted one day further than
-  one loaded an hour earlier and the estate stops being seed-exact against itself. Quality anchors
-  (`HEALTHCONNECT_SEED_ANCHOR_DATES: "true"`) so the call never runs there, and dev's containers carry
-  no `TZ` so their default is UTC — latent rather than live, and one `TZ:` line from being live.
-  Backlog **NEW-9**; fixing catalog's alone is worse than fixing none, because then two services'
-  seeded dates disagree instead of all four being uniformly offset.
+  `Europe/Vienna` — D47 and CLAUDE.md both said `Europe/Berlin`, which is the same offset and the same
+  DST rules, so every claim about the behaviour held and only the name was wrong.
+  `MarketplaceService.BADGE_ZONE` is the pattern.
+  **The one that WROTE is fixed; four that render are not.** D47's inventory found five implicit-zone
+  `LocalDate.now()` calls in catalog — it said four until the WP-15 review counted them — and the
+  missed one was the consequential one. `CatalogSeeder`'s decided how far every seeded date moves, and
+  the identical line was in `BookingSeeder`, `MessagingSeeder` and `PayoutSeeder`. **NEW-9 / D48
+  replaced all four with `SeedCalendar`**, one file copied byte-identically into the four seeded
+  services with CI diffing the copies (the `SubjectPseudonym` arrangement), plus a CI grep that no
+  seeder reads the clock directly. The remaining four are `ReviewWriteResource:115` (which stores
+  `Review.publishedOn`, so correcting it is a data question), `MarketplaceResource:132` and
+  `ProWorkspaceResource` twice — all of them defaults for a rendered availability window.
+  D48 closes the zone half only, deliberately: the four services still evaluate the shift
+  independently, seconds apart on one `compose up`, so a boot straddling Accra midnight can still
+  split them. That residual is dev-only (quality anchors, production never seeds) and D48 names the
+  three triggers that would make a shared `HC_SEED_TODAY` worth its cost.
 - **`Professional.verification` is the projection of the latest `VerificationReview`** (D16), and the
   desk writes both in one transaction. This is a deliberate exception to "derived, never stored":
   Browse filters on the column, and the 18 seeded professionals have a state with no history behind

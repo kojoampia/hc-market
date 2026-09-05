@@ -401,6 +401,68 @@ jobs:
           done
           exit "$fail"
 
+      # The seed calendar is the same arrangement, one service wider — decisions.md D48.
+      #
+      # Every seeded date in catalog, booking, messaging and payout is moved by ONE number per
+      # service, `today - $meta.demoToday`, and the four have to arrive at the same number: catalog's
+      # availability_slot.slot_date is read against booking's scheduled_date, and payout's
+      # ledger.earned_on against booking's completed_at, which the lifetime-earnings aggregate sums
+      # over. A uniform offset in all four is what anchor-dates=false MEANS and is harmless. A one-day
+      # disagreement between two of them is corruption nothing here detects, because no count moves —
+      # which is why fixing one service alone would have been worse than fixing none.
+      #
+      # So SeedCalendar.java and its known-answer test are copied byte-identically into all four and
+      # diffed here. Same reason as SubjectPseudonym: no shared library, and a constant duplicated
+      # with nothing comparing the copies is how the next divergence arrives in silence.
+      - name: The seed calendar must be identical in all four seeded services
+        run: |
+          fail=0
+          for f in src/main/java/net/jojoaddison/service/seed/SeedCalendar.java \
+                   src/test/java/net/jojoaddison/service/seed/SeedCalendarUnitTest.java; do
+            ok=1
+            for svc in booking messaging payout; do
+              diff -u "catalog/$f" "$svc/$f" || ok=0
+            done
+            if [ "$ok" = 0 ]; then
+              echo "::error::$f differs between services — catalog, booking, messaging and payout must agree, or their seeded dates stop lining up. See decisions.md D48."
+              fail=1
+            else
+              echo "ok   $f — identical in all four"
+            fi
+          done
+          exit "$fail"
+
+      # …and no seeder may read the clock itself.
+      #
+      # The defect this replaced was a LocalDate.now() in each of the four load() methods — one line,
+      # four times, taking the JVM default zone. SeedCalendar is now the only place in any of them
+      # that reads the time at all, which is what makes this a grep rather than an argument.
+      #
+      # It matters more than it looks. Re-reading the clock is not only a zone question: the log line
+      # that explains a shift derives the day from the shift for exactly this reason, because two
+      # reads either side of Accra midnight print a date the seed was never loaded against.
+      #
+      # Instant.now() is deliberately NOT in this list. An Instant carries no calendar, so it cannot
+      # be read in the wrong one — CatalogSeeder stamps Favourite.addedAt with one, which is the D21
+      # "when did this happen" category and not a date to be shifted at all. What is banned is the
+      # types that need a zone to mean anything, and the clocks that would supply the JVM's.
+      - name: No seeder may read the clock directly
+        run: |
+          fail=0
+          for f in catalog/src/main/java/net/jojoaddison/service/seed/CatalogSeeder.java \
+                   booking/src/main/java/net/jojoaddison/service/seed/BookingSeeder.java \
+                   messaging/src/main/java/net/jojoaddison/service/seed/MessagingSeeder.java \
+                   payout/src/main/java/net/jojoaddison/service/seed/PayoutSeeder.java; do
+            # Comments may name LocalDate.now() — they explain why it is not there. Code may not.
+            if grep -nE '^[^/*]*((LocalDate|LocalDateTime|LocalTime|ZonedDateTime|OffsetDateTime|Year|YearMonth)\.now\(|Clock\.system)' "$f"; then
+              echo "::error file=$f::a seeder reads the clock directly — the shift belongs to SeedCalendar, in the estate's calendar, or the four services stop agreeing on what day it is. See decisions.md D48."
+              fail=1
+            else
+              echo "ok   $f"
+            fi
+          done
+          exit "$fail"
+
       # And the pepper that keys it must be injected everywhere the three services run, and committed
       # nowhere a real deployment reads. Same shape as the JWT signing key, same reason: this
       # repository is public, so a default that works is a secret that does not.
