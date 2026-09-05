@@ -17,7 +17,8 @@ booking/    healthconnectBooking   PostgreSQL 17        BUILT — aggregate seed
 messaging/  healthconnectMessaging PostgreSQL 17        BUILT — seeded, consumes booking events
 payout/     healthconnectPayout    PostgreSQL 17        BUILT — ledger seeded, earnings verified
 jdl/        the five JDL files — the model of record
-deploy/     deploy-dev.sh, deploy-prod.sh, docker/, demo/
+deploy/     deploy-dev.sh, deploy-prod.sh, docker/, demo/, observability/, prod-server/
+quality/    the jacserver quality stack — compose, vhost, startup.sh
 docs/       the spec, the decisions log, the prototype
 api/ web/   EMPTY. Not created by this build; left alone deliberately.
 ```
@@ -478,6 +479,29 @@ production points at the host's own `infranet` infrastructure, as it always has.
 the same as no broker — four disjoint logs, every cross-product event path configured and never once
 exercised, every stack green while it was wrong.
 
+**The DATABASES are the opposite call, and that is not an exception to D27 but the other half of
+it** (`decisions.md` D49). There is no host-wide PostgreSQL for four products to share, so they are
+bundled — `deploy/prod-server/compose.yml`, a *second* compose project on the host, on this
+product's own `hcmarketnet`, which the application stack joins as a third network. Off `infranet`
+deliberately, exactly as they are off `hcnet` in dev and quality: another product has no business
+resolving `hc-market-catalog-db`. Until 2026-09-05 no compose file here declared a production
+database at all, so every `HC_*_DB_URL` was a `:?` variable pointing at a hostname nothing on the
+host provided, and `deploy-prod.sh`'s preflight checked **two** of the eleven required values.
+
+**`deploy/prod-server/` is the on-server half of production, and nothing in it duplicates the
+application stack.** `deploy-prod.sh` ships `deploy/docker/docker-compose.prod.yml` on every deploy;
+`prod-server/` holds what is installed once and does not roll — the data tier, the nginx vhost and
+its snippet, `infra.sh`, `backup.sh`, `start`, and `secrets.env.example`. There is exactly one place
+in this repository where a production gateway route is written, and it is not in `prod-server/`.
+**Nothing there has ever been run.** Read `deploy/prod-server/README.md` before believing otherwise.
+
+**Production is API-only: the prototype is NOT served on `market.abofonsa.com`.** Quality serves it
+at `/prototype`, same-origin, with a relaxed CSP; production has no such location and must not grow
+one. The page is populated with the seed — 18 invented professionals presented as real people, with
+credentials, association registration numbers and reviews — which is a demo on a private LAN box and
+eighteen fabricated practitioner listings on a public health-services domain. CI asserts the absence
+so that "restoring parity with quality" fails rather than ships.
+
 **Gateway routes match `/services/<service>/api/**`, not `/**`, and that is a security control.**
 Catalog's `/internal/professionals/{ref}/login` answers an unauthenticated caller, so the only thing
 keeping it off the internet is that no route matches it (`decisions.md` D28).
@@ -934,6 +958,11 @@ time.**
   CSP** than the site's `default-src 'none'` — the page is inline script and style. Scoped to that
   one path; the API keeps the strict policy, and `add_header` replaces rather than merges, so check
   the header on an `/api/**` path after touching it.
+  **`market.abofonsa.com` carries the same `default-src 'none'` and no such location** (D49), so the
+  relaxed policy is the one thing production must never inherit from this file. `host-site.conf`'s
+  own comment used to say quality was "stricter than production, which sends no CSP at all"; that
+  stopped being true when `deploy/prod-server/hc-market-app.conf` was written, and it is corrected
+  in place.
 - **End in a real browser.** Not optional, and not satisfied by the headless verifier: `p.rate` is
   derived once in block 1 and live mode forgot to recompute it, so every profile and browse card read
   `₵NaN` while every automated check passed. It is not *sufficient* either — "Sessions brokered"
