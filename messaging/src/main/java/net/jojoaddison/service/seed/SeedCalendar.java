@@ -16,13 +16,19 @@ import java.time.temporal.ChronoUnit;
  *
  * <h2>Why this is a file and not a line</h2>
  *
- * <p>Four services compute that number independently and their dates have to agree with each other:
- * catalog's {@code availability_slot.slot_date} is read against booking's {@code scheduled_date}, and
- * payout's {@code ledger.earned_on} against booking's {@code completed_at}, which the
- * lifetime-earnings aggregate sums over. A uniform offset in all four is exactly what
- * {@code anchor-dates=false} means and is harmless. A one-day disagreement between two of them is
- * corruption that nothing in this estate detects, because none of the counts move — so the estate
- * stops being seed-exact against itself while every check stays green.
+ * <p>Four services compute that number independently and their dates have to agree with each other.
+ * <strong>Nothing joins them and nothing can</strong>: each service owns its own database
+ * <em>instance</em>, so payout's earnings aggregates read payout's own {@code Ledger} and nothing else
+ * — {@code EarningsRepository.lifetime} is one table, and booking's {@code completed_at} is not
+ * reachable from it — and booking never asks catalog about a slot. The agreement is therefore enforced
+ * by no query at all, and a break in it surfaces only on a <em>screen</em>: the professional's overview
+ * puts sessions read from booking beside earnings read from payout, and a profile shows catalog's
+ * {@code availability_slot.slot_date} beside the {@code scheduled_date} booking holds.
+ *
+ * <p>A uniform offset in all four is exactly what {@code anchor-dates=false} means and is harmless. A
+ * one-day disagreement between two of them is corruption that nothing in this estate detects, because
+ * none of the counts move and no query spans the pair — so the estate stops being seed-exact against
+ * itself while every check stays green.
  *
  * <p>There is no shared library here — five standalone Maven projects with no aggregator pom — so
  * this file is <strong>copied byte-identically into catalog, booking, messaging and payout</strong>
@@ -45,8 +51,15 @@ import java.time.temporal.ChronoUnit;
  * <p>Pinning the zone makes the four agree on <em>which</em> calendar. It does not make them read it
  * at the same moment: they are started in parallel by one {@code compose up} and each evaluates this
  * when its own context is ready, so a boot straddling Accra midnight can still hand two services
- * different days. That residual is seconds wide, dev-only — quality anchors — and deliberately not
- * closed by a shared "today" variable; D48 argues the trade and names what would reopen it.
+ * different days. That residual is seconds wide — measured at 7.1s between the four seeder log lines
+ * on the quality box — dev-only, since quality anchors and production never seeds, and deliberately
+ * not closed by a shared "today" variable; D48 argues the trade and names what would reopen it.
+ *
+ * <p><strong>"Seconds wide" is only true because one thing enforces it.</strong>
+ * {@code deploy-dev.sh reseed --services <subset>} reseeds part of the estate against whatever day the
+ * rest were seeded on, which is days wide rather than seconds, so it is refused there unless
+ * {@code --force} is passed. Widen that and this paragraph stops being true — the residual becomes
+ * unbounded, and still silent.
  */
 final class SeedCalendar {
 

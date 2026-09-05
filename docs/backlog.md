@@ -43,7 +43,8 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **NEW-6** | A refusal that offered the one name it withholds | DONE | D46 |
 | **NEW-7** | "Sessions brokered" was not live, under a LIVE banner | DONE | D46 |
 | **NEW-8** | The prototype's professional workspace is demo-only in live mode | WON'T (documented) | D46 §5 |
-| **NEW-9** | Four seeders shift every date by the JVM's idea of today | DONE | D48 — zone closed in all four; the shared-`today` half deliberately not built, with its triggers named |
+| **NEW-9** | Four seeders shift every date by the JVM's idea of today | DONE | D48 — zone closed in all four; the shared-`today` half deliberately not built, with its triggers named. Reviewed 2026-09-05, nine findings, all applied |
+| **NEW-10** | Payout writes `ledger.earned_on` in the JVM's calendar and the seeder's in Accra's | READY | D47/D48 — three writes to the cross-service pivot, two reads. Opened by the NEW-9 review |
 
 ---
 
@@ -876,10 +877,12 @@ line added to a compose file for any other reason.
 
 **Why it is a package and not a one-line fix.** The four seeders' dates have to agree with each other:
 catalog's `availability_slot.slot_date` against booking's `scheduled_date`, payout's `ledger.earned_on`
-against booking's `completed_at`, which is what the lifetime-earnings figure aggregates over. So
-**fixing catalog alone is worse than fixing none** — a uniform one-day offset in all four becomes a
-one-day disagreement between two services' seeded data, which is the shape of defect nothing here
-detects. There is no shared library, so it is four identical edits (the `SubjectPseudonym` situation,
+against booking's `completed_at`. **Nothing joins either pair and nothing can** — each service owns its
+own database instance, so payout's aggregates read payout's own `Ledger` and booking never asks catalog
+about a slot — which means the agreement is enforced by no query and a break in it shows up only on a
+screen. So **fixing catalog alone is worse than fixing none** — a uniform one-day offset in all four
+becomes a one-day disagreement between two services' seeded data, which is the shape of defect nothing
+here detects. There is no shared library, so it is four identical edits (the `SubjectPseudonym` situation,
 minus the CI diff), and proving it red needs a seam the seeders do not have: they take no clock and
 no zone, only a boolean.
 
@@ -923,9 +926,69 @@ disagreement leaves a record of why in both services' logs.
 sets `HEALTHCONNECT_SEED_ANCHOR_DATES: "true"` on all four seeded services, and no compose file in
 this repository sets `TZ` on any service.
 
+**Reviewed 2026-09-05 — nine findings, all applied, and the serious ones are all about the CI check
+rather than the fix.** The review verified rather than accepted — it re-diffed the four copies,
+re-measured both narrowing facts on the box, reproduced the three red tests, and confirmed by mutation
+that the tests' clock zones are load-bearing — and the code stood. The check built to stop NEW-9
+returning did not. It banned the *type* that reads a clock and not the *zone* that interprets one, so
+`LocalDate.ofInstant(Instant.now(), ZoneId.systemDefault())` passed green — **the exact stand-in D48
+quotes as reproducing the defect**. Its `^[^/*]*` comment anchor could not cross a `/` or a `*`, so a
+division or a log string with a slash hid the rest of the line, in the service that does commission
+arithmetic. And it named four files rather than the package, missing `SeedDataLoader` — which is
+precisely where D48's own named future work would put a `LocalDate`. All three widened and **watched
+firing against seven constructed reintroductions the old check missed every one of**, with two
+controls (a bare `Instant.now()`, a comment naming `LocalDate.now()`) that must stay green.
+
+Also: the residual was argued against `up` and never against `reseed --services <subset>`, which
+reseeds part of the estate against the rest's older day — days wide, not seconds — so that is
+**refused now without `--force`** (Appendix A re-embedded); the "lifetime-earnings aggregate sums
+over" claim was false in six places and is corrected to the true and weaker one, that nothing joins
+those pairs at all and the disagreement is only ever visible on a screen; an anchored run logged
+nothing, so the quality box said nothing about its own calendar, and there is an `else` now; the
+fixed clocks were all eastward, so an implementation reading the *clock's* zone was bracketed one way
+only — the westward test has a westward clock now, taking the mutation from 2 red to 3; and
+`CLAUDE.md`'s duplication bullet names both copied families rather than one. D48 carries the detail.
+
 **Not done:** no run against the quality box, which anchors and therefore cannot exercise this at all —
 the only estate that evaluates the shift is dev. And the four *rendering* `LocalDate.now()` calls
-D47 inventoried in catalog are untouched; this package was scoped to the one that writes.
+D47 inventoried in catalog are untouched; this package was scoped to the one that writes. Payout's
+five are **NEW-10**, opened by the review.
+
+## NEW-10 — Payout writes the cross-service pivot in the JVM's calendar · READY
+
+Opened by the NEW-9 review, and deliberately not fixed there: it is outside that package's scope, but
+it undermines D48's thesis and nothing recorded it. `ledger.earned_on` is the column D48 names as the
+pivot between payout's seeded data and booking's `completed_at` — and after D48 the **seeder** writes
+it in `Africa/Accra` while the **consumer** writes it in the JVM's zone, in the same table:
+
+| Where | What it decides | Shape |
+| --- | --- | --- |
+| `BookingEventConsumer:143` | `earned_on` for a completed booking | **writes the pivot** |
+| `BookingEventConsumer:246` | `earned_on` for a late-cancellation fee | **writes the pivot** |
+| `DisputeEventConsumer:142` | `earned_on` for a dispute reversal | **writes the pivot** |
+| `ProEarningsResource:69` | "today", for the month-to-date slice | renders |
+| `ProEarningsResource:86` | the same, on the chart endpoint | renders |
+
+Between 22:00 and 24:00 UTC in summer on this workstation, a booking completed at 23:30 UTC gets a
+ledger row dated **tomorrow**; on a month's last day it lands in the next month and disappears from a
+month-to-date tile computed against a "today" that is also a day ahead. Lifetime gross is unmoved,
+which is why nothing goes red.
+
+The three writes rank above the two reads — a rendered default is wrong for one request, a stored date
+is wrong for ever. `DisputeEventConsumer:142` is the sharpest of the five and worth reading: its
+comment reasons carefully about *which day* a reversal belongs to ("dated today, not backdated … would
+silently rewrite a month that has already been reported") and never names a zone. The decision was
+taken; the calendar it was taken in was not.
+
+**The shape of the fix is known and cheap** — a named constant, as D47 did for the badge and D48 for
+the seed — but the *stored* rows make it a data question rather than a rename, exactly as
+`ReviewWriteResource:115` is in catalog. Whether existing rows need correcting is the part that needs
+a decision, not the constant. Note there is no `SeedCalendar` to reuse: it is package-private in
+`service.seed` and this is the runtime path, so a shared estate-wide `LocalDate today()` is the
+question the package opens.
+
+Related and outside it: `booking` `ProBookingResource:111` is the same implicit-zone default for a
+rendered window, and catalog's remaining four stand as D47 recorded them.
 
 ---
 

@@ -4612,9 +4612,9 @@ live mode normalises an absent value to `null` on ingestion, and walking all 18 
 real browser produced no page error. This is the `p.rate` / `₵NaN` class of defect (D46, NEW-7), and
 the only way to close it is the browser.
 
-**Not fixed here, and worth someone's attention. There are five, not four** — the first count of this
-list, in this section and in `CLAUDE.md`, missed the one that matters most, and it is the one that
-**writes** rather than renders:
+**Not fixed here, and worth someone's attention. There are five in catalog, not four** — the first
+count of this list, in this section and in `CLAUDE.md`, missed the one that matters most, and it is
+the one that **writes** rather than renders:
 
 | Where | What it decides | Shape |
 | --- | --- | --- |
@@ -4627,6 +4627,30 @@ list, in this section and in `CLAUDE.md`, missed the one that matters most, and 
 The first row is closed — **D48**, with the identical line in `BookingSeeder`, `MessagingSeeder` and
 `PayoutSeeder` closed in the same commit, because closing catalog's alone would have been worse than
 closing none. The other four stand exactly as described below.
+
+**And the inventory was only ever catalog's, which the NEW-9 review corrected.** This section was
+written as part of a catalog package and scoped its grep to catalog, so it reads as an estate-wide
+inventory and is not one. Counting what is **still open** after D48: four in catalog, above, and
+**six more outside it** — and the six are worse than the four, because three of them **write the very
+column D48 identifies as the cross-service pivot**:
+
+| Where | What it decides | Shape |
+| --- | --- | --- |
+| `payout` `BookingEventConsumer:143` | `ledger.earned_on` for a completed booking | **writes the pivot** |
+| `payout` `BookingEventConsumer:246` | `ledger.earned_on` for a late-cancellation fee | **writes the pivot** |
+| `payout` `DisputeEventConsumer:142` | `ledger.earned_on` for a reversal | **writes the pivot** |
+| `payout` `ProEarningsResource:69` | "today", for the month-to-date earnings slice | renders |
+| `payout` `ProEarningsResource:86` | the same, on the chart endpoint | renders |
+| `booking` `ProBookingResource:111` | the default start of the professional's own window | renders |
+
+That is **NEW-10** in the backlog, opened rather than fixed: after D48, `ledger.earned_on` is written
+in Accra's calendar by the seeder and in the JVM's by the consumer, in the same table. The three
+writes rank above the two reads, and `DisputeEventConsumer:142` is the sharpest of them — its comment
+reasons carefully about *which day* a reversal belongs to and never names a zone, which is this whole
+class of defect in one place: the decision was taken, and the calendar it was taken in was not.
+
+The seeders' inventory is closed by construction rather than by a list — CI now refuses any clock or
+implicit-zone read anywhere in the four `service.seed` packages, `SeedCalendar` excepted (D48).
 
 `CatalogSeeder`'s is `anchorDates ? 0 : ChronoUnit.DAYS.between(seed.meta().demoToday(), LocalDate.now())`,
 so one JVM-default call moves availability slots, review dates and — through the identical line in
@@ -4777,10 +4801,16 @@ a second spelling of `anchor-dates=true`, and any day can be replayed.
 
 **And what the residual actually is, measured rather than feared.** The four apps are started by one
 `compose up -d` in `apps_up`, each `depends_on` its own database and nothing else, so they boot in
-parallel and each evaluates the shift when its own context is ready — seconds apart, not minutes. The
-window in which two of them can land on different Accra days is that spread, once a day, on the dev
-estate only, since quality anchors and production never seeds. `deploy-dev.sh reseed` is the same
-shape: four sequential `curl`s, seconds apart.
+parallel and each evaluates the shift when its own context is ready — seconds apart, not minutes
+(**re-measured at review: 7.1 seconds** between the four seeder log lines on the quality box, so
+straddling Accra midnight is roughly a 1-in-12,000 event per fresh `up`). The window in which two of
+them can land on different Accra days is that spread, once a day, on the dev estate only, since
+quality anchors and production never seeds. `deploy-dev.sh reseed` is the same shape: four sequential
+`curl`s, seconds apart.
+
+*(This paragraph was incomplete as first written, and §review 4 below is the correction:
+`reseed --services <subset>` is one `curl`, not four, and its gap is days rather than seconds. It is
+refused without `--force` now, which is what makes the sentence above true rather than nearly true.)*
 
 Set against that, mode 1 was wrong for **two hours every day** on the machine this was written on, in
 every environment, including hand-runs, and one `TZ:` line from being wrong on all of them.
@@ -4842,3 +4872,145 @@ The seeders' signature is still `load(SeedFile, boolean)`, the property is still
 `healthconnect.seed.anchor-dates`, and no compose file, deploy script or spec appendix was touched —
 which is why this package needed no re-embedding and no new variable. The seed regenerates
 byte-identically; nothing about the seed *file* is involved, only the arithmetic applied to it.
+
+*(That last sentence stopped being true one review later: the residual below turned out to have a
+days-wide case in `deploy-dev.sh`, so Appendix A **was** re-embedded after all. See §review 4.)*
+
+### Reviewed 2026-09-05 — nine findings, and the two that matter are both about the check
+
+The review verified rather than accepted: it re-diffed the four copies, re-measured both narrowing
+facts on the live box, reproduced the three red tests, and confirmed by mutation that the tests' clock
+zones are load-bearing (against `LocalDate.now(clock)`, `at()` on `Europe/Berlin` puts two tests red;
+change only `at()` to `Africa/Accra` and all six pass). The core stood. What did not was the CI check
+built to stop the defect coming back.
+
+**1. The grep missed the exact stand-in this document quotes.** The alternation banned the *type* that
+reads the clock — `LocalDate.now(`, `Clock.system` — and not the *zone* that interprets one. So
+`ChronoUnit.DAYS.between(demoToday, LocalDate.ofInstant(Instant.now(), ZoneId.systemDefault()))`
+passed green, and that is, character for character, the stand-in quoted above as reproducing NEW-9.
+**The check that exists to stop this coming back did not stop it coming back in the form its own
+author used to demonstrate it.** `ZoneId.systemDefault`, `TimeZone.getDefault` and `systemDefaultZone`
+are in the list now. The `Instant.now()` carve-out is unchanged and was upheld on its merits — the
+seed's `favourites` are bare professional refs with no date, so `Favourite.addedAt` has nothing to
+shift and an instant is the only honest value — but a bare `Instant` and an `Instant` handed an
+implicit zone are now different things to this check, which is what the carve-out always meant.
+
+**2. The `^[^/*]*` anchor failed open on any earlier slash or star.** A negated character class cannot
+cross the characters it excludes, so the anchor stopped at the first `/` or `*` on the line and
+everything after it was invisible: `long pct = amount / 100; LocalDate d = LocalDate.now();` passed,
+as did a log string containing a slash and any multiplication — and `PayoutSeeder` does commission
+arithmetic and logs it. The intent was to skip comment lines, and it is served properly by *dropping*
+comment lines from a full-line match rather than anchoring past them. Comment lines are filtered out
+of `grep -n`'s output, which keeps the real line numbers and, more to the point, **fails closed**: an
+unusual line now over-reports instead of passing.
+
+**3. The grep named four files rather than the package.** `SeedDataLoader` is in
+`net.jojoaddison.service.seed` in all four services, is the `ApplicationRunner` that calls
+`load(SeedFile, boolean)`, and was not covered. Not hypothetical: the `HC_SEED_TODAY` this section
+names as future work changes the seam's signature, and the natural place to compute that `LocalDate`
+is `SeedDataLoader` — so the check was aimed at the four files that stop being the site of the defect
+exactly when the follow-up happens. It scans the whole package now and exempts `SeedCalendar`, which
+is the one file that is supposed to read a clock.
+
+All three were watched firing, against seven constructed reintroductions — the three implicit-zone
+forms, the three slash-and-star forms, and a `LocalDate.now()` in `SeedDataLoader`. The check as
+committed at `41053c0` missed **all seven**; the widened one fires on all seven. Two controls were run
+with them and must stay green, because a check that catches everything is a check nobody can work
+under: a bare `Instant.now()`, and a comment naming `LocalDate.now()`.
+
+A fourth fail-open was introduced by the fix and closed before it was kept: scanning a *directory*
+rather than a list of files means an unexpanded glob leaves `grep` erroring on a literal path while
+every file reports `ok`, so a renamed or moved package would make the check blind and green. The
+directory's existence and the **count of files actually scanned** are both asserted now, and that was
+watched firing too — moving `payout`'s seed package aside turns the step red with
+`payout/.../seed does not exist — this check would scan nothing and pass` instead of passing. A check
+that fails open on the tree it is pointed at is the same defect as a check that fails open on the code
+it is reading, and this one arrived while fixing the other.
+
+**4. The residual was argued against the wrong worst case, and this one is days wide.** Everything
+argued above about `up` is confirmed, and better than claimed: the four seeder log timestamps on the
+quality box are **7.1 seconds** apart, so straddling Accra midnight on a fresh `up` is roughly a
+1-in-12,000 event. But `deploy-dev.sh` takes `--services`, and `reseed` iterates it — so
+`./deploy/deploy-dev.sh reseed --services catalog` reseeds catalog **alone**, dated today, against
+three services still holding whatever day they were seeded on. That is not a seven-second window; it
+is however many days have passed, three for a dev estate left up over a weekend. This section reasoned
+only about `up`, and about `reseed` as "four sequential curls", and never noticed that a flag
+documented at the top of the same script makes it one curl.
+
+Concretely, and silently: catalog reseeded three days after booking puts `availability_slot.slot_date`
+three days ahead of `scheduled_date`, so every seeded booking falls on a day the professional's
+calendar shows no slot. Nothing fails. Booking never asks catalog about a slot, catalog never marks
+one taken, and `verify_seed` counts professionals and reviews. Payout is the same shape against
+`completed_at`, moving the monthly chart at a month boundary while lifetime gross stays ₵81,620.
+
+**Decided: refuse it, and document what `--force` still buys you.** `reseed` is now all-or-nothing
+unless `--force` is passed, and the refusal names the consequence and the flag. Three arguments for
+the guard over the note-in-the-margin the review offered as the alternative. It **restores the
+argument this section makes** rather than qualifying it: the residual really is seconds wide once the
+one case that is not seconds wide cannot be reached by accident, and a residual argued at one size
+while existing at another is the thing to fix, not the sentence describing it. It costs **none of what
+`HC_SEED_TODAY` costs** — the whole case against that option is that it is a fifth value which must
+agree with a sixth, and this is a refusal computed from arguments already parsed, agreeing with
+nothing and interpolated nowhere. And it keeps the case the flag exists for: reseeding one service is
+the fast loop when you are working on that service's seeder, so this is a refusal, not a prohibition,
+and `--force` prints which services are now stale rather than going quiet. The guard sits **ahead of
+`preflight`**, because a refusal that first spends thirty seconds proving the estate is healthy reads
+as a broken estate.
+
+`deploy-dev.sh` is Appendix A, so this one carried a re-embed: `./deploy/sync-appendices.sh`, then
+`--check` clean.
+
+**5. Opened as NEW-10 rather than fixed: payout disagrees with itself about the pivot column.** Not
+NEW-9's to fix and out of its scope, but it undermines this section's own thesis and nothing recorded
+it. Five implicit-zone `LocalDate.now()` calls in payout, **three of them writes to
+`ledger.earned_on`** — the column named above as the cross-service pivot — plus the two "today" values
+the month-to-date slice is computed against. So after D48 that column is written in Accra's calendar
+by the seeder and in the JVM's by the consumer, in the same table: between 22:00 and 24:00 UTC in
+summer on this workstation, a booking completed at 23:30 UTC gets a row dated tomorrow, and on a
+month's last day it lands in the next month and vanishes from a month-to-date tile computed against a
+"today" that is also a day ahead. `DisputeEventConsumer:142` is the sharpest: its comment reasons
+carefully about which day a reversal belongs to and never names a zone. Tabulated in D47, whose
+inventory was corrected at the same time — it was written in a catalog package, scoped its grep to
+catalog, and reads as estate-wide when it never was.
+
+**6. "which the lifetime-earnings aggregate sums over" was not accurate**, and it was in six places —
+`SeedCalendar`'s javadoc in all four copies, the CI comment, and this section. `EarningsRepository.lifetime`
+is `select … from Ledger l where l.professionalLogin = :login`; every aggregate in that file reads
+payout's own `Ledger` and nothing else, and `booking.completed_at` is in a **different database
+instance**, so it cannot enter any of them and there is no join. Nor does booking ever ask catalog
+about a slot. The true claim is weaker and more interesting: **nothing joins these pairs and nothing
+can**, so the agreement between the four is enforced by no query at all and a break in it surfaces
+only on a *screen* — the professional's overview putting sessions from booking beside earnings from
+payout, a profile putting catalog's slots beside booking's scheduled date. That is why the corruption
+is undetectable here, which is the point the inaccurate version was reaching for by the wrong route.
+
+**7. An anchored run logged nothing about its calendar.** All four seeders guarded the log line with
+`if (shift != 0)`, so the quality box — which anchors, on all four services — printed no line at all,
+and "no line" is ambiguous between "anchored" and "the shift happened to be zero". Since the whole
+point of that line is to leave a record of *why* two services disagreed, the one estate anybody audits
+was the one saying nothing. There is an `else` now, naming which of the two cases it is, `demoToday`,
+and `SEED_ZONE` — one line, and the box becomes readable.
+
+**8. The clock's own zone was bracketed from one side only.** `underDefaultZone` correctly brackets
+the *JVM* default in both directions, and this section says so. But the fixed clocks were always
+`Europe/Berlin`, so an implementation reading the *clock's* zone — `LocalDate.now(clock)`, the obvious
+wrong turn — is caught eastward and not westward: at 02:30 UTC a Berlin clock says 04:30 on the same
+day and agrees with Accra by accident, leaving `earlyMorningIsStillAccrasDay` green. `at()` takes a
+zone now and the westward test uses a westward clock, so the pair brackets both dimensions rather than
+one and a half.
+
+**9. `CLAUDE.md`'s duplication bullet named only `SubjectPseudonym`.** That bullet is what someone
+about to edit a duplicated file reads; `SeedCalendar` was mentioned sixty lines away, inside the
+badge-zone bullet, where nobody looking for the rule would find it. There are two such families now
+and the rule names both.
+
+**Counts, unchanged in every service, which is the expected shape.** `clean verify` on all four:
+catalog **94 unit + 127 IT**, booking **158 + 111**, messaging **62 + 90**, payout **85 + 165** — the
+same figures as `41053c0`, because finding 8 strengthened an existing test rather than adding one and
+findings 1–3, 6, 7 and 9 are a CI script, comments and a log line. The seed still regenerates
+byte-identically, both appendices match, every shell script parses, `build.yml` parses, and the four
+copies are two checksums across eight files.
+
+**One thing the review reported that was re-measured here rather than taken on trust**, since it is
+the number the whole residual argument rests on: the four seeder log lines on the running quality box
+are `payout 19:00:52.988` → `catalog 19:01:00.121`, a spread of **7.13 s**. Confirmed.

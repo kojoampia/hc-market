@@ -73,11 +73,22 @@ class SeedCalendarUnitTest {
      * zone passes. They are two tests rather than two assertions in one because the first assertion to
      * fail hides the second, and a guard nobody can watch fire is the class of test D47's review spent
      * its time on.
+     *
+     * <p><strong>Its clock is westward too, and that is the second dimension.</strong> There are two
+     * zones an implementation can wrongly inherit — the JVM's, which {@link #underDefaultZone} brackets
+     * from both ends, and the <em>clock's own</em>, which {@code LocalDate.now(clock)} would read. A
+     * clock fixed to {@code Europe/Berlin} is east of Accra, so it catches the eastward case and leaves
+     * this one green: at 02:30 UTC a Berlin clock says 04:30 on the same day and agrees by accident.
+     * Fixed here to a zone behind UTC, {@code LocalDate.now(clock)} answers the 4th and this goes red —
+     * so the pair now brackets the clock's zone as well as the JVM's.
      */
     @Test
     @DisplayName("early in Accra's morning is still Accra's day, under a westward default zone")
     void earlyMorningIsStillAccrasDay() {
-        underDefaultZone("America/New_York", () -> assertThat(SeedCalendar.today(at("2026-09-05T02:30:00Z"))).isEqualTo(LocalDate.of(2026, 9, 5)));
+        underDefaultZone(
+            "America/New_York",
+            () -> assertThat(SeedCalendar.today(at("2026-09-05T02:30:00Z", "America/New_York"))).isEqualTo(LocalDate.of(2026, 9, 5))
+        );
     }
 
     /**
@@ -125,11 +136,18 @@ class SeedCalendarUnitTest {
         assertThat(actual).isBetween(before, after);
     }
 
+    /** A clock east of Accra — the default, because the eastward window is the one that was live. */
     private static Clock at(String instant) {
+        return at(instant, "Europe/Berlin");
+    }
+
+    private static Clock at(String instant, String clockZone) {
         // The clock's own zone is deliberately NOT Accra: SeedCalendar must take the instant from it
         // and the calendar from itself, and a clock already carrying the right zone could not tell
-        // the difference between an implementation that does that and one that does not.
-        return Clock.fixed(Instant.parse(instant), ZoneId.of("Europe/Berlin"));
+        // the difference between an implementation that does that and one that does not. Which SIDE
+        // of Accra it sits on is the caller's choice, because an implementation reading the clock's
+        // zone is only caught by a clock on the failing side — see earlyMorningIsStillAccrasDay.
+        return Clock.fixed(Instant.parse(instant), ZoneId.of(clockZone));
     }
 
     private static void underDefaultZone(String zone, Runnable assertion) {
