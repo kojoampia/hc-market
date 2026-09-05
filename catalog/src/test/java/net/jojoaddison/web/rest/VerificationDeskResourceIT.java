@@ -8,6 +8,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import jakarta.persistence.EntityManager;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import net.jojoaddison.IntegrationTest;
 import net.jojoaddison.domain.Professional;
 import net.jojoaddison.domain.enumeration.VerificationState;
@@ -29,13 +33,22 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>Three properties matter here and they are the three this file asserts: the decision and the
  * professional's public state move <strong>together</strong>, the reviewer is taken from the token
  * rather than the body, and an ordinary user cannot touch any of it.
+ *
+ * <p>It also asserts what the desk's work looks like from <em>outside</em> — D33's date that must not
+ * outlive its badge, and D47's two: the date is a date on the wire, and the reviewer and the evidence
+ * reference are not on it at all. Those belong here rather than in a public-profile test because the
+ * only way to give the public profile something to disclose is to make a decision at this desk first.
  */
 @IntegrationTest
 @AutoConfigureMockMvc
 class VerificationDeskResourceIT {
 
     private static final String URL = "/api/desk/professionals/{ref}/verification";
+    private static final String PUBLIC_PROFILE = "/api/professionals/{ref}";
     private static final String DESK = "ama.brokerage";
+    private static final String EVIDENCE = "CID-2026-0041";
+    /** The desk's calendar, spelled out here because {@code MarketplaceService.BADGE_ZONE} is package-private to {@code service}. */
+    private static final ZoneId ACCRA = ZoneId.of("Africa/Accra");
 
     @Autowired
     private MockMvc mockMvc;
@@ -212,6 +225,10 @@ class VerificationDeskResourceIT {
      * prototype uses — then shows a verification badge for somebody whose verification was taken away.
      *
      * <p>Two reviews, in order, because one of any kind cannot catch this.
+     *
+     * <p><strong>This is the one of D33's pair that fires against D33's defect</strong>, and its
+     * partner {@link #reVerifyingRestoresTheDate()} is not — see the note there. Watched red during
+     * the WP-15 review: {@code expected: null but was: 2026-09-04}.
      */
     @Test
     @Transactional
@@ -242,7 +259,108 @@ class VerificationDeskResourceIT {
         assertThat(reviews.findByProfessionalReferenceOrderByReviewedAtDesc(professional.getReference())).hasSize(2);
     }
 
-    /** Re-verifying after a suspension dates the badge from the review that restored it. */
+    /**
+     * <strong>The date only, on the wire and not just in the comment</strong> — {@code decisions.md}
+     * D47.
+     *
+     * <p>{@code ProfessionalDetail.verifiedOn} said "the DATE ONLY" while serialising an
+     * {@code Instant}, so the public profile carried {@code "2026-01-14T09:41:07Z"} — the time of day
+     * BridgeCare staff clear their queue, on a field that exists to say a person checked and when
+     * without saying which person.
+     *
+     * <p>Asserted on the serialised body rather than on the DTO, because the defect is a shape
+     * arriving on the wire and a Java object cannot show it. Rendered in {@code Africa/Accra} — the
+     * desk's own zone, not the professional's and not the JVM's; see
+     * {@code MarketplaceService.BADGE_ZONE} and {@code VerificationBadgeDateUnitTest}.
+     *
+     * <p>The Accra date is read <strong>either side</strong> of the call rather than once after it.
+     * The review is stamped with {@code Instant.now()} inside the desk request, so a single
+     * expectation taken afterwards is a one-millisecond-per-day flake at Accra midnight — 02:00 on
+     * this {@code Europe/Berlin} workstation. A package about a midnight boundary should not leave
+     * one in its own test.
+     */
+    @Test
+    @Transactional
+    @WithMockUser(username = DESK, authorities = "ROLE_BROKERAGE")
+    @DisplayName("the public profile carries a date, not an instant")
+    void thePublicDateIsADate() throws Exception {
+        LocalDate before = LocalDate.now(ACCRA);
+        decide("VERIFIED");
+
+        String body = mockMvc
+            .perform(get(PUBLIC_PROFILE, professional.getReference()))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.verifiedOn").isNotEmpty())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+        LocalDate after = LocalDate.now(ACCRA);
+
+        // Ten characters, no T and no Z: the shape an Instant cannot take. This is the assertion the
+        // package exists for, and it is on the raw body because that is where the defect appeared.
+        Matcher served = Pattern.compile("\"verifiedOn\":\"(\\d{4}-\\d{2}-\\d{2})\"").matcher(body);
+        assertThat(served.find()).as("verifiedOn is a bare date on the wire, in %s", body).isTrue();
+        // And it is today in the desk's calendar, whichever side of midnight the stamp fell.
+        assertThat(LocalDate.parse(served.group(1))).isBetween(before, after);
+    }
+
+    /**
+     * <strong>What the badge must never say</strong> — {@code decisions.md} D16/D47.
+     *
+     * <p>D16 kept the reviewer's login and the evidence reference on the {@code ROLE_BROKERAGE} desk
+     * endpoint, and until D47 that was true only because nobody had added them to the public
+     * projection. This makes "just add the reviewer, it is useful" a red test rather than a
+     * disclosure — a staff name and a case number published to anyone who asks for a profile.
+     *
+     * <p>On the serialised body, deliberately. A serialiser being helpful — an added getter, an
+     * {@code @JsonUnwrapped}, a projection that starts returning the entity — is invisible to a test
+     * that inspects a Java object, and every one of those routes puts the field on the wire.
+     *
+     * <p>The professional is verified first with a real evidence reference, so the absence being
+     * asserted is an absence from a profile that <em>has</em> something to leak. Against an unverified
+     * one this would pass for the wrong reason for ever.
+     *
+     * <p>Case-insensitively, because the field name is somebody else's choice: a record component
+     * spelled {@code Reviewer}, or a {@code @JsonProperty("REVIEWER")} on one spelled anything at
+     * all, discloses exactly the same staff name past a case-sensitive assertion.
+     */
+    @Test
+    @Transactional
+    @WithMockUser(username = DESK, authorities = "ROLE_BROKERAGE")
+    @DisplayName("the public profile names neither the reviewer nor the evidence")
+    void thePublicProfileDisclosesNeitherReviewerNorEvidence() throws Exception {
+        mockMvc
+            .perform(
+                post(URL, professional.getReference())
+                    .with(csrf())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"decision\":\"VERIFIED\",\"evidenceRef\":\"%s\",\"note\":\"Ghana Card seen\"}".formatted(EVIDENCE))
+            )
+            .andExpect(status().isCreated());
+
+        String body = mockMvc
+            .perform(get(PUBLIC_PROFILE, professional.getReference()))
+            .andExpect(status().isOk())
+            // The date is there, so this is a profile with a verification behind it to disclose.
+            .andExpect(jsonPath("$.verifiedOn").isNotEmpty())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+
+        assertThat(body).doesNotContainIgnoringCase("reviewer", DESK, "evidenceRef", EVIDENCE);
+    }
+
+    /**
+     * Re-verifying after a suspension dates the badge from the review that restored it.
+     *
+     * <p><strong>This one cannot go red against D33's defect, and never could</strong> — a
+     * {@code verifiedOn} that scans past a suspension also answers non-null here, so the assertion
+     * holds either way. D47 and the backlog said for a while that both of D33's tests fail against
+     * it; only {@link #suspensionClearsTheDate()} does. What this guards is the
+     * <em>over-correction</em>: a filter that suppressed the date whenever any suspension appears
+     * anywhere in the history would be green in its partner and red here. Worth keeping, described
+     * honestly.
+     */
     @Test
     @Transactional
     @WithMockUser(username = DESK, authorities = "ROLE_BROKERAGE")

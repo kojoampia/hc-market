@@ -4468,3 +4468,205 @@ read-only, where it passes. Both of its old deaths fired against the stub and al
 one's refusals fire: a vanished professional, a rating that disagrees with its own reviews, a
 `reviewCount` that disagrees with `totalElements`, a page that truncates, and a sibling's HTML
 answering on the port. Nothing was written to any estate.
+
+---
+
+## D47 — A badge is dated in the desk's calendar, and says nothing more than the day
+
+WP-15. Two things, both about the same field: `ProfessionalDetail.verifiedOn`, the one piece of the
+verification audit trail D16 lets out onto a public profile.
+
+### The field said "the DATE ONLY" and shipped a timestamp
+
+The comment on it read *"The DATE ONLY. The reviewer's login and the evidence reference stay on the
+desk endpoint"*, and the type beside that sentence was `Instant`. So an unauthenticated `GET
+/api/professionals/{ref}` answered:
+
+```json
+{ "verification": "VERIFIED" }, "verifiedOn": "2026-09-04T19:45:03.137625199Z"
+```
+
+— to the nanosecond. That is not the disclosure D16 was arguing about, and it is adjacent to it. The
+date says a person at BridgeCare checked, which is the whole point; the *time* says when that person
+was at their desk. Aggregated over a catalogue it is a picture of when the verification queue is
+worked, which shift decided a contested case, and which reviews were signed off at 23:50 — a
+correlate of the reviewer identity the field exists to withhold, arriving on the same field, in the
+same response, one type away. D16 gave the profile a date and nobody checked what a date was on the
+wire.
+
+`LocalDate`, then. What is **stored** is untouched: `VerificationReview.reviewedAt` is still an
+`Instant`, and the desk endpoint still returns it in full to `ROLE_BROKERAGE`. This is a rendering
+decision at the public boundary, not a remodelling.
+
+### The zone is the decision, and Africa/Accra is the answer
+
+An `Instant` cannot become a `LocalDate` without a zone, and there is no such thing as picking one
+silently — there is only picking one and not writing it down. Three candidates were weighed.
+
+**`ZoneId.systemDefault()` — rejected, and it is the one that would have shipped.** Ghana is UTC+0
+all year, so on a workstation in Accra, in CI, and in a container with no `TZ`, it produces exactly
+the right answer. It produces the wrong one the day a container is started somewhere else or a
+developer's laptop is not on GMT — which was measurable here immediately: this workstation runs
+`Europe/Berlin`, and the badge-date unit test written against a `systemDefault()` implementation
+reported `expected: 2026-01-14 but was: 2026-01-15` without any test fixture arranging it. The
+implicit choice is not merely undocumented; it is already wrong on the machine this was built on.
+
+**The professional's own `zoneId` — rejected, and it is the one D21 might seem to require.** D21
+gives the professional's zone the wall clock of an **appointment**, because that is where the
+service is physically delivered. A verification is not delivered anywhere. It is BridgeCare reading
+documents at a desk, and D21 puts that squarely in its *other* category — the `Instant` that records
+"when did this happen", beside `raisedAt` and `completedAt`. Rendering it per-professional would also
+mean one afternoon at one desk became two different dates depending on whose profile it was written
+on, and would need a fallback for a null `zoneId` that could only be `Africa/Accra` anyway.
+
+**`Africa/Accra`, named in the code as `MarketplaceService.BADGE_ZONE`.** The brokerage's own
+calendar, one zone for one desk, the same date to every reader.
+
+**What that means near midnight, stated rather than discovered.** A review recorded at 23:40 in
+Accra is dated the 14th on the badge and is already the 15th for a customer reading it in Nairobi;
+one recorded at 00:20 is dated the 15th while it is still the 14th in Accra's west. That is the
+intended trade. The alternative — rendering in the reader's zone — makes the same review two
+different dates to two customers, which is worse for a field whose entire job is to be a stable
+public claim about a person. The badge names the day BridgeCare did the work, in BridgeCare's
+calendar, and does not move.
+
+**Pinned by observation, not by reading the constant back.** `VerificationBadgeDateUnitTest` sets
+the JVM default zone to `America/New_York` and asserts an instant that is a different day there, so
+a return to `systemDefault()` is red; and it asserts `2026-01-14T23:40:00Z` is the 14th, which is
+red for any zone east of UTC. Between them the day is bracketed from both ends. The pair cannot
+distinguish `Africa/Accra` from `UTC` — nothing can, they have never differed and Ghana has no DST —
+so the third assertion reads the constant, which is honest about being a spelling check.
+
+### Nothing pinned the non-disclosure, and now something does
+
+D16 kept the reviewer's login and the evidence reference behind `ROLE_BROKERAGE`. That was true for
+one reason: nobody had added them to the public projection. There was no test, in any service, that
+would have gone red if somebody had — and "just add the reviewer, customers like knowing" is a
+plausible, well-meant, single-line change to a record.
+
+`VerificationDeskResourceIT.thePublicProfileDisclosesNeitherReviewerNorEvidence` verifies a
+professional with a real evidence reference at the desk, fetches the **public** profile, and asserts
+the serialised body contains neither the key `reviewer`, nor the desk login, nor `evidenceRef`, nor
+the reference itself.
+
+**On the body, deliberately, and it belongs at the desk's IT deliberately.** The defect this
+prevents is a field arriving on the wire, and a test that inspects a Java object cannot see a
+serialiser being helpful — an added getter, an `@JsonUnwrapped`, a projection that starts returning
+the entity all put the field on the response while the DTO looks unchanged. And the only way to give
+the public profile something to leak is to make a decision at the desk first, which is why it sits
+beside D33's tests rather than in a public-profile test that would have had to reach into this one
+for a fixture.
+
+**It was made to fail before it was kept**, since a test asserting an absence passes for free. Adding
+`String reviewer` and `String evidenceRef` to `ProfessionalDetail` and populating them from the
+latest review turned it red, quoting the whole leaked body:
+
+```
+"…,"verifiedOn":"2026-09-04","reviewer":"ama.brokerage","evidenceRef":"CID-2026-0041"}"
+not to contain: "reviewer"
+```
+
+The two fields were then removed. The date half was red first the ordinary way, against the code as
+it stood: `JSON path "$.verifiedOn" expected:<2026-09-04> but was:<2026-09-04T19:45:03.137625199Z>`,
+which is the defect itself printed by the test that fixes it.
+
+### What was checked and left alone
+
+**D33's regression tests still mean what they claim, and one of the two is stronger than the other.**
+`suspensionClearsTheDate` and `reVerifyingRestoresTheDate` assert `verifiedOn` is null and non-null
+across a `VERIFIED → SUSPENDED → VERIFIED` history, and a type change from `Instant` to `LocalDate`
+does not touch presence or absence — which is the only thing D33 is about. Both still pass.
+
+**Only `suspensionClearsTheDate` fails against D33's defect, and the first version of this section
+claimed both did.** That claim was wrong, and wrong in the way this project keeps finding: a
+statement about test strength that reads as settled and is measurable. `reVerifyingRestoresTheDate`
+asserts the date is **non-null** after `VERIFIED → SUSPENDED → VERIFIED`, and a `verifiedOn` that
+scans past a suspension also answers non-null there — so it cannot go red against that defect and
+never could. It is a complementary guard against the *over-correction*: a filter that suppressed the
+date whenever any suspension appears anywhere in the history would be red here and green in its
+partner. `suspensionClearsTheDate` is the one that fires against D33 itself, and it was watched
+firing during the review of WP-15 (`expected: null but was: 2026-09-04`). The commit message of
+`5f6756c` carries the same overclaim; this is its correction. The new `thePublicDateIsADate`
+strengthens the pair slightly by accident: it is the first test in the file to read the field through
+the API rather than through the service.
+
+**The prototype needs no change and got none.** It renders
+
+```js
+(p.verifiedOn ? ' on ' + fmtD(p.verifiedOn.slice(0,10)) : '')
+```
+
+— guarded by a truthiness test, so the `null` every seeded professional carries renders nothing at
+all rather than throwing on `.slice`. **Quote the guard with the call**: an earlier version of this
+paragraph and of `5f6756c`'s commit message quoted only `fmtD(p.verifiedOn.slice(0,10))`, which
+reconstructs an alarm that is not there — a later reader meets what looks like an unguarded `.slice()`
+on a field that is null for all 18. Inside the guard, `"2026-09-04".slice(0,10)` is `"2026-09-04"`,
+so the slice becomes a no-op rather than a truncation, and `parseD` splits on `-` and wants exactly
+what a `LocalDate` serialises to. `verify-prototype-live.mjs` reads `p1.verified` and not the date;
+`verify-cycle.sh` reads neither. So no client breaks, which was checked rather than assumed — a date
+arriving where an instant was is precisely the change that passes every Java test and breaks a screen.
+
+**And the null case was then checked against the running box rather than reasoned about.** The API
+answers `"verifiedOn":null` for all 18 seeded professionals, the browse card never reads the field,
+live mode normalises an absent value to `null` on ingestion, and walking all 18 profile routes in a
+real browser produced no page error. This is the `p.rate` / `₵NaN` class of defect (D46, NEW-7), and
+the only way to close it is the browser.
+
+**Not fixed here, and worth someone's attention. There are five, not four** — the first count of this
+list, in this section and in `CLAUDE.md`, missed the one that matters most, and it is the one that
+**writes** rather than renders:
+
+| Where | What it decides | Shape |
+| --- | --- | --- |
+| `CatalogSeeder:105` | how far **every seeded date** is shifted | writes |
+| `ReviewWriteResource:115` | `Review.publishedOn` on a new review | writes, stored |
+| `MarketplaceResource:132` | the default start of a public availability window | renders |
+| `ProWorkspaceResource:228` | the default start of the professional's own window | renders |
+| `ProWorkspaceResource:337` | the same, on the second window endpoint | renders |
+
+`CatalogSeeder`'s is `anchorDates ? 0 : ChronoUnit.DAYS.between(seed.meta().demoToday(), LocalDate.now())`,
+so one JVM-default call moves availability slots, review dates and — through the identical line in
+`BookingSeeder`, `MessagingSeeder` and `PayoutSeeder` — bookings, conversations and ledger rows. On
+`Europe/Berlin` in summer the JVM date runs ahead of Accra's from **22:00 UTC to midnight** (00:00 to
+02:00 CEST), and a seed loaded in that window is shifted a day further than one loaded an hour
+earlier, so an estate quietly stops being seed-exact against itself.
+
+**Two things narrow it, and both were checked rather than assumed.** The quality box sets
+`HEALTHCONNECT_SEED_ANCHOR_DATES: "true"` in `quality/compose.yml`, so the ternary short-circuits and
+the call is never evaluated there at all; and the dev compose defaults it to `false` but sets no `TZ`
+on any service, so a dev container's JVM default is UTC, which is Accra. What is left is a seeder run
+on a workstation with `anchor-dates=false` — a hand-run rather than a scripted one, since `CLAUDE.md`'s
+own single-service recipe anchors and the tests anchor. Latent, then, not live; and one `TZ:` line in
+a compose file away from being live.
+
+**Deliberately not fixed in WP-15, and opened as NEW-9 in the backlog instead**, because it is not a
+one-line change. The identical line is in four seeders and the dates they write have to agree with
+each other — catalog's `availability_slot.slot_date` against booking's `scheduled_date`, payout's
+`ledger.earned_on` against booking's `completed_at` — so **fixing catalog alone is worse than fixing
+none**: a uniform one-day offset in all four becomes a one-day disagreement between two services'
+seeded data. There is no shared library here, so it is four edits plus whatever seam makes it
+provable red, which is a package rather than a rider on a rendering package.
+
+The four rendering sites stay as they were: same class of latent defect, none of them WP-15's, and
+`Review.publishedOn` is a stored date rather than a rendered one, so correcting that one is a data
+question and not a serialisation one.
+
+### Two test-strength notes, applied
+
+Both came out of the WP-15 review as judgement calls, and both were taken.
+
+`thePublicProfileDisclosesNeitherReviewerNorEvidence` asserted its four absences **case-sensitively**,
+so a component spelled `Reviewer`, or a `@JsonProperty("REVIEWER")` on one spelled anything, published
+a staff name straight past it. The field name belongs to whoever adds the field, which is exactly the
+person this test exists to stop. `doesNotContainIgnoringCase` now, confirmed red first against a
+key-only leak — a `String Reviewer` component carrying `"Ama B."`, a value the test does not hold, so
+the old form was green on all four needles and the new one reports `but found: ["reviewer"]`.
+
+`thePublicDateIsADate` computed `LocalDate.now(Africa/Accra)` **after** the desk stamped the review
+with `Instant.now()`, so a stamp microseconds before Accra midnight against an expectation microseconds
+after was a one-millisecond-per-day failure — at 02:00 on this workstation. A package about a midnight
+boundary should not leave one in its own test. The Accra date is read either side of the call now and
+the served date asserted `isBetween` them, and the "date, not instant" half moved to a pattern on the
+raw body (`"verifiedOn":"\d{4}-\d{2}-\d{2}"`), which is a stronger statement of the shape than an
+equality against a rendered string. Confirmed it did not weaken: reverting `verifiedOn` to `Instant`
+turns it red quoting the original defect, `"verifiedOn":"2026-09-04T20:26:24.623041711Z"`.

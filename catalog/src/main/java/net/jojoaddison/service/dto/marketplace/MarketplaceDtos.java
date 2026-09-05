@@ -1,7 +1,6 @@
 package net.jojoaddison.service.dto.marketplace;
 
 import java.math.BigDecimal;
-import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 
@@ -82,18 +81,26 @@ public final class MarketplaceDtos {
         List<Integer> starDistribution,
         /**
          * When this professional was last verified, or null if there is no record — decisions.md
-         * D16/D31.
+         * D16/D31/D47.
          *
-         * <p>The DATE ONLY. The reviewer's login and the evidence reference stay on the desk
-         * endpoint: a customer needs to know that a person checked and when, not which member of
-         * staff it was or what case number they filed. Widening this to carry either would turn an
-         * audit trail into a disclosure.
+         * <p>The DATE ONLY, and a {@link LocalDate} so that it is one on the wire as well as in the
+         * comment. It carried an {@code Instant} until D47, which put the time of day the desk was
+         * working on a public profile — {@code "2026-01-14T09:41:07Z"} — so a reader could tell when
+         * BridgeCare staff clear their queue and which reviews were decided at 23:50. That is
+         * adjacent to the reviewer identity this field exists to keep private, and it contradicted
+         * this comment.
+         *
+         * <p>The reviewer's login and the evidence reference stay on the desk endpoint: a customer
+         * needs to know that a person checked and when, not which member of staff it was or what
+         * case number they filed. Widening this to carry either would turn an audit trail into a
+         * disclosure — which is why {@code VerificationDeskResourceIT} asserts on the serialised
+         * profile that neither is on it.
          *
          * <p>Null for every seeded professional, because the prototype it is extracted from has no
          * review history to extract. That is the honest answer and the screen says so rather than
          * inventing a date.
          */
-        Instant verifiedOn
+        LocalDate verifiedOn
     ) {}
 
     public record ServiceView(

@@ -3,6 +3,7 @@ package net.jojoaddison.service;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -194,15 +195,51 @@ public class MarketplaceService {
      * <p>Null for every seeded professional: the seed is extracted from a prototype that has no
      * review history, so there is genuinely nothing to report and the profile says as much. The
      * reviewer and the evidence reference are deliberately not returned — see the DTO.
+     *
+     * <p>A {@link LocalDate} rather than the stored {@link Instant} since D47 — the badge dates an
+     * act, not a moment, and the time of day the desk was working is nobody's business. What is
+     * stored is unchanged; this is a rendering.
      */
-    public Instant verifiedOn(String reference) {
+    public LocalDate verifiedOn(String reference) {
         return reviewQueries
             .findByProfessionalReferenceOrderByReviewedAtDesc(reference)
             .stream()
             .findFirst()
             .filter(r -> r.getDecision() == VerificationState.VERIFIED)
             .map(VerificationReview::getReviewedAt)
+            .map(MarketplaceService::badgeDate)
             .orElse(null);
+    }
+
+    /**
+     * The zone the public verification date is rendered in — {@code decisions.md} D47.
+     *
+     * <p><strong>Stated, never implied.</strong> An {@code Instant} cannot become a date without a
+     * zone, and Ghana is UTC+0 all year — so an implicit choice ({@code ZoneId.systemDefault()}, or
+     * the container's {@code TZ}) is right on every machine anybody would test on and wrong the day
+     * one of them is set to something else. {@code badgeDateNamesItsZone} fails if this goes back to
+     * the default.
+     *
+     * <p><strong>Africa/Accra, and not the professional's own zone.</strong> D21 hands the
+     * professional's {@code zoneId} the wall clock of an <em>appointment</em>, because that is where
+     * the service is delivered; a verification is not delivered anywhere — it is BridgeCare reading
+     * documents at a desk in Accra, which D21 puts squarely in its other category, the {@code Instant}
+     * that records "when did this happen". Dating one professional's badge in Accra and another's in
+     * London would also make the same afternoon at the same desk two different days, and would need a
+     * fallback for a null {@code zoneId} that would be this constant anyway.
+     */
+    static final ZoneId BADGE_ZONE = ZoneId.of("Africa/Accra");
+
+    /**
+     * The one place an instant becomes the date on a badge.
+     *
+     * <p>Near midnight the two disagree by a day for a reader elsewhere: a review recorded at 23:40
+     * in Accra is dated the 14th here and is already the 15th in Nairobi. That is the intended
+     * answer — the badge names the day BridgeCare did the work, in BridgeCare's own calendar, so it
+     * reads the same to every customer instead of shifting with whoever is looking.
+     */
+    static LocalDate badgeDate(Instant reviewedAt) {
+        return reviewedAt.atZone(BADGE_ZONE).toLocalDate();
     }
 
     /**
