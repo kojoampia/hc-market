@@ -51,9 +51,15 @@ import org.springframework.security.core.context.SecurityContextHolder;
 @MockitoSettings(strictness = Strictness.LENIENT)
 class EarningsAreSlicedOnTheMarketplacesDayTest {
 
-    private static final Instant LATE_EVENING = Instant.parse("2026-09-05T23:30:00Z");
-    private static final Instant EARLY_MORNING = Instant.parse("2026-09-05T02:30:00Z");
-    private static final LocalDate ACCRAS_DAY = LocalDate.of(2026, 9, 5);
+    /**
+     * The three constants below are dated 2021 deliberately — see {@code MarketCalendarUnitTest}'s
+     * class javadoc. A date the real clock could also be would let an implementation that ignores the
+     * injected clock pass on whichever of the two directions happened to agree with the machine that
+     * day; five years past, both are red on every day of the year.
+     */
+    private static final Instant LATE_EVENING = Instant.parse("2021-09-05T23:30:00Z");
+    private static final Instant EARLY_MORNING = Instant.parse("2021-09-05T02:30:00Z");
+    private static final LocalDate ACCRAS_DAY = LocalDate.of(2021, 9, 5);
 
     @Mock
     private EarningsService earnings;

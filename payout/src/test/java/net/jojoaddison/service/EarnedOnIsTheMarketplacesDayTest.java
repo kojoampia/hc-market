@@ -58,14 +58,20 @@ import org.mockito.quality.Strictness;
 @MockitoSettings(strictness = Strictness.LENIENT)
 class EarnedOnIsTheMarketplacesDayTest {
 
+    /**
+     * The three constants below are dated 2021 deliberately — see {@code MarketCalendarUnitTest}'s
+     * class javadoc. A date the real clock could also be would let an implementation that ignores the
+     * injected clock pass on whichever of the two directions happened to agree with the machine that
+     * day; five years past, both are red on every day of the year.
+     */
     /** 23:30 in Accra. Already tomorrow anywhere east of UTC — the window that was live here. */
-    private static final Instant LATE_EVENING = Instant.parse("2026-09-05T23:30:00Z");
+    private static final Instant LATE_EVENING = Instant.parse("2021-09-05T23:30:00Z");
 
     /** 02:30 in Accra. Still yesterday far enough west. */
-    private static final Instant EARLY_MORNING = Instant.parse("2026-09-05T02:30:00Z");
+    private static final Instant EARLY_MORNING = Instant.parse("2021-09-05T02:30:00Z");
 
     /** The day both instants above fall on, in {@code Africa/Accra}, and the only right answer. */
-    private static final LocalDate ACCRAS_DAY = LocalDate.of(2026, 9, 5);
+    private static final LocalDate ACCRAS_DAY = LocalDate.of(2021, 9, 5);
 
     @Mock
     private LedgerRepository ledger;

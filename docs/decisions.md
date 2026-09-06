@@ -5692,8 +5692,15 @@ will ever have.** No migration was written. Four things were checked rather than
   was written in UTC, so it was written in Accra's calendar by accident and is right by the new rule
   as well as the old one. (The database was started to read it and stopped again; nothing else on the
   box was touched.)
-- **There are no dev rows at all.** `docker volume ls` lists five `hc-market-quality_*` volumes and no
-  dev volume. Dev is `deploy-dev.sh up --clean` and reseeds; quality is rebuilt from published images.
+- **The dev estate exists, its rows are all seeded, and its containers had no `TZ` either.** *(This
+  bullet said "there are no dev rows at all" as first written. That was false and is corrected below;
+  the conclusion is unchanged and the corrected argument is stronger — see §review 1.)* Five volumes,
+  `healthconnect-dev_{booking,catalog,gateway,messaging,payout}-data`, and five containers wedged in
+  `Restarting` since 2026-08-30. Copied out and read rather than reasoned about:
+  `healthconnect-dev_payout-data` holds **256** ledger rows, every `booking_reference` an `h1`–`h9`
+  seed reference, and **`processed_event` is empty** — so no consumer has ever written there, which is
+  the fact that settles it. `healthconnect/payout:local` reports `Etc/UTC` and the container carries no
+  `TZ`, so had one written, it would have written in Accra's calendar anyway.
 
 So the population of rows that could have been written in a non-Accra calendar is: a hand-run
 `java -jar payout/target/…` on a workstation, against a database somebody kept. None exists here, and
@@ -5871,3 +5878,111 @@ it sounds and it is not zero: the change is a constant and an injected bean, six
 of them under a test that fails against the code as it stood, and the calendar's value is
 indistinguishable from the one the box already uses. A quality run would prove the wiring, not the
 behaviour — the behaviour needs a container started with a `TZ`, which no compose file here has.
+
+### Reviewed 2026-09-06 — six findings, all applied, and the blocking one is a fact about the estate
+
+The review re-ran the mutation matrix rather than accepting it (13 red under `LocalDate.now(clock)`,
+2 under `MARKET_ZONE`→`UTC`, all six `earned_on` assertions red), re-checked `TechnicalStructureTest`
+in both services, confirmed `SeedAndMarketCalendarsAgreeUnitTest` is not a tautology, and confirmed
+`ledger` carries no instant beside the date. The design stood. What did not was one stated fact and
+the reach of the CI check.
+
+**1. BLOCKING — "there are no dev rows at all" was false, and the corrected argument is better.**
+There are five dev volumes, `healthconnect-dev_{booking,catalog,gateway,messaging,payout}-data`, and
+five containers wedged in `Restarting` since 2026-08-30. The claim was in three places — the bullet
+above, `backlog.md`'s NEW-10 section and `8149ea1`'s commit message — and all three are corrected
+where they can be.
+
+The conclusion is untouched and the reasoning is now the same one already made for quality, which is
+what makes it stronger rather than merely repaired: **the estate exists, every row in it is seeded,
+and its containers had no `TZ` either.** Read rather than argued — the payout volume was copied out
+and opened with a throwaway `postgres:17`: **256** ledger rows, every `booking_reference` an `h1`–`h9`
+seed reference, and **`processed_event` empty**, so no consumer has ever written there.
+`healthconnect/payout:local` reports `Etc/UTC`. This matters more than tidiness because this section
+says explicitly that the data answer **is not transferable** and that NEW-12 must re-establish it: a
+reader who runs `docker volume ls`, sees five dev volumes and finds this document denying they exist
+cannot tell whether the estate or the method was wrong.
+
+**Why three separate readers missed it, which is the part worth keeping.** `docker-compose.dev.yml`
+declares `container_name: hc-market-dev-<svc>` and `CLAUDE.md` documents that name — but the compose
+**project** is `name: healthconnect-dev`, volumes take the project name and never a `container_name`,
+and the *running* containers predate that directive so they carry the compose-derived
+`healthconnect-dev-<svc>-1`. So `docker volume ls | grep market` and `docker ps -a | grep market` both
+answer with the quality stack alone and read as "there is no dev estate". **Grep docker for the
+compose PROJECT name, not the documented container name** — `healthconnect-dev` here — or better,
+`docker volume ls` with no filter at all, since the whole point is to find what you did not expect.
+
+**2. A fourth fail-open in the grep, and it is D48's species again.** Dropping any line whose first
+non-space characters were `//`, `*` or `/*` threw away a line that *starts* with a block comment and
+then carries code: `/* a note */ LocalDate d = LocalDate.now();` passed. The property this section
+claimed — "a division or a slash in a log string cannot hide the rest of the line" — was simply not
+the property the code had, which is exactly what D48's review found twice. Comments are **stripped**
+now (sed removes same-line `/* … */` and everything after `//`) and only then is the line matched;
+`sed` is 1:1 on lines so `grep -n` still reports real numbers, and the **original** line is printed
+from the file rather than the stripped one. The one surviving filter is a leading `*`, a javadoc
+continuation, which cannot carry code.
+
+Two further misses are **named rather than contorted around**, and both are empty in the tree today:
+`grep` is line-based so `LocalDate\n    .now()` is invisible, and `Calendar.getInstance()` / `new
+Date()` are the legacy spelling of the same defect and are not in the list.
+
+The fix improved a case this section had recorded as deliberate: a *trailing* comment on a line of
+code naming `LocalDate.now()` used to over-report, described here as fail-closed. Stripping makes it
+correctly green, so the check is now both more sensitive and less noisy.
+
+**3. `messaging` and `gateway` are scanned too, and the whole list is argued now.** The identical
+regex over the other three services matches only messaging's own exempt `SeedCalendar`, nothing at all
+in gateway, and catalog's known four — so adding two of them passes today and costs nothing, which is
+the only moment a check like this is free. **Not scanning a clean service is how catalog's four got
+in.** Catalog stays out for the reason already given, and the check's comment now argues the
+inclusions as well as the exclusion; an unargued omission reads as scope rather than as a decision.
+
+**4. The database-side clock is closed before it opens.** `CURRENT_DATE` or `now()::date` inside a
+`@Query` is evaluated in PostgreSQL's session `TimeZone`, which the JDBC driver sets from the JVM
+default — the identical defect expressed in SQL and invisible to a Java grep. There are **none**
+today in any of the four scanned services, which is precisely when to add the alternation. Matched
+case-insensitively because JPQL is written both ways; the cost is that a Java field named
+`localTimestamp` would over-report, which is fail-closed and renameable.
+
+**5. The `BrokerageResource` consolidation was half of a round trip, and is now complete.** There is
+exactly one caller of `/api/internal/brokerage/split` — `CustomerBookingResource.receipt` — and it
+encoded `completedAt` into a `LocalDate` with `ZoneOffset.UTC` while the endpoint had just started
+decoding in `MARKET_ZONE`. Identity today, and only because the constant happens to be UTC+0: two
+ends independently landing on the same offset rather than one calendar named once. Both ends are
+`MARKET_ZONE` now, so the round trip is self-consistent by construction. **No test can go red on
+either half**, which is why this section keeps calling it a consolidation.
+
+**Three sites were deliberately NOT swept in, and each now says so where a reader will be tempted.**
+`BookingWorkflow.scheduledAt` and `CustomerBookingResource.cancellationPreview` convert an
+*appointment's* wall clock to an instant with `ZoneOffset.UTC` and ignore `Booking.zoneId`. That is
+D21's territory, spec §13 open question #8 is still open on exactly it, and **D21's answer may not be
+Accra** — a professional working from another country would want their own zone there while the
+ledger's day stayed the marketplace's. Changing them would settle an open question by
+find-and-replace and would read, from the diff, like tidying.
+
+**6. A test artefact, closed cheaply.** Reverting a *call site* to a literal `LocalDate.now()` — as
+opposed to mutating inside `MarketCalendar`, which was always fully caught — ignores the injected
+clock entirely and answers with the real wall date. Against instants dated "around now" that made the
+two mechanisms this suite separates (*ignoring the clock* and *reading the wrong zone*) dependent on
+what day the suite was run: one direction of each pair could agree with the machine by coincidence.
+Every asserted instant moved to **2021-09-05**, five years past, and the reason is in the test
+javadoc so nobody "modernises" it. Watched: with both consumers reverted to `LocalDate.now()`, all
+**six** `EarnedOnIsTheMarketplacesDayTest` assertions are red — both directions, on every day of the
+year rather than most of them.
+
+**Also opened rather than fixed: NEW-13.** `BookingEventConsumer.configInForce` resolves the
+brokerage rate at `Instant.now()` — the rate in force when the event was **consumed** — while the
+class javadoc four lines above says "the rate in force when it **completed**". Identical while
+delivery is prompt, different after any outage, replay or paused consumer straddling a rate change.
+The same species as NEW-10 one axis over: a decision taken, and the moment it was taken at never
+written down. It is deliberately not fixed here and is **not a one-liner** — `completedAt` is not on
+the wire at all (`OutboxRecorder` publishes `bookingRaisedAt` and no completion instant), so pricing
+at completion means changing the event payload first. The `Instant.now()` is correct as an instant
+and is not a NEW-10 site.
+
+**Counts after the six.** payout **101 unit + 165 IT**, booking **192 + 112** — unchanged, because
+every finding was a document, a CI script, a comment, a constant's year or a one-token zone with no
+observable effect. Both `clean verify` green, checkstyle 0, modernizer clean. Both CI checks re-run
+against **fifteen** constructed reintroductions in total: the original eight, plus the review's
+leading-block-comment line and its javadoc variant, a call in messaging and one in gateway, and
+`CURRENT_DATE`, `now()::date` and `localtimestamp` inside a `@Query`. Four controls stay green.

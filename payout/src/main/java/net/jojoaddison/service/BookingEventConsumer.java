@@ -267,6 +267,18 @@ public class BookingEventConsumer {
      * The config in force. Versioned by {@code effectiveFrom}, so this takes the latest one that has
      * already taken effect rather than simply the newest row — a rate scheduled for next month must
      * not price today's bookings.
+     *
+     * <p><strong>"In force" here means when the event was CONSUMED, and the class javadoc above says
+     * "when it completed".</strong> Those are the same thing while delivery is prompt and different
+     * after any outage, replay or paused consumer that straddles a rate change — backlog NEW-13,
+     * opened by D51's review and deliberately not fixed there. It is the same species as NEW-10, one
+     * axis over: a decision was taken and the moment it was taken at was never written down. It is
+     * **not** a one-line fix, which is why it is an item rather than an edit — {@code completedAt} is
+     * not on the wire ({@code OutboxRecorder} publishes {@code bookingRaisedAt} and no completion
+     * instant), so pricing at completion means changing the event payload first.
+     *
+     * <p>{@code Instant.now()} itself is correct and stays: an instant carries no calendar, so this
+     * is not a NEW-10 site and {@link MarketCalendar} has nothing to say about it.
      */
     private BrokerageConfig configInForce() {
         Instant now = Instant.now();

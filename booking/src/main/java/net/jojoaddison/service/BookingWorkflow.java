@@ -221,7 +221,18 @@ public class BookingWorkflow {
         return freeCancellationHours;
     }
 
-    /** Africa/Accra is GMT with no offset and no DST — spec §13 open question #8 is still open. */
+    /**
+     * Africa/Accra is GMT with no offset and no DST — spec §13 open question #8 is still open.
+     *
+     * <p><strong>Not a NEW-10 site, and deliberately left alone by D51.</strong> This is an
+     * APPOINTMENT's wall clock becoming an instant, which is D21's question rather than the
+     * brokerage's calendar — and the booking carries its own {@code zoneId} that this line ignores,
+     * which is precisely what §13 #8 is about. D51 named the marketplace's calendar for dates the
+     * platform writes and renders; it did not answer this, and D21's answer may not be Accra.
+     * Changing it to {@code MarketCalendar.MARKET_ZONE} would settle an open question by
+     * find-and-replace and would look, from the diff, like tidying. {@code
+     * CustomerBookingResource.cancellationPreview} has the identical line and the identical reason.
+     */
     private static Instant scheduledAt(Booking booking) {
         LocalDate date = booking.getScheduledDate();
         return date.atTime(booking.getScheduledTime()).toInstant(ZoneOffset.UTC);

@@ -346,6 +346,28 @@ maps them, so `--services catalog` is unchanged.
 The databases stay **off** `hcnet` for the same reason, in reverse: never reachable from another
 product, and free to keep the short names `catalog-db`, `gateway-db`.
 
+### Grepping docker for `market` hides the dev estate entirely
+
+Two names are in play and only one of them is the documented one. `docker-compose.dev.yml` declares
+`container_name: hc-market-dev-<svc>` for the app services and the section above explains why — but the
+compose **project** is `name: healthconnect-dev`, and that is what actually decides what you can find:
+
+- **volumes take the project name and never a `container_name`** — they are
+  `healthconnect-dev_{gateway,catalog,booking,messaging,payout}-data`, with no `hc-market` anywhere;
+- any container started **before** that directive was added carries the compose-derived
+  `healthconnect-dev-<svc>-1`, and five such containers have been sitting in `Restarting` on this
+  workstation since 2026-08-30.
+
+So `docker volume ls | grep -i market` and `docker ps -a | grep -i market` both answer with the
+**quality** stack alone, which reads as "there is no dev estate here" rather than as "you asked the
+wrong question". That is not hypothetical: **three separate readers concluded there were no dev volumes
+at all**, and a false statement about the estate reached `decisions.md`, `backlog.md` and a commit
+message before a fourth person ran `docker volume ls` with no filter (D51's review).
+
+**Grep for the compose project name — `healthconnect-dev`, `hc-market-quality` — or use no filter at
+all.** The point of looking is to find what you did not expect, and a filter built from the name you
+expected cannot do that. `docker compose ls -a` names the projects; the volume prefix follows.
+
 ### `apache/kafka-native` has no shell scripts
 
 Nothing in this repository declares a broker any more (D27), so this now applies to `hc-infra`'s
@@ -707,7 +729,11 @@ time.**
   `ledger.earned_on` (`BookingEventConsumer:143`, `:246`, `DisputeEventConsumer:142` — one table
   written in Accra's calendar by the seeder and the JVM's by the consumer), payout's two rendered
   "today"s and booking's `ProBookingResource:111`. Its CI check is D48's grep widened from a package to
-  payout's and booking's **whole** `src/main` trees.
+  the **whole** `src/main` trees of payout, booking, messaging and gateway, and it bans the
+  **database-side** clock too (`current_date`, `now()::date` in a `@Query` is read in PostgreSQL's
+  session `TimeZone`, which JDBC sets from the JVM default — the same defect, invisible to a Java
+  grep). Messaging and gateway were clean already; adding a clean service is free and **not scanning
+  one is how catalog's four got in.**
   **It deliberately does not scan catalog**, whose four are open as **NEW-12** —
   `ReviewWriteResource:115` (which stores `Review.publishedOn`, so correcting it is a data question),
   `MarketplaceResource:132` and `ProWorkspaceResource` twice. Exempting three files would give a check
@@ -715,12 +741,19 @@ time.**
   next one; it is widened the day NEW-12 closes.
   **D51's data answer was "nothing to correct", and it is not transferable.** No stored `earned_on`
   was ever written outside Accra's calendar — production has never been deployed, no compose file sets
-  `TZ` on any service, the payout image's own zone is `Etc/UTC` (measured), and the quality box holds
-  256 seeded rows plus one consumer-written row, dated correctly. That holds *because* nothing is
-  deployed and nothing sets `TZ`; the day either changes it stops holding, and `ledger` carries no
-  instant beside the date, so a row written in the wrong calendar can never be told from a right one
-  afterwards. NEW-12 must re-establish the same four facts for `Review.publishedOn` rather than cite
-  this one.
+  `TZ` on any service, every image's own zone is `Etc/UTC` (measured), and **both** estates holding
+  rows were read: quality has 256 seeded rows plus one consumer-written row dated correctly, and dev
+  has 256 seeded rows and an empty `processed_event`, so nothing there was consumer-written at all.
+  That holds *because* nothing is deployed and nothing sets `TZ`; the day either changes it stops
+  holding, and `ledger` carries no instant beside the date, so a row written in the wrong calendar can
+  never be told from a right one afterwards. NEW-12 must re-establish the same four facts for
+  `Review.publishedOn` rather than cite this one.
+  **Three sites are deliberately NOT on `MARKET_ZONE` and each says so in place**:
+  `BookingWorkflow.scheduledAt` and `CustomerBookingResource.cancellationPreview` convert an
+  *appointment's* wall clock and ignore `Booking.zoneId`, which is D21's question and spec §13 #8, still
+  open — and D21's answer may not be Accra. Sweeping them in would settle an open question by
+  find-and-replace. The third is `BookingEventConsumer.configInForce`'s `Instant.now()`, which is
+  correct as an instant; what is wrong there is *which moment*, and that is **NEW-13**.
   D48 closes the zone half only, deliberately: the four services still evaluate the shift
   independently, seconds apart on one `compose up` (**measured: 7.1s**), so a boot straddling Accra
   midnight can still split them. That residual is dev-only (quality anchors, production never seeds)

@@ -701,9 +701,10 @@ jobs:
           done
           exit "$fail"
 
-      # …and nothing else in payout or booking may read a date from an implicit zone.
+      # …and nothing else in payout, booking, messaging or gateway may read a date from an implicit
+      # zone.
       #
-      # This is D48's seed-package grep widened from a package to two whole services, because NEW-10
+      # This is D48's seed-package grep widened from a package to four whole services, because NEW-10
       # was five of these outside any seed package: three writes to ledger.earned_on and two rendered
       # "today"s in payout, plus one rendered window default in booking. All five read LocalDate.now(),
       # which takes the JVM's zone — correct in a container with no TZ, correct in CI, and wrong on the
@@ -711,29 +712,65 @@ jobs:
       # is wrong for ever, and nothing about it looks wrong: the row is ordinary, no count moves, and
       # lifetime gross — the one figure anybody has an independent copy of — does not budge.
       #
-      # The regex and the comment filter are D48's, verbatim, including the three fixes its review
-      # made: it bans the ZONE that interprets a clock and not merely the TYPE that reads one, so
-      # LocalDate.ofInstant(Instant.now(), ZoneId.systemDefault()) does not sail through; it drops
-      # comment lines from a full-line match rather than anchoring past them, so a division or a slash
-      # in a log string cannot hide the rest of the line; and it scans directories with the count of
-      # files asserted, so a moved package fails rather than reporting ok on nothing.
+      # WHICH SERVICES, AND WHY — the whole list is argued, not just the exclusion.
+      #
+      #   payout, booking      NEW-10's six sites. Clean by construction after D51.
+      #   messaging, gateway   Clean TODAY and always have been: messaging matches only its own
+      #                        exempt SeedCalendar, gateway matches nothing at all. Adding them costs
+      #                        nothing and locks the property into two more services BEFORE somebody
+      #                        writes the first one — which is the only moment a check like this is
+      #                        free. Not scanning a clean service is how catalog's four got in.
+      #   catalog              DELIBERATELY OUT, and it is a scope statement. Four implicit-zone reads
+      #                        are still open there — ReviewWriteResource:115, MarketplaceResource:132
+      #                        and ProWorkspaceResource twice — inventoried in D47 and carried as
+      #                        backlog NEW-12. Adding catalog with those three files exempted would
+      #                        produce a check that claims to cover the service while being blind in
+      #                        exactly the files most likely to acquire the next one. Added the day
+      #                        NEW-12 closes, and closing NEW-12 means adding it here.
+      #
+      # The regex inherits D48's three review fixes: it bans the ZONE that interprets a clock and not
+      # merely the TYPE that reads one, so LocalDate.ofInstant(Instant.now(), ZoneId.systemDefault())
+      # does not sail through; comments are removed rather than the match being anchored past them, so
+      # a division or a slash in a log string cannot hide the rest of the line; and directories are
+      # scanned with the count of files asserted, so a moved package fails rather than reporting ok on
+      # nothing.
+      #
+      # A FOURTH FAIL-OPEN, inherited from D48 and closed here (D51's review). Dropping any line whose
+      # first non-space characters were `//`, `*` or `/*` threw away a line that STARTS with a block
+      # comment and then carries code:
+      #
+      #     /* a note */ LocalDate d = LocalDate.now();     <- passed, silently
+      #
+      # Same species as the `^[^/*]*` anchor D48 fixed, and the stated property ("a slash cannot hide
+      # the rest of the line") was simply not the property the code had. Comments are now STRIPPED —
+      # sed removes same-line /* … */ and everything after // — and only then is the line matched. sed
+      # is 1:1 on lines so grep -n still reports real line numbers, and the ORIGINAL line is printed
+      # from the file rather than the stripped one, so the error shows what is actually written there.
+      # The one remaining filter is a leading `*`, which is a javadoc continuation line: those cannot
+      # carry code, and this file's own javadoc names LocalDate.now() several times explaining why it
+      # is not used.
+      #
+      # TWO KNOWN GAPS, named rather than contorted around. Both are empty in the tree today.
+      #   - grep is line-based, so `LocalDate\n    .now()` split across two lines is invisible.
+      #   - Calendar.getInstance() and new Date() are the legacy spelling of the same defect and are
+      #     not in the list; nothing in this estate uses either.
+      #
+      # SQL COUNTS TOO, and that is the point of current_date / current_timestamp / localtimestamp /
+      # now()::. A clock read inside a @Query is evaluated in PostgreSQL's session TimeZone, which the
+      # JDBC driver sets from the JVM default — the identical defect expressed in SQL and invisible to
+      # a Java grep. There are none today in any of the four, which is exactly when to close it. The
+      # match is case-insensitive because JPQL is written both ways; the cost is that a Java field
+      # named `localTimestamp` would over-report, which is fail-closed and rename-able.
       #
       # Instant.now() is deliberately NOT banned, exactly as in D48. An Instant carries no calendar and
       # cannot be read in the wrong one — ProcessedEvent, AbstractAuditingEntity and
       # BookingEventConsumer's own effective-dating of the brokerage config all use one correctly.
-      # ZoneOffset.UTC is likewise absent from the list: BrokerageResource names its zone, and a named
-      # zone is a decision somebody can disagree with rather than a defect.
-      #
-      # CATALOG IS DELIBERATELY NOT SCANNED, and that is a scope statement rather than an oversight.
-      # Four implicit-zone reads are still open there — ReviewWriteResource:115, MarketplaceResource:132
-      # and ProWorkspaceResource twice — inventoried in D47 and carried as backlog NEW-12. Adding
-      # catalog with those three files exempted would produce a check that claims to cover the service
-      # while being blind in exactly the files most likely to acquire the next one. It is added the day
-      # NEW-12 closes.
-      - name: No runtime class in payout or booking may read a date in an implicit zone
+      # ZoneOffset.UTC is likewise absent from the list: a named zone is a decision somebody can
+      # disagree with rather than a defect.
+      - name: No runtime class may read a date in an implicit zone
         run: |
           fail=0
-          for svc in payout booking; do
+          for svc in payout booking messaging gateway; do
             dir="$svc/src/main/java/net/jojoaddison"
             if [ ! -d "$dir" ]; then
               echo "::error::$dir does not exist — this check would scan nothing and pass. See decisions.md D51."
@@ -752,8 +789,17 @@ jobs:
               # them.
               case "$f" in */SeedCalendar.java|*/MarketCalendar.java) continue ;; esac
               scanned=$((scanned + 1))
-              if grep -nE '(LocalDate|LocalDateTime|LocalTime|ZonedDateTime|OffsetDateTime|Year|YearMonth)\.now\(|Clock\.system|ZoneId\.systemDefault|TimeZone\.getDefault|systemDefaultZone' "$f" \
-                   | grep -vE '^[0-9]+:[[:space:]]*(//|\*|/\*)'; then
+              # Strip comments, THEN match. Dropping comment lines after the match is what let a
+              # leading /* hide the code behind it.
+              hits=$(sed -E 's@/\*[^*]*\*+([^/*][^*]*\*+)*/@ @g; s@//.*@@' "$f" \
+                       | grep -niE '(LocalDate|LocalDateTime|LocalTime|ZonedDateTime|OffsetDateTime|Year|YearMonth)\.now\(|Clock\.system|ZoneId\.systemDefault|TimeZone\.getDefault|systemDefaultZone|current_date|current_timestamp|localtimestamp|now\(\)[[:space:]]*::' \
+                       | grep -vE '^[0-9]+:[[:space:]]*\*' \
+                       | cut -d: -f1)
+              if [ -n "$hits" ]; then
+                for n in $hits; do
+                  # The original line, not the stripped one — the error should quote what is written.
+                  echo "  $f:$n:$(sed -n "${n}p" "$f")"
+                done
                 echo "::error file=$f::this reads a date in whatever calendar the container was started in — use MarketCalendar, or an Instant if it is a moment rather than a day. See decisions.md D51."
                 fail=1
               fi

@@ -48,6 +48,7 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **WP-19** | Production deployment configuration, to sibling parity | PARTLY DONE | D49 — `deploy/prod-server/` built, five defects in the deploy path fixed, then reviewed 2026-09-05 and eight more applied, one of them blocking (a failing smoke test triggered an automatic rollback). **Nothing has ever been run against a host**; the fifteen things a person must still do are in that directory's README |
 | **NEW-11** | A second payment attempt for one booking would reuse Paystack's reference | WON'T, until there is a second attempt | D50 — no such path exists; the day one is added the suffix goes in with it. Opened by the D50 review |
 | **NEW-12** | Catalog's four implicit-zone reads, one of which stores a date | READY | D47/D51 — `ReviewWriteResource:115` writes `Review.publishedOn` and carries its own data question; three rendered window defaults beside it. The CI check D51 added is widened to catalog the day this closes |
+| **NEW-13** | The brokerage rate is struck when the event is consumed, not when the booking completed | READY | D51 §review — `BookingEventConsumer.configInForce` says `Instant.now()`; the class javadoc says "when it completed". Not a one-liner: `completedAt` is not on the wire. Opened by the D51 review |
 
 ---
 
@@ -1053,20 +1054,34 @@ down nowhere. D51 argues it.
 
 **The data question is answered, and the answer is that there was nothing to correct.** Established
 rather than assumed: production has never been deployed, no compose file in the repository sets `TZ`
-on any service, the payout image's own default is `Etc/UTC` (measured, not inferred), and the one
-estate holding real rows — the quality box — holds 256 seeded rows plus exactly one written by the
-consumer, dated correctly. No dev volume exists at all. So every `earned_on` ever stored was written in
-UTC, which is Accra. **No migration, and it has an expiry**: the answer holds because nothing is
-deployed and nothing sets `TZ`, and `ledger` carries no instant beside the date, so a row written in the
-wrong calendar could never be told from a right one afterwards.
+on any service, and every image's own default is `Etc/UTC` (measured, not inferred). Both estates that
+hold rows were **read**: the quality box has 256 seeded ledger rows plus exactly one written by the
+consumer, dated correctly; the dev estate — five `healthconnect-dev_*` volumes, containers wedged in
+`Restarting` since 2026-08-30 — has 256 rows all carrying `h1`–`h9` seed references and an **empty
+`processed_event`**, so no consumer has ever written there at all. So every `earned_on` ever stored was
+written in UTC, which is Accra. **No migration, and it has an expiry**: the answer holds because nothing
+is deployed and nothing sets `TZ`, and `ledger` carries no instant beside the date, so a row written in
+the wrong calendar could never be told from a right one afterwards.
 
-**Also closed:** a CI grep, D48's widened from a seed package to payout's and booking's whole `src/main`
-trees, watched firing against six constructed reintroductions including the exact stand-in D48's own
-first check missed. And one new fail-open of its own found and closed — a `while read` over an empty
-`find` is one empty line, not none.
+*(This paragraph claimed "no dev volume exists at all" as first written, and D51's review found it
+false. The conclusion never moved; the argument is now the same one already made for quality. **Grep
+docker for the compose PROJECT name** — `healthconnect-dev` — not the `container_name:` the compose
+file declares and `CLAUDE.md` documents: volumes never take a container name, and these containers
+predate that directive, so `| grep market` answers with the quality stack alone and reads as "there is
+no dev estate". That misled three separate readers.)*
+
+**Also closed:** a CI grep, D48's widened from a seed package to the whole `src/main` tree of **four**
+services — payout, booking, messaging and gateway — watched firing against fifteen constructed
+reintroductions in total, including the exact stand-in D48's own first check missed. It also bans the
+**database-side** clock (`current_date`, `now()::date`), which is the identical defect in SQL and
+invisible to a Java grep; there are none today, which is when it is free. Two fail-opens of its own
+were found and closed: a `while read` over an empty `find` is one empty line rather than none, and a
+line **starting** with a block comment hid the code behind it.
 
 **Not closed:** catalog's four, which are **NEW-12**, and which is why the new check does not scan
-catalog. And nothing was run against a live estate: the quality box was read, not rebuilt.
+catalog. `BookingEventConsumer.configInForce` prices at consumption rather than completion, which is
+**NEW-13**, opened by the review and not fixed. And nothing was run against a live estate: both boxes
+were read, not rebuilt.
 
 ## WP-19 — Production deployment configuration · PARTLY DONE
 
@@ -1196,12 +1211,48 @@ reason D47 and D51 both give: it is the verification desk's calendar and answers
 **Two things make it more than a rename.** `Review.publishedOn` is on a *public* review, and catalog's
 quality database holds seeded reviews plus whatever `verify-cycle.sh` has left there, so D51's "no
 stored row needed correcting" **must be re-established rather than cited** — the four checks it used
-(nothing deployed, no `TZ` in any compose file, the image's own default zone, and reading the one
+(nothing deployed, no `TZ` in any compose file, the image's own default zone, and reading **every**
 database that holds real rows) are the method, not the answer.
+
+One of the two is already done, by D51's review and as evidence to be **re-verified rather than
+cited**: `healthconnect-dev_catalog-data` holds **63** reviews with a newest `published_on` of
+2026-08-24 — exactly the seed count, so no `ReviewWriteResource`-written row exists on the dev estate.
+The quality box is the one still to read, and it is the one `verify-cycle.sh` writes to. Note the trap
+that made D51's review necessary: **grep docker for the compose project name** (`healthconnect-dev`),
+never the `container_name:` the compose file declares, or the dev estate looks like it does not exist.
 
 And the CI check D51 added deliberately **does not scan catalog** while these are open, because a check
 with these three files exempted would claim to cover the service while being blind in exactly the files
 most likely to acquire the next one. Widening it to catalog is part of this package, not a follow-up.
+
+## NEW-13 — The brokerage rate is struck when the event is consumed, not when the booking completed · READY
+
+Opened by D51's review, four lines from a comment that package rewrote, and deliberately **not** fixed
+there — it is a decision about money with a wire-format change behind it, not a rider on a calendar
+package.
+
+`BookingEventConsumer.configInForce` picks the latest `BrokerageConfig` whose `effectiveFrom` is not
+after **`Instant.now()`**. The class javadoc four lines above says a booking "prices against the rate
+in force when it **completed**". Those are the same thing while delivery is prompt and different after
+any outage, replayed partition or paused consumer that straddles a rate change — the booking is then
+priced at terms the customer was never shown, and the receipt (which strikes its split at
+`completedAt`, `CustomerBookingResource.receipt`) would disagree with the ledger row by however much
+the rate moved. Nothing detects that: both numbers are internally consistent.
+
+**Same species as NEW-10, one axis over.** A decision was taken — "the rate in force" — and the
+*moment* it was taken at was never written down, exactly as NEW-10's calendar was not. `Instant.now()`
+itself is correct and stays; an instant carries no calendar, so this is not a zone question and
+`MarketCalendar` has nothing to say about it.
+
+**It is not a one-line fix, which is why it is an item.** `completedAt` **is not on the wire**:
+`OutboxRecorder` publishes `bookingRaisedAt` and no completion instant, so pricing at completion means
+adding a field to the `booking.completed` payload first, and then deciding what a consumer that
+receives an event without one should do — the events already in the outbox on the day of the change
+have no such field. That is a compatibility decision, not an edit.
+
+**Cheap and worth doing while nothing has been deployed**, on the same argument D51 made for itself: a
+ledger row records no rate, only the amounts computed from one, so a row priced at the wrong rate can
+never be identified afterwards.
 
 ---
 

@@ -21,6 +21,14 @@ import org.junit.jupiter.api.Test;
  * <p>Every test here supplies its own {@link Clock}. Without one there is no way to stand at Accra's
  * midnight, and a fix to a date defect that can only be tested by being run at the right hour is not
  * a fix — it is a coincidence with a test beside it.
+ *
+ * <p><strong>The year is 2021 on purpose. Do not move it to "today".</strong> These tests exist to
+ * separate two mechanisms — <em>ignoring the injected clock</em> and <em>reading the wrong zone</em> —
+ * and a date the real clock could also be makes them dependent. Reverting a call site to a literal
+ * {@code LocalDate.now()} ignores the clock entirely and answers with the wall date, so an expectation
+ * pinned to today would still pass on whichever half of the pair happened to agree with the machine
+ * that day. Against a date five years past, an implementation that ignores the clock is red on every
+ * day of the year rather than on most of them.
  */
 class MarketCalendarUnitTest {
 
@@ -37,7 +45,7 @@ class MarketCalendarUnitTest {
     @Test
     @DisplayName("late in Accra's evening is still Accra's day, under an eastward default zone")
     void lateEveningIsStillAccrasDay() {
-        underDefaultZone("Pacific/Kiritimati", () -> assertThat(MarketCalendar.at(at("2026-09-05T23:30:00Z")).today()).isEqualTo(LocalDate.of(2026, 9, 5)));
+        underDefaultZone("Pacific/Kiritimati", () -> assertThat(MarketCalendar.at(at("2021-09-05T23:30:00Z")).today()).isEqualTo(LocalDate.of(2021, 9, 5)));
     }
 
     /**
@@ -60,7 +68,7 @@ class MarketCalendarUnitTest {
     void earlyMorningIsStillAccrasDay() {
         underDefaultZone(
             "America/New_York",
-            () -> assertThat(MarketCalendar.at(at("2026-09-05T02:30:00Z", "America/New_York")).today()).isEqualTo(LocalDate.of(2026, 9, 5))
+            () -> assertThat(MarketCalendar.at(at("2021-09-05T02:30:00Z", "America/New_York")).today()).isEqualTo(LocalDate.of(2021, 9, 5))
         );
     }
 
@@ -106,12 +114,12 @@ class MarketCalendarUnitTest {
     @Test
     @DisplayName("only the instant comes from the clock, never its zone")
     void onlyTheInstantComesFromTheClock() {
-        Instant instant = Instant.parse("2026-09-05T23:30:00Z");
+        Instant instant = Instant.parse("2021-09-05T23:30:00Z");
 
         assertThat(MarketCalendar.at(Clock.fixed(instant, ZoneId.of("Pacific/Kiritimati"))).today())
             .isEqualTo(MarketCalendar.at(Clock.fixed(instant, ZoneId.of("America/New_York"))).today())
             .isEqualTo(MarketCalendar.at(Clock.fixed(instant, ZoneId.systemDefault())).today())
-            .isEqualTo(LocalDate.of(2026, 9, 5));
+            .isEqualTo(LocalDate.of(2021, 9, 5));
     }
 
     /** A clock east of Accra — the default, because the eastward window is the one that was live. */
