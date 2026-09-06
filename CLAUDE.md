@@ -549,13 +549,16 @@ predicates in any of the three compose files and the endpoint is public. Nothing
 narrowing: every consumer in the repository already goes through `/api/**`.
 
 **The route being narrow is not the same as the endpoint being guarded, and `/api/brokerage-configs`
-is the open case** — backlog **NEW-14**, found by D53 and not fixed there. payout says
+is the open case** — backlog **NEW-15**, found by D53 and not fixed there. payout says
 `.requestMatchers("/api/**").authenticated()` and nothing narrows it, so JHipster's generated
 `BrokerageConfigResource` CRUD is routed *and* reachable by any token the estate accepts: **verified
 200 with a plain `ROLE_USER` token through the quality gateway**. The read is arguably public — the
 prototype prints "12% platform fee" — but POST/PUT/PATCH/DELETE sit on the same rule, so a customer can
-backdate a commission rate. Do not "tidy it up" by widening anything; the two shapes for the fix and
-the reason to choose deliberately are in the backlog.
+backdate a commission rate. **The root cause is the delete table below: this resource was never in
+it**, which is worth taking seriously about the *other* generated `*Resource` classes still alive, since
+no test can detect an omission from a list. No live exposure today — production has never been
+deployed — and one on the first deploy, where `/api/register` is `permitAll`. Do not "tidy it up" by
+widening anything; the two shapes for the fix are in the backlog.
 
 **Consul registers; it does not route.** `discovery.locator.enabled` is `false` in every
 environment, with static routes beneath it — a shared catalogue holding four products must never be

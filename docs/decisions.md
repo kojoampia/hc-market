@@ -6486,7 +6486,7 @@ before and after, and the tree restored.
 noon on the day a booking completed at 14:00 prices the ledger under the new terms and the receipt
 under the old. **This package narrows that gap from unbounded to sub-day** — it used to grow with
 delivery lag without limit — and it does not close it. It is a real defect of the same species and it
-is **backlog NEW-15** rather than a paragraph here, on D51's own rule that a defect living only in a
+is **backlog NEW-16** rather than a paragraph here, on D51's own rule that a defect living only in a
 decision document is one nobody picks up. It was considered and left out deliberately: closing it is a
 change to a cross-service internal API with a compatibility question of its own (an old payout beside a
 new booking silently falls back to `Instant.now()` unless both parameters are sent), which is a second
@@ -6500,17 +6500,25 @@ late-arriving earning: a payout run should pay in the period it learned about th
 a *term the customer was shown* and must not move; the date is a *reporting period* and moving it
 retrospectively is the harm. Two moments, two answers, both now written down.
 
-**Who may CHANGE the rate is a separate hole and is now backlog NEW-14.** Found while establishing that
+**Who may CHANGE the rate is a separate hole and is now backlog NEW-15.** Found while establishing that
 `effectiveFrom` had never moved: the generated `BrokerageConfigResource` is live on
-`/api/brokerage-configs` behind payout's blanket `.requestMatchers("/api/**").authenticated()`, and the
-gateway routes `/services/healthconnectpayout/api/**`. **Verified against the quality box**: a
+`/api/brokerage-configs` with `@PostMapping`, `@PutMapping`, `@PatchMapping` and `@DeleteMapping`,
+behind payout's blanket `.requestMatchers("/api/**").authenticated()`, and the gateway routes
+`/services/healthconnectpayout/api/**`, which covers it. **Verified against the quality box**: a
 minted `ROLE_USER` token returns `200` and the config body through the gateway. The read is arguably
-public information — the prototype prints "12% platform fee" on every listing — but POST, PUT, PATCH and
-DELETE sit on the same rule, so by construction any authenticated customer can create a backdated
-`BrokerageConfig` and reprice the estate. The writes were **not** exercised: that would mutate a live
-estate this brief says to read only. It is not fixed here because "who sets a rate" is an authorisation
-decision of its own and its shape — delete the generated CRUD as CLAUDE.md's table does for eight other
-resources, or gate it behind `ROLE_BROKERAGE` — is a choice somebody should make deliberately.
+public information — the prototype prints "12% platform fee" on every listing — but the four writes sit
+on the same rule, so by construction any authenticated customer can create a backdated
+`BrokerageConfig` and reprice the estate. The writes were **not** exercised: repricing a live estate to
+prove a point is not a trade worth making, and the GET settles the authorization rule on its own.
+
+**The root cause is that it was never in `CLAUDE.md`'s delete table** — zero occurrences on `main` —
+so unlike `BookingStatusChangeResource` it was never on the list of generated resources to remove. The
+table is the control, and a control cannot fail on an entry it does not have. **There is no live
+external exposure today**, because production has never been deployed (D49); it becomes one on the
+first deploy, and `/api/register` is `permitAll` at the gateway, so on that day the token can be minted
+by anybody. Not fixed here because "who sets a rate" is an authorisation decision of its own, and its
+shape — delete the generated CRUD and add it to the table, or gate it behind `ROLE_BROKERAGE` — is a
+choice somebody should make deliberately. `AuditTrailIsNotAnApiIT` is the guard to copy either way.
 
 **Nothing here was run against a live estate.** Both estates were **read** — quality over HTTP and its
 own psql, dev from a read-only copy of its volume — and neither was restarted, rebuilt, reseeded or

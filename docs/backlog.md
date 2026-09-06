@@ -50,7 +50,7 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **NEW-12** | Catalog's four implicit-zone reads, one of which stores a date | DONE | D52 — all four closed, `MarketCalendar`'s fourth copy, and the CI check now scans **every** service with no per-file exemption anywhere. The estate has no implicit-zone read left. The data question is **re-established, not cited, and its answer differs from D51's**: the quality box holds **two** rows written by the defective line, both dated correctly because the container's zone is `Etc/UTC` — "written by the defect and right", not "nothing was written". No migration |
 | **NEW-13** | The brokerage rate is struck when the event is consumed, not when the booking completed | DONE | D53 — the act's instant is on the wire (`bookingCompletedAt`, `bookingCancelledAt`) and nothing on the pricing path reads a clock. An event without one falls back to the envelope's `occurredAt` **at WARN**, never to now; with neither it is refused. Ten tests, all watched red first; one CI check, watched firing three ways |
 | **NEW-14** | A professional's own calendar opens on Accra's day, not theirs | BLOCKED on spec §13 #8 | D52 §review — the two `/api/pro/**` window defaults read `MarketCalendar`. Nil consequence while every `professional.zone_id` is `Africa/Accra`; deciding it the other way settles D21's open question by find-and-replace, which D51 refused for the neighbouring sites. Opened by the D52 review |
-| **NEW-15** | Any authenticated user can change the brokerage's commission rate | READY | D53 — the generated `BrokerageConfigResource` is live on `/api/brokerage-configs` behind payout's blanket `authenticated()`, and the gateway routes it. GET verified 200 with a `ROLE_USER` token against the quality box; the writes sit on the same rule and were deliberately not exercised. Found while establishing that `effectiveFrom` had never moved |
+| **NEW-15** | Any authenticated user can change the brokerage's commission rate | READY | D53 — the generated `BrokerageConfigResource` is live on `/api/brokerage-configs` behind payout's blanket `authenticated()`, and the gateway routes it. GET verified 200 with a `ROLE_USER` token against the quality box; the writes sit on the same rule and were deliberately not exercised. **Root cause: it was never in `CLAUDE.md`'s delete table.** No live external exposure — production has never been deployed. Found while establishing that `effectiveFrom` had never moved |
 | **NEW-16** | The receipt strikes its split to the day and the ledger to the instant | READY | D53 — narrowed from unbounded to sub-day by NEW-13 and not closed. `BrokerageResource.split` takes a `LocalDate`; a rate taking effect at noon prices a 14:00 completion two ways. Closing it is a cross-service API change with a compatibility question of its own |
 
 ---
@@ -1291,8 +1291,8 @@ booking, never a silent `Instant.now()`. With neither present the event is **ref
 which costs nothing because `occurred_at` is a not-null column. `bookingRaisedAt`, consumption-time and
 refuse-everything were each considered and rejected, with reasons, in D53.
 
-**Two adjacent things it did not close**, both now items of their own: **NEW-15**, the receipt's
-day-granularity, narrowed from unbounded to sub-day and not removed; and **NEW-14**, found while
+**Two adjacent things it did not close**, both now items of their own: **NEW-16**, the receipt's
+day-granularity, narrowed from unbounded to sub-day and not removed; and **NEW-15**, found while
 reading the config rows.
 
 ## NEW-14 — A professional's own calendar opens on Accra's day, not theirs · BLOCKED on spec §13 #8
@@ -1321,27 +1321,46 @@ stay open would give one service two answers. Take it with §13 #8, not before.
 
 Opened by D53 while establishing that `effectiveFrom` had never moved, and **not** fixed there: NEW-13
 is about *when* a rate is struck and this is about *who may set one*, which is an authorisation
-decision with its own answer to choose.
+decision with its own answer to choose. Deliberately not ridden in on that package, for the same
+reason NEW-16 was not.
 
-The generated `BrokerageConfigResource` is alive on `/api/brokerage-configs`. payout's
-`SecurityConfiguration` says `.requestMatchers("/api/**").authenticated()` and nothing narrows it, and
-the gateway routes `Path=/services/healthconnectpayout/api/**`, so the whole of JHipster's CRUD —
-POST, PUT, PATCH, DELETE — is reachable by any token the estate will accept.
+The generated `BrokerageConfigResource` is alive on `/api/brokerage-configs`, carrying
+`@PostMapping`, `@PutMapping`, `@PatchMapping` and `@DeleteMapping`. payout's `SecurityConfiguration`
+says `.requestMatchers("/api/**").authenticated()` and nothing narrows it, and the gateway routes
+`Path=/services/healthconnectpayout/api/**`, which covers it. So the whole of JHipster's CRUD is
+reachable by any token the estate will accept.
 
 **Verified, read-only, against the quality box**: an HS512 `ROLE_USER` token minted with the estate's
 key returns `200` and the config body through the gateway on `127.0.0.1:15509`. The writes sit on the
-same rule and were deliberately **not** exercised, because that would reprice a live estate.
+same rule and were deliberately **not** exercised, because repricing a live estate to prove a point is
+not a trade worth making — the GET is sufficient evidence of the authorization rule.
 
 The read is arguably public — the prototype prints "12% platform fee" on every listing, and
 `/api/internal/brokerage/split` already discloses the rate to any authenticated caller by design. The
 writes are not: a customer can create a backdated `BrokerageConfig` and reprice every booking completed
 after it, and nothing in the ledger would afterwards say which rate was used (D53).
 
+**How urgently a person should read this: there is no live external exposure today.** Production has
+never been deployed (WP-19, D49), so the only estates where this answers are the quality box on a
+private LAN and a wedged dev stack. It becomes a real exposure on the first production deploy, and
+`/api/register` is `permitAll` on the gateway (D49's review), so on that day "any token the estate will
+accept" includes one anybody can mint themselves by registering.
+
+**The root cause is the control, not the code.** `CLAUDE.md`'s delete table is what stops a generated
+CRUD resource shipping — it names eight of them, each with the disclosure or forgery it would allow —
+and **`BrokerageConfigResource` has never appeared in it**, on `main` or on any branch. It is not that
+the table was ignored; the resource was never put on it. Whoever takes this should ask the table's own
+question of every *other* generated `*Resource` still alive in the five services, because the same
+omission cannot be detected by any test that exists.
+
 **Two shapes for the fix, and somebody should choose deliberately.** Delete the generated resource and
-its IT, as `CLAUDE.md`'s table already does for eight others — there is no screen for it in the
-prototype and no caller in this repository. Or keep it and gate it behind `ROLE_BROKERAGE` beside the
-dispute desk. Either way `AuditTrailIsNotAnApiIT` is the pattern for the test: a check that the path
-answers nobody, so "restoring the generated CRUD" is red rather than shipped.
+its IT and add it to the table, as is already done for eight others — there is no screen for it in the
+prototype, no caller in this repository, and `PayoutSeeder` writes the one row directly through the
+repository. Or keep it and gate it behind `ROLE_BROKERAGE` beside the dispute desk, which is the answer
+if the brokerage ever wants a terms-change screen. Either way `AuditTrailIsNotAnApiIT` is the pattern
+for the test — it is the only row in the delete table with a guard that fails if you miss it, and it
+goes red the moment `/api/booking-status-changes` answers anybody again. The equivalent here goes red
+the moment `/api/brokerage-configs` does.
 
 ## NEW-16 — The receipt strikes its split to the day and the ledger to the instant · READY
 
