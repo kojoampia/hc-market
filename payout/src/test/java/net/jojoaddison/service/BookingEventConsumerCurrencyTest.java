@@ -86,8 +86,10 @@ class BookingEventConsumerCurrencyTest {
         {
           "eventId": "e-1",
           "type": "healthconnect.booking.completed",
+          "occurredAt": "2026-08-10T12:00:00.004Z",
           "payload": {
             "bookingRef": "b-1",
+            "bookingCompletedAt": "2026-08-10T12:00:00Z",
             "professionalRef": "p1",
             "professionalLogin": "akosua.mensah",
             "priceMinor": 28000,
@@ -146,8 +148,10 @@ class BookingEventConsumerCurrencyTest {
             {
               "eventId": "e-2",
               "type": "healthconnect.booking.cancelled",
+              "occurredAt": "2026-08-10T12:00:00.004Z",
               "payload": {
                 "bookingRef": "b-2",
+                "bookingCancelledAt": "2026-08-10T12:00:00Z",
                 "professionalRef": "p1",
                 "professionalLogin": "akosua.mensah",
                 "priceMinor": 28000,

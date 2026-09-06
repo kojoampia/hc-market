@@ -6280,3 +6280,307 @@ Corrected in all three copies identically, which is where a future reader will l
 **192 + 112** — because every finding was a CI script, a comment or a document, with no observable
 behaviour touched. All three `clean verify` green, checkstyle 0, modernizer clean. Appendices clean,
 seed byte-identical.
+
+## D53 — The rate is struck when the booking happened, and the moment travels on the event
+
+NEW-13, opened by D51's review four lines from a comment that package rewrote, and deliberately not
+folded into it: it is a decision about money with a wire-format change behind it, not a rider on a
+calendar package. **D52 was taken by NEW-12 on a branch that reached `main` first (PR #28); this is D53.**
+
+`payout`'s `BookingEventConsumer.configInForce` picked the latest `BrokerageConfig` whose
+`effectiveFrom` was not after **`Instant.now()`** — the moment the event was *consumed*. The class
+javadoc four lines above said a booking "prices against the rate in force when it **completed**".
+
+Identical while delivery is prompt. Different after any outage, replayed partition or paused consumer
+that straddles a rate change: the booking is priced at terms the customer was never shown, and
+`CustomerBookingResource.receipt` — which strikes its split at `completedAt` — disagrees with the
+ledger row by however much the rate moved. **Nothing detects it. Both numbers are internally
+consistent**, and there is no third copy of either.
+
+**Same species as NEW-10, one axis over.** A decision was taken — "the rate in force" — and the
+*moment* it was taken at was never written down, exactly as NEW-10's calendar was not.
+`Instant.now()` itself is correct and stays correct as a spelling: an instant carries no calendar, so
+this is not a zone question and `MarketCalendar` has nothing to say about it. What was wrong was
+which moment.
+
+### Why it was an item and not an edit: `completedAt` was not on the wire
+
+`OutboxRecorder` published `bookingRaisedAt` and no completion instant, so payout had nothing to
+decide with and read its own clock. Pricing at completion therefore meant two things, and only the
+first is mechanical:
+
+1. put the moment on the `booking.completed` payload, and
+2. decide what a consumer that receives an event **without** one should do.
+
+(2) is the whole of it. Every event already in booking's outbox on the day of the change carries no
+such field, and so does every one already published and not yet consumed. A rolling upgrade puts old
+booking beside new payout for as long as the deploy takes.
+
+### The compatibility answer: three, in order, and the last one refuses
+
+| | Answer | When |
+| --- | --- | --- |
+| 1 | the payload's own act instant — `bookingCompletedAt`, `bookingCancelledAt` | whenever it is there |
+| 2 | **the envelope's `occurredAt`**, at WARN | the field is absent, null, or the event predates this change |
+| 3 | **refuse**, so the container retries and nothing is marked processed | neither is present |
+
+**Four candidates were considered and three rejected**, because the wrong fallback is the defect
+wearing a different name:
+
+- **`bookingRaisedAt`** — rejected. It is when the booking was *created*, which for a booking made in
+  January and delivered in March is the wrong side of any rate change in between. It would disagree
+  with the receipt by exactly as much as `Instant.now()` did, in the other direction, and the estate's
+  chosen answer — the one the receipt already implements — is completion.
+- **consumption time, recorded** — rejected. That is today's defect with a log line: still priced at
+  terms nobody was shown, and priced that way for precisely the events most likely to be delayed,
+  which is the population this whole item is about.
+- **refuse every old event** — rejected as the *default*, kept as the last resort. This class already
+  refuses a missing `currency` and a missing `deliveryMode` on exactly that argument, and it is right
+  there because such an event is malformed rather than merely old. An event with no
+  `bookingCompletedAt` is not malformed; it is a booking completed by the version running right now.
+  Refusing it stalls payout's partition for the length of the deploy and credits nobody, which is a
+  self-inflicted outage on deploy day and worse than the thing it prevents.
+- **the envelope's `occurredAt`** — taken. `OutboxRecorder` stamps it in the **same transaction** as
+  the transition that writes the act instant, microseconds later, so it answers the question to within
+  that transaction's duration. The property that matters is not its precision but that it **travels
+  with the event**: consumer lag, a replayed partition and a paused consumer cannot move it. It is the
+  only candidate that is both available for every event ever published here and immune to delivery.
+
+**And it is visible, not silent.** A fallback nobody can see is what this item is about, so it logs at
+WARN naming the booking, the field and the instant used — enough to list the affected rows, which the
+ledger itself cannot do (below). It is resolved **after** the late-cancellation guard on the cancelled
+path, so an ordinary cancellation — which owes nothing and prices nothing — does not warn: a warning
+that fires when nothing is wrong is a warning nobody reads on the day something is.
+
+**A malformed instant is refused rather than fallen back from.** `"bookingCompletedAt": "yesterday"`
+is an event somebody meant to send with a value nobody can read, and quietly substituting a different
+moment is how a wrong price becomes unremarkable. Messaging's reader of `bookingRaisedAt` warns and
+carries on because there the safe answer exists — treat the booking as covered by the erasure. Here
+there is no safe answer, only a cheaper one.
+
+**Refusing when neither exists costs nothing today**, which is the whole reason to close the door now:
+`outbox_event.occurred_at` is `nullable = false` and `OutboxRecorder` writes it unconditionally in both
+overloads, so no version of booking that has ever run can produce an envelope without one. Falling
+through to `Instant.now()` there would have reintroduced the defect at the one place nobody would look
+for it again.
+
+### Under replay
+
+Every branch reads the event and nothing else, so **the price is a function of the event alone** and a
+re-consumption writes the row it wrote the first time.
+
+payout's two idempotency guards — `processed_event` on `eventId` and `ledger.booking_reference` — mean
+an ordinary redelivery writes nothing at all, so they *hide* this rather than provide it. The case they
+do not cover is a **restore**: payout recovered to a point before the event and the partition replayed
+from an earlier offset, at which point both guards are legitimately clear and the second consumption is
+a first consumption as far as this class can tell. `replayPricesTheSame` is that case, and it moves the
+brokerage's terms *between* the two consumptions so that against the defect the two rows disagree with
+**each other**, not merely with the truth — which is more than the first test in the file says.
+
+### The data question, and D51's argument re-established rather than cited
+
+**Verified from the live schema and both estates, not quoted from the backlog.**
+
+- **`ledger` records no rate.** Fourteen columns — `booking_reference`, `professional_ref`,
+  `professional_login`, `gross_minor`, `commission_minor`, `net_minor`, `currency`, `delivery_mode`,
+  `service_ref`, `service_name`, `earned_on`, `reversal_of`, `payout_id`, `id` — read off
+  `hc-market-quality-payout-db` itself. No rate column, no `brokerage_config` foreign key, and **no
+  instant**: `earned_on` is a `date`.
+- **But "cannot be identified afterwards" was overstated, and the honest claim is narrower.** This
+  paragraph said a mispriced row could never be found again; D53's review disproved it and the
+  correction stands rather than the sentence. `SELECT DISTINCT round(commission_minor::numeric /
+  gross_minor, 6)` over the quality ledger returns **exactly one value, `0.120000`**, across all 258
+  rows, and `min(gross_minor)` is `15000`, so the `HALF_UP` ambiguity is bounded by about `0.000033` —
+  orders of magnitude below any rate change a brokerage would make. The inference is exact for every
+  row that exists. `booking.completed_at` **is** stored (265 of booking's 290 rows carry one) and
+  `brokerage_config` keeps its full effective-dated history, so a mispriced row is identifiable exactly
+  by joining the two. And this repository already depends on the recoverability:
+  `DisputeEventConsumer.proportionalCommission` reconstructs the original rate from
+  `commission/gross` precisely because it *is* recoverable.
+  **The true claim is: nothing does detect it, and payout alone cannot.** No query, no test, no screen
+  and no reconciliation job compares a ledger row against the config that should have priced it, and
+  payout holds no completion instant to compare with. That is still sufficient motivation — an
+  undetected error in money is an error — and it leaves the "cheapest moment" argument below untouched,
+  since it rests on there having only ever been one rate rather than on irrecoverability. What is
+  genuinely lost for ever is not the *rate* but the *reason*: nothing records whether a row was priced
+  from the act's instant or from the fallback.
+- **One `BrokerageConfig` exists, in both estates, and `effectiveFrom` has never moved.** Quality:
+  `id 1001, 0.12, GHS, effective_from 2020-01-01T00:00:00`, 258 ledger rows (256 seeded + 2 recorded),
+  2 processed events. Dev: the same single row, 256 ledger rows, **`processed_event` empty** — so no
+  consumer has ever priced anything there. The dev volume was copied out with the source mounted
+  **read-only**, read under a throwaway `postgres:17`, and both removed; the wedged
+  `healthconnect-dev-*` containers were not touched. Grep docker for the **compose project name**
+  (`healthconnect-dev`) — `| grep market` finds nothing and reads as "there is no dev estate", which has
+  already put a false statement into two documents and a commit message.
+- So **no row anywhere was priced at a rate that had not yet taken effect**, because there has only
+  ever been one rate. That is not luck the fix depends on; it is why this is the cheapest moment the fix
+  will ever have. The day a second `BrokerageConfig` row exists, every row written across the change is
+  ambiguous for ever.
+
+`PayoutSeeder` backdates its config to `2020-01-01` for a reason that is now doubly load-bearing: every
+seeded session completed after it, so every seeded date prices under it whichever moment is used.
+
+### What changed
+
+**booking** — `OutboxRecorder.payload` puts `bookingCompletedAt` and `bookingCancelledAt` on the
+booking payload, as ISO-8601 strings like `bookingRaisedAt` beside them and for the same reason: the
+wire format must not depend on a consumer's mapper. Two fields rather than one because two events carry
+a money decision and the decisions are taken at different moments — a completion prices the ledger row,
+a cancellation prices the late fee. The names carry the `booking` prefix `bookingRaisedAt` established,
+so neither can be read as the envelope's `occurredAt` one level up.
+
+Both are on **every** booking payload, including `booking.requested`, because `payload(Booking)` is a
+snapshot of the booking and is not told which event it is being asked for. So they arrive as JSON
+**null** most of the time, and **`NullNode.asText(default)` answers the four characters `"null"`
+rather than the default** — the consumer is written around that (`isTextual()`) rather than happening
+to avoid it, and a test asserts the null-carrying shape so the trap cannot be removed from under it.
+
+**payout** — `configInForce(Instant)` takes its moment from `pricedAt(envelope, payload, field)` and
+from nowhere else; nothing on that path reads a clock. `BrokerageResource.inForce` is the same rule
+answering the receipt's half of the same question and is deliberately **not** merged with it: the two
+already agree on the rule, and what differed — and what NEW-13 is — is the moment each was handed. One
+shared helper would have consolidated the part that was never wrong.
+
+**The order inside `BookingWorkflow.apply` is what the producing tests really pin.** The transition
+writes `completedAt` and *then* records the event, so the field is populated; swap those two statements
+and the payload carries null, every test that exercises `OutboxRecorder` directly stays green, and
+payout falls back for every event in the estate. So the assertions are made through `apply`, not
+through the recorder alone.
+
+### What was watched go red
+
+**payout, all seven, against the shipped defect** — `TheRateIsStruckWhenTheBookingHappenedTest` run
+before a line of `BookingEventConsumer` changed: `expected 3360 but was 8400` on the completion, the
+`occurredAt` fallback and the explicit-null case; `1680` vs `4200` on the late fee; two
+`Expecting code to raise a throwable` on the two refusals; and the replay's **equality** assertion
+firing at `8400` against `14000`, which is the two consumptions disagreeing with each other.
+
+**booking, all three** — `expected "<instant>" but was ""` on both act instants, and the null-shape
+test on a key that did not exist.
+
+**Every instant asserted is in 2019–2022.** Not decoration: D51 learned that a hard-coded date equal to
+today's real date in some zone makes a mutation half-green for a day. No wall clock will be in 2020
+again, so `Instant.now()` can only ever select the *latest* config in these fixtures — which is what
+makes each of them red on every day of the year rather than on some of them.
+
+**Three existing payout fixtures had to gain an `occurredAt`, and all three were leaning on the
+defect.** Every one of them dated its `BrokerageConfig` `effectiveFrom` at **2026-01-01** — a date in
+the future relative to nothing in the fixture — so the config each priced with was found only because
+`configInForce` read the *real* clock rather than anything the test set. Only
+`EarnedOnIsTheMarketplacesDayTest` actually **broke**, because it is the one that also fixes its clocks
+(in **2021**), which is what "propped up" means and why it is the specimen; its config is `2019` now.
+The property, though, held for all three and now holds for all three: after this change every fixture's
+config predates every instant its own events carry, so none of them can be satisfied by a clock.
+`BookingEventConsumerCurrencyTest` and `BookingEventConsumerDeliveryModeTest` were additionally carrying
+envelopes no producer emits; they carry an `occurredAt` and an act instant now.
+
+### The CI check, watched firing
+
+**Booking and payout must name the pricing instants identically.** No shared library and no shared
+schema: booking writes two string literals and payout reads them, in two Maven projects that never see
+each other, so no test in either can span the pair. This is the `SubjectPseudonym` / `SeedCalendar` /
+`MarketCalendar` situation once more, except that nothing is copied, so there is nothing to diff — what
+must agree is a pair of literals.
+
+It matters more than a typo usually does **because a rename breaks nothing visible**: payout finds no
+instant, falls back to `occurredAt`, warns into a log nobody is reading during a rename, and writes an
+entirely ordinary row. Both suites stay green, each internally consistent with its own new name. The
+fallback is deliberately forgiving so that old events still price, and that is the same property that
+would hide this.
+
+It asserts the producer still `payload.put`s each key and the consumer still **prices from** it at its
+`pricedAt` call site, with **comments stripped from both files first** — not that the name appears
+somewhere, which would stay green with the call renamed and the javadoc left behind.
+
+#### The first version of this check failed at its own subject matter, and that is the finding worth keeping
+
+**The consumer half shipped as `grep -qF "\"$field\"" "$consumer"` — the name anywhere in the file.**
+`BookingEventConsumer`'s javadoc quotes `"bookingCompletedAt"` while explaining that a malformed one is
+refused, so renaming **only** the call site and leaving the prose exited **0**:
+
+```
+ok   bookingCompletedAt — published by booking and read by payout
+ok   bookingCancelledAt — published by booking and read by payout
+EXIT=0
+```
+
+`bookingCancelledAt` *was* caught — but only because its javadoc happens not to quote it. **The check's
+reach depended on prose**, and it was blind on the field that prices every completed booking: the
+majority of ledger rows, and the entire population NEW-13 exists for. The step's own comment, this
+section and `CLAUDE.md` all asserted the opposite in as many words. That is this check failing at
+exactly the class of defect it was written to close, and it is recorded rather than quietly fixed.
+
+**How "watched firing three ways" looked convincing.** The original mutation set renamed
+`bookingCancelledAt` — the field with no javadoc mention — so it fired for the right reason by
+accident. Renaming *both* fields exits 1 on the cancelled one while printing `ok bookingCompletedAt` on
+the line above, and the exit status is what an author reads. The lesson generalises past this check:
+**a mutation battery must mutate each guarded thing separately**, because an aggregate exit status
+cannot distinguish "all guarded" from "one guarded".
+
+Two fixes, both applied, because either alone leaves a hole. Comments are stripped first, borrowing the
+sed and the javadoc-continuation filter from the implicit-zone check above, which had already had this
+class of fail-open found in it twice — so prose can no longer satisfy the check. And the match is the
+**call site**, `pricedAt\([^)]*"FIELD"\)`, which asserts the act of resolving a pricing moment from that
+field rather than the presence of a name; `[^)]*` rather than the literal argument names, so renaming
+`envelope` or `p` does not fail it spuriously.
+
+**Five mutations red, three controls green**, each guarded thing mutated on its own: the review's exact
+case (consumer completion call site renamed, javadoc intact — now red, where it was green); the
+cancellation call site alone; both together; the producer key with its prose left behind; and the
+consumer file moved away (the fail-open D51's review kept finding — a check reporting `ok` on a tree it
+never looked at). The controls: the clean tree before and after, and — the one that pins the new regex
+is not merely stricter — **`pricedAt`'s two argument names renamed while the fields are kept, which
+must stay green and does**.
+
+### What this does not close
+
+**The receipt is struck to the DAY and the ledger to the instant, and they can still disagree.**
+`CustomerBookingResource.receipt` sends `LocalDate.ofInstant(completedAt, MARKET_ZONE)` and
+`BrokerageResource.split` reads it back as `atStartOfDay(MARKET_ZONE)`, so a rate taking effect at
+noon on the day a booking completed at 14:00 prices the ledger under the new terms and the receipt
+under the old. **This package narrows that gap from unbounded to sub-day** — it used to grow with
+delivery lag without limit — and it does not close it. It is a real defect of the same species and it
+is **backlog NEW-16** rather than a paragraph here, on D51's own rule that a defect living only in a
+decision document is one nobody picks up. It was considered and left out deliberately: closing it is a
+change to a cross-service internal API with a compatibility question of its own (an old payout beside a
+new booking silently falls back to `Instant.now()` unless both parameters are sent), which is a second
+argued decision and not a rider on this one.
+
+**`ledger.earned_on` is still the day the event was CONSUMED**, on the marketplace's calendar, and that
+is deliberate rather than overlooked. It is a different question from the rate and D51 answered it in
+the opposite direction on purpose — `DisputeEventConsumer`'s comment argues that backdating a row
+"would silently rewrite a month that has already been reported", and the same argument applies to a
+late-arriving earning: a payout run should pay in the period it learned about the money. The rate is
+a *term the customer was shown* and must not move; the date is a *reporting period* and moving it
+retrospectively is the harm. Two moments, two answers, both now written down.
+
+**Who may CHANGE the rate is a separate hole and is now backlog NEW-15.** Found while establishing that
+`effectiveFrom` had never moved: the generated `BrokerageConfigResource` is live on
+`/api/brokerage-configs` with `@PostMapping`, `@PutMapping`, `@PatchMapping` and `@DeleteMapping`,
+behind payout's blanket `.requestMatchers("/api/**").authenticated()`, and the gateway routes
+`/services/healthconnectpayout/api/**`, which covers it. **Verified against the quality box**: a
+minted `ROLE_USER` token returns `200` and the config body through the gateway. The read is arguably
+public information — the prototype prints "12% platform fee" on every listing — but the four writes sit
+on the same rule, so by construction any authenticated customer can create a backdated
+`BrokerageConfig` and reprice the estate. The writes were **not** exercised: repricing a live estate to
+prove a point is not a trade worth making, and the GET settles the authorization rule on its own.
+
+**The root cause is that it was never in `CLAUDE.md`'s delete table** — zero occurrences on `main` —
+so unlike `BookingStatusChangeResource` it was never on the list of generated resources to remove. The
+table is the control, and a control cannot fail on an entry it does not have. **There is no live
+external exposure today**, because production has never been deployed (D49); it becomes one on the
+first deploy, and `/api/register` is `permitAll` at the gateway, so on that day the token can be minted
+by anybody. Not fixed here because "who sets a rate" is an authorisation decision of its own, and its
+shape — delete the generated CRUD and add it to the table, or gate it behind `ROLE_BROKERAGE` — is a
+choice somebody should make deliberately. `AuditTrailIsNotAnApiIT` is the guard to copy either way.
+
+**Nothing here was run against a live estate.** Both estates were **read** — quality over HTTP and its
+own psql, dev from a read-only copy of its volume — and neither was restarted, rebuilt, reseeded or
+cleaned. The two end-to-end scripts were not run: `verify-cycle.sh` writes a review that cannot be
+deleted, and this package changes nothing it exercises.
+
+**Counts.** payout `clean verify`: **108 unit + 165 IT** (from 101 + 165 — seven added), 0 checkstyle,
+0 modernizer, `TechnicalStructureTest` green. booking: **195 unit + 112 IT** (from 192 + 112 — three
+added), same. `./deploy/sync-appendices.sh --check` clean; `node deploy/demo/extract-seed.mjs` rewrote
+byte-identically. Nothing in catalog, messaging or gateway was touched: messaging reads named paths out
+of this payload and the gateway passes it through whole, so two more fields are additive to both.

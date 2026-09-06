@@ -193,7 +193,12 @@ class EarnedOnIsTheMarketplacesDayTest {
             .freeCancellationHours(24)
             .lateCancellationPct(new BigDecimal("0.50"))
             .currency("GHS")
-            .effectiveFrom(Instant.parse("2026-01-01T00:00:00Z"));
+            // Before every instant this class uses, which it was not until D53. The fixture's clocks
+            // are in 2021 and this said 2026, so the config in force was only ever found because
+            // configInForce read the real clock — the defect NEW-13 names, propping up a fixture about
+            // something else. The events carry their own act instants now, so the config has to
+            // predate them or nothing here can be priced at all.
+            .effectiveFrom(Instant.parse("2019-01-01T00:00:00Z"));
     }
 
     private static Ledger originalEarning() {
@@ -211,13 +216,21 @@ class EarnedOnIsTheMarketplacesDayTest {
             .earnedOn(LocalDate.of(2026, 8, 10));
     }
 
+    /**
+     * The act instants below decide the <em>rate</em> (D53) and nothing about {@code earned_on}, which
+     * is the day this consumer runs on the marketplace's calendar — the two are different questions
+     * and D51 answered the second one deliberately. They are on the same Accra day as this class's
+     * clocks only so that neither reading changes what these tests assert.
+     */
     private static String completedEvent() {
         return """
         {
           "eventId": "e-1",
           "type": "healthconnect.booking.completed",
+          "occurredAt": "2021-09-05T12:00:00.004Z",
           "payload": {
             "bookingRef": "b-1",
+            "bookingCompletedAt": "2021-09-05T12:00:00Z",
             "professionalRef": "p1",
             "professionalLogin": "akosua.mensah",
             "priceMinor": 28000,
@@ -235,8 +248,10 @@ class EarnedOnIsTheMarketplacesDayTest {
         {
           "eventId": "e-2",
           "type": "healthconnect.booking.cancelled",
+          "occurredAt": "2021-09-05T12:00:00.004Z",
           "payload": {
             "bookingRef": "b-2",
+            "bookingCancelledAt": "2021-09-05T12:00:00Z",
             "professionalRef": "p1",
             "professionalLogin": "akosua.mensah",
             "priceMinor": 28000,

@@ -135,11 +135,39 @@ public class OutboxRecorder {
      * <p>Written as an ISO-8601 string rather than left to Jackson, for {@code scheduledTime}'s reason
      * one line down: the wire format of this payload should not depend on how a consumer's mapper is
      * configured to render an {@code Instant}. {@code Instant.parse} reads it back.
+     *
+     * <h2>{@code bookingCompletedAt} and {@code bookingCancelledAt} — the moment a money decision was taken</h2>
+     *
+     * <p><strong>{@code decisions.md} D53 / backlog NEW-13.</strong> Payout prices a ledger row against
+     * the {@code BrokerageConfig} in force <em>when the booking completed</em>, and a late-cancellation
+     * fee against the one in force <em>when it was cancelled</em>. Until this package the payload named
+     * neither instant, so payout's consumer had nothing to decide with and read its own clock: identical
+     * while delivery is prompt, and after any outage, replayed partition or paused consumer that
+     * straddles a rate change, a booking priced at terms the customer was never shown. <strong>Nothing
+     * detects that</strong>: no query, no test and no reconciliation job compares a ledger row against
+     * the config that should have priced it. (Not the same as undiscoverable — the rate is recoverable
+     * from the amounts and {@code completed_at} is stored here; see D53's data section for the limits
+     * of the claim. What no row records is which <em>moment</em> it was priced at.)
+     *
+     * <p>Two fields rather than one because two events carry a money decision and the decisions are
+     * taken at different moments. They are named like {@code bookingRaisedAt} above, and for the same
+     * reason: each is a property of the <strong>booking</strong>, and the prefix keeps it from being
+     * read as the envelope's {@code occurredAt}, which is when the message was recorded and means
+     * something else.
+     *
+     * <p>Both are on <em>every</em> booking payload rather than only on the event they belong to,
+     * because this method is a snapshot of the booking and does not know which event it is being asked
+     * for. So {@code booking.requested} carries both as JSON <strong>null</strong>, and a consumer must
+     * treat present-and-null exactly as it treats absent — Jackson's {@code NullNode.asText(default)}
+     * answers the four characters {@code "null"} rather than the default, which is a trap the reader in
+     * payout is written around rather than one it happens to avoid.
      */
     private String payload(Booking b) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("bookingRef", b.getReference());
         payload.put("bookingRaisedAt", b.getRaisedAt() == null ? null : b.getRaisedAt().toString());
+        payload.put("bookingCompletedAt", b.getCompletedAt() == null ? null : b.getCompletedAt().toString());
+        payload.put("bookingCancelledAt", b.getCancelledAt() == null ? null : b.getCancelledAt().toString());
         payload.put("professionalRef", b.getProfessionalRef());
         payload.put("professionalLogin", b.getProfessionalLogin());
         payload.put("customerLogin", b.getCustomerLogin());
