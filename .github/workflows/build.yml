@@ -695,13 +695,59 @@ jobs:
       # copies being compared pairwise. Three services is where "A matches B and B matches C" starts
       # being a longer argument than it is worth, and a missing file fails CLOSED here: diff exits 2
       # on one, which `! diff` catches exactly as it catches a difference.
+      #
+      # THE SERVICE LIST IS DERIVED, NEVER ENUMERATED — and that is the SIXTH fail-open found in this
+      # family, caught by D52's review. The scan below exempts */MarketCalendar.java in EVERY service;
+      # this step used to diff a hard-coded `booking catalog`. So a MarketCalendar.java dropped into
+      # messaging or gateway was exempt from the scan, absent from the diff, and free to say
+      # MARKET_ZONE = UTC and return LocalDate.now(). Verified before the fix: both steps stayed green
+      # on exactly that file, reporting `ok messaging — 87 files scanned`.
+      #
+      # That is not hypothetical. The documented move, the day messaging or gateway acquires a runtime
+      # date, is to copy MarketCalendar there — which is precisely the act that would have created an
+      # unchecked copy. Deriving the list means a fourth copy is diffed the moment it exists, with no
+      # edit to this file, and a rogue one fails on its first CI run.
+      #
+      # THE TWO STEPS ARE COUPLED BY THIS, and the coupling is what makes the scan's exemption sound:
+      # the scan may skip any file named MarketCalendar.java only because this step proves every such
+      # file is byte-identical to payout's, which is the one copy the tests actually pin.
       - name: The runtime calendar must be identical in every service that keeps one
         run: |
           fail=0
-          for f in src/main/java/net/jojoaddison/service/MarketCalendar.java \
-                   src/test/java/net/jojoaddison/service/MarketCalendarUnitTest.java \
-                   src/test/java/net/jojoaddison/service/seed/SeedAndMarketCalendarsAgreeUnitTest.java; do
-            for svc in booking catalog; do
+          # Every service holding a runtime calendar, discovered rather than listed. `target` is
+          # excluded so build output cannot invent a service.
+          services=$(find . -path '*/src/main/java/net/jojoaddison/service/MarketCalendar.java' \
+                       -not -path '*/target/*' | sed -E 's@^\./([^/]+)/.*@\1@' | sort -u)
+          if [ -z "$services" ]; then
+            echo "::error::no service holds a MarketCalendar.java — this check would compare nothing and pass. See decisions.md D51/D52."
+            exit 1
+          fi
+          echo "services holding a runtime calendar: $(echo $services)"
+          # payout is the reference every other copy is compared against, so its absence is fatal
+          # rather than merely a smaller comparison.
+          if ! echo "$services" | grep -qx payout; then
+            echo "::error::payout holds no MarketCalendar.java, and it is the reference copy. See decisions.md D51/D52."
+            exit 1
+          fi
+          # A family of one is not being compared with anything. Three hold one today (D52); the
+          # floor is two, so removing a copy is a decision somebody has to take deliberately.
+          count=$(echo "$services" | wc -l)
+          if [ "$count" -lt 2 ]; then
+            echo "::error::only $count service holds a MarketCalendar.java — a copied file with no copy to compare against is not being checked. See decisions.md D51/D52."
+            fail=1
+          fi
+          for svc in $services; do
+            [ "$svc" = payout ] && continue
+            for f in src/main/java/net/jojoaddison/service/MarketCalendar.java \
+                     src/test/java/net/jojoaddison/service/MarketCalendarUnitTest.java \
+                     src/test/java/net/jojoaddison/service/seed/SeedAndMarketCalendarsAgreeUnitTest.java; do
+              # Named explicitly rather than left to diff's exit 2, so "you copied the class and not
+              # its tests" reads as itself instead of as a difference.
+              if [ ! -f "$svc/$f" ]; then
+                echo "::error::$svc holds a MarketCalendar but not $f — the class travels with its tests. See decisions.md D51/D52."
+                fail=1
+                continue
+              fi
               if ! diff -u "payout/$f" "$svc/$f"; then
                 echo "::error::$f differs between services — payout and $svc must agree on what day it is. See decisions.md D51/D52."
                 fail=1

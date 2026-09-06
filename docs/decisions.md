@@ -6206,3 +6206,77 @@ payout **101 + 165** and booking **192 + 112**, both unchanged, because their on
 javadoc. All three `clean verify` green, checkstyle 0, modernizer clean, `TechnicalStructureTest` at
 zero violations. No compose file, deploy script or spec appendix was touched, so
 `./deploy/sync-appendices.sh --check` is clean and the seed still regenerates byte-identically.
+
+### Reviewed 2026-09-06 — four findings, all applied, and one of them is the sixth fail-open
+
+The review re-ran every mutation from scratch in its own copy and reproduced the matrix exactly, then
+confirmed the data question, the `BADGE_ZONE` discriminator (from the live schema — there is no
+`verified_on` column at all; `professional.verification` is a varchar state) and all eight catalog
+reintroductions independently. The design stood. Four things did not.
+
+**1. The scan exempted `MarketCalendar` in five services while the diff compared two.** The scan skips
+`*/MarketCalendar.java` everywhere; the diff step's service list was the literal `booking catalog`.
+Confirmed by planting a `MarketCalendar.java` in messaging with `MARKET_ZONE = ZoneId.of("UTC")` and
+`today()` returning `LocalDate.now()`: **both steps stayed green**, the scan reporting `ok messaging —
+87 files scanned` because it had exempted the very file, and the diff never looking at it.
+
+So this section's "only the two calendars are skipped, in every service" was trusting two *file names*
+in two services where nothing proved they were the copies. And it is not hypothetical: the documented
+move, the day messaging or gateway acquires a runtime date, is to **copy `MarketCalendar` there** —
+which is exactly the act that would have created an unchecked copy, exempt from the scan, absent from
+the diff, free to read the JVM's zone. That is the sixth fail-open in this family and the first in the
+*diff* rather than the grep.
+
+**The list is derived now, never enumerated** — `find . -path '*/src/main/java/net/jojoaddison/service/MarketCalendar.java'`,
+`target` excluded, payout required as the reference, a floor of two so a family of one cannot pass
+unexamined, and a service holding the class but not its two tests named as itself rather than left to
+`diff`'s exit 2. **The two steps are now coupled, and that coupling is what makes the exemption
+sound**: the scan may skip a file called `MarketCalendar.java` only because this step proves every such
+file is byte-identical to payout's. Watched: the rogue messaging copy now produces three errors and
+exit 1; a *legitimate* fourth copy — byte-identical, both tests beside it — is picked up automatically
+and passes with no edit to `build.yml`, which is the property that was wanted; removing payout's copy,
+reducing the family to one, and removing all of them each fail with their own message. The three real
+copies still pass.
+
+**2. `planner.generate` is additive, so its two directions are not equal.** The deletion loop is gated
+on `if (override != null)`, so on an ordinary rules day generation only adds. A start day one **late**
+(east of Accra) never visits today, so today's slots are never written — the professional reads as
+*closed on a day they were open* — and a re-run with the right day adds them, so that direction
+self-corrects. A start day one **early** (west) writes slots for the day *before* the window, and a
+corrective run starting on the right day never visits that day and never deletes them: **stale rows on
+a day nothing will ever remove.** The original text also named the wrong harm — "bookable on a day they
+did not open" is not the mechanism, since the extra day's slots come from that weekday's own rules.
+
+The **ranking below `Review.publishedOn` stands**, and the review agreed, but the reason was leaning on
+the wrong leg: generation *is* idempotent, and that is a different statement from the one doing the
+work. What carries it is that nothing writes without an explicit `POST`, the window is re-derivable
+from the rules, the residue is untaken slots on a past date, and `availability_slot` is verifiably
+still at the seeded 1608 in both estates — so this path has never written a row at all. "Has never run"
+and "is idempotent" are both true and are not interchangeable.
+
+**3. The zone argument copied into catalog rested on a premise that is false there.**
+`MarketCalendar`'s javadoc argues Accra partly from "payout has no professional zone to read". Catalog
+does: `Professional.zoneId` exists and `ProWorkspaceResource` already holds the owner. And the three
+sites this package moved are a professional's **own calendar** and the strip of **appointments** a
+customer books from — the one category D21 assigns to the professional's zone, and the category D51 and
+D52 both say they deliberately leave open. D52 argued the *review's* calendar carefully and settled the
+other three by inclusion.
+
+The decision is unchanged and is now **recorded rather than inherited**: the default decides where a
+rendered window *starts*, which is a question about the page being looked at, while the times inside it
+are already the professional's wall clock. Settling it the other way would answer spec §13 #8 by
+find-and-replace, which D51 refused for the neighbouring sites. The shared file now says that its
+first reason is payout's alone and does not travel with the copies, and the argument lives at the call
+site instead. Consequence today is nil — every professional in every estate is `Africa/Accra` and the
+column defaults to it — and the case where it stops being nil is **NEW-14**, opened rather than decided
+here because it touches an open question.
+
+**4. The shared javadoc classified a write as a render.** Its bullet called catalog's three window
+defaults "rendered", but the generation default materialises `availability_slot` rows and `slot_date` is
+stored *and* public — it is the strip a customer books from. Two of catalog's four write; two render.
+Corrected in all three copies identically, which is where a future reader will look.
+
+**Counts after the four.** Unchanged everywhere — catalog **108 + 127**, payout **101 + 165**, booking
+**192 + 112** — because every finding was a CI script, a comment or a document, with no observable
+behaviour touched. All three `clean verify` green, checkstyle 0, modernizer clean. Appendices clean,
+seed byte-identical.

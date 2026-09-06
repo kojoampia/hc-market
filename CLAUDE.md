@@ -662,7 +662,9 @@ time.**
     seeded rows and whose live rows are dated in two calendars, and only a test comparing the two
     constants in one build can see it. It matters most in the **two services where the two families
     write the same column**: `ledger.earned_on` in payout, `review.published_on` in catalog. CI diffs
-    every copy against **payout's**, which is the reference, rather than pairwise.
+    every copy against **payout's**, which is the reference, rather than pairwise — and it **derives**
+    which services hold a copy rather than listing them, so a fourth copy is checked the moment it
+    exists and an unchecked one cannot be created by copying the file somewhere new.
 - **The scripts and the spec appendices are the same bytes in two places.** Appendix A is
   `deploy/deploy-dev.sh`, Appendix B is `deploy/deploy-prod.sh`. This is enforced mechanically —
   after editing either script, re-embed; before trusting the spec, check:
@@ -752,6 +754,15 @@ time.**
   `ProWorkspaceResource` twice. **No file anywhere carries a per-file exemption**; only the two
   calendars are skipped, in every service. Keep it that way — the moment one file is excused, the
   check stops reading as "the estate does not do this" and becomes "except where it does".
+  **The scan's exemption is only sound because the copy diff DERIVES its service list** (D52 §review,
+  the sixth fail-open in this family). The scan skips `*/MarketCalendar.java` in every service, while
+  the diff used to compare a hard-coded `booking catalog` — so a `MarketCalendar.java` dropped into
+  messaging or gateway was exempt from one and invisible to the other, and a copy saying
+  `MARKET_ZONE = UTC` with `today()` returning `LocalDate.now()` **passed both**, verified. That is
+  not a hypothetical: copying the file there is the documented move the day either service needs a
+  runtime date. The diff now finds every `service/MarketCalendar.java` with `find`, requires payout as
+  the reference, and refuses a family of one — so **never re-enumerate that list**, and never add a
+  service to the scan's exemption without the diff being able to discover it.
   **A data answer of this kind is never transferable, and D52 is the proof.** D51 re-established
   its four facts and got "nothing was written by the defect"; D52 re-established the same four for
   `review.published_on` and got something else. The premises held — production never deployed, no

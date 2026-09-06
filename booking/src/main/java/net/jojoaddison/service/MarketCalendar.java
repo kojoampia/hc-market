@@ -21,9 +21,12 @@ import org.springframework.stereotype.Component;
  *       month-to-date slice is measured from, on both the earnings and the overview endpoints.
  *   <li><strong>booking</strong> — the default first day of the professional's schedule window.
  *   <li><strong>catalog</strong> — {@code review.published_on} when a customer publishes a review,
- *       which is the second stored date in this estate and the only public one. And the default
- *       first day of three rendered availability windows: the public strip on a profile, the
- *       professional's own calendar, and the day slot generation starts from (D52).
+ *       and the default first day of three availability windows: the public strip on a profile, the
+ *       professional's own calendar, and the day slot generation runs from (D52). <strong>Two of
+ *       those four write and two render.</strong> The generation default is not a rendered window:
+ *       it materialises {@code availability_slot} rows, and {@code slot_date} is stored and public
+ *       exactly as {@code published_on} is — it is the strip a customer books from. Corrected by
+ *       D52's review, which found this bullet calling three of them rendered.
  * </ul>
  *
  * <h2>Africa/Accra, and why it is not the professional's zone</h2>
@@ -50,6 +53,13 @@ import org.springframework.stereotype.Component;
  * a rendered "today" must be read in the <strong>same calendar as the column it slices</strong>, or
  * a month-to-date total is bounded in one calendar over rows dated in another, which is the
  * seeder-versus-consumer disagreement this class exists to end, rebuilt on the read side.
+ *
+ * <p><strong>The first of those two reasons is payout's alone, and does not travel with this file</strong>
+ * (D52 review). Catalog <em>does</em> have a professional zone to read — {@code Professional.zoneId}
+ * exists and its resources hold the owner — so there the choice is a decision rather than a
+ * constraint, and it is argued where it is made: on {@code ProWorkspaceResource.availability}, with
+ * the open question it defers to named. Do not read this paragraph as having settled it for every
+ * service that copies the file.
  *
  * <p>What that means near midnight, stated rather than discovered: a session completed at 23:30 UTC
  * is earned on that day and not the next, wherever the container is started; and on a month's last

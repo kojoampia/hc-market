@@ -49,6 +49,7 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **NEW-11** | A second payment attempt for one booking would reuse Paystack's reference | WON'T, until there is a second attempt | D50 — no such path exists; the day one is added the suffix goes in with it. Opened by the D50 review |
 | **NEW-12** | Catalog's four implicit-zone reads, one of which stores a date | DONE | D52 — all four closed, `MarketCalendar`'s fourth copy, and the CI check now scans **every** service with no per-file exemption anywhere. The estate has no implicit-zone read left. The data question is **re-established, not cited, and its answer differs from D51's**: the quality box holds **two** rows written by the defective line, both dated correctly because the container's zone is `Etc/UTC` — "written by the defect and right", not "nothing was written". No migration |
 | **NEW-13** | The brokerage rate is struck when the event is consumed, not when the booking completed | READY | D51 §review — `BookingEventConsumer.configInForce` says `Instant.now()`; the class javadoc says "when it completed". Not a one-liner: `completedAt` is not on the wire. Opened by the D51 review |
+| **NEW-14** | A professional's own calendar opens on Accra's day, not theirs | BLOCKED on spec §13 #8 | D52 §review — the two `/api/pro/**` window defaults read `MarketCalendar`. Nil consequence while every `professional.zone_id` is `Africa/Accra`; deciding it the other way settles D21's open question by find-and-replace, which D51 refused for the neighbouring sites. Opened by the D52 review |
 
 ---
 
@@ -1269,6 +1270,28 @@ have no such field. That is a compatibility decision, not an edit.
 **Cheap and worth doing while nothing has been deployed**, on the same argument D51 made for itself: a
 ledger row records no rate, only the amounts computed from one, so a row priced at the wrong rate can
 never be identified afterwards.
+
+## NEW-14 — A professional's own calendar opens on Accra's day, not theirs · BLOCKED on spec §13 #8
+
+Opened by the D52 review, and deliberately **not** decided there. `ProWorkspaceResource.availability`
+and `.generate` default their window start to `MarketCalendar.today()` — the marketplace's day — for a
+professional looking at their **own** calendar and generating their **own** slots.
+
+The reason it is a question at all is that catalog, unlike payout, **has a zone to read**:
+`Professional.zoneId` exists (D21) and both methods already hold the owner. D52's shared javadoc argued
+Accra partly from payout having no such zone, which is true there and false here — corrected in place,
+and the argument that remains is that a window *start* is a question about the page being read, while
+the times inside it are already the professional's wall clock.
+
+**Consequence today is nil.** Every `professional.zone_id` in every estate is `Africa/Accra` and the
+column defaults to it, so the two spellings cannot differ. The day a professional carries another zone,
+they open their calendar — and generate their slots — on Accra's day rather than their own, which near
+midnight is the wrong day by one.
+
+**Why it is blocked rather than ready.** It is the same question spec §13 #8 leaves open for
+`BookingWorkflow.scheduledAt` and `CustomerBookingResource.cancellationPreview`, which D51 refused to
+settle by find-and-replace and D52 refused for the same reason. Answering it for these two while those
+stay open would give one service two answers. Take it with §13 #8, not before.
 
 ---
 
