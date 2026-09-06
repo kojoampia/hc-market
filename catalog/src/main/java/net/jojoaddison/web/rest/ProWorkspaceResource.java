@@ -32,6 +32,7 @@ import net.jojoaddison.repository.MarketplaceQueryRepository;
 import net.jojoaddison.repository.ReviewRepository;
 import net.jojoaddison.repository.ServiceOfferingRepository;
 import net.jojoaddison.security.SecurityUtils;
+import net.jojoaddison.service.MarketCalendar;
 import net.jojoaddison.service.MarketplaceService;
 import net.jojoaddison.service.dto.marketplace.ProDtos.*;
 import org.springframework.http.HttpStatus;
@@ -64,6 +65,7 @@ public class ProWorkspaceResource {
     private final HighlightRepository highlights;
     private final MarketplaceService marketplaceService;
     private final AvailabilityPlanner planner;
+    private final MarketCalendar calendar;
 
     public ProWorkspaceResource(
         MarketplaceQueryRepository marketplace,
@@ -73,7 +75,8 @@ public class ProWorkspaceResource {
         CredentialRepository credentials,
         HighlightRepository highlights,
         MarketplaceService marketplaceService,
-        AvailabilityPlanner planner
+        AvailabilityPlanner planner,
+        MarketCalendar calendar
     ) {
         this.marketplace = marketplace;
         this.services = services;
@@ -83,6 +86,7 @@ public class ProWorkspaceResource {
         this.highlights = highlights;
         this.marketplaceService = marketplaceService;
         this.planner = planner;
+        this.calendar = calendar;
     }
 
     // ------------------------------------------------------------------- services --
@@ -222,10 +226,11 @@ public class ProWorkspaceResource {
 
     // --------------------------------------------------------------- availability --
 
+    /** Defaults to the marketplace's today when no window is given — D52. */
     @GetMapping("/availability")
     @Transactional(readOnly = true)
     public List<WorkingDay> availability(@RequestParam(required = false) LocalDate from) {
-        LocalDate start = from == null ? LocalDate.now() : from;
+        LocalDate start = from == null ? calendar.today() : from;
         Map<LocalDate, List<Slot>> byDay = new LinkedHashMap<>();
         for (AvailabilitySlot s : marketplace.findOwnedSlots(me(), start)) {
             byDay.computeIfAbsent(s.getSlotDate(), d -> new ArrayList<>()).add(new Slot(SlotTime.format(s.getSlotTime()), Boolean.TRUE.equals(s.getTaken())));
@@ -330,11 +335,19 @@ public class ProWorkspaceResource {
      * <p>Explicit rather than scheduled: there is no scheduler in this estate, and inventing one
      * here would be a second thing to operate. A professional generating their own calendar also
      * gets to see what changed, which {@link GeneratedView} reports.
+     *
+     * <p><strong>The one default here that reaches the database</strong> — D52. The other two
+     * defaulted "today"s in catalog bound a read; this one is the first day of a window that
+     * {@code planner.generate} materialises into {@code availability_slot} rows, so a start day off
+     * by one leaves a professional bookable on a day they did not open, or closed on one they did.
+     * It still ranks below {@code Review.publishedOn}: generation is explicit, idempotent and
+     * repeatable, and re-running it with the right day corrects the calendar — a published review's
+     * date has no endpoint that could.
      */
     @PostMapping("/availability/generate")
     public GeneratedView generate(@RequestParam(required = false) Integer weeks, @RequestParam(required = false) LocalDate from) {
         Professional owner = meOrThrow();
-        LocalDate start = from == null ? LocalDate.now() : from;
+        LocalDate start = from == null ? calendar.today() : from;
         int horizon = weeks == null ? planner.defaultHorizonWeeks() : weeks;
         if (horizon < 1 || horizon > 52) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "weeks must be between 1 and 52");

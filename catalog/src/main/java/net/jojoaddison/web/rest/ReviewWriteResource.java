@@ -5,7 +5,6 @@ import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
-import java.time.LocalDate;
 import java.util.UUID;
 import net.jojoaddison.domain.Professional;
 import net.jojoaddison.domain.Review;
@@ -14,6 +13,7 @@ import net.jojoaddison.repository.ReviewRepository;
 import net.jojoaddison.security.SecurityUtils;
 import net.jojoaddison.service.BookingClient;
 import net.jojoaddison.service.BookingClient.BookingSummary;
+import net.jojoaddison.service.MarketCalendar;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -49,6 +49,21 @@ import org.springframework.web.server.ResponseStatusException;
  * <p>There is deliberately no endpoint to remove a review, for anyone, including admins. The only
  * response available to a professional is a public reply. A brokerage that can quietly delete its
  * bad reviews is not running a review system.
+ *
+ * <h2>The date it is published on is the marketplace's day</h2>
+ *
+ * <p>{@code publishedOn} is <strong>stored</strong>, and it is the only public date this service
+ * writes — it appears beside a named person's words on a profile anybody can read. It goes through
+ * {@link MarketCalendar} rather than {@code LocalDate.now()} (D52, NEW-12), because "no delete"
+ * above is exactly what makes a wrong one permanent: there is no endpoint that could correct it and
+ * no instant stored beside it to reconstruct it from, so a review dated in the container's calendar
+ * instead of the estate's is wrong for as long as the row exists and cannot afterwards be told from
+ * a right one.
+ *
+ * <p>It is also the same column {@code CatalogSeeder} writes, which since D48 dates the seeded 63 in
+ * {@code SeedCalendar.SEED_ZONE}. One column, two writers: without this they are two calendars, and
+ * a review published at 23:30 Accra time sorts a day ahead of seeded reviews it was written after —
+ * on an endpoint whose whole contract is "newest first".
  */
 @RestController
 public class ReviewWriteResource {
@@ -58,11 +73,18 @@ public class ReviewWriteResource {
     private final ReviewRepository reviews;
     private final MarketplaceQueryRepository marketplace;
     private final BookingClient booking;
+    private final MarketCalendar calendar;
 
-    public ReviewWriteResource(ReviewRepository reviews, MarketplaceQueryRepository marketplace, BookingClient booking) {
+    public ReviewWriteResource(
+        ReviewRepository reviews,
+        MarketplaceQueryRepository marketplace,
+        BookingClient booking,
+        MarketCalendar calendar
+    ) {
         this.reviews = reviews;
         this.marketplace = marketplace;
         this.booking = booking;
+        this.calendar = calendar;
     }
 
     public record PublishReview(
@@ -112,7 +134,9 @@ public class ReviewWriteResource {
             .authorName(summary.customerName() == null ? login : summary.customerName())
             .authorInitials(initialsOf(summary.customerName(), login))
             .stars(request.stars())
-            .publishedOn(LocalDate.now())
+            // D52: the marketplace's day, not the container's. This value is stored, public and
+            // uncorrectable — see the class javadoc.
+            .publishedOn(calendar.today())
             .body(request.body())
             .bookingReference(summary.reference())
             .professional(professional);

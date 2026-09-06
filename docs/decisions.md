@@ -5986,3 +5986,223 @@ observable effect. Both `clean verify` green, checkstyle 0, modernizer clean. Bo
 against **fifteen** constructed reintroductions in total: the original eight, plus the review's
 leading-block-comment line and its javadoc variant, a call in messaging and one in gateway, and
 `CURRENT_DATE`, `now()::date` and `localtimestamp` inside a `@Query`. Four controls stay green.
+
+## D52 — A review is dated in the marketplace's calendar, and two rows written by the defect are right anyway
+
+NEW-12, opened by D51 and deliberately left out of it: a different service, and one of the four sites
+**stores** a date, which is a data question rather than a rename. D47 inventoried them and they stood
+exactly as recorded — re-verified against `main` before anything was changed.
+
+| Where | What it decides | Shape |
+| --- | --- | --- |
+| `catalog` `ReviewWriteResource:115` | `review.published_on` on a new review | **writes, stored, public** |
+| `catalog` `MarketplaceResource:132` | the default start of the public ten-day strip | renders |
+| `catalog` `ProWorkspaceResource:228` | the default start of the professional's own calendar | renders |
+| `catalog` `ProWorkspaceResource:337` | the default first day slot generation runs from | renders, **but reaches the database** |
+
+All four read `LocalDate.now()`, which takes the JVM's default zone. Catalog was the last service with
+any of these, and with it closed the estate has none.
+
+### `Review.publishedOn` is the sharpest instance of this defect in the repository
+
+Sharper than `ledger.earned_on`, which D51 called the specimen, for three reasons that compound.
+
+It is **public**. A review is shown beside a named person's words on a profile anybody can read, so a
+wrong date is not internal bookkeeping but a visible claim about when somebody said something.
+
+It is **uncorrectable, twice over**. There is deliberately no endpoint to edit or delete a review —
+a review-integrity decision, not an omission — so nothing in the API could repair the value. And
+`review` carries **no instant beside the date**: verified from the live schema rather than from the
+entity, eleven columns and not one a timestamp. So a row written in the wrong calendar cannot be
+*identified* afterwards, let alone fixed. That is D51's asymmetry, and it is the argument for doing
+this while nothing has been deployed rather than scheduling it.
+
+And it is the **second writer of a column the seeder already writes**. `CatalogSeeder:217` dates the
+seeded 63 through `SeedCalendar.SEED_ZONE` (D48); `ReviewWriteResource` dated its own in the
+container's. One column, two calendars, is NEW-10 exactly — the same shape as `ledger.earned_on`,
+which is why `SeedAndMarketCalendarsAgreeUnitTest` is not a formality here. The consequence is
+legible: `/api/professionals/{ref}/reviews` orders by `publishedOn desc`, so a review published at
+23:30 Accra time under an eastward zone sorts a day ahead of seeded reviews it was written after, on
+an endpoint whose whole contract is "newest first".
+
+`ProWorkspaceResource:337` is ranked as a render and earns a sentence, because it is **the one default
+in catalog that reaches the database**: `planner.generate` materialises its window into
+`availability_slot` rows, so a start day off by one leaves a professional bookable on a day they did
+not open. It stays below the review because generation is explicit, idempotent and repeatable —
+re-running it with the right day corrects the calendar, and nothing corrects a published review.
+
+### The data question, answered by measurement — and the answer is NOT D51's
+
+D51 states its own finding is not transferable and must be re-established. It was, by the same four
+checks, and **the answer differs in the way that matters**: on the quality box two rows *were* written
+by the defective line. They are correct anyway. "Written by the defect and right" is a materially
+different sentence from D51's "nothing was written by the defect", and it is the honest one here.
+
+- **Production has never been deployed.** `deploy/prod-server/README.md` still opens with "none of it
+  has ever been run", and D49's account of why the first deploy could not have succeeded is unchanged.
+  The production host is remote and was not contacted, so this premise is re-read rather than
+  re-measured — the one of the four resting on the record rather than on an instrument.
+- **No compose file sets `TZ` on any service.** `grep -rn TZ deploy/docker/*.yml quality/compose.yml
+  deploy/prod-server/compose.yml` returns **nothing**, exit 1, across all four files. And `$TZ` is
+  empty in all five running quality containers.
+- **The catalog image's own zone is `Etc/UTC`, measured through the JVM rather than inferred.**
+  `/etc/localtime` resolving to `Etc/UTC` is what D51 read; this went a step further and ran a probe
+  class inside both catalog images — the published `ghcr.io/kojoampia/hc-market-catalog:2d28309…` and
+  the dev `healthconnect/catalog:local` — because `ZoneId.systemDefault()` is the call the defect
+  actually makes and `/etc/localtime` is only its usual source. Both answer `ZoneId.systemDefault() =
+  Etc/UTC`, and both report `LocalDate.now()` equal to `LocalDate.now(Africa/Accra)`. UTC **is** Accra.
+- **Both estates holding rows were read.**
+  - *dev* — `healthconnect-dev_catalog-data`, copied out with the source mounted read-only and opened
+    with a throwaway `postgres:17`: **63** reviews, oldest 2026-03-25, newest 2026-08-24, and **zero**
+    whose reference matches `r-%`. `ReviewWriteResource` mints `r-<8 hex>` while the seed carries
+    `r53`-style references, so that pattern is the exact test for "written by the defective line", and
+    it answers none. 18 professionals and 1608 slots confirm an untouched seed. The container and copy
+    were removed afterwards; the five wedged `healthconnect-dev-*` containers were not touched.
+  - *quality* — read after the roll to `2d28309…` finished, on the live database: **65** reviews, **63**
+    seeded and **2** written by `ReviewWriteResource` — `r-3dba2020` dated 2026-09-05 and `r-1948adca`
+    dated 2026-09-06, one per `verify-cycle.sh` run. Their bookings supply the instants:
+    `b-b392ca72` completed 2026-09-05T21:23:07Z and `b-f75c819f` completed 2026-09-06T13:29:51Z, and
+    each review is written seconds later in the same script. In Accra both days are the ones stored.
+    **Correct — by accident of the container's zone, not by the code.** `availability_slot` still holds
+    the seeded 1608 with a last day of 2026-08-30, so the `generate` path has never written a row in
+    any estate.
+
+So nothing needs correcting, **and the reason is narrower than D51's**. Payout's dev estate had never
+run a consumer at all; catalog's quality estate ran the defective line twice and was saved only by
+`Etc/UTC` being Accra's offset. Neither row even fell in the window where a `TZ: Europe/Vienna` on
+this workstation would have produced a wrong date — 22:00–24:00 UTC in summer — though the first
+missed it by 37 minutes. That is the whole margin this defect had.
+
+**The expiry is the same and is closer to being tested.** The finding holds because nothing is deployed
+and nothing sets `TZ`. One `TZ:` line in a compose file, or a first production deploy, and rows
+written after it can be wrong with nothing able to tell.
+
+### `BADGE_ZONE` stays uncompared, and that is a decision with a discriminator
+
+Catalog now holds **three** named zone constants — `SeedCalendar.SEED_ZONE`,
+`MarketplaceService.BADGE_ZONE` and `MarketCalendar.MARKET_ZONE` — and is the only service holding all
+three. Whether that third pair needs an agreement test beside D51's is a question this package had to
+answer rather than assume.
+
+**It does not, and the reason is not that two tests are enough.** The discriminator is whether the two
+constants date the **same column**:
+
+- `SEED_ZONE` and `MARKET_ZONE` do. `ledger.earned_on` in payout and `review.published_on` in catalog
+  each have two writers, one per family. Divergence there is a defect *by construction* — nobody could
+  argue for seeded rows and live rows in one column being dated differently — and no diff can see it,
+  which is exactly why `SeedAndMarketCalendarsAgreeUnitTest` exists.
+- `BADGE_ZONE` shares a column with neither. It is a **render**: `MarketplaceService.verifiedOn` turns
+  a `VerificationReview.reviewedAt` `Instant` into a `LocalDate` for the wire, and there is no
+  `verified_on` column in the schema at all — checked, not assumed. Nothing else writes what it
+  produces, and it writes nothing itself.
+
+So a test asserting `BADGE_ZONE == MARKET_ZONE` would pin a **coincidence rather than a contract**. The
+two are equal today because D47 and D51 independently reasoned their way to Accra from different
+premises, and D47's premise could legitimately change: if the verification desk moved, the badge's
+calendar would move with it and nothing about the ledger, the seed or a review's date would be wrong.
+A test that goes red on a correct change trains people to delete tests. The argument against is real
+and is recorded rather than dismissed — three constants in one service with only one pair checked is
+something a later reader will notice — so it is argued in `MarketCalendar`'s own javadoc, where that
+reader will be standing. `BADGE_ZONE` keeps the spelling test D47 gave it, which is what actually stops
+it drifting unnoticed.
+
+### `MarketCalendar`'s fourth copy, and what the shared text had to say differently
+
+`MarketCalendar.java`, `MarketCalendarUnitTest.java` and `SeedAndMarketCalendarsAgreeUnitTest.java` are
+now in **payout, booking and catalog**, byte-identical, with CI diffing every copy against payout's as
+the reference rather than pairwise. Their javadoc named "payout and booking" and the two services that
+"render or write at run time", which stopped being true — so the shared text was edited **once in
+payout and propagated by copy**, which is how a byte-identical family should be edited: three parallel
+hand-edits are three chances to differ, and the diff would then fail on work that was correct. The
+agreement test's javadoc gained the sentence that matters most here — that in two of the three services
+the two families write literally one column, naming both.
+
+`TechnicalStructureTest` passes unchanged at zero violations, which was not assumed: `MarketCalendar`
+is in `service`, `web` may reach `service`, and nothing may reach `config`. Three of catalog's four
+call sites are in `web.rest`.
+
+### What was watched go red
+
+Four mutations, against catalog's fourteen new tests (5 `MarketCalendarUnitTest`, 1 agreement, 6
+`AvailabilityWindowsOpenOnTheMarketplacesDayTest`, 2 `ReviewIsPublishedOnTheMarketplacesDayTest`).
+
+1. **`today()` reading `ZoneId.systemDefault()`** — character for character `LocalDate.now()` with an
+   injectable instant: **11 of 14 red.** All 8 behaviour tests, both directions each, plus 3 of the 5
+   calendar tests.
+2. **`today()` as `LocalDate.now(clock)`** — reading the clock's *own* zone, the obvious wrong turn:
+   **the same 11.** D48's review finding 8 inherited rather than rediscovered: every test's fixed clock
+   carries a zone on the same side of Accra as the assertion it makes, so the westward tests use a
+   westward clock. A single eastward clock would have left every westward test green, because at 02:30
+   UTC a Berlin clock says 04:30 the same day and agrees with Accra by accident.
+3. **`MARKET_ZONE` set to `UTC`**: **2 red, and the right two** — `theCalendarIsTheMarketplaces` and
+   `SeedAndMarketCalendarsAgreeUnitTest`. All 12 observational tests stay green, because nothing can
+   distinguish Accra from UTC by observation and nothing ever will. The second is the case neither CI
+   diff can see, firing in the service where it now guards a real shared column.
+4. **All four call sites reverted to `LocalDate.now()`** while the calendar stays injected — D51's
+   review finding 6, the mutation that ignores the clock entirely: **all 8 behaviour tests red.** That
+   is what the 2021 anchor buys. Against assertions dated "around now", a call site answering with the
+   real wall date would agree with one direction of each pair on most days; five years past, every one
+   is red on every day of the year. The reason is in each test class's javadoc so nobody "modernises"
+   the date.
+
+Two tests rather than two assertions in one, throughout, for D51's reason: the first assertion to fail
+hides the second.
+
+### The CI check, widened to catalog and watched firing there
+
+Two steps changed. **The copy diff** now compares booking *and* catalog against payout for all three
+files; a missing file fails closed, because `diff` exits 2 and `! diff` catches that exactly as it
+catches a difference. **The implicit-zone scan** adds catalog to its service list, which is now every
+service in the repository, and **no file anywhere carries a per-file exemption** — only the two
+calendars are skipped, in every service, as they always were. That was the whole point of keeping
+catalog out until now: a check with `ReviewWriteResource`, `MarketplaceResource` and
+`ProWorkspaceResource` excused would have claimed to cover the service while being blind in exactly the
+three files most likely to acquire the next one. The comment argues the inclusion rather than leaving
+the list to be read as scope.
+
+Both steps were **extracted from `build.yml` by a YAML parser and executed**, rather than a hand-copy of
+them being tested — the workflow parses, both bodies pass `bash -n`, and both run green against the
+tree. Then eight constructed reintroductions **in catalog specifically**, every one of which fired,
+covering each of the five fail-opens already found in this check's history:
+
+1. `.publishedOn(LocalDate.now())` back in `ReviewWriteResource` — NEW-12 itself;
+2. `LocalDate.ofInstant(Instant.now(), ZoneId.systemDefault())` — D48 finding 1, the zone rather than
+   the type;
+3. the same call behind an earlier `/` and `*` on the line — D48 finding 2;
+4. `/* a note */ LocalDate.now()`, a line starting in a block comment and then carrying code — D51
+   review finding 2;
+5. a `LocalDate.now()` in `service/SlotTime.java`, nowhere near a resource or a seeder, which is what
+   scanning a tree rather than a package buys;
+6. `current_date` inside a `@Query` — the database-side clock, evaluated in PostgreSQL's session
+   `TimeZone` and invisible to a Java grep;
+7. catalog's source tree moved aside (`does not exist`) — it must not report ok on what it never looked
+   at;
+8. and the same tree left in place but **emptied** (`matched no scannable file`), the branch the
+   `while read` over an empty `find` guard exists for.
+
+The summary was checked for D51's review finding too: when catalog fails it prints `FAIL catalog` and
+never `ok catalog` beside it. Controls stay green — a bare `Instant.now()`, and the javadoc line in
+`ReviewWriteResource` that names `LocalDate.now()` while explaining why it is not used, which is a live
+control in the committed tree rather than a constructed one.
+
+### What this does not close
+
+**NEW-13 is untouched** and is not a zone question — `BookingEventConsumer.configInForce` strikes the
+brokerage rate at the moment the event is *consumed*, and fixing it needs a wire-format change first.
+
+**The two sites D51 deliberately left out stay out**, for its reasons unchanged:
+`BookingWorkflow.scheduledAt` and `CustomerBookingResource.cancellationPreview` convert an
+*appointment's* wall clock and belong to D21, spec §13 #8, still open and possibly not Accra.
+
+**Nothing was run against a live estate.** The quality box was **read** — that is where the 65 rows and
+the two written ones come from — but not rebuilt against this branch, so no review has been published
+by this code anywhere. As in D51 that gap is smaller than it sounds and is not zero: four call sites,
+every one under a test that fails against the code as it stood, and a calendar whose value is
+indistinguishable from the one the box already uses. Proving the *behaviour* needs a container started
+with a `TZ`, which no compose file here has.
+
+**Counts.** catalog **108 unit + 127 IT**, from 94 + 127 — fourteen unit tests added, no IT touched.
+payout **101 + 165** and booking **192 + 112**, both unchanged, because their only edit was shared
+javadoc. All three `clean verify` green, checkstyle 0, modernizer clean, `TechnicalStructureTest` at
+zero violations. No compose file, deploy script or spec appendix was touched, so
+`./deploy/sync-appendices.sh --check` is clean and the seed still regenerates byte-identically.

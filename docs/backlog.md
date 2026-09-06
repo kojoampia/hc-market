@@ -47,7 +47,7 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **NEW-10** | Payout writes `ledger.earned_on` in the JVM's calendar and the seeder's in Accra's | DONE | D51 — all six closed, three writes and three renders, across payout and booking. The data question is **answered**: no stored row anywhere was written outside Accra's calendar, so no migration. Catalog's four are NEW-12 |
 | **WP-19** | Production deployment configuration, to sibling parity | PARTLY DONE | D49 — `deploy/prod-server/` built, five defects in the deploy path fixed, then reviewed 2026-09-05 and eight more applied, one of them blocking (a failing smoke test triggered an automatic rollback). **Nothing has ever been run against a host**; the fifteen things a person must still do are in that directory's README |
 | **NEW-11** | A second payment attempt for one booking would reuse Paystack's reference | WON'T, until there is a second attempt | D50 — no such path exists; the day one is added the suffix goes in with it. Opened by the D50 review |
-| **NEW-12** | Catalog's four implicit-zone reads, one of which stores a date | READY | D47/D51 — `ReviewWriteResource:115` writes `Review.publishedOn` and carries its own data question; three rendered window defaults beside it. The CI check D51 added is widened to catalog the day this closes |
+| **NEW-12** | Catalog's four implicit-zone reads, one of which stores a date | DONE | D52 — all four closed, `MarketCalendar`'s fourth copy, and the CI check now scans **every** service with no per-file exemption anywhere. The estate has no implicit-zone read left. The data question is **re-established, not cited, and its answer differs from D51's**: the quality box holds **two** rows written by the defective line, both dated correctly because the container's zone is `Etc/UTC` — "written by the defect and right", not "nothing was written". No migration |
 | **NEW-13** | The brokerage rate is struck when the event is consumed, not when the booking completed | READY | D51 §review — `BookingEventConsumer.configInForce` says `Instant.now()`; the class javadoc says "when it completed". Not a one-liner: `completedAt` is not on the wire. Opened by the D51 review |
 
 ---
@@ -1190,7 +1190,7 @@ legitimately carry the same reference, which today describes a world no adapter 
 
 Written on `PaystackPaymentProvider.authorize`, where whoever adds that path will be standing.
 
-## NEW-12 — Catalog's four implicit-zone reads, one of which stores a date · READY
+## NEW-12 — Catalog's four implicit-zone reads, one of which stores a date · DONE (D52)
 
 Opened by D51 rather than by a review, and separate from NEW-10 for two reasons: it is a different
 service, and one of the four is a **stored** date whose correction is a data question of its own rather
@@ -1224,6 +1224,22 @@ never the `container_name:` the compose file declares, or the dev estate looks l
 And the CI check D51 added deliberately **does not scan catalog** while these are open, because a check
 with these three files exempted would claim to cover the service while being blind in exactly the files
 most likely to acquire the next one. Widening it to catalog is part of this package, not a follow-up.
+
+**Closed by D52, 2026-09-06.** All four go through a fourth byte-identical copy of `MarketCalendar`;
+the CI scan now covers **every** service in the repository with no per-file exemption anywhere, and was
+watched firing against eight constructed reintroductions in catalog, one per fail-open in its history.
+Catalog's fourteen new unit tests were each proved red first, under four mutations.
+
+**The data question was re-established and its answer is not D51's.** Both premises held — nothing
+deployed, no `TZ` in any of the four compose files or any running container, and both catalog images
+measured through the JVM at `ZoneId.systemDefault() = Etc/UTC` — but the row count did not. The dev
+estate has **63** reviews and none written by the resource, as recorded above. The **quality** estate
+has **65**: 63 seeded and **two written by the defective line**, `r-3dba2020` (2026-09-05) and
+`r-1948adca` (2026-09-06), one per `verify-cycle.sh` run, each matching its booking's completion
+instant read in Accra. So the honest finding is **"written by the defect and still right, because the
+container's zone happens to be the estate's calendar"** — not "nothing was written by the defect", and
+the difference is the whole margin the defect had. No migration; `review` carries no instant beside the
+date, so a wrong row could never have been identified anyway.
 
 ## NEW-13 — The brokerage rate is struck when the event is consumed, not when the booking completed · READY
 

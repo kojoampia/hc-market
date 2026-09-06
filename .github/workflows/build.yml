@@ -672,12 +672,14 @@ jobs:
           done
           exit "$fail"
 
-      # The RUNTIME calendar is the same arrangement again, two services wide — decisions.md D51.
+      # The RUNTIME calendar is the same arrangement again, three services wide — decisions.md D51,
+      # widened to catalog by D52.
       #
       # SeedCalendar says what day it is for the seed. MarketCalendar says what day it is for
       # everything else: payout's ledger.earned_on on all three paths that write it, the "today" its
-      # month-to-date slice is bounded by, and booking's default first day of the schedule window.
-      # Copied byte-identically into payout and booking and diffed here, same reason as
+      # month-to-date slice is bounded by, booking's default first day of the schedule window, and
+      # catalog's review.published_on plus its three defaulted availability windows.
+      # Copied byte-identically into payout, booking and catalog and diffed here, same reason as
       # SubjectPseudonym and SeedCalendar — no shared library, and a constant duplicated with nothing
       # comparing the copies is how the next divergence arrives in silence.
       #
@@ -685,26 +687,34 @@ jobs:
       # stay green while one FAMILY says Africa/Accra and the other says UTC — that is a service whose
       # seeded rows and whose live rows are dated in two calendars, which is NEW-10 itself and is what
       # this estate actually had for a week. Neither this check nor the one above can see it; the test
-      # can, because it compares the two constants in one build.
-      - name: The runtime calendar must be identical in both services that keep one
+      # can, because it compares the two constants in one build. It matters most in the two services
+      # where the two families write the SAME COLUMN: ledger.earned_on in payout, review.published_on
+      # in catalog.
+      #
+      # payout is the reference copy and every other service is compared against it, rather than the
+      # copies being compared pairwise. Three services is where "A matches B and B matches C" starts
+      # being a longer argument than it is worth, and a missing file fails CLOSED here: diff exits 2
+      # on one, which `! diff` catches exactly as it catches a difference.
+      - name: The runtime calendar must be identical in every service that keeps one
         run: |
           fail=0
           for f in src/main/java/net/jojoaddison/service/MarketCalendar.java \
                    src/test/java/net/jojoaddison/service/MarketCalendarUnitTest.java \
                    src/test/java/net/jojoaddison/service/seed/SeedAndMarketCalendarsAgreeUnitTest.java; do
-            if ! diff -u "payout/$f" "booking/$f"; then
-              echo "::error::$f differs between services — payout and booking must agree on what day it is. See decisions.md D51."
-              fail=1
-            else
-              echo "ok   $f — identical in both"
-            fi
+            for svc in booking catalog; do
+              if ! diff -u "payout/$f" "$svc/$f"; then
+                echo "::error::$f differs between services — payout and $svc must agree on what day it is. See decisions.md D51/D52."
+                fail=1
+              else
+                echo "ok   $f — payout and $svc identical"
+              fi
+            done
           done
           exit "$fail"
 
-      # …and nothing else in payout, booking, messaging or gateway may read a date from an implicit
-      # zone.
+      # …and nothing anywhere in the five services may read a date from an implicit zone.
       #
-      # This is D48's seed-package grep widened from a package to four whole services, because NEW-10
+      # This is D48's seed-package grep widened from a package to five whole services, because NEW-10
       # was five of these outside any seed package: three writes to ledger.earned_on and two rendered
       # "today"s in payout, plus one rendered window default in booking. All five read LocalDate.now(),
       # which takes the JVM's zone — correct in a container with no TZ, correct in CI, and wrong on the
@@ -720,13 +730,19 @@ jobs:
       #                        nothing and locks the property into two more services BEFORE somebody
       #                        writes the first one — which is the only moment a check like this is
       #                        free. Not scanning a clean service is how catalog's four got in.
-      #   catalog              DELIBERATELY OUT, and it is a scope statement. Four implicit-zone reads
-      #                        are still open there — ReviewWriteResource:115, MarketplaceResource:132
-      #                        and ProWorkspaceResource twice — inventoried in D47 and carried as
-      #                        backlog NEW-12. Adding catalog with those three files exempted would
-      #                        produce a check that claims to cover the service while being blind in
-      #                        exactly the files most likely to acquire the next one. Added the day
-      #                        NEW-12 closes, and closing NEW-12 means adding it here.
+      #   catalog              IN since D52, and that is the whole of NEW-12's CI half. It was out
+      #                        while its four were open — ReviewWriteResource:115 (which STORED
+      #                        review.published_on), MarketplaceResource:132 and ProWorkspaceResource
+      #                        twice — because adding it with those three files exempted would have
+      #                        produced a check that claims to cover the service while being blind in
+      #                        exactly the files most likely to acquire the next one. All four now go
+      #                        through MarketCalendar, so no exemption was needed and none was added:
+      #                        the two calendars below are the only files skipped, in every service.
+      #
+      # Every service in the repository is now scanned and no file anywhere carries a per-file
+      # exemption. That is the state to keep it in — the moment one file is excused, this check stops
+      # being readable as "the estate does not do this" and becomes "the estate does not do this
+      # except where it does".
       #
       # The regex inherits D48's three review fixes: it bans the ZONE that interprets a clock and not
       # merely the TYPE that reads one, so LocalDate.ofInstant(Instant.now(), ZoneId.systemDefault())
@@ -770,7 +786,7 @@ jobs:
       - name: No runtime class may read a date in an implicit zone
         run: |
           fail=0
-          for svc in payout booking messaging gateway; do
+          for svc in payout booking messaging gateway catalog; do
             dir="$svc/src/main/java/net/jojoaddison"
             if [ ! -d "$dir" ]; then
               echo "::error::$dir does not exist — this check would scan nothing and pass. See decisions.md D51."
