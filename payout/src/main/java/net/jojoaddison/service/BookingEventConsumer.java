@@ -285,9 +285,17 @@ public class BookingEventConsumer {
      * <p>Never a clock. That was the defect: {@code configInForce()} took {@code Instant.now()}, so a
      * booking completed under one set of terms and consumed after an outage that straddled a rate
      * change was priced under the other — terms the customer was never shown, and a ledger row that
-     * disagrees with {@code CustomerBookingResource.receipt} by however much the rate moved. Neither
-     * number can be identified as the wrong one afterwards, because both are internally consistent and
-     * a ledger row records the amounts computed from a rate and never the rate.
+     * disagrees with {@code CustomerBookingResource.receipt} by however much the rate moved.
+     *
+     * <p><strong>Nothing detects that</strong> — no query, no test, no screen and no reconciliation job
+     * compares a ledger row against the config that should have priced it, and both numbers are
+     * internally consistent. Note the honest limit of that claim, which D53's review had to correct:
+     * a wrong row is not <em>undiscoverable</em>. The rate is recoverable from
+     * {@code commission_minor / gross_minor} to well within any real rate change, {@code completed_at}
+     * is stored in booking, and {@code brokerage_config} keeps its history, so the two can be joined —
+     * {@code DisputeEventConsumer.proportionalCommission} already relies on exactly that
+     * recoverability. What no row records is which moment it was priced at, and payout alone cannot
+     * answer it at all.
      *
      * <h2>Three answers, in order, and the last one refuses</h2>
      *
@@ -377,8 +385,17 @@ public class BookingEventConsumer {
      *
      * <p>The moment comes from {@link #pricedAt} and never from a clock. Same rule as
      * {@code BrokerageResource.inForce}, which answers the receipt's half of the same question; the
-     * two are deliberately not merged into one helper, because they already agree on the rule and what
-     * used to differ — and what NEW-13 is about — is the moment each was handed.
+     * two are not merged here, because they already agree on the rule and what used to differ — and
+     * what NEW-13 is about — is the moment each was handed.
+     *
+     * <p><strong>That is the weakest available reason and merging them is backlog NEW-16.</strong> The
+     * value of one selector is that they keep agreeing, and there is a concrete way for them to stop:
+     * both take {@code Stream.max} over an unordered {@code findAll()}, so two configs sharing an
+     * {@code effectiveFrom} resolve non-deterministically and the two copies can pick different rows in
+     * one JVM — a receipt and a ledger row disagreeing with no rate change between them. Nothing
+     * prevents that data state today. Unlike {@code SubjectPseudonym} and {@link MarketCalendar} there
+     * is no obstacle: same Maven module, and {@code TechnicalStructureTest} permits {@code web} to
+     * reach {@code service}.
      */
     private BrokerageConfig configInForce(Instant at) {
         List<BrokerageConfig> all = brokerage.findAll();

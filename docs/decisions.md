@@ -6385,12 +6385,25 @@ brokerage's terms *between* the two consumptions so that against the defect the 
   `professional_login`, `gross_minor`, `commission_minor`, `net_minor`, `currency`, `delivery_mode`,
   `service_ref`, `service_name`, `earned_on`, `reversal_of`, `payout_id`, `id` — read off
   `hc-market-quality-payout-db` itself. No rate column, no `brokerage_config` foreign key, and **no
-  instant**: `earned_on` is a `date`. So a row priced at the wrong rate cannot be identified afterwards
-  and there is nothing to migrate even if one wanted to. (The one nuance the backlog's wording did not
-  carry: `commission_minor / gross_minor` *approximates* the rate, so two rates far enough apart are
-  distinguishable per row — but rounding is `HALF_UP` per row, two rates can produce the same
-  commission on a given gross, and nothing records which config row was consulted. It is an inference,
-  not a record.)
+  instant**: `earned_on` is a `date`.
+- **But "cannot be identified afterwards" was overstated, and the honest claim is narrower.** This
+  paragraph said a mispriced row could never be found again; D53's review disproved it and the
+  correction stands rather than the sentence. `SELECT DISTINCT round(commission_minor::numeric /
+  gross_minor, 6)` over the quality ledger returns **exactly one value, `0.120000`**, across all 258
+  rows, and `min(gross_minor)` is `15000`, so the `HALF_UP` ambiguity is bounded by about `0.000033` —
+  orders of magnitude below any rate change a brokerage would make. The inference is exact for every
+  row that exists. `booking.completed_at` **is** stored (265 of booking's 290 rows carry one) and
+  `brokerage_config` keeps its full effective-dated history, so a mispriced row is identifiable exactly
+  by joining the two. And this repository already depends on the recoverability:
+  `DisputeEventConsumer.proportionalCommission` reconstructs the original rate from
+  `commission/gross` precisely because it *is* recoverable.
+  **The true claim is: nothing does detect it, and payout alone cannot.** No query, no test, no screen
+  and no reconciliation job compares a ledger row against the config that should have priced it, and
+  payout holds no completion instant to compare with. That is still sufficient motivation — an
+  undetected error in money is an error — and it leaves the "cheapest moment" argument below untouched,
+  since it rests on there having only ever been one rate rather than on irrecoverability. What is
+  genuinely lost for ever is not the *rate* but the *reason*: nothing records whether a row was priced
+  from the act's instant or from the fallback.
 - **One `BrokerageConfig` exists, in both estates, and `effectiveFrom` has never moved.** Quality:
   `id 1001, 0.12, GHS, effective_from 2020-01-01T00:00:00`, 258 ledger rows (256 seeded + 2 recorded),
   2 processed events. Dev: the same single row, 256 ledger rows, **`processed_event` empty** — so no
@@ -6450,12 +6463,16 @@ today's real date in some zone makes a mutation half-green for a day. No wall cl
 again, so `Instant.now()` can only ever select the *latest* config in these fixtures — which is what
 makes each of them red on every day of the year rather than on some of them.
 
-**Three existing payout fixtures had to gain an `occurredAt`, and one of them was propped up by the
-defect.** `EarnedOnIsTheMarketplacesDayTest` fixes its clocks in **2021** and gave its
-`BrokerageConfig` an `effectiveFrom` of **2026-01-01**, so the config it prices with was only ever
-found because `configInForce` read the *real* clock rather than anything in the test. It is `2019` now
-and the events carry their own act instants. `BookingEventConsumerCurrencyTest` and
-`BookingEventConsumerDeliveryModeTest` simply carried envelopes no producer emits; they carry one now.
+**Three existing payout fixtures had to gain an `occurredAt`, and all three were leaning on the
+defect.** Every one of them dated its `BrokerageConfig` `effectiveFrom` at **2026-01-01** — a date in
+the future relative to nothing in the fixture — so the config each priced with was found only because
+`configInForce` read the *real* clock rather than anything the test set. Only
+`EarnedOnIsTheMarketplacesDayTest` actually **broke**, because it is the one that also fixes its clocks
+(in **2021**), which is what "propped up" means and why it is the specimen; its config is `2019` now.
+The property, though, held for all three and now holds for all three: after this change every fixture's
+config predates every instant its own events carry, so none of them can be satisfied by a clock.
+`BookingEventConsumerCurrencyTest` and `BookingEventConsumerDeliveryModeTest` were additionally carrying
+envelopes no producer emits; they carry an `occurredAt` and an act instant now.
 
 ### The CI check, watched firing
 
@@ -6471,12 +6488,49 @@ entirely ordinary row. Both suites stay green, each internally consistent with i
 fallback is deliberately forgiving so that old events still price, and that is the same property that
 would hide this.
 
-It asserts the producer still `payload.put`s each key and the consumer still reads that literal — not
-that the name appears somewhere in the tree, which would stay green with the `put()` renamed and the
-javadoc left behind, and which is exactly how a rename happens. Watched firing three ways: the producer
-renamed with its prose intact, the consumer renamed, and the producer file moved away (the fail-open
-D51's review kept finding — a check that reports `ok` on a tree it never looked at). Control green
-before and after, and the tree restored.
+It asserts the producer still `payload.put`s each key and the consumer still **prices from** it at its
+`pricedAt` call site, with **comments stripped from both files first** — not that the name appears
+somewhere, which would stay green with the call renamed and the javadoc left behind.
+
+#### The first version of this check failed at its own subject matter, and that is the finding worth keeping
+
+**The consumer half shipped as `grep -qF "\"$field\"" "$consumer"` — the name anywhere in the file.**
+`BookingEventConsumer`'s javadoc quotes `"bookingCompletedAt"` while explaining that a malformed one is
+refused, so renaming **only** the call site and leaving the prose exited **0**:
+
+```
+ok   bookingCompletedAt — published by booking and read by payout
+ok   bookingCancelledAt — published by booking and read by payout
+EXIT=0
+```
+
+`bookingCancelledAt` *was* caught — but only because its javadoc happens not to quote it. **The check's
+reach depended on prose**, and it was blind on the field that prices every completed booking: the
+majority of ledger rows, and the entire population NEW-13 exists for. The step's own comment, this
+section and `CLAUDE.md` all asserted the opposite in as many words. That is this check failing at
+exactly the class of defect it was written to close, and it is recorded rather than quietly fixed.
+
+**How "watched firing three ways" looked convincing.** The original mutation set renamed
+`bookingCancelledAt` — the field with no javadoc mention — so it fired for the right reason by
+accident. Renaming *both* fields exits 1 on the cancelled one while printing `ok bookingCompletedAt` on
+the line above, and the exit status is what an author reads. The lesson generalises past this check:
+**a mutation battery must mutate each guarded thing separately**, because an aggregate exit status
+cannot distinguish "all guarded" from "one guarded".
+
+Two fixes, both applied, because either alone leaves a hole. Comments are stripped first, borrowing the
+sed and the javadoc-continuation filter from the implicit-zone check above, which had already had this
+class of fail-open found in it twice — so prose can no longer satisfy the check. And the match is the
+**call site**, `pricedAt\([^)]*"FIELD"\)`, which asserts the act of resolving a pricing moment from that
+field rather than the presence of a name; `[^)]*` rather than the literal argument names, so renaming
+`envelope` or `p` does not fail it spuriously.
+
+**Five mutations red, three controls green**, each guarded thing mutated on its own: the review's exact
+case (consumer completion call site renamed, javadoc intact — now red, where it was green); the
+cancellation call site alone; both together; the producer key with its prose left behind; and the
+consumer file moved away (the fail-open D51's review kept finding — a check reporting `ok` on a tree it
+never looked at). The controls: the clean tree before and after, and — the one that pins the new regex
+is not merely stricter — **`pricedAt`'s two argument names renamed while the fields are kept, which
+must stay green and does**.
 
 ### What this does not close
 

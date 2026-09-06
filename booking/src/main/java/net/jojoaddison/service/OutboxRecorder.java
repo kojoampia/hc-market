@@ -143,8 +143,11 @@ public class OutboxRecorder {
      * fee against the one in force <em>when it was cancelled</em>. Until this package the payload named
      * neither instant, so payout's consumer had nothing to decide with and read its own clock: identical
      * while delivery is prompt, and after any outage, replayed partition or paused consumer that
-     * straddles a rate change, a booking priced at terms the customer was never shown. Nothing could
-     * detect it afterwards — a ledger row records the amounts computed from a rate and never the rate.
+     * straddles a rate change, a booking priced at terms the customer was never shown. <strong>Nothing
+     * detects that</strong>: no query, no test and no reconciliation job compares a ledger row against
+     * the config that should have priced it. (Not the same as undiscoverable — the rate is recoverable
+     * from the amounts and {@code completed_at} is stored here; see D53's data section for the limits
+     * of the claim. What no row records is which <em>moment</em> it was priced at.)
      *
      * <p>Two fields rather than one because two events carry a money decision and the decisions are
      * taken at different moments. They are named like {@code bookingRaisedAt} above, and for the same

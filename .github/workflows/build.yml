@@ -910,10 +910,34 @@ jobs:
       # fallback is deliberately silent-ish by design (it is a WARN, not a failure) precisely so that
       # old events still price, which is the same property that would hide this.
       #
-      # So the check is that the producer still writes each key and the consumer still reads it. It is
-      # NOT a grep for the name anywhere in the tree: the name appears in javadoc in both files and in
-      # three tests, so a bare grep would stay green with the put() renamed and the prose left behind —
-      # which is exactly how a rename happens.
+      # So the check is that the producer still PUTS each key and the consumer still READS it AT ITS
+      # CALL SITE. Neither half may be a grep for the name anywhere in the file, and the consumer half
+      # WAS one until D53's review caught it — that is the finding worth keeping, because it is this
+      # check failing at its own subject matter.
+      #
+      #   elif ! grep -qF "\"$field\"" "$consumer"        <- the version that shipped
+      #
+      # BookingEventConsumer's javadoc quotes "bookingCompletedAt" while explaining that a malformed
+      # one is refused. So renaming ONLY the call site and leaving the prose exited 0:
+      #
+      #   ok   bookingCompletedAt — published by booking and read by payout      <- with the call site
+      #   ok   bookingCancelledAt — published by booking and read by payout         renamed to
+      #   EXIT=0                                                                    "completionInstant"
+      #
+      # bookingCancelledAt WAS caught, but only because its javadoc happens not to quote it. The
+      # check's behaviour depended on PROSE, and it was blind on the field that prices every completed
+      # booking — the majority of ledger rows and the whole population NEW-13 exists for. It also
+      # explains how "watched firing three ways" looked convincing: renaming both fields exits 1 on the
+      # cancelled one while printing `ok` for the completed one on the line above, and the exit status
+      # is what an author checks.
+      #
+      # Two fixes, both applied, because either alone leaves a hole:
+      #   - COMMENTS ARE STRIPPED FIRST, borrowing the sed and the javadoc-continuation filter from
+      #     "No runtime class may read a date in an implicit zone" above, which had already had this
+      #     class of fail-open found in it twice. Prose can no longer satisfy the check.
+      #   - THE MATCH IS THE CALL SITE, not the bare literal, so it asserts the act of resolving a
+      #     pricing moment from that field rather than the presence of a name. `[^)]*` rather than the
+      #     literal argument names, so renaming `envelope` or `p` does not fail this spuriously.
       - name: Booking and payout must name the pricing instants identically
         run: |
           fail=0
@@ -926,17 +950,21 @@ jobs:
             fi
           done
           if [ "$fail" = 0 ]; then
+            # Comments removed before either half looks, so no javadoc quoting a field name can
+            # satisfy the check for it. Same sed as the implicit-zone check, same reason.
+            producer_code=$(sed -E 's@/\*[^*]*\*+([^/*][^*]*\*+)*/@ @g; s@//.*@@' "$producer" | grep -vE '^[[:space:]]*\*')
+            consumer_code=$(sed -E 's@/\*[^*]*\*+([^/*][^*]*\*+)*/@ @g; s@//.*@@' "$consumer" | grep -vE '^[[:space:]]*\*')
             for field in bookingCompletedAt bookingCancelledAt; do
               # The producer must PUT it on the payload, not merely mention it.
-              if ! grep -qF "payload.put(\"$field\"" "$producer"; then
+              if ! printf '%s\n' "$producer_code" | grep -qF "payload.put(\"$field\""; then
                 echo "::error file=$producer::booking no longer publishes $field — payout then prices every event at the envelope's occurredAt instead of at the act, warns, and stays green. See decisions.md D53."
                 fail=1
-              # …and the consumer must READ it by that same name.
-              elif ! grep -qF "\"$field\"" "$consumer"; then
-                echo "::error file=$consumer::payout no longer reads $field — the field booking publishes is being ignored and every row prices from the fallback. See decisions.md D53."
+              # …and the consumer must resolve its pricing moment FROM it, at the call site.
+              elif ! printf '%s\n' "$consumer_code" | grep -qE "pricedAt\([^)]*\"$field\"\)"; then
+                echo "::error file=$consumer::payout no longer prices from $field — the field booking publishes is being ignored and every such event falls back to the envelope's occurredAt, warns once, and writes an ordinary ledger row. See decisions.md D53."
                 fail=1
               else
-                echo "ok   $field — published by booking and read by payout"
+                echo "ok   $field — published by booking and priced from by payout"
               fi
             done
           fi

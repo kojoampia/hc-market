@@ -598,15 +598,26 @@ keeps the estate uniformly Boot 4 — and matches all three sibling products. Se
   that path reads a clock**, which is what makes the price a function of the event alone and therefore
   stable under a replay. It was `Instant.now()` until D53: identical while delivery is prompt, and after
   any outage or paused consumer that straddled a rate change, a booking priced at terms the customer was
-  never shown — undetectably, because `ledger` records the amounts computed from a rate and never the
-  rate. An event carrying no act instant falls back to the envelope's `occurredAt` **at WARN** (stamped
+  never shown. **Nothing detects that** — no query, no test and no reconciliation job compares a ledger
+  row against the config that should have priced it, and both numbers are internally consistent. It is
+  *not* undiscoverable, and D53 was corrected on this: the rate is recoverable from
+  `commission_minor / gross_minor` (one distinct value, `0.120000`, over all 258 quality rows; ambiguity
+  bounded by ~0.000033 at `min(gross)` 15000), `booking.completed_at` is stored, and `brokerage_config`
+  keeps its history, so the two can be joined — `DisputeEventConsumer.proportionalCommission` already
+  depends on that recoverability. What no row records is which **moment** it was priced at.
+  An event carrying no act instant falls back to the envelope's `occurredAt` **at WARN** (stamped
   in the same transaction, so it travels with the event and delivery lag cannot move it), and an event
   with neither is **refused** so the container retries. Never a fallback to now — that is the defect
   under a different name, for exactly the events most likely to be delayed. `occurred_at` is not-null,
   so the refusal is unreachable from any booking that has ever run, which is when a closed door is free.
-  A CI check asserts booking still publishes both names and payout still reads them: a rename breaks
-  nothing visible, because payout would fall back, warn, and write an entirely ordinary row with both
-  suites green. **`ledger.earned_on` remains the day the event was CONSUMED** and that is the opposite
+  A CI check asserts booking still `payload.put`s both names and payout still **prices from** them at
+  its `pricedAt` call site, with **comments stripped first**: a rename breaks nothing visible, because
+  payout would fall back, warn, and write an entirely ordinary row with both suites green. Neither half
+  may be a grep for the bare name — the consumer half was one until D53's review, and
+  `BookingEventConsumer`'s own javadoc quotes `bookingCompletedAt`, so renaming only the call site
+  exited 0 on the field that prices every completed booking while `bookingCancelledAt` was caught purely
+  because its javadoc happens not to quote it. **A check whose reach depends on prose is not a check**,
+  and it looked convincing because renaming both fields still exits 1. **`ledger.earned_on` remains the day the event was CONSUMED** and that is the opposite
   answer to a different question, argued in D51 and D53 — a term the customer was shown must not move, a
   reporting period must not be rewritten retrospectively.
 - **One `Booking` aggregate** replaces the prototype's four arrays. `ACCEPTED` was removed as

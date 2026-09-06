@@ -1273,7 +1273,17 @@ have no such field. That is a compatibility decision, not an edit.
 ledger row records no rate, only the amounts computed from one, so a row priced at the wrong rate can
 never be identified afterwards.
 
-**Established rather than cited, which is what the argument above needed.** The live schema was read
+**Established rather than cited, which is what the argument above needed — and the sentence above is
+overstated.** "Can never be identified afterwards" is not true and D53's review disproved it: the rate
+is recoverable from `commission_minor / gross_minor` (one distinct value, `0.120000`, over all 258
+quality rows, with the `HALF_UP` ambiguity bounded by ~0.000033 at `min(gross)` 15000),
+`booking.completed_at` is stored, and `brokerage_config` keeps its effective-dated history, so a
+mispriced row is identifiable by joining the two — and `DisputeEventConsumer.proportionalCommission`
+already depends on that recoverability. **The true claim is that nothing *does* detect it, and payout
+alone cannot.** That is still sufficient motivation, and it leaves the cheap-now argument intact, which
+rests on there having only ever been one rate rather than on irrecoverability.
+
+The live schema was read
 off `hc-market-quality-payout-db`: `ledger` has fourteen columns, no rate, no `brokerage_config`
 reference and **no instant** — `earned_on` is a `date`. Both estates hold exactly **one**
 `BrokerageConfig`, the seeded 0.12/GHS row effective `2020-01-01`, and it has never moved: quality has
@@ -1379,6 +1389,19 @@ old payout that ignores an unknown parameter would otherwise fall through to `In
 NEW-13 rebuilt in the other service. There is also no test of `BrokerageResource` at all today, so the
 package includes writing the first one, and it must pin the parameter *binding* (an `Instant`
 `@RequestParam`) and not only the selection rule.
+
+**And merge the two selectors while you are there — with a better reason than D53 gave.** D53 declined
+to merge `BookingEventConsumer.configInForce` with `BrokerageResource.inForce` on the grounds that
+"they already agree on the rule", which is the weakest argument available: the value of merging is that
+they keep agreeing. There is a concrete defect behind it. **Both do `Stream.max(comparing(effectiveFrom))`
+over an unordered `findAll()`**, so two configs sharing an `effectiveFrom` resolve **non-deterministically**,
+and the two copies can pick different rows *in the same JVM* — a receipt and a ledger row disagreeing
+with no rate change between them. It needs a data error to reach (nothing stops one: see NEW-15, where
+anybody can POST a config), and `max` returning an arbitrary element among equals is a documented
+property rather than a bug to report. Unlike `SubjectPseudonym` and `MarketCalendar` there is nothing
+stopping the merge: both are in payout's **same Maven module**, and `TechnicalStructureTest` permits
+`web → service`, so one selector in `service` is reachable from both. Decide the tie-break explicitly
+while merging — newest `id` wins is the obvious answer and any answer beats an arbitrary one.
 
 ---
 
