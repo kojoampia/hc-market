@@ -3,6 +3,7 @@ package net.jojoaddison.web.rest;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
+import net.jojoaddison.service.MarketCalendar;
 import net.jojoaddison.service.MarketplaceService;
 import net.jojoaddison.service.MarketplaceService.BrowseFilter;
 import net.jojoaddison.service.dto.marketplace.MarketplaceDtos.AvailabilityDay;
@@ -41,9 +42,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class MarketplaceResource {
 
     private final MarketplaceService marketplace;
+    private final MarketCalendar calendar;
 
-    public MarketplaceResource(MarketplaceService marketplace) {
+    public MarketplaceResource(MarketplaceService marketplace, MarketCalendar calendar) {
         this.marketplace = marketplace;
+        this.calendar = calendar;
     }
 
     /** Discover — the four category tiles, with a live count and the specialities in use. */
@@ -119,6 +122,12 @@ public class MarketplaceResource {
     /**
      * Profile and booking wizard step 2. Defaults to the prototype's ten-day strip when no window
      * is given.
+     *
+     * <p>"No window given" means <em>from today</em>, and today is the marketplace's — D52. A
+     * rendered default is wrong for one request rather than for ever, which is why this ranks below
+     * {@code ReviewWriteResource}; it is still worth naming, because the strip a customer books
+     * from would otherwise start on whatever day the container thinks it is, and the first day of a
+     * ten-day strip is the one most likely to be clicked.
      */
     @GetMapping("/api/professionals/{ref}/availability")
     public ResponseEntity<List<AvailabilityDay>> availability(
@@ -129,7 +138,7 @@ public class MarketplaceResource {
         if (!marketplace.exists(ref)) {
             return ResponseEntity.notFound().build();
         }
-        LocalDate start = from == null ? LocalDate.now() : from;
+        LocalDate start = from == null ? calendar.today() : from;
         LocalDate end = to == null ? start.plusDays(10) : to;
         return ResponseEntity.ok(marketplace.availability(ref, start, end));
     }

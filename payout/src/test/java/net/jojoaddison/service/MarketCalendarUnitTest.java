@@ -13,10 +13,10 @@ import org.junit.jupiter.api.Test;
 /**
  * The calendar every runtime date is read in — {@code decisions.md} D51.
  *
- * <p>Copied byte-identically into payout and booking beside {@link MarketCalendar} itself, and
- * diffed by CI, because what these tests pin is that <strong>the two services agree</strong>. A
- * known answer asserted in one proves nothing about the other; asserted identically in both, it is
- * the same cross-service contract {@code SeedCalendarUnitTest} is for the seed.
+ * <p>Copied byte-identically into payout, booking and catalog beside {@link MarketCalendar} itself,
+ * and diffed by CI, because what these tests pin is that <strong>the three services agree</strong>.
+ * A known answer asserted in one proves nothing about the others; asserted identically in all of
+ * them, it is the same cross-service contract {@code SeedCalendarUnitTest} is for the seed.
  *
  * <p>Every test here supplies its own {@link Clock}. Without one there is no way to stand at Accra's
  * midnight, and a fix to a date defect that can only be tested by being run at the right hour is not

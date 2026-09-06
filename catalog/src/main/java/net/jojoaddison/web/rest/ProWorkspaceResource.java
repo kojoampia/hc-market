@@ -32,6 +32,7 @@ import net.jojoaddison.repository.MarketplaceQueryRepository;
 import net.jojoaddison.repository.ReviewRepository;
 import net.jojoaddison.repository.ServiceOfferingRepository;
 import net.jojoaddison.security.SecurityUtils;
+import net.jojoaddison.service.MarketCalendar;
 import net.jojoaddison.service.MarketplaceService;
 import net.jojoaddison.service.dto.marketplace.ProDtos.*;
 import org.springframework.http.HttpStatus;
@@ -64,6 +65,7 @@ public class ProWorkspaceResource {
     private final HighlightRepository highlights;
     private final MarketplaceService marketplaceService;
     private final AvailabilityPlanner planner;
+    private final MarketCalendar calendar;
 
     public ProWorkspaceResource(
         MarketplaceQueryRepository marketplace,
@@ -73,7 +75,8 @@ public class ProWorkspaceResource {
         CredentialRepository credentials,
         HighlightRepository highlights,
         MarketplaceService marketplaceService,
-        AvailabilityPlanner planner
+        AvailabilityPlanner planner,
+        MarketCalendar calendar
     ) {
         this.marketplace = marketplace;
         this.services = services;
@@ -83,6 +86,7 @@ public class ProWorkspaceResource {
         this.highlights = highlights;
         this.marketplaceService = marketplaceService;
         this.planner = planner;
+        this.calendar = calendar;
     }
 
     // ------------------------------------------------------------------- services --
@@ -222,10 +226,34 @@ public class ProWorkspaceResource {
 
     // --------------------------------------------------------------- availability --
 
+    /**
+     * Defaults to the marketplace's today when no window is given — D52.
+     *
+     * <h2>The reader's day, deliberately, and not the professional's own</h2>
+     *
+     * <p>Recorded because the obvious reason is the wrong one here. {@code MarketCalendar}'s javadoc
+     * argues Accra partly from payout having no professional zone to read — {@code Ledger} carries
+     * none, and fetching one per write would put a round trip inside a ledger row. <strong>That
+     * premise is false in catalog</strong>: {@code Professional.zoneId} exists and {@code meOrThrow()}
+     * already holds it, so using it here was available and declining to is a choice rather than a
+     * constraint (D52 review).
+     *
+     * <p>The choice is that this default decides only where a rendered window <em>starts</em> — a
+     * question about the page being looked at, not about when a session happens. The times inside
+     * the window are already the professional's wall clock, which is what D21 hands their zone. And
+     * a professional's zone in a *window start* is the same question spec §13 #8 leaves open for
+     * {@code BookingWorkflow.scheduledAt}; D51 declined to settle that by find-and-replace and so
+     * does this.
+     *
+     * <p>Consequence today: none — every professional in every estate is {@code Africa/Accra} and the
+     * column defaults to it. Consequence when that stops being true: a professional carrying another
+     * zone opens their calendar on Accra's day rather than their own. Carried as <strong>NEW-14</strong>,
+     * blocked on §13 #8 rather than decided here.
+     */
     @GetMapping("/availability")
     @Transactional(readOnly = true)
     public List<WorkingDay> availability(@RequestParam(required = false) LocalDate from) {
-        LocalDate start = from == null ? LocalDate.now() : from;
+        LocalDate start = from == null ? calendar.today() : from;
         Map<LocalDate, List<Slot>> byDay = new LinkedHashMap<>();
         for (AvailabilitySlot s : marketplace.findOwnedSlots(me(), start)) {
             byDay.computeIfAbsent(s.getSlotDate(), d -> new ArrayList<>()).add(new Slot(SlotTime.format(s.getSlotTime()), Boolean.TRUE.equals(s.getTaken())));
@@ -330,11 +358,36 @@ public class ProWorkspaceResource {
      * <p>Explicit rather than scheduled: there is no scheduler in this estate, and inventing one
      * here would be a second thing to operate. A professional generating their own calendar also
      * gets to see what changed, which {@link GeneratedView} reports.
+     *
+     * <p><strong>The one default here that reaches the database</strong> — D52, corrected by its
+     * review. The other two defaulted "today"s in catalog bound a read; this one is the first day of
+     * a window {@code generate} materialises into {@code availability_slot} rows.
+     *
+     * <p><strong>And generation is additive, so the two directions are not equal.</strong> The
+     * deletion loop above runs only when an override exists, so on an ordinary rules day this adds
+     * and never removes. A start day one <em>late</em> — east of Accra, late in the evening — never
+     * visits today, so today's slots are never written and the professional reads as closed on a day
+     * they were open; re-running with the right day adds them, and that direction self-corrects. A
+     * start day one <em>early</em> — west of Accra, early in the morning — writes slots for the day
+     * before the intended window, and a corrective run starting on the right day never visits that
+     * day and so never deletes them. Those rows survive every later generation. The harm is not
+     * "bookable on a day they did not open": the extra day's slots come from that weekday's own
+     * rules. It is <em>closed today</em> one way and <em>stale rows nothing will remove</em> the other.
+     *
+     * <p>It still ranks below {@code Review.publishedOn}, and idempotence is not why — generation is
+     * idempotent, but that is a different statement from the one carrying the weight. The reasons
+     * are that nothing here writes without an explicit {@code POST}, that the window is re-derivable
+     * from the rules, and that the residue is untaken slots on a past date. Both estates are
+     * verifiably still at the seeded 1608, so this path has never written a row at all.
+     *
+     * <p>The zone this default is read in is the reader's and not the professional's, deliberately —
+     * the argument is on {@link #availability(LocalDate)} above, and it applies with more force here
+     * because this one writes.
      */
     @PostMapping("/availability/generate")
     public GeneratedView generate(@RequestParam(required = false) Integer weeks, @RequestParam(required = false) LocalDate from) {
         Professional owner = meOrThrow();
-        LocalDate start = from == null ? LocalDate.now() : from;
+        LocalDate start = from == null ? calendar.today() : from;
         int horizon = weeks == null ? planner.defaultHorizonWeeks() : weeks;
         if (horizon < 1 || horizon > 52) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "weeks must be between 1 and 52");

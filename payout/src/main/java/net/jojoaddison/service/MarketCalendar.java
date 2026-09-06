@@ -20,6 +20,13 @@ import org.springframework.stereotype.Component;
  *       completed booking, a late-cancellation fee and a dispute reversal. And the "today" the
  *       month-to-date slice is measured from, on both the earnings and the overview endpoints.
  *   <li><strong>booking</strong> — the default first day of the professional's schedule window.
+ *   <li><strong>catalog</strong> — {@code review.published_on} when a customer publishes a review,
+ *       and the default first day of three availability windows: the public strip on a profile, the
+ *       professional's own calendar, and the day slot generation runs from (D52). <strong>Two of
+ *       those four write and two render.</strong> The generation default is not a rendered window:
+ *       it materialises {@code availability_slot} rows, and {@code slot_date} is stored and public
+ *       exactly as {@code published_on} is — it is the strip a customer books from. Corrected by
+ *       D52's review, which found this bullet calling three of them rendered.
  * </ul>
  *
  * <h2>Africa/Accra, and why it is not the professional's zone</h2>
@@ -28,6 +35,14 @@ import org.springframework.stereotype.Component;
  * {@code MarketplaceService.BADGE_ZONE} makes for a verification date and the seeders' {@code
  * SeedCalendar.SEED_ZONE} makes for the shift — three constants, three different questions, one
  * answer, and they are deliberately not one shared thing (D51).
+ *
+ * <p>Since D52 catalog holds all three of them, and only one pair of the three is checked against
+ * itself. {@code SEED_ZONE} and {@code MARKET_ZONE} date the <strong>same column</strong> from two
+ * writers — {@code ledger.earned_on} in payout, {@code review.published_on} in catalog — so they
+ * disagreeing is a defect by construction and {@code SeedAndMarketCalendarsAgreeUnitTest} asserts
+ * they do not. {@code BADGE_ZONE} shares a column with neither: it renders a date from an
+ * {@code Instant} and stores nothing. It could move without anything here being wrong, so pinning
+ * it to this constant would assert a coincidence rather than a contract.
  *
  * <p>D21 gives a <em>professional's</em> zone the wall clock of an <strong>appointment</strong>,
  * because that is where the service is delivered. An earning is not delivered anywhere: it is the
@@ -38,6 +53,13 @@ import org.springframework.stereotype.Component;
  * a rendered "today" must be read in the <strong>same calendar as the column it slices</strong>, or
  * a month-to-date total is bounded in one calendar over rows dated in another, which is the
  * seeder-versus-consumer disagreement this class exists to end, rebuilt on the read side.
+ *
+ * <p><strong>The first of those two reasons is payout's alone, and does not travel with this file</strong>
+ * (D52 review). Catalog <em>does</em> have a professional zone to read — {@code Professional.zoneId}
+ * exists and its resources hold the owner — so there the choice is a decision rather than a
+ * constraint, and it is argued where it is made: on {@code ProWorkspaceResource.availability}, with
+ * the open question it defers to named. Do not read this paragraph as having settled it for every
+ * service that copies the file.
  *
  * <p>What that means near midnight, stated rather than discovered: a session completed at 23:30 UTC
  * is earned on that day and not the next, wherever the container is started; and on a month's last
@@ -64,9 +86,9 @@ import org.springframework.stereotype.Component;
  * <h2>Copied, and diffed</h2>
  *
  * <p>There is no shared library here — five standalone Maven projects with no aggregator pom — so
- * this file and its test are <strong>copied byte-identically into payout and booking</strong>, and
- * CI diffs the copies, exactly as {@code SubjectPseudonym} (D35) and {@code SeedCalendar} (D48) are.
- * Edit one and you must edit the other, comments included. CI also asserts that this file and
+ * this file and its test are <strong>copied byte-identically into payout, booking and catalog</strong>,
+ * and CI diffs the copies, exactly as {@code SubjectPseudonym} (D35) and {@code SeedCalendar} (D48)
+ * are. Edit one and you must edit all of them, comments included. CI also asserts that this file and
  * {@code SeedCalendar} in the same service name the <em>same</em> zone, because a service whose seed
  * and whose runtime disagree about the calendar is NEW-10 itself and neither diff would see it.
  */

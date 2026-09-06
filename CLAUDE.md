@@ -654,12 +654,17 @@ time.**
     How far every seeded date moves, and in whose calendar. Diverge and two services' seeded data stop
     lining up, with no count moving and nothing going red.
   - `MarketCalendar.java` + `MarketCalendarUnitTest.java` + `SeedAndMarketCalendarsAgreeUnitTest.java`
-    — **payout, booking** (D51). What day it is at *run* time: `ledger.earned_on` on all three paths
-    that write it, the "today" the month-to-date slice is bounded by, and the schedule window's first
-    day. The third file is not merely a third copy — **both diffs stay green while `SEED_ZONE` says
-    one thing and `MARKET_ZONE` says another**, which is a service whose seeded rows and whose live
-    rows are dated in two calendars, and only a test comparing the two constants in one build can see
-    it. A fourth copy goes into catalog the day NEW-12 closes.
+    — **payout, booking, catalog** (D51, fourth copy added by D52). What day it is at *run* time:
+    `ledger.earned_on` on all three paths that write it, the "today" the month-to-date slice is
+    bounded by, the schedule window's first day, and catalog's `review.published_on` plus its three
+    defaulted availability windows. The third file is not merely a third copy — **both diffs stay
+    green while `SEED_ZONE` says one thing and `MARKET_ZONE` says another**, which is a service whose
+    seeded rows and whose live rows are dated in two calendars, and only a test comparing the two
+    constants in one build can see it. It matters most in the **two services where the two families
+    write the same column**: `ledger.earned_on` in payout, `review.published_on` in catalog. CI diffs
+    every copy against **payout's**, which is the reference, rather than pairwise — and it **derives**
+    which services hold a copy rather than listing them, so a fourth copy is checked the moment it
+    exists and an unchecked one cannot be created by copying the file somewhere new.
 - **The scripts and the spec appendices are the same bytes in two places.** Appendix A is
   `deploy/deploy-dev.sh`, Appendix B is `deploy/deploy-prod.sh`. This is enforced mechanically —
   after editing either script, re-embed; before trusting the spec, check:
@@ -721,33 +726,54 @@ time.**
   There is also nowhere to put it — five standalone Maven projects, no aggregator pom, so "shared"
   means a copied file either way. `MarketCalendar` is the pattern for a runtime date; `BADGE_ZONE` for
   a rendered one that is nobody else's business.
-  **The estate-wide inventory is now four, all in catalog.** D47's original inventory was catalog-only
-  and read as estate-wide; it never was. **NEW-9 / D48 closed the four seeders** with `SeedCalendar`,
+  **Since D52 catalog holds all three, and only ONE pair is checked against itself.** The
+  discriminator is whether the two constants date the **same column**, not whether they happen to be
+  equal. `SEED_ZONE` and `MARKET_ZONE` do — `ledger.earned_on` and `review.published_on` each have
+  one writer per family — so their disagreeing is a defect by construction and
+  `SeedAndMarketCalendarsAgreeUnitTest` asserts it cannot happen. `BADGE_ZONE` shares a column with
+  nothing: it renders a `LocalDate` from an `Instant` and there is no `verified_on` column at all. It
+  could move if the verification desk did, with nothing else wrong, so a test pinning it to
+  `MARKET_ZONE` would assert a coincidence and go red on a correct change. Do not add one; D47's
+  spelling test is what keeps it honest.
+  **The estate-wide inventory is now EMPTY, and the check covers every service.** D47's original
+  inventory was catalog-only and read as estate-wide; it never was. **NEW-9 / D48 closed the four
+  seeders** with `SeedCalendar`,
   copied byte-identically with CI diffing the copies plus a grep that nothing in a `service.seed`
   package reads a clock or the JVM's zone — the whole package, `SeedCalendar` excepted, because
   `SeedDataLoader` is in it too. **NEW-10 / D51 closed the six outside it**: payout's three writes to
   `ledger.earned_on` (`BookingEventConsumer:143`, `:246`, `DisputeEventConsumer:142` — one table
   written in Accra's calendar by the seeder and the JVM's by the consumer), payout's two rendered
   "today"s and booking's `ProBookingResource:111`. Its CI check is D48's grep widened from a package to
-  the **whole** `src/main` trees of payout, booking, messaging and gateway, and it bans the
+  the **whole** `src/main` trees of every service, and it bans the
   **database-side** clock too (`current_date`, `now()::date` in a `@Query` is read in PostgreSQL's
   session `TimeZone`, which JDBC sets from the JVM default — the same defect, invisible to a Java
   grep). Messaging and gateway were clean already; adding a clean service is free and **not scanning
   one is how catalog's four got in.**
-  **It deliberately does not scan catalog**, whose four are open as **NEW-12** —
-  `ReviewWriteResource:115` (which stores `Review.publishedOn`, so correcting it is a data question),
-  `MarketplaceResource:132` and `ProWorkspaceResource` twice. Exempting three files would give a check
-  that claims to cover the service while being blind in exactly the files most likely to acquire the
-  next one; it is widened the day NEW-12 closes.
-  **D51's data answer was "nothing to correct", and it is not transferable.** No stored `earned_on`
-  was ever written outside Accra's calendar — production has never been deployed, no compose file sets
-  `TZ` on any service, every image's own zone is `Etc/UTC` (measured), and **both** estates holding
-  rows were read: quality has 256 seeded rows plus one consumer-written row dated correctly, and dev
-  has 256 seeded rows and an empty `processed_event`, so nothing there was consumer-written at all.
-  That holds *because* nothing is deployed and nothing sets `TZ`; the day either changes it stops
-  holding, and `ledger` carries no instant beside the date, so a row written in the wrong calendar can
-  never be told from a right one afterwards. NEW-12 must re-establish the same four facts for
-  `Review.publishedOn` rather than cite this one.
+  **NEW-12 / D52 closed catalog's four and the check now scans all five services** —
+  `ReviewWriteResource:115` (which *stored* `review.published_on`), `MarketplaceResource:132` and
+  `ProWorkspaceResource` twice. **No file anywhere carries a per-file exemption**; only the two
+  calendars are skipped, in every service. Keep it that way — the moment one file is excused, the
+  check stops reading as "the estate does not do this" and becomes "except where it does".
+  **The scan's exemption is only sound because the copy diff DERIVES its service list** (D52 §review,
+  the sixth fail-open in this family). The scan skips `*/MarketCalendar.java` in every service, while
+  the diff used to compare a hard-coded `booking catalog` — so a `MarketCalendar.java` dropped into
+  messaging or gateway was exempt from one and invisible to the other, and a copy saying
+  `MARKET_ZONE = UTC` with `today()` returning `LocalDate.now()` **passed both**, verified. That is
+  not a hypothetical: copying the file there is the documented move the day either service needs a
+  runtime date. The diff now finds every `service/MarketCalendar.java` with `find`, requires payout as
+  the reference, and refuses a family of one — so **never re-enumerate that list**, and never add a
+  service to the scan's exemption without the diff being able to discover it.
+  **A data answer of this kind is never transferable, and D52 is the proof.** D51 re-established
+  its four facts and got "nothing was written by the defect"; D52 re-established the same four for
+  `review.published_on` and got something else. The premises held — production never deployed, no
+  `TZ` in any of the four compose files or any running container, both catalog images measured
+  through the JVM at `ZoneId.systemDefault() = Etc/UTC` — but the quality box holds **two** reviews
+  written by the defective line (one per `verify-cycle.sh` run), both dated **correctly**, because
+  UTC *is* Accra. **"Written by the defect and still right" is not "nothing was written by the
+  defect".** Dev holds 63 seeded reviews and none written by the resource. Nothing needed
+  correcting — and `review` carries no instant beside the date, exactly as `ledger` does not, so a
+  wrong row could never have been identified afterwards. All of it holds only while nothing is
+  deployed and nothing sets `TZ`.
   **Three sites are deliberately NOT on `MARKET_ZONE` and each says so in place**:
   `BookingWorkflow.scheduledAt` and `CustomerBookingResource.cancellationPreview` convert an
   *appointment's* wall clock and ignore `Booking.zoneId`, which is D21's question and spec §13 #8, still
