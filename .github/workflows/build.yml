@@ -778,6 +778,13 @@ jobs:
               continue
             fi
             scanned=0
+            # Per-service, because the summary below must not contradict an error above it. `fail` is
+            # the job's exit status and says nothing about WHICH service was dirty, so gating the `ok`
+            # line on it would print "ok payout — none reads an implicit zone" directly beneath
+            # payout's own violation. That is this check's own subject matter — a report asserting a
+            # property the run does not have — and it is fail-CLOSED (the job still exits 1), which is
+            # exactly the kind that survives review by being technically harmless.
+            svc_fail=0
             while IFS= read -r f; do
               # A `while read` over an empty find is one EMPTY line, not none — grep would then be
               # handed "" , error, and the pipeline's exit status would come from the filter and read
@@ -802,13 +809,19 @@ jobs:
                 done
                 echo "::error file=$f::this reads a date in whatever calendar the container was started in — use MarketCalendar, or an Instant if it is a moment rather than a day. See decisions.md D51."
                 fail=1
+                svc_fail=1
               fi
+              # A here-string is NOT a subshell, so `scanned` and `svc_fail` both survive the loop.
+              # Piping find into `while` instead would lose both, silently: `scanned` would read 0 and
+              # every service would report itself blind.
             done <<< "$(find "$dir" -name '*.java' -type f | sort)"
             if [ "$scanned" -eq 0 ]; then
               echo "::error::$dir matched no scannable file — this check is now blind. See decisions.md D51."
               fail=1
-            else
+            elif [ "$svc_fail" -eq 0 ]; then
               echo "ok   $svc — $scanned files scanned, none reads an implicit zone"
+            else
+              echo "FAIL $svc — $scanned files scanned, see the errors above"
             fi
           done
           exit "$fail"
