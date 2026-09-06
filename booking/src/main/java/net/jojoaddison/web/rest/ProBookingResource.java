@@ -12,6 +12,7 @@ import net.jojoaddison.security.SecurityUtils;
 import net.jojoaddison.service.BookingMapper;
 import net.jojoaddison.service.BookingWorkflow;
 import net.jojoaddison.service.BookingTransition;
+import net.jojoaddison.service.MarketCalendar;
 import net.jojoaddison.service.dto.BookingDtos.BookingView;
 import net.jojoaddison.service.dto.BookingDtos.DeclineRequest;
 import net.jojoaddison.service.dto.BookingDtos.ProposeRequest;
@@ -37,6 +38,15 @@ import org.springframework.web.server.ResponseStatusException;
  * catalog service — which would make the requests inbox fail whenever catalog is down. Instead the
  * mapping is carried on the booking itself: {@code professionalLogin} is written at seed and create
  * time, exactly as {@code Ledger.professionalLogin} is (decisions.md D12).
+ *
+ * <h2>The first day of the schedule window</h2>
+ *
+ * <p>{@link MarketCalendar}, not {@code LocalDate.now()} — decisions.md D51. This is a rendered
+ * default rather than a stored date, so it is wrong for one request rather than for ever, but the
+ * calendar is the same one and the reason it is not D21's per-professional zone is worth stating: a
+ * <em>window</em> is one boundary over a list of bookings that each carry their own {@code zoneId},
+ * so it cannot be read in all of theirs, and D21 gives a professional's zone the wall clock of an
+ * appointment rather than the edges of a list.
  */
 @RestController
 @RequestMapping("/api/pro")
@@ -45,11 +55,18 @@ public class ProBookingResource {
     private final BookingWorkflow bookings;
     private final BookingQueryRepository repository;
     private final BookingMapper mapper;
+    private final MarketCalendar calendar;
 
-    public ProBookingResource(BookingWorkflow bookings, BookingQueryRepository repository, BookingMapper mapper) {
+    public ProBookingResource(
+        BookingWorkflow bookings,
+        BookingQueryRepository repository,
+        BookingMapper mapper,
+        MarketCalendar calendar
+    ) {
         this.bookings = bookings;
         this.repository = repository;
         this.mapper = mapper;
+        this.calendar = calendar;
     }
 
     /** The requests inbox — everything still waiting on this professional. */
@@ -108,7 +125,7 @@ public class ProBookingResource {
         @RequestParam(required = false) String mode,
         @RequestParam(required = false) String q
     ) {
-        LocalDate start = from == null ? LocalDate.now() : from;
+        LocalDate start = from == null ? calendar.today() : from;
         LocalDate end = to == null ? start.plusDays(14) : to;
 
         List<Booking> confirmed = repository

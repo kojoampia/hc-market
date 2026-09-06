@@ -3,7 +3,6 @@ package net.jojoaddison.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
-import java.time.LocalDate;
 import net.jojoaddison.domain.Ledger;
 import net.jojoaddison.domain.ProcessedEvent;
 import net.jojoaddison.repository.LedgerRepository;
@@ -42,6 +41,14 @@ import org.springframework.transaction.annotation.Transactional;
  * {@code domain}, so a {@code @KafkaListener} in {@code broker} could touch neither the entities nor
  * a service that does. Reacting to a domain event <em>is</em> application logic. Putting one in
  * {@code broker} previously cost 51 violations.
+ *
+ * <h2>Which day "today" is</h2>
+ *
+ * <p>{@link MarketCalendar}, injected — decisions.md D51. A reversal is dated the day it happens
+ * rather than the day the original was earned, and that decision was already taken and argued at the
+ * line below; what it never said was <em>whose</em> day. It is the marketplace's, so a reversal
+ * recorded at 23:30 UTC cannot be filed on tomorrow's date and reopen the reported month it was
+ * deliberately kept out of.
  */
 @Service
 public class DisputeEventConsumer {
@@ -52,17 +59,20 @@ public class DisputeEventConsumer {
     private final ReversalRepository ledgerQueries;
     private final ProcessedEventRepository processed;
     private final ObjectMapper mapper;
+    private final MarketCalendar calendar;
 
     public DisputeEventConsumer(
         LedgerRepository ledger,
         ReversalRepository ledgerQueries,
         ProcessedEventRepository processed,
-        ObjectMapper mapper
+        ObjectMapper mapper,
+        MarketCalendar calendar
     ) {
         this.ledger = ledger;
         this.ledgerQueries = ledgerQueries;
         this.processed = processed;
         this.mapper = mapper;
+        this.calendar = calendar;
     }
 
     @KafkaListener(
@@ -139,7 +149,12 @@ public class DisputeEventConsumer {
                 .serviceName("Dispute reversal — " + original.getServiceName())
                 // Dated today, not backdated to the original. The reversal is a thing that happened
                 // now; backdating it would silently rewrite a month that has already been reported.
-                .earnedOn(LocalDate.now())
+                // "Today" is the MARKETPLACE'S day (decisions.md D51). This line took the decision
+                // about which day and left the calendar it was taken in unstated, which is the whole
+                // of NEW-10 in one place: read in the JVM's zone, a reversal recorded at 23:30 UTC
+                // lands on tomorrow, and on a month's last day it rewrites exactly the reported
+                // month the sentence above exists to protect.
+                .earnedOn(calendar.today())
         );
         LOG.info("dispute {} reversed {} of booking {} (commission {})", disputeRef, grossToReverse, bookingRef, commissionToReverse);
     }

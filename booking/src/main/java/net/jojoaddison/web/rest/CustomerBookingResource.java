@@ -19,6 +19,7 @@ import net.jojoaddison.repository.BookingHistoryRepository;
 import net.jojoaddison.security.SecurityUtils;
 import net.jojoaddison.service.BookingMapper;
 import net.jojoaddison.service.BookingWorkflow;
+import net.jojoaddison.service.MarketCalendar;
 import net.jojoaddison.service.payment.BookingPayments;
 import net.jojoaddison.service.payment.PaymentChoiceRefused;
 import net.jojoaddison.service.payment.PaymentProviders;
@@ -223,6 +224,14 @@ public class CustomerBookingResource {
             );
         }
         Instant now = Instant.now();
+        // DELIBERATELY NOT MarketCalendar.MARKET_ZONE, and not a NEW-10 site — decisions.md D51.
+        // This converts an APPOINTMENT's wall clock to an instant, which is D21's territory, not the
+        // brokerage's calendar: the booking carries its own zoneId and this line ignores it. Spec §13
+        // open question #8 is still open on exactly that, and D21's answer may not be Accra — a
+        // professional working from another country would want their own zone here and the ledger's
+        // day would still be the marketplace's. Sweeping this in with the receipt above would settle
+        // an open question by find-and-replace. BookingWorkflow.scheduledAt has the identical line
+        // and the identical reason.
         Instant scheduled = booking.getScheduledDate().atTime(booking.getScheduledTime()).toInstant(ZoneOffset.UTC);
         long hours = Duration.between(now, scheduled).toHours();
         return new CancellationPreview(
@@ -268,12 +277,21 @@ public class CustomerBookingResource {
      *
      * <p>The split is struck at the date the session happened, not today: a receipt reprinted after
      * the brokerage changes its terms must still say what the customer was told at the time.
+     *
+     * <p><strong>And the date is read in the marketplace's calendar</strong> — {@code decisions.md}
+     * D51. {@code completedAt} is an {@code Instant} and the endpoint at the other end takes a
+     * {@code LocalDate}, so this is one half of a round trip: payout's
+     * {@code BrokerageResource.split} decodes it with {@code MarketCalendar.MARKET_ZONE}. This
+     * encoded it with {@code ZoneOffset.UTC}, and the two agreed only because the constant happens to
+     * be UTC+0 — two ends independently landing on the same offset rather than one calendar named
+     * once. Neither end was the NEW-10 defect (both zones were named), and no test can go red on the
+     * change; it makes the round trip self-consistent by construction.
      */
     @GetMapping("/{ref}/receipt")
     public Receipt receipt(@PathVariable String ref, @RequestHeader(HttpHeaders.AUTHORIZATION) String authorization) {
         Booking b = mineOr404(ref);
         LocalDate struckAt = b.getCompletedAt() != null
-            ? LocalDate.ofInstant(b.getCompletedAt(), java.time.ZoneOffset.UTC)
+            ? LocalDate.ofInstant(b.getCompletedAt(), MarketCalendar.MARKET_ZONE)
             : b.getScheduledDate();
         long price = b.getPriceMinor() == null ? 0L : b.getPriceMinor();
 
