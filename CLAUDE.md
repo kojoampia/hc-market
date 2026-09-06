@@ -548,6 +548,15 @@ such thing exists here". Widen those four
 predicates in any of the three compose files and the endpoint is public. Nothing is lost by the
 narrowing: every consumer in the repository already goes through `/api/**`.
 
+**The route being narrow is not the same as the endpoint being guarded, and `/api/brokerage-configs`
+is the open case** — backlog **NEW-14**, found by D53 and not fixed there. payout says
+`.requestMatchers("/api/**").authenticated()` and nothing narrows it, so JHipster's generated
+`BrokerageConfigResource` CRUD is routed *and* reachable by any token the estate accepts: **verified
+200 with a plain `ROLE_USER` token through the quality gateway**. The read is arguably public — the
+prototype prints "12% platform fee" — but POST/PUT/PATCH/DELETE sit on the same rule, so a customer can
+backdate a commission rate. Do not "tidy it up" by widening anything; the two shapes for the fix and
+the reason to choose deliberately are in the backlog.
+
 **Consul registers; it does not route.** `discovery.locator.enabled` is `false` in every
 environment, with static routes beneath it — a shared catalogue holding four products must never be
 able to mint a route into somebody else's running estate. Registration is only safe with
@@ -579,6 +588,24 @@ keeps the estate uniformly Boot 4 — and matches all three sibling products. Se
   reaching an adapter, and the booking is created in `REQUESTED` with `booking.requested` published
   and no `payment_attempt` row. Not `PENDING_PAYMENT` — nothing would ever confirm a payment that was
   never started, and that state has no expiry sweep.
+- **The rate is struck when the BOOKING happened, and the moment travels on the event** (D53). Payout
+  prices a ledger row against the `BrokerageConfig` in force at `bookingCompletedAt`, and a late fee at
+  `bookingCancelledAt` — two fields booking's `OutboxRecorder` puts on the payload, named like
+  `bookingRaisedAt` beside them so neither can be read as the envelope's `occurredAt`. **Nothing on
+  that path reads a clock**, which is what makes the price a function of the event alone and therefore
+  stable under a replay. It was `Instant.now()` until D53: identical while delivery is prompt, and after
+  any outage or paused consumer that straddled a rate change, a booking priced at terms the customer was
+  never shown — undetectably, because `ledger` records the amounts computed from a rate and never the
+  rate. An event carrying no act instant falls back to the envelope's `occurredAt` **at WARN** (stamped
+  in the same transaction, so it travels with the event and delivery lag cannot move it), and an event
+  with neither is **refused** so the container retries. Never a fallback to now — that is the defect
+  under a different name, for exactly the events most likely to be delayed. `occurred_at` is not-null,
+  so the refusal is unreachable from any booking that has ever run, which is when a closed door is free.
+  A CI check asserts booking still publishes both names and payout still reads them: a rename breaks
+  nothing visible, because payout would fall back, warn, and write an entirely ordinary row with both
+  suites green. **`ledger.earned_on` remains the day the event was CONSUMED** and that is the opposite
+  answer to a different question, argued in D51 and D53 — a term the customer was shown must not move, a
+  reporting period must not be rewritten retrospectively.
 - **One `Booking` aggregate** replaces the prototype's four arrays. `ACCEPTED` was removed as
   unreachable; accepting goes straight to `CONFIRMED`. The topic is still `booking.accepted` — it
   names the act, not the state.
@@ -774,12 +801,13 @@ time.**
   correcting — and `review` carries no instant beside the date, exactly as `ledger` does not, so a
   wrong row could never have been identified afterwards. All of it holds only while nothing is
   deployed and nothing sets `TZ`.
-  **Three sites are deliberately NOT on `MARKET_ZONE` and each says so in place**:
+  **Two sites are deliberately NOT on `MARKET_ZONE` and each says so in place**:
   `BookingWorkflow.scheduledAt` and `CustomerBookingResource.cancellationPreview` convert an
   *appointment's* wall clock and ignore `Booking.zoneId`, which is D21's question and spec §13 #8, still
   open — and D21's answer may not be Accra. Sweeping them in would settle an open question by
-  find-and-replace. The third is `BookingEventConsumer.configInForce`'s `Instant.now()`, which is
-  correct as an instant; what is wrong there is *which moment*, and that is **NEW-13**.
+  find-and-replace. There was a third until D53 — `BookingEventConsumer.configInForce`'s
+  `Instant.now()`, correct as an instant and wrong as a *moment* — and it is gone rather than moved:
+  that path reads no clock at all now (NEW-13, below).
   D48 closes the zone half only, deliberately: the four services still evaluate the shift
   independently, seconds apart on one `compose up` (**measured: 7.1s**), so a boot straddling Accra
   midnight can still split them. That residual is dev-only (quality anchors, production never seeds)

@@ -48,8 +48,10 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **WP-19** | Production deployment configuration, to sibling parity | PARTLY DONE | D49 — `deploy/prod-server/` built, five defects in the deploy path fixed, then reviewed 2026-09-05 and eight more applied, one of them blocking (a failing smoke test triggered an automatic rollback). **Nothing has ever been run against a host**; the fifteen things a person must still do are in that directory's README |
 | **NEW-11** | A second payment attempt for one booking would reuse Paystack's reference | WON'T, until there is a second attempt | D50 — no such path exists; the day one is added the suffix goes in with it. Opened by the D50 review |
 | **NEW-12** | Catalog's four implicit-zone reads, one of which stores a date | DONE | D52 — all four closed, `MarketCalendar`'s fourth copy, and the CI check now scans **every** service with no per-file exemption anywhere. The estate has no implicit-zone read left. The data question is **re-established, not cited, and its answer differs from D51's**: the quality box holds **two** rows written by the defective line, both dated correctly because the container's zone is `Etc/UTC` — "written by the defect and right", not "nothing was written". No migration |
-| **NEW-13** | The brokerage rate is struck when the event is consumed, not when the booking completed | READY | D51 §review — `BookingEventConsumer.configInForce` says `Instant.now()`; the class javadoc says "when it completed". Not a one-liner: `completedAt` is not on the wire. Opened by the D51 review |
+| **NEW-13** | The brokerage rate is struck when the event is consumed, not when the booking completed | DONE | D53 — the act's instant is on the wire (`bookingCompletedAt`, `bookingCancelledAt`) and nothing on the pricing path reads a clock. An event without one falls back to the envelope's `occurredAt` **at WARN**, never to now; with neither it is refused. Ten tests, all watched red first; one CI check, watched firing three ways |
 | **NEW-14** | A professional's own calendar opens on Accra's day, not theirs | BLOCKED on spec §13 #8 | D52 §review — the two `/api/pro/**` window defaults read `MarketCalendar`. Nil consequence while every `professional.zone_id` is `Africa/Accra`; deciding it the other way settles D21's open question by find-and-replace, which D51 refused for the neighbouring sites. Opened by the D52 review |
+| **NEW-15** | Any authenticated user can change the brokerage's commission rate | READY | D53 — the generated `BrokerageConfigResource` is live on `/api/brokerage-configs` behind payout's blanket `authenticated()`, and the gateway routes it. GET verified 200 with a `ROLE_USER` token against the quality box; the writes sit on the same rule and were deliberately not exercised. Found while establishing that `effectiveFrom` had never moved |
+| **NEW-16** | The receipt strikes its split to the day and the ledger to the instant | READY | D53 — narrowed from unbounded to sub-day by NEW-13 and not closed. `BrokerageResource.split` takes a `LocalDate`; a rate taking effect at noon prices a 14:00 completion two ways. Closing it is a cross-service API change with a compatibility question of its own |
 
 ---
 
@@ -1081,8 +1083,8 @@ line **starting** with a block comment hid the code behind it.
 
 **Not closed:** catalog's four, which are **NEW-12**, and which is why the new check does not scan
 catalog. `BookingEventConsumer.configInForce` prices at consumption rather than completion, which is
-**NEW-13**, opened by the review and not fixed. And nothing was run against a live estate: both boxes
-were read, not rebuilt.
+**NEW-13**, opened by the review and not fixed there — **closed since, by D53**. And nothing was run
+against a live estate: both boxes were read, not rebuilt.
 
 ## WP-19 — Production deployment configuration · PARTLY DONE
 
@@ -1242,11 +1244,11 @@ container's zone happens to be the estate's calendar"** — not "nothing was wri
 the difference is the whole margin the defect had. No migration; `review` carries no instant beside the
 date, so a wrong row could never have been identified anyway.
 
-## NEW-13 — The brokerage rate is struck when the event is consumed, not when the booking completed · READY
+## NEW-13 — The brokerage rate is struck when the event is consumed, not when the booking completed · DONE
 
 Opened by D51's review, four lines from a comment that package rewrote, and deliberately **not** fixed
 there — it is a decision about money with a wire-format change behind it, not a rider on a calendar
-package.
+package. **Built as D53.**
 
 `BookingEventConsumer.configInForce` picks the latest `BrokerageConfig` whose `effectiveFrom` is not
 after **`Instant.now()`**. The class javadoc four lines above says a booking "prices against the rate
@@ -1271,6 +1273,28 @@ have no such field. That is a compatibility decision, not an edit.
 ledger row records no rate, only the amounts computed from one, so a row priced at the wrong rate can
 never be identified afterwards.
 
+**Established rather than cited, which is what the argument above needed.** The live schema was read
+off `hc-market-quality-payout-db`: `ledger` has fourteen columns, no rate, no `brokerage_config`
+reference and **no instant** — `earned_on` is a `date`. Both estates hold exactly **one**
+`BrokerageConfig`, the seeded 0.12/GHS row effective `2020-01-01`, and it has never moved: quality has
+258 ledger rows and 2 processed events, dev has 256 and an **empty** `processed_event`. So no row
+anywhere has ever been priced across a rate change, which is why this was the cheapest moment it will
+ever have — the day a second config row exists, every row written across the change is ambiguous for
+ever.
+
+**What was decided, since the item said the compatibility question was the real work.** The act's
+instant goes on the payload — `bookingCompletedAt` and `bookingCancelledAt`, two fields because two
+events carry a money decision taken at different moments. An event without one falls back to the
+**envelope's `occurredAt`**, which booking stamps in the same transaction as the transition and which
+travels with the event, so no amount of delivery lag can move it; the fallback is a **WARN** naming the
+booking, never a silent `Instant.now()`. With neither present the event is **refused** and retried,
+which costs nothing because `occurred_at` is a not-null column. `bookingRaisedAt`, consumption-time and
+refuse-everything were each considered and rejected, with reasons, in D53.
+
+**Two adjacent things it did not close**, both now items of their own: **NEW-15**, the receipt's
+day-granularity, narrowed from unbounded to sub-day and not removed; and **NEW-14**, found while
+reading the config rows.
+
 ## NEW-14 — A professional's own calendar opens on Accra's day, not theirs · BLOCKED on spec §13 #8
 
 Opened by the D52 review, and deliberately **not** decided there. `ProWorkspaceResource.availability`
@@ -1292,6 +1316,50 @@ midnight is the wrong day by one.
 `BookingWorkflow.scheduledAt` and `CustomerBookingResource.cancellationPreview`, which D51 refused to
 settle by find-and-replace and D52 refused for the same reason. Answering it for these two while those
 stay open would give one service two answers. Take it with §13 #8, not before.
+
+## NEW-15 — Any authenticated user can change the brokerage's commission rate · READY
+
+Opened by D53 while establishing that `effectiveFrom` had never moved, and **not** fixed there: NEW-13
+is about *when* a rate is struck and this is about *who may set one*, which is an authorisation
+decision with its own answer to choose.
+
+The generated `BrokerageConfigResource` is alive on `/api/brokerage-configs`. payout's
+`SecurityConfiguration` says `.requestMatchers("/api/**").authenticated()` and nothing narrows it, and
+the gateway routes `Path=/services/healthconnectpayout/api/**`, so the whole of JHipster's CRUD —
+POST, PUT, PATCH, DELETE — is reachable by any token the estate will accept.
+
+**Verified, read-only, against the quality box**: an HS512 `ROLE_USER` token minted with the estate's
+key returns `200` and the config body through the gateway on `127.0.0.1:15509`. The writes sit on the
+same rule and were deliberately **not** exercised, because that would reprice a live estate.
+
+The read is arguably public — the prototype prints "12% platform fee" on every listing, and
+`/api/internal/brokerage/split` already discloses the rate to any authenticated caller by design. The
+writes are not: a customer can create a backdated `BrokerageConfig` and reprice every booking completed
+after it, and nothing in the ledger would afterwards say which rate was used (D53).
+
+**Two shapes for the fix, and somebody should choose deliberately.** Delete the generated resource and
+its IT, as `CLAUDE.md`'s table already does for eight others — there is no screen for it in the
+prototype and no caller in this repository. Or keep it and gate it behind `ROLE_BROKERAGE` beside the
+dispute desk. Either way `AuditTrailIsNotAnApiIT` is the pattern for the test: a check that the path
+answers nobody, so "restoring the generated CRUD" is red rather than shipped.
+
+## NEW-16 — The receipt strikes its split to the day and the ledger to the instant · READY
+
+Opened by D53, which **narrowed it from unbounded to sub-day and deliberately did not close it**.
+
+`CustomerBookingResource.receipt` sends `LocalDate.ofInstant(completedAt, MARKET_ZONE)` and
+`BrokerageResource.split` reads it back as `atStartOfDay(MARKET_ZONE)`. The ledger now prices at the
+completion **instant**. So a rate taking effect at noon on the day a booking completed at 14:00 prices
+the ledger under the new terms and the receipt under the old — the same two-numbers-that-disagree shape
+NEW-13 was about, one granularity down. It bites only when `effectiveFrom` is not midnight in Accra,
+which the one config in either estate is.
+
+**Why it is separate.** The fix is a cross-service internal API change with a compatibility question of
+its own: add `at` (an `Instant`) beside `on`, prefer it, and **send both** — a new booking calling an
+old payout that ignores an unknown parameter would otherwise fall through to `Instant.now()`, which is
+NEW-13 rebuilt in the other service. There is also no test of `BrokerageResource` at all today, so the
+package includes writing the first one, and it must pin the parameter *binding* (an `Instant`
+`@RequestParam`) and not only the selection rule.
 
 ---
 

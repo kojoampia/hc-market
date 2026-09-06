@@ -3,6 +3,7 @@ package net.jojoaddison.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
+import java.time.format.DateTimeParseException;
 import java.util.Comparator;
 import java.util.List;
 import net.jojoaddison.domain.BrokerageConfig;
@@ -48,6 +49,16 @@ import org.springframework.transaction.annotation.Transactional;
  * versioned by {@code effectiveFrom} so that a booking prices against the rate in force when it
  * completed. Booking has no business knowing the rate, and a booking service that computed
  * commission would have to be redeployed every time the brokerage changed its terms.
+ *
+ * <h2>And "when it completed" now means it — decisions.md D53</h2>
+ *
+ * <p>That sentence was an aspiration for a week: {@link #configInForce} took {@code Instant.now()},
+ * so the rate was struck when the event was <em>consumed</em>. Identical while delivery is prompt,
+ * and different after any outage, replayed partition or paused consumer that straddles a rate change.
+ * The moment is on the wire now — {@code bookingCompletedAt} and {@code bookingCancelledAt}, put
+ * there by booking's {@code OutboxRecorder} — and {@link #pricedAt} is the only thing that decides
+ * it. Nothing on this path reads a clock, which is what makes the price a function of the event
+ * alone and therefore stable under replay.
  *
  * <h2>Which day a row is earned on</h2>
  *
@@ -114,8 +125,8 @@ public class BookingEventConsumer {
             }
 
             switch (type) {
-                case "healthconnect.booking.completed" -> writeLedgerEntry(payload);
-                case "healthconnect.booking.cancelled" -> writeLateFeeIfAny(payload);
+                case "healthconnect.booking.completed" -> writeLedgerEntry(envelope, payload);
+                case "healthconnect.booking.cancelled" -> writeLateFeeIfAny(envelope, payload);
                 default -> LOG.debug("ignoring {}", type);
             }
 
@@ -128,14 +139,14 @@ public class BookingEventConsumer {
         }
     }
 
-    private void writeLedgerEntry(JsonNode p) {
+    private void writeLedgerEntry(JsonNode envelope, JsonNode p) {
         String bookingRef = p.path("bookingRef").asText();
         if (ledgerQueries.existsByBookingReference(bookingRef)) {
             LOG.debug("ledger already has an entry for {}", bookingRef);
             return;
         }
         long gross = p.path("priceMinor").asLong();
-        BrokerageConfig config = configInForce();
+        BrokerageConfig config = configInForce(pricedAt(envelope, p, "bookingCompletedAt"));
         long commission = Commission.on(gross, config.getCommissionRate());
 
         ledger.save(
@@ -233,12 +244,16 @@ public class BookingEventConsumer {
      * sets {@code lateCancellation = true}, which the payout service reads to raise a 50% fee to
      * the professional. Everything else is free."
      */
-    private void writeLateFeeIfAny(JsonNode p) {
+    private void writeLateFeeIfAny(JsonNode envelope, JsonNode p) {
         if (!p.path("lateCancellation").asBoolean(false)) {
             return;
         }
         String bookingRef = p.path("bookingRef").asText();
-        BrokerageConfig config = configInForce();
+        // Resolved AFTER the guard above, not before it. An ordinary cancellation owes nothing, so
+        // asking for a pricing moment there would warn about a fallback on the majority of events
+        // while deciding nothing at all — and a warning that fires when nothing is wrong is a warning
+        // nobody reads on the day something is.
+        BrokerageConfig config = configInForce(pricedAt(envelope, p, "bookingCancelledAt"));
         long full = p.path("priceMinor").asLong();
         long fee = Commission.lateCancellationFee(full, config.getLateCancellationPct());
         long commission = Commission.on(fee, config.getCommissionRate());
@@ -264,29 +279,113 @@ public class BookingEventConsumer {
     }
 
     /**
-     * The config in force. Versioned by {@code effectiveFrom}, so this takes the latest one that has
-     * already taken effect rather than simply the newest row — a rate scheduled for next month must
-     * not price today's bookings.
+     * The moment this event's money decision was taken, which is the moment its rate is struck at —
+     * {@code decisions.md} D53, backlog NEW-13.
      *
-     * <p><strong>"In force" here means when the event was CONSUMED, and the class javadoc above says
-     * "when it completed".</strong> Those are the same thing while delivery is prompt and different
-     * after any outage, replay or paused consumer that straddles a rate change — backlog NEW-13,
-     * opened by D51's review and deliberately not fixed there. It is the same species as NEW-10, one
-     * axis over: a decision was taken and the moment it was taken at was never written down. It is
-     * **not** a one-line fix, which is why it is an item rather than an edit — {@code completedAt} is
-     * not on the wire ({@code OutboxRecorder} publishes {@code bookingRaisedAt} and no completion
-     * instant), so pricing at completion means changing the event payload first.
+     * <p>Never a clock. That was the defect: {@code configInForce()} took {@code Instant.now()}, so a
+     * booking completed under one set of terms and consumed after an outage that straddled a rate
+     * change was priced under the other — terms the customer was never shown, and a ledger row that
+     * disagrees with {@code CustomerBookingResource.receipt} by however much the rate moved. Neither
+     * number can be identified as the wrong one afterwards, because both are internally consistent and
+     * a ledger row records the amounts computed from a rate and never the rate.
      *
-     * <p>{@code Instant.now()} itself is correct and stays: an instant carries no calendar, so this
-     * is not a NEW-10 site and {@link MarketCalendar} has nothing to say about it.
+     * <h2>Three answers, in order, and the last one refuses</h2>
+     *
+     * <ol>
+     *   <li><strong>The payload's own instant</strong> — {@code bookingCompletedAt} on a completion,
+     *       {@code bookingCancelledAt} on a cancellation. Written by booking in the same transaction
+     *       as the status change it reports, so it is the act's own moment and nothing about delivery
+     *       can move it.
+     *   <li><strong>The envelope's {@code occurredAt}</strong>, if the payload names no instant. This
+     *       is the compatibility answer and the one that had to be decided rather than defaulted into:
+     *       every event already in booking's outbox on the day of this change, and every one already
+     *       published and not yet consumed, carries no such field. {@code occurredAt} is stamped by
+     *       {@code OutboxRecorder} microseconds after the transition writes the instant, in the
+     *       <em>same transaction</em>, so it answers the question to within that transaction's
+     *       duration and — the property that matters — it is immune to consumer lag, to a replayed
+     *       partition and to a paused consumer, because it travels with the event. <strong>It is
+     *       logged at WARN</strong>: a fallback nobody can see is the defect wearing a different
+     *       name, and the line names the booking so the affected rows can be listed.
+     *   <li><strong>Neither: refuse.</strong> The caller rethrows, the container retries and the event
+     *       is never marked processed — the trade {@code currencyOf} and {@code deliveryModeOf} above
+     *       already make, for the same reason. This is unreachable from any version of booking that
+     *       has ever run ({@code occurred_at} is a not-null column written unconditionally), which is
+     *       precisely when a refusal is free; falling through to {@code Instant.now()} here would put
+     *       the whole defect back for the one class of event most likely to be delayed.
+     * </ol>
+     *
+     * <p><strong>A malformed instant is refused rather than fallen back from.</strong> An event
+     * carrying {@code "bookingCompletedAt": "yesterday"} is malformed, not merely old, and quietly
+     * substituting a different moment for one somebody meant to send is how a wrong price becomes
+     * unremarkable. Contrast messaging's reader of {@code bookingRaisedAt}, which warns and carries
+     * on: there the safe answer is to treat the booking as covered by an erasure, and there is one.
+     * Here there is no safe answer, only a cheaper one.
+     *
+     * <p>Every branch reads the event and nothing else, which is what makes the price a function of
+     * the event alone: a replay after a restore — payout recovered to a point before the event and the
+     * partition re-consumed from an earlier offset, so both idempotency guards are legitimately
+     * clear — writes the same row it wrote the first time.
+     *
+     * <p>An {@code Instant} is deliberate and unchanged from what this replaced: an instant carries no
+     * calendar, so this is not a NEW-10 site and {@link MarketCalendar} has nothing to say about it.
+     * What was wrong here was never the zone; it was which moment.
      */
-    private BrokerageConfig configInForce() {
-        Instant now = Instant.now();
+    private static Instant pricedAt(JsonNode envelope, JsonNode p, String field) {
+        String bookingRef = p.path("bookingRef").asText();
+        // isTextual(), not asText(default). Booking puts both instants on EVERY booking payload, so
+        // an event about a booking that has not completed carries an explicit JSON null — and
+        // Jackson's NullNode.asText(default) answers the four characters "null" rather than the
+        // default, which would be parsed here rather than falling back.
+        JsonNode declared = p.path(field);
+        if (declared.isTextual() && !declared.asText().isBlank()) {
+            return instantOr(declared.asText(), field, bookingRef);
+        }
+        JsonNode recorded = envelope.path("occurredAt");
+        if (!recorded.isTextual() || recorded.asText().isBlank()) {
+            throw new IllegalArgumentException(
+                "booking event for %s carries no %s and its envelope carries no occurredAt — there is no moment to price it at".formatted(
+                        bookingRef,
+                        field
+                    )
+            );
+        }
+        Instant fallback = instantOr(recorded.asText(), "occurredAt", bookingRef);
+        LOG.warn(
+            "booking event for {} carries no {} — pricing it at the envelope's occurredAt {}, which is when booking recorded the event rather than when the act happened (decisions.md D53)",
+            bookingRef,
+            field,
+            fallback
+        );
+        return fallback;
+    }
+
+    private static Instant instantOr(String raw, String field, String bookingRef) {
+        try {
+            return Instant.parse(raw);
+        } catch (DateTimeParseException notAnInstant) {
+            throw new IllegalArgumentException(
+                "booking event for %s carries a %s that is not an instant: '%s'".formatted(bookingRef, field, raw)
+            );
+        }
+    }
+
+    /**
+     * The config in force at a given moment. Versioned by {@code effectiveFrom}, so this takes the
+     * latest one that had already taken effect <em>then</em> rather than simply the newest row — a rate
+     * scheduled for next month must not price a booking completed today, and a rate that took effect
+     * last month must not price a booking completed the month before it.
+     *
+     * <p>The moment comes from {@link #pricedAt} and never from a clock. Same rule as
+     * {@code BrokerageResource.inForce}, which answers the receipt's half of the same question; the
+     * two are deliberately not merged into one helper, because they already agree on the rule and what
+     * used to differ — and what NEW-13 is about — is the moment each was handed.
+     */
+    private BrokerageConfig configInForce(Instant at) {
         List<BrokerageConfig> all = brokerage.findAll();
         return all
             .stream()
-            .filter(c -> c.getEffectiveFrom() != null && !c.getEffectiveFrom().isAfter(now))
+            .filter(c -> c.getEffectiveFrom() != null && !c.getEffectiveFrom().isAfter(at))
             .max(Comparator.comparing(BrokerageConfig::getEffectiveFrom))
-            .orElseThrow(() -> new IllegalStateException("no BrokerageConfig in force — cannot price a booking"));
+            .orElseThrow(() -> new IllegalStateException("no BrokerageConfig in force at " + at + " — cannot price a booking"));
     }
 }
