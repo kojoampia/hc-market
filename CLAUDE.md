@@ -841,11 +841,19 @@ time.**
   correcting — and `review` carries no instant beside the date, exactly as `ledger` does not, so a
   wrong row could never have been identified afterwards. All of it holds only while nothing is
   deployed and nothing sets `TZ`.
-  **Two sites are deliberately NOT on `MARKET_ZONE` and each says so in place**:
-  `BookingWorkflow.scheduledAt` and `CustomerBookingResource.cancellationPreview` convert an
-  *appointment's* wall clock and ignore `Booking.zoneId`, which is D21's question and spec §13 #8, still
-  open — and D21's answer may not be Accra. Sweeping them in would settle an open question by
-  find-and-replace. There was a third until D53 — `BookingEventConsumer.configInForce`'s
+  **Spec §13 #8 is ANSWERED — D55, ratified 2026-09-07 — and the answer is a SPLIT.** An
+  *appointment's* wall clock is the professional's (D21, now ratified); a *window or "today" default*
+  the platform renders is the marketplace's. They are different questions with the same answer today,
+  which is precisely why they needed separate rules. It closed **NEW-14** with no code change —
+  `ProWorkspaceResource`'s two window defaults were already right, and `MARKET_ZONE` is now *chosen*
+  there rather than merely unchallenged — and it opened **NEW-19**, because the other half found a
+  defect. **Two sites are still NOT on `Booking.zoneId` and each says so in place**:
+  `BookingWorkflow.scheduledAt:238` and `CustomerBookingResource.cancellationPreview:235` convert an
+  appointment's wall clock with `ZoneOffset.UTC` and ignore the booking's own zone. **The fix is
+  `Booking.zoneId`, NOT `MARKET_ZONE`** — the marketplace's constant behaves identically today and is
+  wrong for the one case the ratification exists for, which is the trap this family has spent five
+  packages avoiding. Nil consequence while every zone is `Africa/Accra`; the cancellation one prices a
+  late fee, so the zone moves a **customer-visible** boundary. There was a third until D53 — `BookingEventConsumer.configInForce`'s
   `Instant.now()`, correct as an instant and wrong as a *moment* — and it is gone rather than moved:
   that path reads no clock at all now (NEW-13, below).
   D48 closes the zone half only, deliberately: the four services still evaluate the shift

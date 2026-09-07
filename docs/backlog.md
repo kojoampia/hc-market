@@ -49,11 +49,12 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **NEW-11** | A second payment attempt for one booking would reuse Paystack's reference | WON'T, until there is a second attempt | D50 — no such path exists; the day one is added the suffix goes in with it. Opened by the D50 review |
 | **NEW-12** | Catalog's four implicit-zone reads, one of which stores a date | DONE | D52 — all four closed, `MarketCalendar`'s fourth copy, and the CI check now scans **every** service with no per-file exemption anywhere. The estate has no implicit-zone read left. The data question is **re-established, not cited, and its answer differs from D51's**: the quality box holds **two** rows written by the defective line, both dated correctly because the container's zone is `Etc/UTC` — "written by the defect and right", not "nothing was written". No migration |
 | **NEW-13** | The brokerage rate is struck when the event is consumed, not when the booking completed | DONE | D53 — the act's instant is on the wire (`bookingCompletedAt`, `bookingCancelledAt`) and nothing on the pricing path reads a clock. An event without one falls back to the envelope's `occurredAt` **at WARN**, never to now; with neither it is refused. Ten tests, all watched red first; one CI check, watched firing three ways |
-| **NEW-14** | A professional's own calendar opens on Accra's day, not theirs | BLOCKED on spec §13 #8 | D52 §review — the two `/api/pro/**` window defaults read `MarketCalendar`. Nil consequence while every `professional.zone_id` is `Africa/Accra`; deciding it the other way settles D21's open question by find-and-replace, which D51 refused for the neighbouring sites. Opened by the D52 review |
+| **NEW-14** | A professional's own calendar opens on Accra's day, not theirs | CLOSED by decision | D55 — spec §13 #8 ratified 2026-09-07. A window *start* is a question about the page being read, so `MARKET_ZONE` is now **chosen** there rather than merely unchallenged. **No code change**: the two `ProWorkspaceResource` defaults were already right |
 | **NEW-15** | Any authenticated user can change the brokerage's commission rate — **and eight other things** | DONE | D54 — the scope was **nine, not one**: `BrokerageConfig`, `Ledger`, `Payout`, `Credential`, `AvailabilitySlot`, `ServiceOffering`, `Highlight`, `Message` and `Conversation`, each with four write mappings and zero authorization. Measured in-process at 200/200/201/200 apiece before deletion — 36 assertions, 36 red. All nine deleted with their generated ITs, argued individually; three `GeneratedCrudIsNotAnApiIT` guards, each door mutated **separately**. **The root cause was the control**: one CI check now derives the expected set from `jdl/*.jdl` and demands, per entity, a delete-table row or real authorization. Eight mutations watched. Opened a tenth family as NEW-17 |
 | **NEW-16** | The receipt strikes its split to the day and the ledger to the instant | READY | D53 — narrowed from unbounded to sub-day by NEW-13 and not closed. `BrokerageResource.split` takes a `LocalDate`; a rate taking effect at noon prices a 14:00 completion two ways. Closing it is a cross-service API change with a compatibility question of its own |
 | **NEW-17** | The five generated Kafka sample resources are unauthenticated write endpoints | READY | D54 — `POST /api/healthconnect-<service>-kafka/publish` in all four services **and the gateway**, generated, no `@PreAuthorize`, gateway-routed. What it actually does on a running estate is **unestablished**: the binding and `auto-create-topics` live in `application-kafka.yml` and the `kafka` profile is active nowhere, so it is a `StreamBridge` dynamic destination against an unconfigured binding. Closing it also deletes **five ITs that currently assert the hole works** (`producesMessages`, expecting 200). NEW-15's CI check is entity-derived and **cannot** reach this family; a second `web/rest`-derived check is the answer |
 | **NEW-18** | Nothing can create a `BrokerageConfig`, and payout cannot price a booking without one | READY — **blocks the first production deploy** | D54's review. `BookingEventConsumer.configInForce` throws `IllegalStateException` on an empty table; the only writers were `PayoutSeeder` (`seed.enabled: false` under `prod`) and the `BrokerageConfigResource` D54 deleted; the Liquibase `loadData` is `context="faker"`. So on production the table is empty, **the first `booking.completed` throws and the consumer retries for ever** — no ledger row, no earnings, and the failure lands after the money moved. The deletion is still right; the bootstrap was always missing and the CRUD hid it |
+| **NEW-19** | Two sites convert an appointment with `ZoneOffset.UTC` and ignore `Booking.zoneId` | READY | D55 — was an open question until §13 #8 was ratified; now a defect. `BookingWorkflow.scheduledAt:238` and `CustomerBookingResource.cancellationPreview:235`. Nil consequence while every zone is `Africa/Accra`; the cancellation path prices a late fee off `scheduled`, so the zone moves a **customer-visible** boundary |
 
 ---
 
@@ -1307,7 +1308,7 @@ refuse-everything were each considered and rejected, with reasons, in D53.
 day-granularity, narrowed from unbounded to sub-day and not removed; and **NEW-15**, found while
 reading the config rows.
 
-## NEW-14 — A professional's own calendar opens on Accra's day, not theirs · BLOCKED on spec §13 #8
+## NEW-14 — A professional's own calendar opens on Accra's day, not theirs · CLOSED by decision (D55)
 
 Opened by the D52 review, and deliberately **not** decided there. `ProWorkspaceResource.availability`
 and `.generate` default their window start to `MarketCalendar.today()` — the marketplace's day — for a
@@ -1324,10 +1325,17 @@ column defaults to it, so the two spellings cannot differ. The day a professiona
 they open their calendar — and generate their slots — on Accra's day rather than their own, which near
 midnight is the wrong day by one.
 
-**Why it is blocked rather than ready.** It is the same question spec §13 #8 leaves open for
-`BookingWorkflow.scheduledAt` and `CustomerBookingResource.cancellationPreview`, which D51 refused to
-settle by find-and-replace and D52 refused for the same reason. Answering it for these two while those
-stay open would give one service two answers. Take it with §13 #8, not before.
+**Closed by D55, 2026-09-07, with no code change.** Spec §13 #8 was ratified: an *appointment's*
+wall clock is the professional's (D21), a *window or "today" default* the platform renders is the
+marketplace's. These two defaults are the second kind, so `MARKET_ZONE` was already the right answer —
+what changes is that it is now **chosen** rather than unchallenged. The times *inside* the window are
+already the professional's wall clock, carried on the slots; answering the start per-professional would
+make one afternoon at one desk render as two dates depending on whose profile it landed on, which is
+D47's `BADGE_ZONE` argument.
+
+**An item closed by ratifying the behaviour it questioned is closed**, and that is worth naming: it was
+never a defect, it was an unanswered question about a line that happened to be right. The half of §13 #8
+that *did* find a defect is **NEW-19**.
 
 ## NEW-15 — Any authenticated user can change the brokerage's commission rate · DONE (D54)
 
@@ -1520,6 +1528,39 @@ assertion that payout holds at least one `BrokerageConfig` would turn a silent f
 failed deploy — but note that a smoke test for a condition with **no remedy** would simply fail every
 production deploy until one of the three above is built, and a failing smoke test triggers an automatic
 rollback (D49). So build the answer first, and the check with it.
+
+## NEW-19 — An appointment is converted in UTC and its own zone is ignored · READY
+
+Opened by **D55**, which is what turned it from a question into a defect. Two sites do
+`.toInstant(ZoneOffset.UTC)` on an appointment's wall clock and never read `Booking.zoneId`:
+
+| Where | What it decides |
+| --- | --- |
+| `BookingWorkflow.scheduledAt:238` | the instant a booking's appointment is treated as happening at |
+| `CustomerBookingResource.cancellationPreview:235` | the same, and the late-cancellation boundary quoted to a customer |
+
+Both carry a comment saying they are deliberately not on `MARKET_ZONE` because §13 #8 was open and
+D21's answer might not be Accra. **§13 #8 is answered and D21's answer is the professional's zone**, so
+those comments are now the record of a question that has been settled and need rewriting to say what the
+code does.
+
+**Not a `MARKET_ZONE` site.** That is the trap this whole family has been avoiding: the fix is
+`Booking.zoneId`, the booking's own captured zone, not the marketplace's constant. Sweeping them onto
+`MARKET_ZONE` would produce identical behaviour today and be wrong for exactly the case the ratification
+exists to handle.
+
+**The cancellation half is customer-visible and needs its own care.** `cancellationPreview` prices a
+late fee off `scheduled`, so moving the zone moves the hour at which a cancellation becomes late — a
+term the customer was quoted. D53's rule applies: a term the customer was shown must not move under
+them. Whether an in-flight booking keeps the boundary it was quoted, or is re-evaluated, is the decision
+this package has to make rather than assume.
+
+**Consequence today is nil, and that is why it is cheap.** Every `Booking.zoneId` in every estate is
+`Africa/Accra`, the column defaults to it, and Ghana is UTC+0 all year, so the two spellings cannot
+produce a different instant. It becomes real with the first professional onboarded outside GMT, and at
+that point it is a wrong late-cancellation boundary on a live booking rather than a rendering slip. Same
+argument D51 made for `ledger.earned_on`: the cheapest moment to fix a zone defect is while every zone
+is the same.
 
 ---
 

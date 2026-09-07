@@ -5956,7 +5956,9 @@ either half**, which is why this section keeps calling it a consolidation.
 `BookingWorkflow.scheduledAt` and `CustomerBookingResource.cancellationPreview` convert an
 *appointment's* wall clock to an instant with `ZoneOffset.UTC` and ignore `Booking.zoneId`. That is
 D21's territory, spec §13 open question #8 is still open on exactly it, and **D21's answer may not be
-Accra** — a professional working from another country would want their own zone there while the
+Accra** — *[§13 #8 was ratified on 2026-09-07; see D55. D21's answer is indeed the professional's zone,
+which makes these two a defect rather than a question, opened as NEW-19. Left as written: it records
+why D51 declined to touch them, and that reasoning was correct at the time.]* — a professional working from another country would want their own zone there while the
 ledger's day stayed the marketplace's. Changing them would settle an open question by
 find-and-replace and would read, from the diff, like tidying.
 
@@ -6193,6 +6195,7 @@ brokerage rate at the moment the event is *consumed*, and fixing it needs a wire
 **The two sites D51 deliberately left out stay out**, for its reasons unchanged:
 `BookingWorkflow.scheduledAt` and `CustomerBookingResource.cancellationPreview` convert an
 *appointment's* wall clock and belong to D21, spec §13 #8, still open and possibly not Accra.
+*[Answered 2026-09-07 — D55. They are now NEW-19.]*
 
 **Nothing was run against a live estate.** The quality box was **read** — that is where the 65 rows and
 the two written ones come from — but not rebuilt against this branch, so no review has been published
@@ -6914,3 +6917,76 @@ written `LedgerResource.java` with `git show >`, which leaves it **untracked**, 
 exactly as designed. Worth recording because it is the first time one of these guards has fired on
 something real rather than on a deliberate mutation — and because a mutation harness that restores a
 file must restore it the same way it removed it.
+
+## D55 — Whose clock an appointment keeps, and whose day a page opens on
+
+**Spec §13 open question #8, ratified by the architect on 2026-09-07.** It was the last question
+blocking a code path, and it had been open long enough to accumulate four sites that could not be
+settled without it — two that contradict D21 today, and two that NEW-14 was opened on.
+
+The question as the spec asks it: *"Everything is currently Africa/Accra with no offset. Does the
+platform ever serve a client or professional outside GMT, and if so, whose local time is authoritative
+on a booking?"* **D21 proposed "the professional's" and was never ratified**, which is why every
+package since D47 has refused to touch these lines: changing them would have settled a spec question by
+find-and-replace, and would have looked from the diff like tidying.
+
+### The answer is a split, and the split is the point
+
+**An appointment's wall clock belongs to whoever delivers it. A window's start belongs to whoever is
+reading the page.** They are different questions that happen to have the same answer today, and the
+whole cost of the last five packages has been that "the same answer today" is not a reason to write one
+rule.
+
+| What | Whose zone | Sites |
+| --- | --- | --- |
+| An **appointment's** wall clock becoming an instant | `Booking.zoneId` (D21, now ratified) | `BookingWorkflow.scheduledAt`, `CustomerBookingResource.cancellationPreview` — **both wrong today** |
+| A **window or "today" default** the platform renders | `MarketCalendar.MARKET_ZONE` | `ProWorkspaceResource.availability`, `ProWorkspaceResource.generate` — **both already correct** |
+
+**D21 is ratified**: the professional's local time is authoritative on a booking, the wall clock is
+kept, an explicit `zoneId` travels with it, and appointments are never converted to UTC instants. That
+was always the model; what was missing was permission to make two lines obey it.
+
+### Why the window defaults are NOT the professional's zone
+
+This is the half that is easy to get wrong by generalising, and D52's review already argued it:
+`ProWorkspaceResource.availability` and `.generate` default the **start of a window** a professional is
+looking at. The times *inside* that window are already the professional's wall clock, carried on the
+slots themselves. The start is a question about the page — "what does today mean for the person
+rendering this" — and answering it per-professional would make one afternoon at one desk render as two
+different dates depending on whose profile it landed on, which is the same argument D47 used for
+`BADGE_ZONE`.
+
+So **NEW-14 closes by decision with no code change.** That is the correct outcome and it is worth
+naming as one: an item can be closed by ratifying the behaviour it questioned, and doing so is not the
+same as leaving it open. What changes is that `MARKET_ZONE` is now *chosen* there rather than merely
+*unchallenged*.
+
+### What is now wrong, and is NOT fixed here
+
+`BookingWorkflow.scheduledAt:238` and `CustomerBookingResource.cancellationPreview:235` both do
+`.toInstant(ZoneOffset.UTC)` and **ignore `Booking.zoneId`**, which this decision makes a defect rather
+than an open question. Both carry a comment saying exactly that, written when it was still open.
+
+They are **NEW-19**, opened rather than folded in, for the reason this repository has now applied five
+times: a decision document that also changes behaviour makes the ratification and the implementation
+one thing to review, and the second is where the compatibility questions are. Specifically, the
+cancellation path prices a late fee off `scheduled`, so moving the zone moves the boundary at which a
+cancellation becomes late — a customer-visible term. That deserves its own package and its own tests.
+
+**Consequence today is nil, and that is the reason to do it now rather than the reason not to.** Every
+`Booking.zoneId` and every `Professional.zoneId` in every estate is `Africa/Accra`, the column defaults
+to it, and Ghana is UTC+0 all year — so `ZoneOffset.UTC` and `Booking.zoneId` cannot currently produce a
+different instant. The defect is unobservable until the first professional is onboarded outside GMT, at
+which point it is a wrong late-cancellation boundary on a live booking. This is the same shape as D51's
+argument for closing `ledger.earned_on` while nothing was deployed: the cheapest moment to fix a
+zone defect is while every zone is the same.
+
+### What this closes and what it does not
+
+**Closed:** spec §13 #8, D21's ratification, and NEW-14.
+
+**Not closed, and deliberately still open:** whether the platform *will* serve outside GMT is answered
+"the model must survive it", not "it will happen on a date". Nothing here commits to onboarding abroad;
+it commits to the code being right if it happens. And the three named zone constants stay three —
+`SEED_ZONE`, `BADGE_ZONE`, `MARKET_ZONE` — for the reasons D51 and D52 give. A fourth is not created
+here: `Booking.zoneId` is data, not a constant, which is exactly the distinction this decision turns on.

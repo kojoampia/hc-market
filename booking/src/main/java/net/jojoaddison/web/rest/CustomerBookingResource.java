@@ -224,14 +224,18 @@ public class CustomerBookingResource {
             );
         }
         Instant now = Instant.now();
-        // DELIBERATELY NOT MarketCalendar.MARKET_ZONE, and not a NEW-10 site — decisions.md D51.
-        // This converts an APPOINTMENT's wall clock to an instant, which is D21's territory, not the
-        // brokerage's calendar: the booking carries its own zoneId and this line ignores it. Spec §13
-        // open question #8 is still open on exactly that, and D21's answer may not be Accra — a
-        // professional working from another country would want their own zone here and the ledger's
-        // day would still be the marketplace's. Sweeping this in with the receipt above would settle
-        // an open question by find-and-replace. BookingWorkflow.scheduledAt has the identical line
-        // and the identical reason.
+        // STILL NOT MarketCalendar.MARKET_ZONE, and now a DEFECT rather than an open question —
+        // decisions.md D55, backlog NEW-19. This converts an APPOINTMENT's wall clock to an instant,
+        // which is D21's territory: the booking carries its own zoneId and this line ignores it.
+        // Spec §13 #8 was ratified on 2026-09-07 and D21's answer IS the professional's zone, so the
+        // fix is booking.getZoneId() — not the marketplace's constant, which would read as tidying,
+        // behave identically today, and be wrong for the one case the ratification is for.
+        // Not fixed here because this line prices the late-cancellation fee below: moving the zone
+        // moves the hour at which a cancellation becomes late, which is a term the customer was
+        // quoted, and D53's rule is that such a term must not move under them. Whether an in-flight
+        // booking keeps its quoted boundary is NEW-19's decision to make.
+        // Nil consequence while every Booking.zoneId is Africa/Accra. BookingWorkflow.scheduledAt
+        // has the identical line and the identical reason.
         Instant scheduled = booking.getScheduledDate().atTime(booking.getScheduledTime()).toInstant(ZoneOffset.UTC);
         long hours = Duration.between(now, scheduled).toHours();
         return new CancellationPreview(
