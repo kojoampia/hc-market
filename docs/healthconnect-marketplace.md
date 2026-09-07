@@ -928,7 +928,12 @@ full-text search (Q6), and hc-market wires no observability at all (Q12).
 7. **Availability model.** The seed carries explicit slots. Real professionals think in recurring rules plus exceptions. Recurrence in v1, or slots generated from a rule engine?
    → **D20:** both — rules authored, slots materialised, because `taken` needs a row to lock against a double booking.
 8. **Time zones.** Everything is currently Africa/Accra with no offset. Does the platform ever serve a client or professional outside GMT, and if so, whose local time is authoritative on a booking?
-   → **D21:** the professional's. Keep the wall clock, add an explicit `zoneId`; do **not** convert appointments to UTC instants.
+   → **D21, RATIFIED 2026-09-07 as D55:** the professional's. Keep the wall clock, add an explicit
+   `zoneId`; do **not** convert appointments to UTC instants. D55 splits it: an *appointment's* wall
+   clock is the professional's, a *window or "today" default* the platform renders is the
+   marketplace's (`MARKET_ZONE`). This was the last §13 question blocking a code path. It closes
+   backlog NEW-14 by decision and opens **NEW-19** — two sites still convert an appointment with
+   `ZoneOffset.UTC` and ignore `Booking.zoneId`, which the ratification makes a defect.
 9. **Multi-currency.** `currency` is on every money field but only `GHS` is used. Real requirement, or should it be dropped to keep the model honest?
    → **D22:** keep the column, build no conversion — but start enforcing it, because nothing checks it agrees across a join today.
 10. **Data protection.** Ghana's Data Protection Act applies to the care summary. Where does data live, how long is it retained, and what does a deletion request do to a booking history that a payout ledger depends on?

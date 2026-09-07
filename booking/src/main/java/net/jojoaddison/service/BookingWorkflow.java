@@ -222,16 +222,23 @@ public class BookingWorkflow {
     }
 
     /**
-     * Africa/Accra is GMT with no offset and no DST — spec §13 open question #8 is still open.
+     * Africa/Accra is GMT with no offset and no DST — spec §13 #8 was ratified as D55 on 2026-09-07.
      *
-     * <p><strong>Not a NEW-10 site, and deliberately left alone by D51.</strong> This is an
+     * <p><strong>Not a NEW-10 site; left alone by D51 when the question was open.</strong> This is an
      * APPOINTMENT's wall clock becoming an instant, which is D21's question rather than the
-     * brokerage's calendar — and the booking carries its own {@code zoneId} that this line ignores,
-     * which is precisely what §13 #8 is about. D51 named the marketplace's calendar for dates the
-     * platform writes and renders; it did not answer this, and D21's answer may not be Accra.
-     * Changing it to {@code MarketCalendar.MARKET_ZONE} would settle an open question by
-     * find-and-replace and would look, from the diff, like tidying. {@code
-     * CustomerBookingResource.cancellationPreview} has the identical line and the identical reason.
+     * brokerage's calendar — and the booking carries its own {@code zoneId} that this line ignores.
+     *
+     * <p><strong>§13 #8 is ANSWERED and this line is now a defect — decisions.md D55, backlog
+     * NEW-19.</strong> D21 is ratified: an appointment's wall clock is the professional's, so the
+     * fix is {@code booking.getZoneId()} and emphatically <em>not</em> {@code
+     * MarketCalendar.MARKET_ZONE} — the marketplace's constant would give identical behaviour today
+     * and be wrong for exactly the case the ratification exists to handle. It is not fixed here
+     * because {@code CustomerBookingResource.cancellationPreview} has the identical line and prices
+     * a late fee off it, so moving the zone moves a boundary a customer was quoted.
+     *
+     * <p>Nil consequence while every {@code Booking.zoneId} is {@code Africa/Accra} and Ghana is
+     * UTC+0 all year: the two spellings cannot produce a different instant. It becomes real with the
+     * first professional onboarded outside GMT.
      */
     private static Instant scheduledAt(Booking booking) {
         LocalDate date = booking.getScheduledDate();
