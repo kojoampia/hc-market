@@ -79,7 +79,17 @@ class TheRateIsStruckWhenTheBookingHappenedTest {
 
     @BeforeEach
     void setUp() {
-        consumer = new BookingEventConsumer(ledger, ledgerQueries, brokerage, processed, new ObjectMapper(), new MarketCalendar());
+        // A REAL BrokerageTerms over the mocked repository, not a mocked selector — decisions.md D56.
+        // What these tests are about is which config the consumer ends up pricing against, and a
+        // stubbed selector would assert the consumer's call and nothing about the selection.
+        consumer = new BookingEventConsumer(
+            ledger,
+            ledgerQueries,
+            new BrokerageTerms(brokerage),
+            processed,
+            new ObjectMapper(),
+            new MarketCalendar()
+        );
         // Both versions are present, exactly as they would be after the brokerage changed its terms:
         // the old one is still there, because effective-dating is how a rate change is recorded.
         when(brokerage.findAll()).thenReturn(List.of(config("0.12", OLD_RATE_FROM), config("0.30", NEW_RATE_FROM)));

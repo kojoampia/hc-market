@@ -970,6 +970,102 @@ jobs:
           fi
           exit "$fail"
 
+      # The RECEIPT's half of the same question — decisions.md D56, backlog NEW-16.
+      #
+      # The check above guards a pair of field names on a Kafka payload. This guards a pair of QUERY
+      # PARAMETERS on an internal HTTP call, and it is the same hazard for the same reason: booking
+      # asks payout for the brokerage split, the two are separate Maven projects that never see each
+      # other, and no test in either can span the pair. Both services' suites assert their own end and
+      # are internally consistent with any name.
+      #
+      # WHAT EACH HALF BUYS, because they are not the same failure.
+      #
+      #   `at` is the MOMENT. Lose it — rename it, or widen the type back to a String — and payout
+      #   falls through to `on`, which is the day, and prices a booking completed at 14:00 at the terms
+      #   in force at midnight. That is NEW-16 itself, restored, with the ledger row behind the same
+      #   booking still priced at the instant (D53) and no row anywhere recording which rate produced
+      #   which number.
+      #
+      #   `on` is the DAY, and it is redundant against the payout in this repository — which is exactly
+      #   why somebody will delete it. It is the compatibility half: booking and payout roll
+      #   independently (deploy-prod.sh takes --services), so a new booking can call an OLD payout that
+      #   ignores `at` as an unknown parameter. With `on` beside it that deployment prices to the day,
+      #   which is the defect this package closes and not a new one. Without it, that payout has
+      #   nothing at all and falls through to its own Instant.now() — NEW-13 rebuilt in the other
+      #   service, on the path where a customer is reading a financial statement. Nothing on either
+      #   side of a green build can see that.
+      #
+      # THE THIRD ASSERTION is that the resource does not read a clock. The implicit-zone check above
+      # deliberately does NOT ban Instant.now() — an instant carries no calendar and cannot be read in
+      # the wrong one — so a fallback to "now" here is invisible to every other check in this
+      # workflow, and it is exactly what `split` did until D56: a request that failed to say when was
+      # answered at today's terms, and looked like a correct receipt. BrokerageResource has no other
+      # use for a clock; it is handed a moment or it refuses.
+      #
+      # BOOKINGEVENTCONSUMER IS DELIBERATELY NOT IN THIS BAN, and the first version of this check had
+      # it in. It writes ProcessedEvent(eventId, type, Instant.now()) — an idempotency record's
+      # "when did we handle this", which is a correct use and the one the comment above the
+      # implicit-zone check already names. Banning the call there fails on the honest line while
+      # saying nothing about the pricing one. The consumer's pricing moment is already pinned, one
+      # check above: D53 requires its call site to be pricedAt(…, "bookingCompletedAt"), so replacing
+      # it with a clock is red there. Watching this check run is how that was found — it fired on
+      # main, on a line nobody should change.
+      #
+      # Comments are stripped before anything is matched, D53's review's finding: a check whose reach
+      # depends on prose is not a check, and both of these files discuss `at`, `on` and Instant.now()
+      # at length in their javadoc.
+      - name: Booking and payout must name the receipt's pricing parameters identically
+        run: |
+          fail=0
+          asker=booking/src/main/java/net/jojoaddison/service/BrokerageClient.java
+          answerer=payout/src/main/java/net/jojoaddison/web/rest/BrokerageResource.java
+          for f in "$asker" "$answerer"; do
+            if [ ! -f "$f" ]; then
+              echo "::error::$f does not exist — this check would compare nothing and pass. See decisions.md D56."
+              fail=1
+            fi
+          done
+          if [ "$fail" = 0 ]; then
+            strip() { sed -E 's@/\*[^*]*\*+([^/*][^*]*\*+)*/@ @g; s@//.*@@' "$1" | grep -vE '^[[:space:]]*\*'; }
+            asker_code=$(strip "$asker")
+            answerer_code=$(strip "$answerer")
+
+            # Booking must SEND each one, not merely mention it.
+            for param in at on; do
+              if ! printf '%s\n' "$asker_code" | grep -qF "queryParam(\"$param\""; then
+                echo "::error file=$asker::booking no longer sends '$param' to the split endpoint. See decisions.md D56."
+                fail=1
+              else
+                echo "ok   $param — sent by booking"
+              fi
+            done
+
+            # …and payout must BIND each one, with its type. `Instant at` rather than the bare name:
+            # widening it to a String would leave the name present, the value unparsed and every
+            # request falling through to the day, which is the defect wearing the right label.
+            if ! printf '%s\n' "$answerer_code" | grep -qE 'RequestParam\([^)]*\)[[:space:]]+Instant[[:space:]]+at\b'; then
+              echo "::error file=$answerer::payout no longer binds 'at' as an Instant — every split then falls through to the day and a 14:00 completion is priced at midnight's terms. See decisions.md D56."
+              fail=1
+            else
+              echo "ok   at — bound by payout as an Instant"
+            fi
+            if ! printf '%s\n' "$answerer_code" | grep -qE 'RequestParam\([^)]*\)[[:space:]]+LocalDate[[:space:]]+on\b'; then
+              echo "::error file=$answerer::payout no longer binds 'on' as a LocalDate — a booking that has no completion instant, and any older booking service, then has nothing to price with. See decisions.md D56."
+              fail=1
+            else
+              echo "ok   on — bound by payout as a LocalDate"
+            fi
+
+            # And the resource may not substitute a clock for the moment it was given.
+            if printf '%s\n' "$answerer_code" | grep -qE 'Instant\.now\(\)'; then
+              echo "::error file=$answerer::the split prices against a clock instead of the moment it was asked about — the defect D56 removed. A request that failed to say when is not a request about now. See decisions.md D56."
+              fail=1
+            else
+              echo "ok   BrokerageResource — prices at a stated moment, never at now"
+            fi
+          fi
+          exit "$fail"
+
       # And the pepper that keys it must be injected everywhere the three services run, and committed
       # nowhere a real deployment reads. Same shape as the JWT signing key, same reason: this
       # repository is public, so a default that works is a secret that does not.

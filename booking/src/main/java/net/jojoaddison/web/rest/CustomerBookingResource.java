@@ -279,29 +279,34 @@ public class CustomerBookingResource {
     /**
      * The receipt — spec §6's "gross, commission, total".
      *
-     * <p>The split is struck at the date the session happened, not today: a receipt reprinted after
-     * the brokerage changes its terms must still say what the customer was told at the time.
+     * <p>The split is struck when the session happened, not today: a receipt reprinted after the
+     * brokerage changes its terms must still say what the customer was told at the time.
      *
-     * <p><strong>And the date is read in the marketplace's calendar</strong> — {@code decisions.md}
-     * D51. {@code completedAt} is an {@code Instant} and the endpoint at the other end takes a
-     * {@code LocalDate}, so this is one half of a round trip: payout's
-     * {@code BrokerageResource.split} decodes it with {@code MarketCalendar.MARKET_ZONE}. This
-     * encoded it with {@code ZoneOffset.UTC}, and the two agreed only because the constant happens to
-     * be UTC+0 — two ends independently landing on the same offset rather than one calendar named
-     * once. Neither end was the NEW-10 defect (both zones were named), and no test can go red on the
-     * change; it makes the round trip self-consistent by construction.
+     * <p><strong>At the MOMENT it completed, and not merely on the day</strong> —
+     * {@code decisions.md} D56, backlog NEW-16. This sent only a {@code LocalDate} until then, and
+     * payout read it back as the start of that day, while D53 had already moved the ledger row
+     * behind the same booking onto the completion instant. A rate taking effect at noon therefore
+     * priced a 14:00 completion two ways, and neither number records the rate that produced it.
+     *
+     * <p>The day goes too, and payout prefers the instant. Both are sent because this call crosses a
+     * deployment boundary and the two services roll independently — see
+     * {@link BrokerageClient#splitFor}, which is where that argument belongs.
+     *
+     * <p><strong>The day is still read in the marketplace's calendar</strong> —
+     * {@code decisions.md} D51 — and now both halves of the round trip name it: payout decodes
+     * {@code on} with the same {@code MARKET_ZONE}. A booking that has not completed has no instant
+     * at all, only its scheduled day, and sends exactly that rather than a manufactured midnight.
      */
     @GetMapping("/{ref}/receipt")
     public Receipt receipt(@PathVariable String ref, @RequestHeader(HttpHeaders.AUTHORIZATION) String authorization) {
         Booking b = mineOr404(ref);
-        LocalDate struckAt = b.getCompletedAt() != null
-            ? LocalDate.ofInstant(b.getCompletedAt(), MarketCalendar.MARKET_ZONE)
-            : b.getScheduledDate();
+        Instant struckAt = b.getCompletedAt();
+        LocalDate struckOn = struckAt != null ? LocalDate.ofInstant(struckAt, MarketCalendar.MARKET_ZONE) : b.getScheduledDate();
         long price = b.getPriceMinor() == null ? 0L : b.getPriceMinor();
 
         BrokerageClient.Split split;
         try {
-            split = brokerage.splitFor(price, struckAt, authorization);
+            split = brokerage.splitFor(price, struckAt, struckOn, authorization);
         } catch (BrokerageClient.PayoutUnavailable e) {
             // Deliberately no fallback. Guessing 12% here would produce a receipt that looks
             // authoritative and might not match the ledger.

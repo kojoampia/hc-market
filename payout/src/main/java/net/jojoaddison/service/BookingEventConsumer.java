@@ -4,13 +4,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
-import java.util.Comparator;
-import java.util.List;
 import net.jojoaddison.domain.BrokerageConfig;
 import net.jojoaddison.domain.Ledger;
 import net.jojoaddison.domain.ProcessedEvent;
 import net.jojoaddison.domain.enumeration.DeliveryMode;
-import net.jojoaddison.repository.BrokerageConfigRepository;
 import net.jojoaddison.repository.EarningsRepository;
 import net.jojoaddison.repository.LedgerRepository;
 import net.jojoaddison.repository.ProcessedEventRepository;
@@ -75,7 +72,7 @@ public class BookingEventConsumer {
 
     private final LedgerRepository ledger;
     private final EarningsRepository ledgerQueries;
-    private final BrokerageConfigRepository brokerage;
+    private final BrokerageTerms terms;
     private final ProcessedEventRepository processed;
     private final ObjectMapper mapper;
     private final MarketCalendar calendar;
@@ -83,14 +80,14 @@ public class BookingEventConsumer {
     public BookingEventConsumer(
         LedgerRepository ledger,
         EarningsRepository ledgerQueries,
-        BrokerageConfigRepository brokerage,
+        BrokerageTerms terms,
         ProcessedEventRepository processed,
         ObjectMapper mapper,
         MarketCalendar calendar
     ) {
         this.ledger = ledger;
         this.ledgerQueries = ledgerQueries;
-        this.brokerage = brokerage;
+        this.terms = terms;
         this.processed = processed;
         this.mapper = mapper;
         this.calendar = calendar;
@@ -383,26 +380,22 @@ public class BookingEventConsumer {
      * scheduled for next month must not price a booking completed today, and a rate that took effect
      * last month must not price a booking completed the month before it.
      *
-     * <p>The moment comes from {@link #pricedAt} and never from a clock. Same rule as
-     * {@code BrokerageResource.inForce}, which answers the receipt's half of the same question; the
-     * two are not merged here, because they already agree on the rule and what used to differ — and
-     * what NEW-13 is about — is the moment each was handed.
+     * <p>The moment comes from {@link #pricedAt} and never from a clock.
      *
-     * <p><strong>That is the weakest available reason and merging them is backlog NEW-16.</strong> The
-     * value of one selector is that they keep agreeing, and there is a concrete way for them to stop:
-     * both take {@code Stream.max} over an unordered {@code findAll()}, so two configs sharing an
-     * {@code effectiveFrom} resolve non-deterministically and the two copies can pick different rows in
-     * one JVM — a receipt and a ledger row disagreeing with no rate change between them. Nothing
-     * prevents that data state today. Unlike {@code SubjectPseudonym} and {@link MarketCalendar} there
-     * is no obstacle: same Maven module, and {@code TechnicalStructureTest} permits {@code web} to
-     * reach {@code service}.
+     * <p><strong>The rule itself now lives in {@link BrokerageTerms}, once</strong> —
+     * {@code decisions.md} D56, backlog NEW-16. It was written out here and again in
+     * {@code BrokerageResource.inForce}, which answers the receipt's half of the same question about
+     * the same booking, and D53 declined to merge them on the grounds that they already agreed. That
+     * is the weakest available reason — the value of merging is that they keep agreeing — and there
+     * was a real way for them to stop: both took {@code Stream.max} over an unordered
+     * {@code findAll()}, which returns an arbitrary element among equals, so two configs sharing an
+     * {@code effectiveFrom} could resolve to different rows in the same JVM. This method survives
+     * only to turn "no terms" into a throw the container will retry, which is not what the receipt
+     * wants from the same absence.
      */
     private BrokerageConfig configInForce(Instant at) {
-        List<BrokerageConfig> all = brokerage.findAll();
-        return all
-            .stream()
-            .filter(c -> c.getEffectiveFrom() != null && !c.getEffectiveFrom().isAfter(at))
-            .max(Comparator.comparing(BrokerageConfig::getEffectiveFrom))
+        return terms
+            .inForceAt(at)
             .orElseThrow(() -> new IllegalStateException("no BrokerageConfig in force at " + at + " — cannot price a booking"));
     }
 }
