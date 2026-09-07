@@ -199,7 +199,7 @@ against the hand-written resource that replaced it:
 | `MessageResource`, `ConversationResource` | messaging `web/rest/` | `MessagingResource` — the **singular/plural** trap again, and the only thing that stopped these being name collisions. Generated CRUD returns **200 with every message in the estate to any `ROLE_USER`**: the body a customer wrote to a professional, and who wrote it to whom, unscoped by anything. The write half puts words in a named person's mouth in a thread there is no endpoint to delete from. It is an erasure surface too — a fresh row naming an erased customer makes a receipt (D31/D39) a statement about a moment rather than about the estate |
 | `BrokerageConfigResource` | payout `web/rest/` | **nothing.** A terms-change screen would need an **append-only** resource behind `ROLE_BROKERAGE`, not this: D53 prices every completed booking against the config in force at the booking's own instant, so `POST` of a backdated row reprices history, and `PUT`/`DELETE` on the config a ledger row was priced under destroys the only record of what that rate was. Generated CRUD would let **any authenticated user set this platform's commission rate** |
 | `LedgerResource` | payout `web/rest/` | `ProEarningsResource`, scoped to the caller's own login. Generated CRUD returns **every professional's earnings in the estate to any `ROLE_USER`** — gross, commission and net per booking, with `professionalLogin` on every row — and lets the same token **write an earning nobody worked for, or delete a commission**, in the table that is this platform's money record |
-| `PayoutResource` | payout `web/rest/` | `ProEarningsResource.payouts`, scoped to the caller. Generated CRUD discloses **every professional's settlement history** and lets any token **record a payment that never happened, or mark an unpaid batch `PAID`** |
+| `PayoutResource` | payout `web/rest/` | `ProEarningsResource.payouts`, scoped to the caller — **and that reads a table nothing writes.** `grep -rn "new Payout()" payout/src/main` finds nothing outside the seeder: the deleted resource was the estate's only writer, so on an unseeded estate `/api/pro/payouts` returns `[]` and always will. Not a regression — the CRUD was never how a payout should be created — but do not read this row as "the replacement covers the use". Generated CRUD disclosed **every professional's settlement history** and let any token **record a payment that never happened, or mark an unpaid batch `PAID`** |
 
 **And their tests.** A generated `...ResourceIT` for a resource you just deleted compiles fine and
 fails at run time against a 404. Delete `CategoryResourceIT`, `ReviewResourceIT`,
@@ -569,17 +569,22 @@ such thing exists here". Widen those four
 predicates in any of the three compose files and the endpoint is public. Nothing is lost by the
 narrowing: every consumer in the repository already goes through `/api/**`.
 
-**The route being narrow is not the same as the endpoint being guarded, and `/api/brokerage-configs`
-is the open case** — backlog **NEW-15**, found by D53 and not fixed there. payout says
-`.requestMatchers("/api/**").authenticated()` and nothing narrows it, so JHipster's generated
-`BrokerageConfigResource` CRUD is routed *and* reachable by any token the estate accepts: **verified
-200 with a plain `ROLE_USER` token through the quality gateway**. The read is arguably public — the
-prototype prints "12% platform fee" — but POST/PUT/PATCH/DELETE sit on the same rule, so a customer can
-backdate a commission rate. **The root cause is the delete table below: this resource was never in
-it**, which is worth taking seriously about the *other* generated `*Resource` classes still alive, since
-no test can detect an omission from a list. No live exposure today — production has never been
-deployed — and one on the first deploy, where `/api/register` is `permitAll`. Do not "tidy it up" by
-widening anything; the two shapes for the fix are in the backlog.
+**The route being narrow is not the same as the endpoint being guarded, and nine endpoints proved
+it** — backlog **NEW-15**, found by D53 on one and **closed by D54 on nine**. Every service says
+`.requestMatchers("/api/**").authenticated()` and nothing narrows it, so JHipster's generated CRUD was
+routed *and* reachable by any token the estate accepts. Measured in-process before deletion: all nine
+answered `GET` 200, `GET/{id}` 200, `POST` 201 and `PUT` 200 to a plain `ROLE_USER` — the commission
+rate, the ledger, the payout batches, the price list, the availability slots, credentials, highlights,
+and **every private message in the estate**. All nine are deleted and on the delete table below;
+`GeneratedCrudIsNotAnApiIT` in catalog, messaging and payout goes red if any of them answers again.
+
+**The root cause was the delete table, and the lesson generalises past this item**: it named eight
+resources, these nine had never been written down, and *no test in the estate could see an omission
+from a list*. So the list is now derived rather than trusted — `build.yml` reads `jdl/*.jdl` and
+demands, per entity, either a delete-table row naming that service or a resource carrying real
+authorization. Do not "tidy it up" by widening a route predicate; and if a screen ever needs one of
+these back, gate it — the check accepts a class-level `@PreAuthorize`, and D54 argues per resource why
+none was worth keeping.
 
 **Consul registers; it does not route.** `discovery.locator.enabled` is `false` in every
 environment, with static routes beneath it — a shared catalogue holding four products must never be

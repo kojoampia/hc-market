@@ -21,11 +21,15 @@ import org.springframework.web.server.ResponseStatusException;
  *
  * <p>The REST paths are {@code /api/threads} even though the entity is {@code Conversation}: the
  * spec, the prototype and every screen call them threads, and the rename exists only to stop a
- * JHipster entity shadowing {@code java.lang.Thread} inside its own package. The generated
- * {@code ConversationResource} keeps {@code /api/conversations} for CRUD and does not collide.
+ * JHipster entity shadowing {@code java.lang.Thread} inside its own package.
  *
- * <p>{@code NotificationResource} was deleted: it mapped {@code /api/notifications}, which spec §6
- * needs for the recipient-scoped list, and two controllers on one path stop the app booting.
+ * <p><strong>This resource is now the only way in.</strong> {@code NotificationResource} was deleted
+ * first: it mapped {@code /api/notifications}, which spec §6 needs for the recipient-scoped list, and
+ * two controllers on one path stop the app booting. {@code ConversationResource} and
+ * {@code MessageResource} followed with NEW-15 / D54 — they did not collide, which is exactly why
+ * nobody noticed them, and they served every conversation and every message body in the estate to any
+ * {@code ROLE_USER}. Everything here is scoped to the caller instead, and
+ * {@code GeneratedCrudIsNotAnApiIT} goes red if either comes back.
  */
 @RestController
 public class MessagingResource {

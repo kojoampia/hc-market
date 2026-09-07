@@ -1071,7 +1071,11 @@ jobs:
           for jdl in $jdls; do
             svc=$(basename "$jdl" .jdl)
             rest="$svc/src/main/java/net/jojoaddison/web/rest"
-            entities=$(grep -oE '^entity[[:space:]]+[A-Za-z][A-Za-z0-9]*' "$jdl" | awk '{print $2}')
+            # ^[[:space:]]* and not ^. JDL does not care about leading whitespace and JHipster
+            # generates from an indented `entity` exactly as from a flush one, so anchoring at column
+            # zero let two spaces hide an entity from this check entirely — verified, exit 0, nobody
+            # asked to answer for it. D54's review, and the narrowest fail-open in this step.
+            entities=$(grep -oE '^[[:space:]]*entity[[:space:]]+[A-Za-z][A-Za-z0-9]*' "$jdl" | awk '{print $2}')
             if [ -z "$entities" ]; then
               # gateway.jdl declares an application and no entity, so it generates no CRUD at all.
               echo "ok   $jdl declares no entity"
@@ -1086,20 +1090,72 @@ jobs:
               total=$((total + 1))
               f="$rest/${e}Resource.java"
               if [ ! -f "$f" ]; then
-                if printf '%s' "$table" | grep -qF "\`${e}Resource\`"; then
-                  echo "ok   $svc/$e — deleted, and CLAUDE.md's delete table says so"
+                # The row must name the resource in the DELETE column *and* this service in the FROM
+                # column. A bare grep of the whole table matched the "Replaced by" column too, so
+                # `entity Review` added to messaging.jdl was satisfied by CATALOG's ReviewResource row
+                # — verified. Every entity sharing a name with a replacement (Messaging, Marketplace,
+                # ProWorkspace, Favourites, ProEarnings, VerificationDesk) had the same free pass.
+                # -F'|' makes $2 the Delete column and $3 the From column; the separator row and any
+                # prose line outside a table row match neither.
+                if printf '%s\n' "$table" |
+                     awk -F'|' -v e="\`${e}Resource\`" -v svc="$svc" \
+                       'index($2, e) > 0 && index($3, svc) > 0 { found = 1 } END { exit !found }'; then
+                  echo "ok   $svc/$e — deleted, and CLAUDE.md's delete table says so for $svc"
                 else
-                  echo "::error file=CLAUDE.md::$svc has no ${e}Resource and the delete table does not name one — either it was deleted without being written down, or $e is a new entity nobody has answered for yet. Either way the next regeneration creates it with no authorization on it and nothing will say so. Add a row naming the disclosure or forgery it would allow, or gate the resource. See backlog NEW-15 and decisions.md D54."
+                  echo "::error file=CLAUDE.md::$svc has no ${e}Resource and the delete table does not name one for $svc — either it was deleted without being written down, or $e is a new entity nobody has answered for yet. Either way the next regeneration creates it with no authorization on it and nothing will say so. Add a row naming the disclosure or forgery it would allow, or gate the resource. See backlog NEW-15 and decisions.md D54."
                   fail=1
                 fi
                 continue
               fi
-              # It survives, so it must be gated. Class-level counts for everything; otherwise there
-              # must be at least one @PreAuthorize per mapping.
-              maps=$(grep -cE '@(Get|Post|Put|Patch|Delete|Request)Mapping\(' "$f")
-              pre=$(grep -cE '@PreAuthorize' "$f")
-              preline=$(grep -nE '@PreAuthorize' "$f" | head -1 | cut -d: -f1)
-              clsline=$(grep -nE '^[[:space:]]*(public[[:space:]]+)?(final[[:space:]]+)?class[[:space:]]' "$f" | head -1 | cut -d: -f1)
+              # IT SURVIVES, SO IT MUST BE GATED — and gated means annotated, not mentioned.
+              #
+              # This branch read raw text until D54's review and was the SEVENTH fail-open in this
+              # family. Both halves fell to prose, verified against a restored LedgerResource with no
+              # authorization whatsoever: one javadoc line saying "TODO: decide whether this needs a
+              # @PreAuthorize" passed it as gated at class level, and eight `// @PreAuthorize left out
+              # on purpose` comments passed it as gated per mapping. Exit 0 both times. That is
+              # exactly the rule D53 established one check earlier — A CHECK WHOSE REACH DEPENDS ON
+              # PROSE IS NOT A CHECK — and it was not applied here.
+              #
+              # So: strip comments first, then count. The awk below removes /* */ blocks across lines
+              # (javadoc included) and then // to end of line, preserving line numbering so the
+              # class-declaration comparison still means something.
+              stripped=$(mktemp)
+              awk '{
+                     line = $0
+                     while (1) {
+                       if (inblk) {
+                         p = index(line, "*/")
+                         if (p == 0) { line = ""; break }
+                         line = substr(line, p + 2); inblk = 0
+                       } else {
+                         p = index(line, "/*")
+                         if (p == 0) break
+                         pre = substr(line, 1, p - 1); rest = substr(line, p + 2)
+                         q = index(rest, "*/")
+                         if (q == 0) { line = pre; inblk = 1; break }
+                         line = pre substr(rest, q + 2)
+                       }
+                     }
+                     sub(/\/\/.*/, "", line)
+                     print line
+                   }' "$f" > "$stripped"
+              clsline=$(grep -nE '^[[:space:]]*(public[[:space:]]+)?(final[[:space:]]+)?(abstract[[:space:]]+)?class[[:space:]]' "$stripped" | head -1 | cut -d: -f1)
+              # Handler mappings only — those AFTER the class declaration. The class-level
+              # @RequestMapping("/api/ledgers") is a path prefix and not something to authorize, and
+              # counting it demanded one more @PreAuthorize than the resource has handlers: a
+              # LedgerResource correctly gated on all seven handlers was refused as "7 for 8".
+              # Failing closed, but refusing a correct fix is still a defect, and it is the branch
+              # the error message tells people to use. Found by re-running D54's own R4 mutation.
+              maps=$(awk -v c="${clsline:-0}" 'NR > c && /^[[:space:]]*@(Get|Post|Put|Patch|Delete|Request)Mapping\(/ { n++ } END { print n + 0 }' "$stripped")
+              # Anchored at the start of a line, so a @PreAuthorize inside a string literal is not an
+              # annotation either.
+              pre=$(grep -cE '^[[:space:]]*@PreAuthorize' "$stripped")
+              preline=$(grep -nE '^[[:space:]]*@PreAuthorize' "$stripped" | head -1 | cut -d: -f1)
+              rm -f "$stripped"
+              # An annotation line above the class declaration is necessarily TYPE-level: methods come
+              # after it, imports carry no @, and comments are gone. That is what makes "before the
+              # class" a sound reading of "in the annotation block" here.
               if [ -n "$preline" ] && [ -n "$clsline" ] && [ "$preline" -lt "$clsline" ]; then
                 echo "ok   $svc/$e — kept, gated at class level"
               elif [ "$pre" -gt 0 ] && [ "$pre" -ge "$maps" ]; then

@@ -6644,8 +6644,10 @@ screen to justify a gate".
   ledger row was already priced under destroy the only record of what that rate was. A terms-change
   screen therefore needs an **append-only** resource behind `ROLE_BROKERAGE` — closer to
   `VerificationDeskResource` than to CRUD — and building that speculatively, with no screen asking for
-  it, would be inventing a shape nobody has specified. Deleting it costs nothing and does not decide
-  the question.
+  it, would be inventing a shape nobody has specified. Deleting it does not decide that question.
+  **It does not cost nothing, though, which is what this said first and the review corrected**: it was
+  the last thing in the estate that could create a `BrokerageConfig` at all, and payout cannot price a
+  booking without one. That is **NEW-18**, below.
 - **`ServiceOfferingResource`** — `ProWorkspaceResource` owns `/api/pro/services` and takes no
   professional parameter at all, which is what makes spec §9's "refuse any reference that is not the
   caller's" true by construction. The generated one is that property's exact opposite. It is also a
@@ -6753,14 +6755,26 @@ authorization, and each is under `/api/**` and gateway-routed. All three compose
 `SPRING_CLOUD_STREAM_KAFKA_BINDER_BROKERS` at the **shared** broker four products borrow (D27), so any
 authenticated caller can publish an arbitrary string onto it, on a topic the binder auto-creates.
 
-Lower consequence than any of the nine — junk on a shared broker, not disclosure or forgery, and no
-consumer in this repository reads that binding — but it is the same omission in a different family, and
-**the new CI check cannot see it**: these resources correspond to no JDL entity, so nothing derives
-their existence. It is **backlog NEW-17** rather than a deletion here, on D51's rule that a defect
-living only in a decision document is one nobody picks up. Not ridden in on this package because it
-touches the **gateway**, which NEW-15 does not, and because removing the sample means deciding what
-becomes of `broker.KafkaConsumer` and the `/consume` endpoint CLAUDE.md discusses under D25/D29 — a
-decision, not a deletion.
+Lower consequence than any of the nine — no consumer in this repository reads that binding — but it is
+the same omission in a different family. It is **backlog NEW-17** rather than a deletion here, on D51's
+rule that a defect living only in a decision document is one nobody picks up. Not ridden in on this
+package because it touches the **gateway**, which NEW-15 does not, and because removing the sample
+means deciding what becomes of `broker.KafkaConsumer` and the `/consume` endpoint CLAUDE.md discusses
+under D25/D29 — a decision, not a deletion.
+
+**Three corrections from the review, and the first is the kind this document keeps making.** This
+section originally said the binder is pointed at the shared broker with `auto-create-topics: true`, so
+any authenticated caller can publish onto infrastructure four products share. **That cites
+`application-kafka.yml`, and the `kafka` profile is active in no environment** — dev `test,dev`,
+quality `dev,test`, production `prod`. Outside it there is no `spring.cloud.stream` block at all, so
+what `/publish` does is a `StreamBridge` dynamic destination against an unconfigured binding and was
+never established. Reading a mechanism out of a config file without checking which profile loads it is
+the same move as D53's check-that-depended-on-prose: plausible, specific, and not about the running
+system. Second, **CI currently asserts the hole works** — one `Healthconnect<Svc>KafkaResourceIT
+.producesMessages` per service POSTs to `/publish` and expects 200, so the endpoint has a passing test
+and reads as intended. Third, the blind spot is broader than "no JDL entity": the check's whole shape
+is entity-derived, so **no widening of it reaches this family** and a second `web/rest`-derived check
+is the answer rather than a bigger first one.
 
 ### Not exercised, and said plainly
 
@@ -6789,3 +6803,114 @@ JHipster's CRUD works, against nine endpoints that must not exist; 36 assertions
 replace them. booking and gateway were not touched. `./deploy/sync-appendices.sh --check` clean;
 `node deploy/demo/extract-seed.mjs` rewrote byte-identically; `build.yml` parses under pyyaml and the
 new step extracts as runnable bash.
+
+**Two things in that 244 are worth naming rather than glossing.** The `check<Field>IsRequired` tests
+were the only end-to-end assertion of the DTO-level `@NotNull` set — a theoretical loss, since they come
+back with the resources on a regeneration and the constraints are enforced by the schema regardless.
+And **`unique_availability_slot` is covered by nothing, before or after**: `AvailabilitySlotResourceIT`
+never mentioned it. Given that CLAUDE.md's Liquibase table calls that constraint the thing that makes
+concurrent double bookings collide, that is a pre-existing gap this deletion merely makes visible, and
+it belongs to whoever writes the concurrency test the constraint deserves.
+
+**The orphaned service classes stay, deliberately.** `LedgerService`, `LedgerQueryService`,
+`PayoutService`, `BrokerageConfigService`, `MessageService`, `ConversationService`,
+`ServiceOfferingService` and `AvailabilitySlotService` now have no caller in `src/main`. They are
+**generated files**: deleting them buys nothing a regeneration would not undo on the next run, and
+unlike a resource they map no URL, so an orphan here is dead code rather than an open door. The
+precedent is already in the tree — `CategoryService` and `ProfessionalService` have been orphaned since
+their resources went, and the delete table has never listed a service class. Adding one would widen the
+table from "what is reachable" to "what is unused", which is a different and much weaker rule.
+
+### The review: ten findings, and the four that were real defects rather than prose
+
+**Two fail-opens in the CI check, and one of them is the seventh in this family.** The gate branch
+counted `@PreAuthorize` in **raw text**, so it fell to prose exactly as D53's predecessor did — a
+restored `LedgerResource` with no authorization whatsoever passed as *"gated at class level"* on one
+javadoc line reading "TODO: decide whether this needs a `@PreAuthorize`", and as *"8 `@PreAuthorize`
+for 8 mappings"* on eight `// @PreAuthorize left out on purpose` comments. Exit 0 both times. **The rule
+this repository wrote one decision earlier — a check whose reach depends on prose is not a check — was
+not applied to the check that enforces it.** Comments are now stripped (block and line, preserving line
+numbers) before anything is counted, and `@PreAuthorize` must be an annotation at the start of a line,
+which also makes "before the class declaration" a sound reading of "type-level": methods come after it,
+imports carry no `@`, and comments are gone.
+
+The second was narrower and just as blind: `grep -oE '^entity…'` anchored at column zero, so two spaces
+of indentation hid an entity completely — `  entity Payslip {` gave exit 0, 21 entities scanned, nobody
+asked to answer for it, and JHipster generates from an indented `entity` exactly as from a flush one.
+
+**And the delete-table lookup was not service-scoped**, which is a third: a bare `grep -F` matched the
+*"Replaced by"* column too, so `entity Review` added to `jdl/messaging.jdl` was satisfied by
+**catalog's** `ReviewResource` row. Every entity sharing a name with a replacement — `Messaging`,
+`Marketplace`, `ProWorkspace`, `Favourites`, `ProEarnings`, `VerificationDesk` — had the same free pass.
+The row must now name the resource in the **Delete** column and the service in the **From** column.
+
+**Re-running the mutations after those fixes found a fourth, in the opposite direction.** The check
+counted the class-level `@RequestMapping("/api/ledgers")` as a mapping needing authorization, so a
+`LedgerResource` correctly gated on all seven handlers was refused as *"7 `@PreAuthorize` for 8
+mappings"*. Failing closed, but **refusing a correct fix is still a defect** — and it is the branch the
+error message tells people to use. Only handler mappings, those after the class declaration, are
+counted now. That one is worth noting for how it was found: the mutation that catches a fail-open in
+one direction is the mutation that catches over-strictness in the other, and it only surfaced because
+R3 and R4 assert the gate branch must **pass**.
+
+**Sixteen mutations now, each watched separately** — the original eight plus R1 (javadoc prose), R2
+(comment prose), R3 (a genuine class-level gate must pass), R4 (a genuine per-handler gate must pass),
+R5 (indented entity), R6 (another service's table row), R7 (the correct row for this service must
+pass). A harness bug is worth recording too: the first run of R2 and R4 used `sed 's|…|…|'`, where `\|`
+is an escaped delimiter rather than alternation, so both substitutions matched nothing and **R4 read as
+a broken check rather than a mutation that never landed**. Every mutation now prints evidence that it
+landed before its verdict is believed.
+
+**`aRowExistsBehindEveryDoor` was a name, not an assertion.** This document listed it *first* among the
+things the guards do that a status check would not, and nothing asserted it had happened: with its body
+replaced by a comment, payout reported `Tests run: 12, Failures: 0, BUILD SUCCESS`. The disclosure
+marker is unconditioned on there being anything to disclose and the row count compares 0 to 0, so a
+`Door` added without a row planted for it goes green. `thePlantingActuallyHappened` now asserts the
+planted id and a positive row count, per door, first thing in every test.
+
+**And every test here was a negative one.** The `401/403/404` refusal set is right and stays — pinning
+404 would go red on the correct fix — but the price of that latitude is that a 404 for the wrong reason
+reads exactly like a 404 for the right one: pointing a `Door` at `/api/payoutz` left both read cases
+green. Each guard now has a **positive control** asserting a surviving hand-written endpoint answers
+200 in the same run (`/api/pro/earnings`, `/api/threads`, `/api/professionals`). It does not rescue a
+typo in one `Door`'s own path — nothing can, since the door *is* its path — but a typo in `Door.entity`
+was already caught, because `rows()` builds JPQL from it.
+
+**The guards covered five of seven verbs.** `LedgerResource` carried `GET`, `GET/{id}`, **`GET /count`**,
+`POST`, `PUT`, **`PATCH`** and `DELETE`; this document said "four write mappings" while measuring two of
+them. `PATCH` is now asserted on every door and `/api/ledgers/count` is a door of its own — the only one
+of the nine with a count endpoint, because `filter Ledger` is the only `filter` directive covering any
+of them, and it discloses how many bookings the platform has completed. Proving `PATCH` fires needed its
+own arrangement: `PUT` is asserted first in the same method, so a fully restored resource reddens on
+`PUT` and `PATCH` is never reached. Restoring `LedgerResource` with its `@PutMapping` moved off
+`/{id}` produced `[PATCH /api/ledgers/{id}]` alone, which is the evidence.
+
+**Three stale claims this package created or left standing**, all corrected: CLAUDE.md's Architecture
+section still described `/api/brokerage-configs` as the open case with the fix "in the backlog", 380
+lines above a delete table saying it was deleted — and it is the paragraph a reader of that section
+hits first; `MessagingResource`'s javadoc still said the generated `ConversationResource` "keeps
+`/api/conversations` for CRUD and does not collide", which is precisely why nobody noticed it; and the
+sentence this package added to `ProfessionalResourceIT` claiming `GeneratedCrudIsNotAnApiIT` is now its
+only caller was simply false — `ErasureResourceIT`, `ErasureFanoutLegIT` and
+`VerificationDeskResourceIT` all build their professional there.
+
+**One delete-table row overstated its replacement.** `PayoutResource`'s row named
+`ProEarningsResource.payouts` as the scoped replacement, and that endpoint reads a table **nothing
+writes**: `grep -rn "new Payout()" payout/src/main` finds zero, seeder included, so the deleted CRUD was
+the estate's only writer and `/api/pro/payouts` returns `[]` and always will. Not a regression, and not
+a reason to keep four unauthenticated verbs — but the row said "covered" and it is not. The other seven
+were checked against real mappings and are genuinely covered.
+
+**Counts after the review**, all three `clean verify`, `TechnicalStructureTest` green, 0 checkstyle and
+0 modernizer: catalog **108 unit / 72 IT** (from 71), messaging **62 / 64** (from 63), payout
+**108 / 42** (from 40). Four new cases between them — one positive control per service and payout's
+count door. `PATCH` adds no case: it is folded into the existing edit-or-erase test, which is why
+proving it fires needed a resource with its `PUT` moved off the path rather than a whole restoration.
+
+**And the last gate caught one more thing, in the working tree rather than in the code.** payout's
+first `clean verify` after these fixes failed on five ledger cases: the `patchproof.sh` harness had
+written `LedgerResource.java` with `git show >`, which leaves it **untracked**, so its closing
+`git rm -f` matched nothing and the file stayed. `git status` showed it as `??` and the guard went red
+exactly as designed. Worth recording because it is the first time one of these guards has fired on
+something real rather than on a deliberate mutation — and because a mutation harness that restores a
+file must restore it the same way it removed it.

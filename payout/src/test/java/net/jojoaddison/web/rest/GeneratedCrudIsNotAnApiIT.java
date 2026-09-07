@@ -4,8 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import jakarta.persistence.EntityManager;
 import java.math.BigDecimal;
@@ -23,6 +25,7 @@ import net.jojoaddison.domain.enumeration.PayoutStatus;
 import net.jojoaddison.security.AuthoritiesConstants;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -141,11 +144,33 @@ class GeneratedCrudIsNotAnApiIT {
         planted.put(PAYOUT, payout.getId());
     }
 
+    /**
+     * A positive control, because every other test here is a negative one — D54's review, finding 3.
+     *
+     * <p>The refusal set is {@code 401/403/404} rather than a bare {@code 404} on purpose: deletion
+     * gives 404 today and a future gate would give 403, and pinning 404 would make this guard go red
+     * on the correct fix. The cost of that latitude is that <strong>a 404 for the wrong reason reads
+     * exactly like a 404 for the right one</strong> — pointing a {@code Door} at
+     * {@code /api/payoutz} left both read cases green, verified. So one endpoint that must answer
+     * establishes that the application is up, mapped and serving in the same run.
+     *
+     * <p>It does not rescue a typo in a single {@code Door}'s own path, and nothing can: the door is
+     * defined by its path. A typo in {@code Door.entity} <em>is</em> caught, because {@link #rows}
+     * builds JPQL from it and an unknown entity throws.
+     */
+    @Test
+    @Transactional
+    @DisplayName("the service is actually serving — otherwise every refusal below is meaningless")
+    void theSurvivingApiStillAnswers() throws Exception {
+        mockMvc.perform(get("/api/pro/earnings")).andExpect(status().isOk());
+    }
+
     @ParameterizedTest(name = "GET {0}")
     @MethodSource("doors")
     @Transactional
     @DisplayName("no generated collection is readable")
     void nobodyMayReadTheCollection(Door door) throws Exception {
+        thePlantingActuallyHappened(door);
         mockMvc
             .perform(get(door.path()))
             .andExpect(result -> {
@@ -161,6 +186,7 @@ class GeneratedCrudIsNotAnApiIT {
     @Transactional
     @DisplayName("nor one row of it, which is the same disclosure asked for one row at a time")
     void nobodyMayReadOneRow(Door door) throws Exception {
+        thePlantingActuallyHappened(door);
         mockMvc
             .perform(get(door.path() + "/" + planted.get(door)))
             .andExpect(result -> {
@@ -185,6 +211,7 @@ class GeneratedCrudIsNotAnApiIT {
     @Transactional
     @DisplayName("nobody may create one")
     void nobodyMayCreate(Door door) throws Exception {
+        thePlantingActuallyHappened(door);
         long before = rows(door);
 
         mockMvc
@@ -199,6 +226,7 @@ class GeneratedCrudIsNotAnApiIT {
     @Transactional
     @DisplayName("nobody may edit or erase one")
     void nobodyMayEditOrErase(Door door) throws Exception {
+        thePlantingActuallyHappened(door);
         Long id = planted.get(door);
         long before = rows(door);
 
@@ -206,11 +234,52 @@ class GeneratedCrudIsNotAnApiIT {
             .perform(put(door.path() + "/" + id).with(csrf()).contentType(MediaType.APPLICATION_JSON).content(forged(door, id)))
             .andExpect(result -> assertThat(result.getResponse().getStatus()).as("PUT %s/{id}", door.path()).isIn(401, 403, 404, 405));
 
+        // PATCH is a fourth write verb and was unexercised until D54's review. The generated
+        // partialUpdate accepts application/json as well as merge-patch+json, so the same body works.
+        mockMvc
+            .perform(patch(door.path() + "/" + id).with(csrf()).contentType(MediaType.APPLICATION_JSON).content(forged(door, id)))
+            .andExpect(result -> assertThat(result.getResponse().getStatus()).as("PATCH %s/{id}", door.path()).isIn(401, 403, 404, 405));
+
         mockMvc
             .perform(delete(door.path() + "/" + id).with(csrf()))
             .andExpect(result -> assertThat(result.getResponse().getStatus()).as("DELETE %s/{id}", door.path()).isIn(401, 403, 404, 405));
 
         assertThat(rows(door)).as("%s must still hold every row it held", door.path()).isEqualTo(before);
+    }
+
+    /**
+     * {@code /api/ledgers/count} — the sixth door, and the only one of the nine with a count endpoint,
+     * because {@code filter Ledger} is the only {@code filter} directive covering any of them.
+     *
+     * <p>It is a disclosure in its own right and a smaller one than the collection: how many bookings
+     * this platform has completed, and — with a criteria parameter — how many any named professional
+     * has. D54 counted the generated resource's mappings at four writes and measured two of them; this
+     * is the read half of the same omission.
+     */
+    @Test
+    @Transactional
+    @DisplayName("nor may anybody count the ledger")
+    void nobodyMayCountTheLedger() throws Exception {
+        thePlantingActuallyHappened(LEDGER);
+        mockMvc
+            .perform(get(LEDGER.path() + "/count"))
+            .andExpect(result -> assertThat(result.getResponse().getStatus()).as("GET %s/count", LEDGER.path()).isIn(401, 403, 404));
+    }
+
+    /**
+     * The guard's own foundation, asserted rather than assumed — D54's review, finding 2.
+     *
+     * <p>{@code aRowExistsBehindEveryDoor} was listed first among the things this guard does that a
+     * bare status check would not, and <strong>nothing checked that it had done it</strong>. With its
+     * body replaced by a comment the whole file still reported {@code Tests run: 12, Failures: 0}: the
+     * disclosure marker is unconditioned on there being anything to disclose, and the row count
+     * compares 0 to 0. A {@code Door} added without a row planted for it would go green the same way.
+     */
+    private void thePlantingActuallyHappened(Door door) {
+        assertThat(planted.get(door))
+            .as("nothing was planted behind %s — every assertion about it would pass vacuously", door.path())
+            .isNotNull();
+        assertThat(rows(door)).as("%s has no row behind it, so this guard proves nothing", door.path()).isPositive();
     }
 
     /** Counted through JPQL rather than a repository per door, so the list stays a list. */

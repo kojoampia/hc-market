@@ -52,7 +52,8 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **NEW-14** | A professional's own calendar opens on Accra's day, not theirs | BLOCKED on spec §13 #8 | D52 §review — the two `/api/pro/**` window defaults read `MarketCalendar`. Nil consequence while every `professional.zone_id` is `Africa/Accra`; deciding it the other way settles D21's open question by find-and-replace, which D51 refused for the neighbouring sites. Opened by the D52 review |
 | **NEW-15** | Any authenticated user can change the brokerage's commission rate — **and eight other things** | DONE | D54 — the scope was **nine, not one**: `BrokerageConfig`, `Ledger`, `Payout`, `Credential`, `AvailabilitySlot`, `ServiceOffering`, `Highlight`, `Message` and `Conversation`, each with four write mappings and zero authorization. Measured in-process at 200/200/201/200 apiece before deletion — 36 assertions, 36 red. All nine deleted with their generated ITs, argued individually; three `GeneratedCrudIsNotAnApiIT` guards, each door mutated **separately**. **The root cause was the control**: one CI check now derives the expected set from `jdl/*.jdl` and demands, per entity, a delete-table row or real authorization. Eight mutations watched. Opened a tenth family as NEW-17 |
 | **NEW-16** | The receipt strikes its split to the day and the ledger to the instant | READY | D53 — narrowed from unbounded to sub-day by NEW-13 and not closed. `BrokerageResource.split` takes a `LocalDate`; a rate taking effect at noon prices a 14:00 completion two ways. Closing it is a cross-service API change with a compatibility question of its own |
-| **NEW-17** | The five generated Kafka sample resources publish to the shared broker unauthenticated | READY | D54 — `POST /api/healthconnect-<service>-kafka/publish` in all four services **and the gateway**, generated, no authorization, gateway-routed, with the binder pointed at the broker four products borrow (D27). Low consequence — junk on a shared broker, not disclosure — but the same omission in a family **NEW-15's CI check cannot see**, because these correspond to no JDL entity. Deliberately not ridden in on D54 |
+| **NEW-17** | The five generated Kafka sample resources are unauthenticated write endpoints | READY | D54 — `POST /api/healthconnect-<service>-kafka/publish` in all four services **and the gateway**, generated, no `@PreAuthorize`, gateway-routed. What it actually does on a running estate is **unestablished**: the binding and `auto-create-topics` live in `application-kafka.yml` and the `kafka` profile is active nowhere, so it is a `StreamBridge` dynamic destination against an unconfigured binding. Closing it also deletes **five ITs that currently assert the hole works** (`producesMessages`, expecting 200). NEW-15's CI check is entity-derived and **cannot** reach this family; a second `web/rest`-derived check is the answer |
+| **NEW-18** | Nothing can create a `BrokerageConfig`, and payout cannot price a booking without one | READY — **blocks the first production deploy** | D54's review. `BookingEventConsumer.configInForce` throws `IllegalStateException` on an empty table; the only writers were `PayoutSeeder` (`seed.enabled: false` under `prod`) and the `BrokerageConfigResource` D54 deleted; the Liquibase `loadData` is `context="faker"`. So on production the table is empty, **the first `booking.completed` throws and the consumer retries for ever** — no ledger row, no earnings, and the failure lands after the money moved. The deletion is still right; the bootstrap was always missing and the CRUD hid it |
 
 ---
 
@@ -1441,22 +1442,84 @@ compose files set `SPRING_CLOUD_STREAM_KAFKA_BINDER_BROKERS` at the shared broke
 (D27) and the binding has `auto-create-topics: true`, so any token the estate accepts can publish an
 arbitrary string onto that broker on a topic it creates on demand.
 
+**What it does on a running estate is UNESTABLISHED, and D54 first claimed otherwise.** The original
+write here said the binder was pointed at the shared broker with `auto-create-topics: true`, so any
+token could publish an arbitrary string onto infrastructure four products share. **That cites a file no
+environment loads.** Both the `spring.cloud.stream` bindings and `auto-create-topics` live in
+`application-kafka.yml`, and the `kafka` profile is active **nowhere** — dev runs `test,dev`, quality
+runs `dev,test` (read off the running container), production runs `prod`. Outside that profile there is
+no `spring.cloud.stream` block at all, so `streamBridge.send("binding-out-0", …)` is a dynamic
+destination against an unconfigured binding and what it does was never determined. Establish that
+before writing the consequence down again; the endpoint being an unauthenticated write is reason
+enough on its own.
+
 **Why it is lower priority than the nine.** Nothing in this repository consumes `binding-out-0`, so the
-consequence is junk topics on shared infrastructure rather than disclosure or forgery. The
+worst case is junk on shared infrastructure rather than disclosure or forgery. The
 `@GetMapping("/register")` half is the sample SSE consumer CLAUDE.md already describes as *not*
 `/api/stream`, bound to a `sse-topic` nothing publishes to.
+
+**CI currently asserts the hole works.** One `Healthconnect<Svc>KafkaResourceIT.producesMessages` per
+service POSTs to `/publish` under `@WithMockUser` and expects **200**. Five ITs go with the five
+resources, and their existence is part of why nobody looked: the endpoint has a passing test, so it
+reads as intended behaviour.
 
 **Why it needs its own package rather than a deletion.** It touches the **gateway**, which NEW-15 did
 not; and removing the resource means deciding what becomes of the generated `broker.KafkaConsumer` it
 injects and of `/api/healthconnect-gateway-kafka/consume`, which CLAUDE.md discusses under D25/D29 as
 the thing `MarketplaceStreamResource` is not. That is a decision, not a deletion.
 
-**NEW-15's CI check cannot see this family** and that is worth saying plainly: it derives the set of
-resources to interrogate from `jdl/*.jdl`, and these five correspond to no entity. Whoever takes this
-should decide whether the check widens to "every generated `*Resource` under `web/rest`" or whether a
-second, differently-derived check is the honest answer — the first would have to distinguish the
-estate's fourteen hand-written resources from the generated ones without enumerating either, which is
-the part that needs thought.
+**NEW-15's CI check cannot see this family, and no widening of it will.** The blind spot is not "these
+five have no JDL entity" — it is that the check's whole *shape* is entity-derived: it iterates entities
+and asks a question about each. There is no entity to iterate here. So the answer is a **second,
+differently-derived check** over `web/rest` rather than a wider version of the first, and its hard part
+is distinguishing the estate's fourteen hand-written resources from the generated ones without
+enumerating either. One derivation that might work: a resource whose name matches
+`Healthconnect.*KafkaResource` is generated by construction, since the prefix is the JHipster
+application name from the JDL — which makes even that family derivable from `jdl/*.jdl`, one level up
+from the entities.
+
+---
+
+## NEW-18 — Nothing can create a `BrokerageConfig`, and payout cannot price a booking without one · READY, blocks the first production deploy
+
+Opened by D54's review, which found it by asking what the `BrokerageConfigResource` deletion actually
+cost. D54 said "deleting it costs nothing and does not decide the question". **The first half was
+wrong**, and the deletion is still right — it uncovered a gap that was always there.
+
+Four facts, each verified:
+
+- `BookingEventConsumer.configInForce` ends `.orElseThrow(() -> new IllegalStateException("no
+  BrokerageConfig in force at " + at + " — cannot price a booking"))`.
+- The only writers of a `BrokerageConfig` outside tests were `PayoutSeeder` and the resource D54
+  deleted. `grep -rn "new BrokerageConfig()" payout/src/main` now finds exactly one hit, in the seeder.
+- `payout/src/main/resources/config/application-prod.yml` sets `seed.enabled: false`, and seeding is
+  double-locked on the `test & dev` profile pair besides.
+- The generated `loadData` in `20231204031835_added_entity_BrokerageConfig.xml` is
+  `context="faker"`, which no environment but dev enables — and dev's faker context is disabled here
+  anyway for the reason in CLAUDE.md.
+
+**So on a production estate `brokerage_config` is empty, the first `booking.completed` throws, and the
+consumer retries it for ever.** No ledger row is written, `/api/pro/earnings` stays at zero, and the
+booking service is perfectly happy because the failure is entirely inside payout's consumer. It lands
+on the one path where the customer's money has already moved.
+
+**Three shapes for the answer, and somebody should choose deliberately:**
+
+1. A **Liquibase changeset outside `faker`** inserting the founding rate. Simplest, runs once, and puts
+   the estate's commercial terms in a migration where a schema change can be reviewed — but a rate is
+   not schema, and changing it later means a second changeset.
+2. A **seeded-once row**, guarded so it writes only into an empty table, on a property that is safe to
+   leave on in production. Closest to how the estate already behaves, and it makes "the founding rate"
+   a deployment input rather than a code constant.
+3. The **append-only `ROLE_BROKERAGE` resource** D54 said a terms-change screen would need. Solves
+   bootstrap and terms-changes together, and is the most work.
+
+**A preflight is worth considering with whichever is chosen, and is not a substitute for one.**
+`deploy-prod.sh`'s existing smoke test counts professionals in the catalogue and cannot see this. An
+assertion that payout holds at least one `BrokerageConfig` would turn a silent forever-retry into a
+failed deploy — but note that a smoke test for a condition with **no remedy** would simply fail every
+production deploy until one of the three above is built, and a failing smoke test triggers an automatic
+rollback (D49). So build the answer first, and the check with it.
 
 ---
 
