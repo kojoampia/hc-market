@@ -50,8 +50,10 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **NEW-12** | Catalog's four implicit-zone reads, one of which stores a date | DONE | D52 — all four closed, `MarketCalendar`'s fourth copy, and the CI check now scans **every** service with no per-file exemption anywhere. The estate has no implicit-zone read left. The data question is **re-established, not cited, and its answer differs from D51's**: the quality box holds **two** rows written by the defective line, both dated correctly because the container's zone is `Etc/UTC` — "written by the defect and right", not "nothing was written". No migration |
 | **NEW-13** | The brokerage rate is struck when the event is consumed, not when the booking completed | DONE | D53 — the act's instant is on the wire (`bookingCompletedAt`, `bookingCancelledAt`) and nothing on the pricing path reads a clock. An event without one falls back to the envelope's `occurredAt` **at WARN**, never to now; with neither it is refused. Ten tests, all watched red first; one CI check, watched firing three ways |
 | **NEW-14** | A professional's own calendar opens on Accra's day, not theirs | BLOCKED on spec §13 #8 | D52 §review — the two `/api/pro/**` window defaults read `MarketCalendar`. Nil consequence while every `professional.zone_id` is `Africa/Accra`; deciding it the other way settles D21's open question by find-and-replace, which D51 refused for the neighbouring sites. Opened by the D52 review |
-| **NEW-15** | Any authenticated user can change the brokerage's commission rate | READY | D53 — the generated `BrokerageConfigResource` is live on `/api/brokerage-configs` behind payout's blanket `authenticated()`, and the gateway routes it. GET verified 200 with a `ROLE_USER` token against the quality box; the writes sit on the same rule and were deliberately not exercised. **Root cause: it was never in `CLAUDE.md`'s delete table.** No live external exposure — production has never been deployed. Found while establishing that `effectiveFrom` had never moved |
+| **NEW-15** | Any authenticated user can change the brokerage's commission rate — **and eight other things** | DONE | D54 — the scope was **nine, not one**: `BrokerageConfig`, `Ledger`, `Payout`, `Credential`, `AvailabilitySlot`, `ServiceOffering`, `Highlight`, `Message` and `Conversation`, each with four write mappings and zero authorization. Measured in-process at 200/200/201/200 apiece before deletion — 36 assertions, 36 red. All nine deleted with their generated ITs, argued individually; three `GeneratedCrudIsNotAnApiIT` guards, each door mutated **separately**. **The root cause was the control**: one CI check now derives the expected set from `jdl/*.jdl` and demands, per entity, a delete-table row or real authorization. Eight mutations watched. Opened a tenth family as NEW-17 |
 | **NEW-16** | The receipt strikes its split to the day and the ledger to the instant | READY | D53 — narrowed from unbounded to sub-day by NEW-13 and not closed. `BrokerageResource.split` takes a `LocalDate`; a rate taking effect at noon prices a 14:00 completion two ways. Closing it is a cross-service API change with a compatibility question of its own |
+| **NEW-17** | The five generated Kafka sample resources are unauthenticated write endpoints | READY | D54 — `POST /api/healthconnect-<service>-kafka/publish` in all four services **and the gateway**, generated, no `@PreAuthorize`, gateway-routed. What it actually does on a running estate is **unestablished**: the binding and `auto-create-topics` live in `application-kafka.yml` and the `kafka` profile is active nowhere, so it is a `StreamBridge` dynamic destination against an unconfigured binding. Closing it also deletes **five ITs that currently assert the hole works** (`producesMessages`, expecting 200). NEW-15's CI check is entity-derived and **cannot** reach this family; a second `web/rest`-derived check is the answer |
+| **NEW-18** | Nothing can create a `BrokerageConfig`, and payout cannot price a booking without one | READY — **blocks the first production deploy** | D54's review. `BookingEventConsumer.configInForce` throws `IllegalStateException` on an empty table; the only writers were `PayoutSeeder` (`seed.enabled: false` under `prod`) and the `BrokerageConfigResource` D54 deleted; the Liquibase `loadData` is `context="faker"`. So on production the table is empty, **the first `booking.completed` throws and the consumer retries for ever** — no ledger row, no earnings, and the failure lands after the money moved. The deletion is still right; the bootstrap was always missing and the CRUD hid it |
 
 ---
 
@@ -1327,7 +1329,31 @@ midnight is the wrong day by one.
 settle by find-and-replace and D52 refused for the same reason. Answering it for these two while those
 stay open would give one service two answers. Take it with §13 #8, not before.
 
-## NEW-15 — Any authenticated user can change the brokerage's commission rate · READY
+## NEW-15 — Any authenticated user can change the brokerage's commission rate · DONE (D54)
+
+**Closed by D54, and the scope turned out to be nine resources rather than one.** The item's own
+closing paragraph asked whoever took it to put the delete table's question to every other generated
+`*Resource` in the five services. Doing that first found eight more, every one with four write
+mappings and no authorization annotation of any kind: `LedgerResource` and `PayoutResource` in payout,
+`MessageResource` and `ConversationResource` in messaging, and `ServiceOfferingResource`,
+`AvailabilitySlotResource`, `CredentialResource` and `HighlightResource` in catalog.
+
+Ranked by what a **write** does rather than what a read discloses, the resource this item was opened on
+comes fifth. Messaging's pair are the worst — they return the content of private conversations, the one
+category of personal data here that is neither pseudonymised nor derivable — and payout's ledger and
+payout tables are the money record, with no third copy of either.
+
+All nine are deleted, with their generated ITs, each argued on its own callers and its own replacement
+rather than in bulk; three `GeneratedCrudIsNotAnApiIT` guards go red the moment any of them answers
+anybody again, with each door mutated separately to prove the guard is per-door and not per-file. **The
+control itself was the real deliverable**: `build.yml` now derives the expected set from `jdl/*.jdl`
+and demands, for every entity in the model of record, either a delete-table row or real authorization —
+so the tenth cannot ship the way these nine did. D54 has the per-resource arguments, the measurements
+and the eight mutations.
+
+Everything below is the item as it stood, kept because it is the record of what was known before.
+
+---
 
 Opened by D53 while establishing that `effectiveFrom` had never moved, and **not** fixed there: NEW-13
 is about *when* a rate is struck and this is about *who may set one*, which is an authorisation
@@ -1402,6 +1428,98 @@ property rather than a bug to report. Unlike `SubjectPseudonym` and `MarketCalen
 stopping the merge: both are in payout's **same Maven module**, and `TechnicalStructureTest` permits
 `web → service`, so one selector in `service` is reachable from both. Decide the tie-break explicitly
 while merging — newest `id` wins is the obvious answer and any answer beats an arbitrary one.
+
+## NEW-17 — The generated Kafka sample resources publish to the shared broker, unauthenticated · READY
+
+Opened by D54, which found them while re-deriving NEW-15's inventory and deliberately did not fix them.
+
+`HealthconnectBookingKafkaResource`, `HealthconnectCatalogKafkaResource`,
+`HealthconnectMessagingKafkaResource`, `HealthconnectPayoutKafkaResource` and — this is why it is not a
+rider on D54 — `HealthconnectGatewayKafkaResource` each carry `@PostMapping("/publish")` taking a
+`message` request parameter, with no `@PreAuthorize`, under `/api/**` and therefore behind the same
+blanket `.authenticated()` the nine deleted resources sat behind. Each is gateway-routed. All three
+compose files set `SPRING_CLOUD_STREAM_KAFKA_BINDER_BROKERS` at the shared broker four products borrow
+(D27) and the binding has `auto-create-topics: true`, so any token the estate accepts can publish an
+arbitrary string onto that broker on a topic it creates on demand.
+
+**What it does on a running estate is UNESTABLISHED, and D54 first claimed otherwise.** The original
+write here said the binder was pointed at the shared broker with `auto-create-topics: true`, so any
+token could publish an arbitrary string onto infrastructure four products share. **That cites a file no
+environment loads.** Both the `spring.cloud.stream` bindings and `auto-create-topics` live in
+`application-kafka.yml`, and the `kafka` profile is active **nowhere** — dev runs `test,dev`, quality
+runs `dev,test` (read off the running container), production runs `prod`. Outside that profile there is
+no `spring.cloud.stream` block at all, so `streamBridge.send("binding-out-0", …)` is a dynamic
+destination against an unconfigured binding and what it does was never determined. Establish that
+before writing the consequence down again; the endpoint being an unauthenticated write is reason
+enough on its own.
+
+**Why it is lower priority than the nine.** Nothing in this repository consumes `binding-out-0`, so the
+worst case is junk on shared infrastructure rather than disclosure or forgery. The
+`@GetMapping("/register")` half is the sample SSE consumer CLAUDE.md already describes as *not*
+`/api/stream`, bound to a `sse-topic` nothing publishes to.
+
+**CI currently asserts the hole works.** One `Healthconnect<Svc>KafkaResourceIT.producesMessages` per
+service POSTs to `/publish` under `@WithMockUser` and expects **200**. Five ITs go with the five
+resources, and their existence is part of why nobody looked: the endpoint has a passing test, so it
+reads as intended behaviour.
+
+**Why it needs its own package rather than a deletion.** It touches the **gateway**, which NEW-15 did
+not; and removing the resource means deciding what becomes of the generated `broker.KafkaConsumer` it
+injects and of `/api/healthconnect-gateway-kafka/consume`, which CLAUDE.md discusses under D25/D29 as
+the thing `MarketplaceStreamResource` is not. That is a decision, not a deletion.
+
+**NEW-15's CI check cannot see this family, and no widening of it will.** The blind spot is not "these
+five have no JDL entity" — it is that the check's whole *shape* is entity-derived: it iterates entities
+and asks a question about each. There is no entity to iterate here. So the answer is a **second,
+differently-derived check** over `web/rest` rather than a wider version of the first, and its hard part
+is distinguishing the estate's fourteen hand-written resources from the generated ones without
+enumerating either. One derivation that might work: a resource whose name matches
+`Healthconnect.*KafkaResource` is generated by construction, since the prefix is the JHipster
+application name from the JDL — which makes even that family derivable from `jdl/*.jdl`, one level up
+from the entities.
+
+---
+
+## NEW-18 — Nothing can create a `BrokerageConfig`, and payout cannot price a booking without one · READY, blocks the first production deploy
+
+Opened by D54's review, which found it by asking what the `BrokerageConfigResource` deletion actually
+cost. D54 said "deleting it costs nothing and does not decide the question". **The first half was
+wrong**, and the deletion is still right — it uncovered a gap that was always there.
+
+Four facts, each verified:
+
+- `BookingEventConsumer.configInForce` ends `.orElseThrow(() -> new IllegalStateException("no
+  BrokerageConfig in force at " + at + " — cannot price a booking"))`.
+- The only writers of a `BrokerageConfig` outside tests were `PayoutSeeder` and the resource D54
+  deleted. `grep -rn "new BrokerageConfig()" payout/src/main` now finds exactly one hit, in the seeder.
+- `payout/src/main/resources/config/application-prod.yml` sets `seed.enabled: false`, and seeding is
+  double-locked on the `test & dev` profile pair besides.
+- The generated `loadData` in `20231204031835_added_entity_BrokerageConfig.xml` is
+  `context="faker"`, which no environment but dev enables — and dev's faker context is disabled here
+  anyway for the reason in CLAUDE.md.
+
+**So on a production estate `brokerage_config` is empty, the first `booking.completed` throws, and the
+consumer retries it for ever.** No ledger row is written, `/api/pro/earnings` stays at zero, and the
+booking service is perfectly happy because the failure is entirely inside payout's consumer. It lands
+on the one path where the customer's money has already moved.
+
+**Three shapes for the answer, and somebody should choose deliberately:**
+
+1. A **Liquibase changeset outside `faker`** inserting the founding rate. Simplest, runs once, and puts
+   the estate's commercial terms in a migration where a schema change can be reviewed — but a rate is
+   not schema, and changing it later means a second changeset.
+2. A **seeded-once row**, guarded so it writes only into an empty table, on a property that is safe to
+   leave on in production. Closest to how the estate already behaves, and it makes "the founding rate"
+   a deployment input rather than a code constant.
+3. The **append-only `ROLE_BROKERAGE` resource** D54 said a terms-change screen would need. Solves
+   bootstrap and terms-changes together, and is the most work.
+
+**A preflight is worth considering with whichever is chosen, and is not a substitute for one.**
+`deploy-prod.sh`'s existing smoke test counts professionals in the catalogue and cannot see this. An
+assertion that payout holds at least one `BrokerageConfig` would turn a silent forever-retry into a
+failed deploy — but note that a smoke test for a condition with **no remedy** would simply fail every
+production deploy until one of the three above is built, and a failing smoke test triggers an automatic
+rollback (D49). So build the answer first, and the check with it.
 
 ---
 
