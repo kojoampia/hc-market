@@ -6584,3 +6584,208 @@ deleted, and this package changes nothing it exercises.
 added), same. `./deploy/sync-appendices.sh --check` clean; `node deploy/demo/extract-seed.mjs` rewrote
 byte-identically. Nothing in catalog, messaging or gateway was touched: messaging reads named paths out
 of this payload and the gateway passes it through whole, so two more fields are additive to both.
+
+## D54 — Nine generated CRUD resources nobody owned, and the control that never named them
+
+NEW-15, opened by D53 on **one** resource. It is nine.
+
+D53 found the generated `BrokerageConfigResource` live on `/api/brokerage-configs` and said, in the
+item it wrote, that whoever took it should "ask the table's own question of every *other* generated
+`*Resource` still alive in the five services, because the same omission cannot be detected by any test
+that exists". Asking it found eight more. **Every one of the nine carried four write mappings and zero
+authorization annotations**, sat behind its service's blanket
+`.requestMatchers("/api/**").authenticated()`, and was routed from the edge by
+`Path=/services/<service>/api/**`.
+
+| | Service | Resource | Path | What a write did |
+| --- | --- | --- | --- | --- |
+| 1 | messaging | `MessageResource` | `/api/messages` | every private message in the estate, read; and words put in a named person's mouth, written |
+| 2 | messaging | `ConversationResource` | `/api/conversations` | who is talking to whom, about which booking |
+| 3 | payout | `LedgerResource` | `/api/ledgers` | every professional's earnings; an earning nobody worked for; a commission deleted |
+| 4 | payout | `PayoutResource` | `/api/payouts` | every professional's settlement history; a payment recorded that never happened |
+| 5 | payout | `BrokerageConfigResource` | `/api/brokerage-configs` | this platform's commission rate, backdated |
+| 6 | catalog | `ServiceOfferingResource` | `/api/service-offerings` | anybody's price list — which is what the next booking costs |
+| 7 | catalog | `AvailabilitySlotResource` | `/api/availability-slots` | anybody's calendar, including the row a double booking collides on |
+| 8 | catalog | `CredentialResource` | `/api/credentials` | a qualification attached to a real practitioner's public profile |
+| 9 | catalog | `HighlightResource` | `/api/highlights` | the same, one notch down: the bullets on somebody else's profile |
+
+**The ranking is by what a write does, not by what a read discloses, and it puts the item's own
+resource fifth.** NEW-15 was opened on the commission rate because that is where D53 was looking. Two
+are worse on disclosure — messaging's pair return the *content* of private conversations, which is the
+only personal data in this estate that is neither pseudonymised nor derivable — and two are worse on
+integrity, because `Ledger` and `Payout` are the money record and there is no third copy of either.
+
+### All nine are deleted. Here is the argument for each, because "delete them all" is a conclusion and not a reason
+
+The item offered two shapes: delete and add to the table, or gate behind `ROLE_BROKERAGE`. **Nothing in
+this repository called any of the nine** — checked against the prototype, `deploy/verify-cycle.sh`,
+`deploy/verify-outbox-recovery.sh`, `deploy/verify-prototype-live.mjs`, both deploy scripts,
+`quality/startup.sh` and the other four services; the only hits for those path strings were each
+resource's own `@RequestMapping`, its own generated IT, and the prototype's client-side `#/messages`
+route. **Every seeder writes through repositories**, confirmed per service in `CatalogSeeder`,
+`MessagingSeeder` and `PayoutSeeder`, as do payout's two event consumers and messaging's
+`ErasureWorkflow`. So the choice was never "delete or keep working code"; it was "delete, or invent a
+screen to justify a gate".
+
+- **`MessageResource`, `ConversationResource`** — `MessagingResource` already serves this domain scoped
+  to the caller, on `/api/threads`. A gate would have to be per-row, not per-role: there is no authority
+  that should read everybody's messages, so `ROLE_BROKERAGE` would be a *wider* answer than no answer.
+  Also an erasure surface (D31, D36, D39) — a CRUD path that writes a fresh row naming an erased
+  customer turns a receipt into a statement about a moment.
+- **`LedgerResource`** — `ProEarningsResource` serves the professional their own rows. A brokerage-wide
+  ledger screen is a plausible future thing and it still would not be this: the generated resource has
+  `PUT` and `DELETE` on rows that are D23's compensating-entry record, append-only in the same sense as
+  the audit trail `BookingStatusChangeResource` was deleted for.
+- **`PayoutResource`** — same, via `ProEarningsResource.payouts`. Marking a batch `PAID` is a real
+  future operation, and when it exists it is one endpoint doing one transition, not four verbs.
+- **`BrokerageConfigResource`** — the one the item was opened on, and the clearest *delete* of the nine
+  once D53 is taken seriously. D53 prices every completed booking against the config in force at the
+  booking's own instant, so the history of that table is load-bearing: `PUT` and `DELETE` on a config a
+  ledger row was already priced under destroy the only record of what that rate was. A terms-change
+  screen therefore needs an **append-only** resource behind `ROLE_BROKERAGE` — closer to
+  `VerificationDeskResource` than to CRUD — and building that speculatively, with no screen asking for
+  it, would be inventing a shape nobody has specified. Deleting it costs nothing and does not decide
+  the question.
+- **`ServiceOfferingResource`** — `ProWorkspaceResource` owns `/api/pro/services` and takes no
+  professional parameter at all, which is what makes spec §9's "refuse any reference that is not the
+  caller's" true by construction. The generated one is that property's exact opposite. It is also a
+  hole in **D22**: `BookingCreator` reads `priceMinor` from the catalogue precisely so a client cannot
+  name it, and this let a client edit the catalogue instead.
+- **`AvailabilitySlotResource`** — the third resource from the generator run that produced
+  `AvailabilityRuleResource` and `AvailabilityOverrideResource`, both of which have been on the delete
+  table for months with the words *"generated CRUD would let any authenticated user edit anyone's
+  availability"* against them. The argument was already written down; it was applied to two of the three
+  files. `DELETE` also removes the `unique_availability_slot` row that D20 makes the double booking
+  collide on — the guarantee **is** a row, so deleting the row deletes the guarantee.
+- **`CredentialResource`, `HighlightResource`** — the only two of the nine with no hand-written
+  counterpart, and that is the argument rather than against it: this estate has no write path for either
+  and has never needed one. They are seeded, and read as part of the public profile. A gate would be
+  authorising an operation nobody performs. They are the same category `VerificationReviewResource` was
+  deleted for — a public claim about a real person — and a licence or association number that cannot be
+  traced to an author is worse than none.
+
+### What was measured, in-process, before anything was deleted
+
+Not against the quality box: **the writes were never exercised anywhere**, on the previous package's
+reasoning that repricing or defacing a live estate to prove a point is not a trade worth making. The
+measurement is `MockMvc` inside each service's own integration context, with a `ROLE_USER` principal,
+against the tree as it stood on `main`. Every one of the nine, four ways:
+
+```
+GET  /api/<collection>       200      GET  /api/<collection>/{id}   200
+POST /api/<collection>       201      PUT  /api/<collection>/{id}   200
+```
+
+Thirty-six assertions, thirty-six red. That is the whole defect, stated once per door.
+
+### The guards, and why one test walking a list beats nine files
+
+`GeneratedCrudIsNotAnApiIT` in catalog, messaging and payout — new files, so a regeneration leaves them
+in place while it puts the resources back, which is the entire point of them and the property
+`AuditTrailIsNotAnApiIT` was built for in booking. Each is parameterised over a `Door` record and
+**every assertion names the path it was asked about**, because a battery that fires as one number
+cannot tell you which door opened. That is D53's review's finding — a mutation battery that fired on
+one field and was read as covering both — applied before it could happen again.
+
+Three things each guard does that a status check alone would not:
+
+- **`aRowExistsBehindEveryDoor`.** A guard against an empty table passes vacuously and reads as proof.
+  Every door has a real row planted behind it before anything is asked.
+- **A planted disclosure marker per door**, asserted absent from the body. "It was not 200" cannot
+  distinguish a refusal from a 200 holding somebody's earnings — the wrong-app-collision lesson, one
+  endpoint at a time. The `BrokerageConfig` marker is deliberately an **integer**: a `BigDecimal`'s
+  serialised scale is decided by the column, the driver and Jackson between them, so `0.999000` coming
+  back as `0.999` would have made that assertion pass against a body that had just served the whole row.
+- **A row count either side of every write**, with a complete valid DTO so the refusal is authorization
+  and not bean validation, and — in catalog — a forged `AvailabilitySlot` on a *different* date from the
+  planted one, or `unique_availability_slot` would refuse the write before authorization got the chance
+  to and the count would prove nothing.
+
+**Each door was mutated separately.** Nine runs, each restoring exactly one resource from `aeb9a3f` and
+running only that service's guard: in every one, exactly that door's four cases went red naming its own
+path, and every other door in the same file stayed green. Nine doors failing together would not have
+shown this, and an aggregate exit status could not have.
+
+### The check that matters more than the nine deletions
+
+**The root cause is the control.** `CLAUDE.md`'s delete table is what stops a generated resource
+shipping. It named eight. The table did not fail — nothing was ignored and no rule was broken. The nine
+were never written down, and **no test in the estate could have seen that**, because there was nothing
+to compare the table against.
+
+So `build.yml` gains *"Every entity JHipster generates CRUD for must be deleted or authorized"*, and
+**the expected set is derived from `jdl/*.jdl`** — the model of record, and the same files a
+regeneration reads. Every entity gets one of exactly two answers: no `<Entity>Resource.java` **and** a
+row in the delete table, or a resource carrying real authorization. There is no third.
+
+Enumerating nine paths in the workflow would have been the **seventh fail-open in this family** — the
+last three packages each found one, and D52's review found the sixth. An enumerated list goes stale the
+moment somebody adds an entity, which is precisely the moment it needs to fire. Derived, it demands an
+answer for a new entity in the same pull request that adds it. Twenty-one entities scanned today.
+
+Two details that are the difference between a check and a comment:
+
+- **Authorization means gated, not mentioned.** A class-level `@PreAuthorize` passes; otherwise there
+  must be at least one per request mapping. "Contains the string somewhere" would pass a resource that
+  gated its `GET` and left all four writes open, which is the shape of half the defects found here.
+- **The delete table is extracted, not restated** — between its own heading and the "And their tests."
+  paragraph that closes it, so a row anywhere in the table counts and a resource merely mentioned in the
+  prose around it does not.
+
+**Fail-closed in four places**, because a check like this can only ever fail open: the `jdl` glob must
+match something, every JDL must name a directory that exists, the scan must reach at least one entity,
+and the table must extract as a non-empty range.
+
+**Eight mutations, watched, one guarded thing at a time**: a resource restored ungated (fails); the same
+resource gated at class level (**passes** — the gate branch is real, not decoration); gated on one
+mapping only (fails); a deletion whose table row was renamed away (fails); the table heading changed so
+the extractor finds nothing (fails); a JDL naming a service directory that is gone (fails); `jdl/*.jdl`
+matching nothing (fails); and a brand-new `entity Payslip` added to `payout.jdl` with nobody answering
+for it (fails). That last one is the claim the check is bought for.
+
+### A tenth family, reported and not fixed: the Kafka sample resources
+
+Asking the same question of resources carrying **no** `BadRequestAlertException` — the marker the nine
+share — finds `HealthconnectBookingKafkaResource`, `HealthconnectCatalogKafkaResource`,
+`HealthconnectMessagingKafkaResource`, `HealthconnectPayoutKafkaResource` and
+`HealthconnectGatewayKafkaResource`. Each is generated, each carries `@PostMapping("/publish")` with no
+authorization, and each is under `/api/**` and gateway-routed. All three compose files set
+`SPRING_CLOUD_STREAM_KAFKA_BINDER_BROKERS` at the **shared** broker four products borrow (D27), so any
+authenticated caller can publish an arbitrary string onto it, on a topic the binder auto-creates.
+
+Lower consequence than any of the nine — junk on a shared broker, not disclosure or forgery, and no
+consumer in this repository reads that binding — but it is the same omission in a different family, and
+**the new CI check cannot see it**: these resources correspond to no JDL entity, so nothing derives
+their existence. It is **backlog NEW-17** rather than a deletion here, on D51's rule that a defect
+living only in a decision document is one nobody picks up. Not ridden in on this package because it
+touches the **gateway**, which NEW-15 does not, and because removing the sample means deciding what
+becomes of `broker.KafkaConsumer` and the `/consume` endpoint CLAUDE.md discusses under D25/D29 — a
+decision, not a deletion.
+
+### Not exercised, and said plainly
+
+**No estate was written to, and none was restarted, rebuilt, reseeded or cleaned.** The quality box was
+not touched at all by this package — D53 had already established the authorization rule there with a
+`GET`, and re-establishing it with a `POST` would have repriced a live estate. Everything above was
+measured in-process. `verify-cycle.sh` and `verify-outbox-recovery.sh` were not run: neither exercises
+any of the nine paths, and the first writes a review that cannot be deleted.
+
+**What a deployed estate will show that this could not.** The gateway is unchanged, so the nine routes
+still *match* — `Path=/services/<service>/api/**` is deliberately broad within a service; D28 narrows
+between services, not within one — and after this the origin answers **404** where it answered 200. That
+is the intended shape and it has not been observed end to end through nginx and the gateway.
+
+**Counts.** All three `clean verify` on `jdk-25.0.2-oracle-x64`, `TechnicalStructureTest` green in each,
+0 checkstyle and 0 modernizer violations:
+
+| Service | unit | IT | note |
+| --- | --- | --- | --- |
+| catalog | 108 | **71** (from 127) | −72 in four deleted generated ITs, +16 guard |
+| messaging | 62 | **63** (from 90) | −35 in two deleted generated ITs, +8 guard |
+| payout | 108 | **40** (from 165) | −137 in three deleted generated ITs, +12 guard |
+
+**The IT count falling by 244 is the honest number and not a regression.** Those tests asserted that
+JHipster's CRUD works, against nine endpoints that must not exist; 36 assertions that they answer nobody
+replace them. booking and gateway were not touched. `./deploy/sync-appendices.sh --check` clean;
+`node deploy/demo/extract-seed.mjs` rewrote byte-identically; `build.yml` parses under pyyaml and the
+new step extracts as runnable bash.

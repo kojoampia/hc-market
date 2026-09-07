@@ -50,8 +50,9 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **NEW-12** | Catalog's four implicit-zone reads, one of which stores a date | DONE | D52 — all four closed, `MarketCalendar`'s fourth copy, and the CI check now scans **every** service with no per-file exemption anywhere. The estate has no implicit-zone read left. The data question is **re-established, not cited, and its answer differs from D51's**: the quality box holds **two** rows written by the defective line, both dated correctly because the container's zone is `Etc/UTC` — "written by the defect and right", not "nothing was written". No migration |
 | **NEW-13** | The brokerage rate is struck when the event is consumed, not when the booking completed | DONE | D53 — the act's instant is on the wire (`bookingCompletedAt`, `bookingCancelledAt`) and nothing on the pricing path reads a clock. An event without one falls back to the envelope's `occurredAt` **at WARN**, never to now; with neither it is refused. Ten tests, all watched red first; one CI check, watched firing three ways |
 | **NEW-14** | A professional's own calendar opens on Accra's day, not theirs | BLOCKED on spec §13 #8 | D52 §review — the two `/api/pro/**` window defaults read `MarketCalendar`. Nil consequence while every `professional.zone_id` is `Africa/Accra`; deciding it the other way settles D21's open question by find-and-replace, which D51 refused for the neighbouring sites. Opened by the D52 review |
-| **NEW-15** | Any authenticated user can change the brokerage's commission rate | READY | D53 — the generated `BrokerageConfigResource` is live on `/api/brokerage-configs` behind payout's blanket `authenticated()`, and the gateway routes it. GET verified 200 with a `ROLE_USER` token against the quality box; the writes sit on the same rule and were deliberately not exercised. **Root cause: it was never in `CLAUDE.md`'s delete table.** No live external exposure — production has never been deployed. Found while establishing that `effectiveFrom` had never moved |
+| **NEW-15** | Any authenticated user can change the brokerage's commission rate — **and eight other things** | DONE | D54 — the scope was **nine, not one**: `BrokerageConfig`, `Ledger`, `Payout`, `Credential`, `AvailabilitySlot`, `ServiceOffering`, `Highlight`, `Message` and `Conversation`, each with four write mappings and zero authorization. Measured in-process at 200/200/201/200 apiece before deletion — 36 assertions, 36 red. All nine deleted with their generated ITs, argued individually; three `GeneratedCrudIsNotAnApiIT` guards, each door mutated **separately**. **The root cause was the control**: one CI check now derives the expected set from `jdl/*.jdl` and demands, per entity, a delete-table row or real authorization. Eight mutations watched. Opened a tenth family as NEW-17 |
 | **NEW-16** | The receipt strikes its split to the day and the ledger to the instant | READY | D53 — narrowed from unbounded to sub-day by NEW-13 and not closed. `BrokerageResource.split` takes a `LocalDate`; a rate taking effect at noon prices a 14:00 completion two ways. Closing it is a cross-service API change with a compatibility question of its own |
+| **NEW-17** | The five generated Kafka sample resources publish to the shared broker unauthenticated | READY | D54 — `POST /api/healthconnect-<service>-kafka/publish` in all four services **and the gateway**, generated, no authorization, gateway-routed, with the binder pointed at the broker four products borrow (D27). Low consequence — junk on a shared broker, not disclosure — but the same omission in a family **NEW-15's CI check cannot see**, because these correspond to no JDL entity. Deliberately not ridden in on D54 |
 
 ---
 
@@ -1327,7 +1328,31 @@ midnight is the wrong day by one.
 settle by find-and-replace and D52 refused for the same reason. Answering it for these two while those
 stay open would give one service two answers. Take it with §13 #8, not before.
 
-## NEW-15 — Any authenticated user can change the brokerage's commission rate · READY
+## NEW-15 — Any authenticated user can change the brokerage's commission rate · DONE (D54)
+
+**Closed by D54, and the scope turned out to be nine resources rather than one.** The item's own
+closing paragraph asked whoever took it to put the delete table's question to every other generated
+`*Resource` in the five services. Doing that first found eight more, every one with four write
+mappings and no authorization annotation of any kind: `LedgerResource` and `PayoutResource` in payout,
+`MessageResource` and `ConversationResource` in messaging, and `ServiceOfferingResource`,
+`AvailabilitySlotResource`, `CredentialResource` and `HighlightResource` in catalog.
+
+Ranked by what a **write** does rather than what a read discloses, the resource this item was opened on
+comes fifth. Messaging's pair are the worst — they return the content of private conversations, the one
+category of personal data here that is neither pseudonymised nor derivable — and payout's ledger and
+payout tables are the money record, with no third copy of either.
+
+All nine are deleted, with their generated ITs, each argued on its own callers and its own replacement
+rather than in bulk; three `GeneratedCrudIsNotAnApiIT` guards go red the moment any of them answers
+anybody again, with each door mutated separately to prove the guard is per-door and not per-file. **The
+control itself was the real deliverable**: `build.yml` now derives the expected set from `jdl/*.jdl`
+and demands, for every entity in the model of record, either a delete-table row or real authorization —
+so the tenth cannot ship the way these nine did. D54 has the per-resource arguments, the measurements
+and the eight mutations.
+
+Everything below is the item as it stood, kept because it is the record of what was known before.
+
+---
 
 Opened by D53 while establishing that `effectiveFrom` had never moved, and **not** fixed there: NEW-13
 is about *when* a rate is struck and this is about *who may set one*, which is an authorisation
@@ -1402,6 +1427,36 @@ property rather than a bug to report. Unlike `SubjectPseudonym` and `MarketCalen
 stopping the merge: both are in payout's **same Maven module**, and `TechnicalStructureTest` permits
 `web → service`, so one selector in `service` is reachable from both. Decide the tie-break explicitly
 while merging — newest `id` wins is the obvious answer and any answer beats an arbitrary one.
+
+## NEW-17 — The generated Kafka sample resources publish to the shared broker, unauthenticated · READY
+
+Opened by D54, which found them while re-deriving NEW-15's inventory and deliberately did not fix them.
+
+`HealthconnectBookingKafkaResource`, `HealthconnectCatalogKafkaResource`,
+`HealthconnectMessagingKafkaResource`, `HealthconnectPayoutKafkaResource` and — this is why it is not a
+rider on D54 — `HealthconnectGatewayKafkaResource` each carry `@PostMapping("/publish")` taking a
+`message` request parameter, with no `@PreAuthorize`, under `/api/**` and therefore behind the same
+blanket `.authenticated()` the nine deleted resources sat behind. Each is gateway-routed. All three
+compose files set `SPRING_CLOUD_STREAM_KAFKA_BINDER_BROKERS` at the shared broker four products borrow
+(D27) and the binding has `auto-create-topics: true`, so any token the estate accepts can publish an
+arbitrary string onto that broker on a topic it creates on demand.
+
+**Why it is lower priority than the nine.** Nothing in this repository consumes `binding-out-0`, so the
+consequence is junk topics on shared infrastructure rather than disclosure or forgery. The
+`@GetMapping("/register")` half is the sample SSE consumer CLAUDE.md already describes as *not*
+`/api/stream`, bound to a `sse-topic` nothing publishes to.
+
+**Why it needs its own package rather than a deletion.** It touches the **gateway**, which NEW-15 did
+not; and removing the resource means deciding what becomes of the generated `broker.KafkaConsumer` it
+injects and of `/api/healthconnect-gateway-kafka/consume`, which CLAUDE.md discusses under D25/D29 as
+the thing `MarketplaceStreamResource` is not. That is a decision, not a deletion.
+
+**NEW-15's CI check cannot see this family** and that is worth saying plainly: it derives the set of
+resources to interrogate from `jdl/*.jdl`, and these five correspond to no entity. Whoever takes this
+should decide whether the check widens to "every generated `*Resource` under `web/rest`" or whether a
+second, differently-derived check is the honest answer — the first would have to distinguish the
+estate's fourteen hand-written resources from the generated ones without enumerating either, which is
+the part that needs thought.
 
 ---
 

@@ -15,6 +15,12 @@ import net.jojoaddison.domain.enumeration.VerificationState;
  * {@link MarketplaceResource} replaced — the two cannot coexist on {@code /api/professionals/{id}}
  * vs {@code /{ref}}.
  *
+ * <p><strong>Those four ITs were deleted with their resources</strong> (NEW-15, decisions.md D54), so
+ * on a tree that has not been regenerated the only caller left is
+ * {@link GeneratedCrudIsNotAnApiIT}, which plants the professional the four deleted doors hung off.
+ * The fixture stays regardless: a regeneration puts all four ITs back and they call it again, which
+ * is the window it exists for.
+ *
  * <p><strong>Regeneration restores those tests over this file.</strong> Deleting
  * {@code ProfessionalResource.java} afterwards is not enough; this has to be rewritten too, or the
  * suite fails against endpoints that no longer exist.
