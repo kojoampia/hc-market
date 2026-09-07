@@ -646,6 +646,43 @@ keeps the estate uniformly Boot 4 — and matches all three sibling products. Se
   and it looked convincing because renaming both fields still exits 1. **`ledger.earned_on` remains the day the event was CONSUMED** and that is the opposite
   answer to a different question, argued in D51 and D53 — a term the customer was shown must not move, a
   reporting period must not be rewritten retrospectively.
+- **And so is the RECEIPT's, at the same moment and through the same selector** (D56, backlog NEW-16).
+  D53 moved the ledger onto the completion instant and left the receipt on a `LocalDate`, so a rate
+  taking effect at **noon** priced a 14:00 completion two ways — the same shape one granularity down,
+  biting only when `effectiveFrom` is not midnight in Accra, which the one row in either estate is.
+  `GET /api/internal/brokerage/split` now takes **`at` (an `Instant`) beside `on`**, and booking sends
+  **both**. Preference: `at` alone wins; both present, `at` wins and a **WARN** fires if `on` is not
+  that instant's day; `on` alone is the start of that marketplace day; **neither is a 400**, never
+  `Instant.now()` — the shape D53 removed, in the other service.
+  **Do not drop `on` because it looks redundant.** Booking and payout roll independently, so a new
+  booking against an *old* payout is a real deployment: with `on` it prices to the day, without it that
+  payout falls through to its own clock. It is also what a caller with no moment sends — a receipt for a
+  booking that has not completed — which is why that branch does **not** warn: a warning that fires on a
+  correct state is one people learn to ignore.
+  **One selector, `BrokerageTerms`, with a stated tie-break.** `BookingEventConsumer.configInForce` and
+  `BrokerageResource.inForce` were the same six lines twice, both `Stream.max(comparing(effectiveFrom))`
+  over an unordered `findAll()` — which returns an **arbitrary** element among equals, so two configs
+  sharing an `effectiveFrom` could resolve to different rows *in one JVM*: a receipt and a ledger row
+  disagreeing with no rate change between them. Newest `id` wins, nulls first. It returns an `Optional`
+  because the two callers refuse differently — 503 for a customer, a retryable throw for the consumer.
+  **The orphaned `BrokerageConfigService` is left alone and must not absorb this**: the JDL generates it
+  (`service BrokerageConfig with serviceClass`), so anything put there is discarded on the next
+  regeneration. It is not on the delete table either — it has no HTTP door, so it is not that table's
+  subject. The warning lives on `BrokerageTerms`, which is a new file.
+  A CI check asserts booking still **sends** each parameter and payout still **binds** each with its
+  type, comments stripped — `Instant at`, not the bare name, because widening it to a `String` leaves
+  the name present and every request falling through to the day. It also bans `Instant.now()` in
+  `BrokerageResource` and **deliberately not** in `BookingEventConsumer`, which writes one correctly on
+  `ProcessedEvent`; the first version did include it and went red on `main`.
+  **What covers the consumer is a TEST, not the check above it** — D56 said otherwise and was wrong.
+  D53's check greps for `pricedAt(… "bookingCompletedAt")`, which asserts the literal appears at such a
+  call and **not that its value is used**: keep the call as a bare statement, price at `Instant.now()`
+  beside it, and that check still exits 0. `TheRateIsStruckWhenTheBookingHappenedTest` is what goes red.
+  Do not read any of these greps as covering more than the text they match.
+  **`/api/internal/brokerage/split` IS gateway-routed**, unlike catalog's `/internal/**`, because the
+  route predicate is `/services/healthconnectpayout/api/**` and this path begins `/api/`. Any token the
+  estate accepts reaches it, by design: it discloses the public commission rate and arithmetic on an
+  amount the caller supplied, and nothing about whose booking anything is.
 - **One `Booking` aggregate** replaces the prototype's four arrays. `ACCEPTED` was removed as
   unreachable; accepting goes straight to `CONFIRMED`. The topic is still `booking.accepted` — it
   names the act, not the state.
@@ -675,6 +712,27 @@ the deployed image is the built one.
   happened here: the seed still regenerates identically from the prototype, the spec appendices
   still match the deploy scripts, all three compose files still interpolate, every shell script
   still parses, and the quality vhost still agrees with its compose about the upstream port.
+
+**Any check that matches source text must strip comments with `.github/checks/strip-comments.awk`,
+and never its own expression.** *"A check whose reach depends on prose is not a check"* has been the
+finding in eight successive fail-opens here, and by D56 three of the four text-matching checks had each
+grown a private stripper — the same line-based `sed`, which removes only a block comment that opens and
+closes on **one line**. Javadoc survived it by accident (a `grep -v` dropped `*`-prefixed continuation
+lines); a **non-javadoc** multi-line `/* … */`, which is the house style, passed straight through. So a
+comment naming a deleted call satisfied the check guarding it, verified on two of them. D54's stateful
+awk was the only correct copy and is now the shared file. It **preserves line numbering** — one blank
+line out per comment line in — because two callers quote the original line back by number. Adding a
+fifth text-matching check means calling it, not writing a fifth stripper.
+
+**Each caller guards that the file EXISTS, and that guard is measured rather than decorative.** One
+file four checks trust is a single point of failure, and absent it the two whose subject is a silent
+gap **passed**: the implicit-zone check printed `ok` for all five services having read nothing, and
+the CRUD check saw every resource strip to empty, so `maps` and `pre` were both 0 and a resource with
+no annotation passed as gated. Consolidating eight fail-opens produced a ninth, found by running it.
+All four exit 1 now with one error naming the cause. `strip-comments-test.sh` is the mechanism's own
+test — it rebuilds the comment the old `sed` could not see, asserts line numbering survives, and
+asserts **real code survives**, which is the control, because every other assertion there is satisfied
+by a stripper that outputs nothing.
 
 There was no CI before this. That is how the whole suite came to be skipped for a week: D9 switched
 local builds to `-DskipTests`, nothing else ran them, and when they were finally run booking had 137
@@ -855,7 +913,11 @@ time.**
   packages avoiding. Nil consequence while every zone is `Africa/Accra`; the cancellation one prices a
   late fee, so the zone moves a **customer-visible** boundary. There was a third until D53 — `BookingEventConsumer.configInForce`'s
   `Instant.now()`, correct as an instant and wrong as a *moment* — and it is gone rather than moved:
-  that path reads no clock at all now (NEW-13, below).
+  that path reads no clock at all now (NEW-13, below). **And a fourth of the same kind until D56**:
+  `BrokerageResource.split`'s `on == null ? Instant.now()`, which priced a receipt at today's terms for
+  a request that failed to say when. Also gone rather than moved — that request is a 400 now. Neither
+  was ever an implicit-zone site, so neither could have been found by the check above; an instant
+  carries no calendar, and what was wrong was which moment.
   D48 closes the zone half only, deliberately: the four services still evaluate the shift
   independently, seconds apart on one `compose up` (**measured: 7.1s**), so a boot straddling Accra
   midnight can still split them. That residual is dev-only (quality anchors, production never seeds)

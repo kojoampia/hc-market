@@ -6990,3 +6990,310 @@ zone defect is while every zone is the same.
 it commits to the code being right if it happens. And the three named zone constants stay three —
 `SEED_ZONE`, `BADGE_ZONE`, `MARKET_ZONE` — for the reasons D51 and D52 give. A fourth is not created
 here: `Booking.zoneId` is data, not a constant, which is exactly the distinction this decision turns on.
+
+## D56 — The receipt is struck at the moment too, and there is one selector rather than two
+
+NEW-16, opened by D53 and deliberately narrowed rather than closed there. **`main` ended at D54 when
+this began, and D55 was taken by spec §13 #8's ratification on a branch that reached `main` first
+(PR #31, whose clock an appointment keeps)** —
+verified against both refs before numbering, because taking a number held on an unmerged branch is
+what cost the WP-19/Paystack pair a renumber and a rebase. **This is D56.**
+
+### The defect
+
+D53 moved the ledger onto the completion instant and left the receipt on a day.
+`CustomerBookingResource.receipt` sent `LocalDate.ofInstant(completedAt, MARKET_ZONE)` and
+`BrokerageResource.split` read it back as `on.atStartOfDay(MARKET_ZONE)`. So a rate taking effect at
+**noon** on the day a booking completed at **14:00** priced the ledger under the new terms and the
+receipt under the old — NEW-13's shape one granularity down, and with the same property that makes
+that family expensive: **both numbers are internally consistent and no row records which rate produced
+it.** It bites only when `effectiveFrom` is not midnight in Accra.
+
+**Nothing has ever been priced across it, in either estate.** Verified read-only against the running
+quality box: `brokerage_config` holds exactly **one** row — id `1001`, `0.12`, `GHS`,
+`effective_from 2020-01-01 00:00:00`, a `timestamp without time zone` — against **260** ledger rows.
+The dev estate could **not** be read: its five app containers have been `Restarting` for seven days and
+it has no database containers at all, so this is a claim about quality and about the seed the two
+share, not a measurement of both. That is the same shape of limit D52 recorded — a data answer is never
+transferable — and it is stated rather than generalised.
+
+### What was built
+
+**`at`, an `Instant`, beside `on`, and both are sent.** The compatibility question was the real work,
+and the four cases are decided explicitly in `BrokerageResource.struckAt`:
+
+| `at` | `on` | answer |
+| --- | --- | --- |
+| present | absent | `at`. Nothing else is consulted. |
+| present | present | `at`. `on` is ignored, and **WARN** if it is not that instant's day in `MARKET_ZONE`. |
+| absent | present | `on.atStartOfDay(MARKET_ZONE)`. No warning. |
+| absent | absent | **400, refused.** Never `Instant.now()`. |
+
+Three of those four needed an argument.
+
+**Why both go on the wire.** Booking and payout are separate Maven projects that roll independently
+(`deploy-prod.sh` takes `--services`), so a **new booking calling an old payout** is a real deployment
+and not a thought experiment. That payout ignores `at` as an unknown parameter. With `on` beside it,
+that window prices to the day — which is the defect this package closes, not a new one. Without `on`,
+it has nothing and falls through to its own `Instant.now()`: **NEW-13 rebuilt in the other service**,
+on the path where a customer is reading a financial statement. `on` is therefore not deprecated, and
+because it is redundant against the payout in this repository it is exactly the parameter somebody will
+delete — which is why CI now guards it by name.
+
+**Why the `on`-only branch does not warn, when D53's equivalent fallback does.** D53 warns because its
+fallback substitutes a *different* moment for one that was meant to be sent. Here `on` alone is what a
+caller with **no moment** sends: the receipt for a booking that has not completed is struck on its
+scheduled day, and a day is the only truth about it. Payout cannot distinguish that caller from an old
+booking service anyway, and a warning that fires on a correct state is one people learn to ignore.
+
+**Why the disagreeing pair warns rather than refuses.** `on` is a coarsening of `at` by construction,
+so "they differ" is the normal case; what is abnormal is `on` naming a different *day*, which only a
+caller holding two ideas of when produces. The answer is `at` either way, so refusing would cost a
+customer their receipt and buy nothing. The line names both values so the caller can be fixed.
+
+**Why neither-present is a refusal.** It is the shape D53 removed from `configInForce`, in the other
+service, and the task of pricing a receipt at "now" produces something indistinguishable from a correct
+answer. It is unreachable from any version of booking that has ever run — `Booking.scheduledDate` is
+required and `on` has always been sent — which is precisely when a closed door is free. `Instant.now()`
+had been sitting in that branch since the endpoint was written.
+
+**Booking sends `at = completedAt` and nothing else.** A booking with no `completedAt` sends `at` **not
+at all**, rather than a manufactured `scheduledDate.atStartOfDay()`: the two produce the same answer
+today, and only one of them says truthfully that this service does not know a moment.
+
+### The two selectors are one
+
+`BookingEventConsumer.configInForce` and `BrokerageResource.inForce` were the same six lines twice. D53
+declined to merge them because "they already agree on the rule", which is the weakest argument
+available — the value of merging is that they *keep* agreeing — and there was a concrete defect behind
+it. **Both took `Stream.max(comparing(effectiveFrom))` over an unordered `findAll()`.** `Stream.max`
+returns an arbitrary element among equals (documented behaviour: it reduces with `BinaryOperator.maxBy`,
+which keeps the first maximal element, so the answer is whatever order the table came back in). Two
+configs sharing an `effectiveFrom` could therefore resolve to **different rows in one JVM** — a receipt
+and a ledger row disagreeing with no rate change between them. Nothing in the schema stops that pair
+existing, and until D54 anybody with a token could `POST` one.
+
+`BrokerageTerms` in payout's `service` package is the single selector. There was never an obstacle —
+same Maven module, and `TechnicalStructureTest` permits `web → service` (verified green, not assumed).
+It returns an `Optional` rather than throwing, because **the two callers refuse differently**: 503 for a
+customer reading a receipt, and a throw the Kafka container will retry for the consumer. A shared
+selector that chose the failure would have to choose one of them wrongly.
+
+**The tie-break is decided: the newest row wins**, highest `id` among those sharing the latest
+`effectiveFrom`, with `null` sorting first so an unsaved entity never outranks a persisted one. `id`
+comes from a sequence here, so the highest is the most recently inserted — the row whoever wrote the
+second one meant to take effect. Any stated answer beats an arbitrary one, and this one has the further
+property that it does not depend on a query plan.
+
+**`BrokerageConfigService` is left where it is, and that is argued rather than defaulted.** It is
+orphaned — NEW-15/D54 deleted its only caller — and it is the obvious-looking place to put a selector,
+which is the hazard. It is *not* absorbed, because the JDL says `service BrokerageConfig with
+serviceClass` and anything put there is discarded by the next `jhipster jdl --force`; CLAUDE.md's
+"never name a hand-written class after one the JDL generates" is the rule `BookingWorkflow` exists for.
+It is *not* deleted either: unlike D54's nine it has **no HTTP door**, so it discloses nothing and
+forges nothing, and a delete-table row would describe a hazard that table is not about — every row
+there is a mapping somebody can reach. What the deletion would have bought is a warning to the next
+reader, and that is written on `BrokerageTerms` instead, which is a new file a regeneration leaves
+alone.
+
+### Establishing rather than assuming
+
+- **`/api/internal/brokerage/split` IS gateway-routed**, unlike catalog's `/internal/**` which D28
+  keeps private precisely by not matching. All three compose files carry
+  `Path=/services/healthconnectpayout/api/**` with `StripPrefix=2`, and `/api/internal/...` begins
+  `/api/`. Payout's `SecurityConfiguration` says `.requestMatchers("/api/**").authenticated()` with
+  nothing narrowing it. **So any token this estate accepts can reach it**, which is by design and is
+  what the endpoint's own javadoc argues: it discloses the commission rate (public — the prototype
+  prints "12% platform fee" on every listing), the currency and the two cancellation terms, plus
+  arithmetic on an amount the caller supplied. No ownership, no personal data, no booking reference.
+  That is now written on the class, because "internal" in a path reads as a claim about reachability
+  this one does not make. **No route predicate was widened or narrowed by this package.**
+  A live probe was attempted and **blocked by the sandbox**; an anonymous request to the path answers
+  401, but so does one to a service that does not exist, because the gateway's generated chain
+  authenticates `/services/**` *before* routing — so that probe distinguishes nothing and the
+  conclusion rests on reading all three compose files and the security config.
+- **`BrokerageClient` is the only caller**, in this repository. `grep` for the path finds the resource,
+  the client, and two documentation mentions.
+- **The endpoint had zero tests.** Nothing in `payout/src/test` or `booking/src/test` referenced it, so
+  this package writes the first.
+
+### Tests, and each guarded thing mutated separately
+
+`TheSplitIsStruckAtAMomentIT` (payout, 10 cases) goes through **MockMvc with real query strings**
+rather than calling the resource, because half of what changed is a **parameter binding** — whether an
+`Instant` `@RequestParam` binds at all, and in what format. It does: ISO-8601, `2020-06-01T14:00:00Z`,
+through the application's own conversion service. A malformed `at=yesterday` is 400, which is what
+proves the value is parsed rather than accepted and dropped. **Run against unchanged production code
+first: 7 of the 10 were red**, including both defect cases, both refusals, the binding, and the tie.
+The three that were green are the controls — 10:00 on the same day, `on` alone, and the untouched rest
+of the contract.
+
+Every instant is in **2019–2022**, D51's lesson: a `LATEST` config effective 2022 exists precisely so
+that a resource falling back to a clock selects a rate no assertion here expects, rather than
+accidentally agreeing with one.
+
+`BrokerageTermsUnitTest` controls the row order against a mocked repository and asserts **both**
+orders, which is the only way to say anything about a tie-break. That distinction was measured rather
+than assumed: **removing the tie-break leaves the IT's tie case green** — PostgreSQL happened to return
+the rows in an order where `Stream.max` landed on the same row — and only the unit test goes red. Said
+in the IT's own javadoc so nobody over-trusts it.
+
+Booking gets two, and **neither can see the other's failure**, which is the point:
+
+- `TheReceiptAsksForAMomentAndADayUnitTest` runs against a **JDK `HttpServer` on loopback**
+  (`PaystackPaymentProviderUnitTest`'s pattern) and asserts the query string that actually went over a
+  wire, because the formats are the contract.
+- `TheReceiptIsStruckAtTheCompletionIT` mocks `BrokerageClient` and captures the arguments, pinning
+  that the resource sends `completedAt` and not a null.
+
+Measured separability: making the receipt pass `null` reddens **only** the IT; making the client drop
+`at` or `on` reddens **only** the unit test. Five more mutations, each applied alone:
+
+| mutation | red |
+| --- | --- |
+| the day is preferred over the moment | `theInstantIsPreferred`, `theMomentDecidesAndNotTheDay` |
+| neither parameter falls back to `Instant.now()` | `aRequestThatSaysNothingAboutWhenIsRefused` |
+| the `on`-only branch reads a clock | `theDayAloneIsTheCompatibilityAnswer` |
+| the tie-break is removed | `theTieBreakDoesNotDependOnRowOrder`, `aNullIdSortsFirst` |
+| the receipt sends no instant | `theCompletionInstantIsWhatIsAsked` only |
+
+### The CI check, and the thing watching it run found
+
+`build.yml` gains *"Booking and payout must name the receipt's pricing parameters identically"*, beside
+D53's field-name check and for the same reason: two Maven projects that never see each other, a pair of
+literals that must agree, and no test in either able to span the pair. Booking must **send** each
+parameter (`queryParam("at"`, `queryParam("on"`) and payout must **bind** each with its type
+(`RequestParam(...) Instant at`, `... LocalDate on`) — the type, because widening `at` back to a
+`String` leaves the name present, the value unparsed and every request falling through to the day.
+Comments are stripped first, D53's review's rule: both files discuss these names at length in javadoc,
+and a check whose reach depends on prose is not a check. All five assertions were watched firing on
+their own mutation, one at a time.
+
+**A third assertion bans `Instant.now()` in `BrokerageResource`**, because the implicit-zone check
+deliberately does not — an instant carries no calendar — so a fallback to a clock there is invisible to
+every other check in the workflow.
+
+**It was written covering `BookingEventConsumer` too, and running it caught that.** The consumer writes
+`ProcessedEvent(eventId, type, Instant.now())`, an idempotency record's "when did we handle this",
+which is correct and is the use the workflow's own comment already names. The check went red on `main`,
+on a line nobody should change. Narrowed to the resource, with the reason written in place. This is the
+third time in this family that watching a check run has found the check rather than the code, and the
+first where the finding was a **false positive** rather than a fail-open.
+
+**The narrowing is free — but not for the reason first written here, and the correction matters more
+than the conclusion.** This paragraph said the consumer's pricing moment "is already pinned one check
+above, since D53 requires its call site to be `pricedAt(…, "bookingCompletedAt")`". It is not. That
+check greps `pricedAt\([^)]*"bookingCompletedAt"\)` — it asserts the literal **appears at such a call**,
+never that the call's **value is used**. Keeping the call as a bare statement and pricing beside it:
+
+```java
+pricedAt(envelope, p, "bookingCompletedAt");
+BrokerageConfig config = configInForce(Instant.now());
+```
+
+leaves D53's check at **exit 0**, printing `ok bookingCompletedAt`. So the narrowing is covered by a
+**test** — `TheRateIsStruckWhenTheBookingHappenedTest`, four failures — and not by the check above it.
+Both the decision and the outcome stand; the *reason* was wrong, and a wrong reason recorded beside a
+right decision is how the next person concludes the check covers more than it does. Which is the same
+class of error as everything else in this family: **a claim about a check's reach, asserted rather than
+run.**
+
+### What this deliberately does not touch
+
+**NEW-19 is not fixed here.** `BookingWorkflow.scheduledAt` and `CustomerBookingResource.cancellationPreview`
+convert an appointment with `ZoneOffset.UTC`, one method above the receipt, and are open on PR #31 with
+D55. Folding them in would move a customer-visible late-fee boundary on a package about a commission
+rate. The receipt edit is kept as tight as it can be for the same reason — that PR edits the comment
+block above `cancellationPreview` and a conflict there is expected.
+
+`ledger.earned_on` is untouched and remains the day the event was **consumed** (D51, D53). That is the
+opposite answer to a different question and stays that way: a term the customer was shown must not
+move, and a reporting period must not be rewritten retrospectively.
+
+### Review of `2f33b64` — four findings, and the new check was one of them
+
+The compatibility matrix, the merged selector, the red-first evidence and the data claim all held on
+re-derivation. Four things did not.
+
+**1. The new check shipped with the wrong comment stripper, and it was a fail-open.** It copied D53's
+line-based `sed`, which removes only a block comment that opens and closes on **one line**. Javadoc
+survived it by accident — a trailing `grep -v` dropped `*`-prefixed continuation lines — so a
+**non-javadoc** `/* … */` spanning lines, which is the house style here
+(`booking/.../ErasureWorkflow.java:202` has a five-line one), passed through whole. Reproduced both
+ways, on both files the check guards: delete `uri.queryParam("at", at)`, leave a block comment naming
+it, and the check exits **0** printing `ok at — sent by booking`. **NEW-16 restored on a green build.**
+The eighth fail-open in this family, and the second time the fix was already in the file: D54's
+stateful `awk` handles blocks across lines and was sitting 200 lines further down.
+
+The awk is now **`.github/checks/strip-comments.awk`** and **all four** text-matching checks call it —
+the implicit-zone check, D53's, D54's and this one. D54's had the only correct copy, and *being a copy*
+is precisely why the other three could be wrong beside it.
+
+Watched, one check at a time — never as a batch, since a battery read through one exit status is what
+D53's review found:
+
+| check | probe | before (its own `sed`) | after (shared awk) |
+| --- | --- | --- | --- |
+| D53's | call site deleted, block comment naming `bookingCompletedAt` | **exit 0**, `ok` | exit 1 |
+| D56's | `queryParam("at", at)` deleted, block comment naming it | **exit 0**, `ok` | exit 1 |
+| implicit-zone | block comment *discussing* `LocalDate.now()` | **exit 1** | exit 0 |
+| implicit-zone | a real `LocalDate.now()` | exit 1, quoting the **comment** | exit 1, quoting the code |
+
+**The implicit-zone one points the other way and is worth separating**: there an unstripped comment is
+a **false positive**, not a fail-open — it reddened on correct code, and quoted the wrong line while
+doing it. That is not harmless. A check that fires on correct code is the one that gets disabled, and
+the second probe is there to show the fix did not buy quiet by going blind.
+
+**D54's check is a pure refactor and is evidenced as one**: its inline awk was byte-identical to the
+shared file, and both were run over **all 858 Java files in the estate** — 0 differ. Its own
+prose-mutations were not re-run; what was re-run is that the extracted step still fires, by removing
+one delete-table row and watching it name that entity. Also removed while touching the implicit-zone
+check: the trailing `grep -vE '^[0-9]+:[[:space:]]*\*'`, which was the only thing stripping javadoc
+continuations before and can now only drop matches.
+
+**And watching those four run produced a fifth finding, which the consolidation itself created.**
+Moving the stripper into a file makes four checks depend on a file being present, so the question is
+which way they fail when it is not. Measured by removing it:
+
+| check | stripper absent |
+| --- | --- |
+| implicit-zone | **EXIT 0** — `awk -f` errors, the pipeline yields no hits, and it prints `ok` for all five services having read nothing |
+| D54's CRUD | **EXIT 0** — every resource strips to an empty file, so `maps` and `pre` are both 0 and a resource with no annotation passes the authorization branch |
+| D53's | exit 1 (its greps find nothing in an empty string) |
+| D56's | exit 1, same reason |
+
+**Two of the four failed open**, and on the two whose whole subject is a silent gap. So each of the
+four now carries a two-line existence guard, worded like the "would scan nothing and pass" guards
+already beside them, and all four were re-measured as exit 1 with one error naming the cause. That is
+a defect this package **introduced and then found by running the thing it had just written** — the
+fix for eight fail-opens arriving with a ninth is the argument for watching rather than reasoning,
+made about as plainly as it can be.
+
+Beside them, **`.github/checks/strip-comments-test.sh`**, in the shape `pepper-wiring-test.sh`
+established: it builds the multi-line non-javadoc block comment the old `sed` could not see and
+asserts the new stripper removes it, asserts javadoc and `//` go, asserts **line numbering is
+preserved** (two callers quote lines by number), and asserts the predecessor really does still leave
+that comment intact — so the file documents the defect it defends against rather than describing it.
+**Its control is that real code survives**, because every other assertion there is satisfied by a
+stripper that outputs nothing, which is precisely the state a missing file produces.
+
+**2. This decision's own reason for narrowing the clock ban was wrong.** Corrected in place above:
+D53's check asserts the literal appears at a `pricedAt(...)` call, **never that its value is used**, so
+keeping the call as a bare statement while pricing at `Instant.now()` beside it leaves it at exit 0.
+What covers the consumer is `TheRateIsStruckWhenTheBookingHappenedTest`. The narrowing stands; the
+reason recorded for it did not, and a wrong reason beside a right decision is how the next person
+over-credits a grep.
+
+**3. A javadoc claimed a test that does not exist.** `BY_EFFECTIVE_FROM_THEN_NEWEST` was
+package-private "so `BrokerageTermsUnitTest` can assert the ordering itself" — nothing outside
+`BrokerageTerms` referenced it, every case goes through `inForceAt`, and the distinction it was
+reaching for is answered by that test asserting **both row orders**, which is what actually goes red.
+Now `private`, with the correction on the constant.
+
+**4. A numeric `at` binds as epoch MILLISECONDS, silently.** Spring's converter accepts a bare number,
+so `at=1591020000` — epoch **seconds**, the convention most payment APIs speak — binds to 1970 rather
+than being refused. It answers 503 here only because the oldest config is dated 2020; against an estate
+whose terms predate the moment sent, it is a **200 at the wrong rate**, which is this endpoint's worst
+outcome and its quietest. Unreachable from `BrokerageClient`, which sends ISO-8601 and is pinned to it
+by a test on the wire. Documented on the `@param` rather than defended against: refusing numeric input
+would need a second binder, and the honest boundary is that this endpoint's contract is ISO-8601.

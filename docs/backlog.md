@@ -51,7 +51,7 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **NEW-13** | The brokerage rate is struck when the event is consumed, not when the booking completed | DONE | D53 — the act's instant is on the wire (`bookingCompletedAt`, `bookingCancelledAt`) and nothing on the pricing path reads a clock. An event without one falls back to the envelope's `occurredAt` **at WARN**, never to now; with neither it is refused. Ten tests, all watched red first; one CI check, watched firing three ways |
 | **NEW-14** | A professional's own calendar opens on Accra's day, not theirs | CLOSED by decision | D55 — spec §13 #8 ratified 2026-09-07. A window *start* is a question about the page being read, so `MARKET_ZONE` is now **chosen** there rather than merely unchallenged. **No code change**: the two `ProWorkspaceResource` defaults were already right |
 | **NEW-15** | Any authenticated user can change the brokerage's commission rate — **and eight other things** | DONE | D54 — the scope was **nine, not one**: `BrokerageConfig`, `Ledger`, `Payout`, `Credential`, `AvailabilitySlot`, `ServiceOffering`, `Highlight`, `Message` and `Conversation`, each with four write mappings and zero authorization. Measured in-process at 200/200/201/200 apiece before deletion — 36 assertions, 36 red. All nine deleted with their generated ITs, argued individually; three `GeneratedCrudIsNotAnApiIT` guards, each door mutated **separately**. **The root cause was the control**: one CI check now derives the expected set from `jdl/*.jdl` and demands, per entity, a delete-table row or real authorization. Eight mutations watched. Opened a tenth family as NEW-17 |
-| **NEW-16** | The receipt strikes its split to the day and the ledger to the instant | READY | D53 — narrowed from unbounded to sub-day by NEW-13 and not closed. `BrokerageResource.split` takes a `LocalDate`; a rate taking effect at noon prices a 14:00 completion two ways. Closing it is a cross-service API change with a compatibility question of its own |
+| **NEW-16** | The receipt strikes its split to the day and the ledger to the instant | DONE | D56 — `at` (an `Instant`) beside `on`, **both sent**, `at` preferred, and neither present is a **400** rather than `Instant.now()`. `on` stays because a new booking calling an old payout would otherwise fall through to that service's own clock — NEW-13 rebuilt one service over. The two selectors are merged into `BrokerageTerms` with an explicit tie-break (newest `id`), closing a non-determinism neither copy could see. First tests for an endpoint that had none: 10 ITs through the real binder, **7 red first**; one CI check, all five assertions watched firing — and running it found the check itself was banning a correct `Instant.now()` |
 | **NEW-17** | The five generated Kafka sample resources are unauthenticated write endpoints | READY | D54 — `POST /api/healthconnect-<service>-kafka/publish` in all four services **and the gateway**, generated, no `@PreAuthorize`, gateway-routed. What it actually does on a running estate is **unestablished**: the binding and `auto-create-topics` live in `application-kafka.yml` and the `kafka` profile is active nowhere, so it is a `StreamBridge` dynamic destination against an unconfigured binding. Closing it also deletes **five ITs that currently assert the hole works** (`producesMessages`, expecting 200). NEW-15's CI check is entity-derived and **cannot** reach this family; a second `web/rest`-derived check is the answer |
 | **NEW-18** | Nothing can create a `BrokerageConfig`, and payout cannot price a booking without one | READY — **blocks the first production deploy** | D54's review. `BookingEventConsumer.configInForce` throws `IllegalStateException` on an empty table; the only writers were `PayoutSeeder` (`seed.enabled: false` under `prod`) and the `BrokerageConfigResource` D54 deleted; the Liquibase `loadData` is `context="faker"`. So on production the table is empty, **the first `booking.completed` throws and the consumer retries for ever** — no ledger row, no earnings, and the failure lands after the money moved. The deletion is still right; the bootstrap was always missing and the CRUD hid it |
 | **NEW-19** | Two sites convert an appointment with `ZoneOffset.UTC` and ignore `Booking.zoneId` | READY | D55 — was an open question until §13 #8 was ratified; now a defect. `BookingWorkflow.scheduledAt:238` and `CustomerBookingResource.cancellationPreview:235`. Nil consequence while every zone is `Africa/Accra`; the cancellation path prices a late fee off `scheduled`, so the zone moves a **customer-visible** boundary |
@@ -1406,7 +1406,53 @@ for the test — it is the only row in the delete table with a guard that fails 
 goes red the moment `/api/booking-status-changes` answers anybody again. The equivalent here goes red
 the moment `/api/brokerage-configs` does.
 
-## NEW-16 — The receipt strikes its split to the day and the ledger to the instant · READY
+## NEW-16 — The receipt strikes its split to the day and the ledger to the instant · DONE (D56)
+
+**Closed by D56.** `at` — an `Instant` — is sent beside `on`, payout prefers it, and a request naming
+neither is **400** rather than the `Instant.now()` that had been sitting in that branch since the
+endpoint was written. `on` is kept and is not deprecated: booking and payout roll independently, so a
+new booking calling an **old** payout is a real deployment, and with `on` beside `at` that window
+prices to the day (this defect, not a new one) while without it that payout falls through to its own
+clock — NEW-13 rebuilt in the other service, on a customer's financial statement. It is also the honest
+request from a caller that has no moment, which is why it does not warn. The four cases and the reason
+each was decided that way are tabulated in D56.
+
+The two selectors are merged into **`BrokerageTerms`**, with a stated tie-break — newest `id` among
+rows sharing an `effectiveFrom` — closing a non-determinism neither copy could detect: `Stream.max`
+returns an arbitrary element among equals, so a receipt and a ledger row could resolve different rows
+in one JVM. `BrokerageConfigService` is deliberately **not** absorbed and **not** deleted; D56 argues
+both halves.
+
+The endpoint had **no test at all**. It has ten now, through MockMvc with real query strings so the
+`Instant` parameter *binding* is pinned and not only the selection rule; seven were red against the
+unchanged code. Booking gets two more that cannot see each other's failure, and one CI check whose five
+assertions were each watched firing on their own mutation — a run that found the check banning a
+correct `Instant.now()` in `BookingEventConsumer` and got it narrowed.
+
+**The review found four more, the first of them in the new check itself.** It had copied D53's
+line-based comment stripper, blind to any block comment spanning more than one line, so deleting
+`queryParam("at", at)` and leaving a comment naming it exited **0** — NEW-16 restored on a green build,
+the eighth fail-open in this family. D54's stateful awk is now `.github/checks/strip-comments.awk` and
+**all four** text-matching checks call it, each watched firing separately; the implicit-zone one turns
+out to have had the same blind spot pointing the *other* way, as a false positive on correct code. Also
+corrected: this decision's own reason for the clock-ban narrowing (a **test** covers the consumer, not
+the check above it), a javadoc claiming a test that does not exist, and an undocumented binding where a
+numeric `at` is read as epoch **milliseconds**.
+
+**Watching those four run produced a fifth finding the consolidation itself created**: with the shared
+file absent, two of the four — the implicit-zone check and D54's CRUD check, the two whose whole
+subject is a silent gap — **exited 0 having read nothing**. Existence guards on all four, plus
+`strip-comments-test.sh` as the mechanism's own test. The fix for eight fail-opens arrived with a
+ninth, and running it is what found it.
+
+**Nothing was ever priced across the defect**, as far as could be established: quality holds one
+`brokerage_config` row at midnight 2020-01-01 against 260 ledger rows. The dev estate could not be
+read — its containers have been `Restarting` for a week and it has no databases running — so that is a
+claim about quality, not about both.
+
+Everything below is the item as it stood.
+
+---
 
 Opened by D53, which **narrowed it from unbounded to sub-day and deliberately did not close it**.
 

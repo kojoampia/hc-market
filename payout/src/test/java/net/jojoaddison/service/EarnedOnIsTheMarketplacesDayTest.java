@@ -161,7 +161,14 @@ class EarnedOnIsTheMarketplacesDayTest {
         when(brokerage.findAll()).thenReturn(List.of(ghsConfig()));
         when(ledgerQueries.existsByBookingReference(anyString())).thenReturn(false);
         when(processed.existsById(anyString())).thenReturn(false);
-        return new BookingEventConsumer(ledger, ledgerQueries, brokerage, processed, new ObjectMapper(), calendarAt(instant, clockZone));
+        return new BookingEventConsumer(
+            ledger,
+            ledgerQueries,
+            new BrokerageTerms(brokerage),
+            processed,
+            new ObjectMapper(),
+            calendarAt(instant, clockZone)
+        );
     }
 
     private DisputeEventConsumer disputeConsumer(Instant instant, String clockZone) {

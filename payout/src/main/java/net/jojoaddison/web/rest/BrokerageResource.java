@@ -2,12 +2,12 @@ package net.jojoaddison.web.rest;
 
 import java.time.Instant;
 import java.time.LocalDate;
-import java.util.Comparator;
-import java.util.List;
 import net.jojoaddison.domain.BrokerageConfig;
-import net.jojoaddison.repository.BrokerageConfigRepository;
+import net.jojoaddison.service.BrokerageTerms;
 import net.jojoaddison.service.Commission;
 import net.jojoaddison.service.MarketCalendar;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -15,7 +15,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
 /**
- * The brokerage split for an amount, on a date. Used by the booking service to build a customer's
+ * The brokerage split for an amount, at a moment. Used by the booking service to build a customer's
  * receipt.
  *
  * <h2>Why a pure function, and not "the split for booking X"</h2>
@@ -26,10 +26,16 @@ import org.springframework.web.server.ResponseStatusException;
  * authenticated customer could read the price and commission of any booking whose reference they
  * could guess, and the seeded references are {@code b1}, {@code h1}, {@code q1}.
  *
- * <p>This takes an amount the caller already knows and a date, and returns arithmetic. It discloses
+ * <p>This takes an amount the caller already knows and a moment, and returns arithmetic. It discloses
  * nothing: the commission rate is public — the prototype prints "12% platform fee" on the listing —
  * and the amount came from the caller. Ownership stays entirely in the booking service, which is the
  * only one that knows whose booking it is.
+ *
+ * <p><strong>It is gateway-routed and therefore reachable by any token this estate accepts.</strong>
+ * {@code Path=/services/healthconnectpayout/api/**} covers {@code /api/internal/...}, unlike
+ * catalog's {@code /internal/**}, which D28 keeps private precisely by not matching. That is by
+ * design and the paragraph above is why; it is written down here because "internal" in the path
+ * reads as a claim about reachability that this one does not make.
  *
  * <h2>Why booking does not just multiply by 0.12 itself</h2>
  *
@@ -41,10 +47,12 @@ import org.springframework.web.server.ResponseStatusException;
 @RestController
 public class BrokerageResource {
 
-    private final BrokerageConfigRepository configs;
+    private static final Logger LOG = LoggerFactory.getLogger(BrokerageResource.class);
 
-    public BrokerageResource(BrokerageConfigRepository configs) {
-        this.configs = configs;
+    private final BrokerageTerms terms;
+
+    public BrokerageResource(BrokerageTerms terms) {
+        this.terms = terms;
     }
 
     public record Split(
@@ -59,9 +67,38 @@ public class BrokerageResource {
 
     /**
      * @param amountMinor the price the caller is asking about, in minor units
-     * @param on          the date the split should be struck at — defaults to now. A receipt for a
-     *                    session completed last year must use last year's rate, which is why this is
-     *                    a parameter rather than "now".
+     * @param at          the <strong>moment</strong> the split should be struck at, and the answer
+     *                    whenever the caller has one — {@code decisions.md} D56, backlog NEW-16.
+     *                    <p>This parameter did not exist until D56 and {@code on} was the whole of
+     *                    the question. D53 had moved the ledger onto the completion instant and left
+     *                    the receipt on a day, so a rate taking effect at <em>noon</em> on the day a
+     *                    booking completed at 14:00 priced the ledger under the new terms and the
+     *                    receipt under the old — NEW-13's shape one granularity down, biting only
+     *                    when {@code effectiveFrom} is not midnight in Accra, which the one row in
+     *                    either estate is.
+     *                    <p><strong>Send ISO-8601.</strong> Spring's {@code Instant} converter also
+     *                    accepts a bare number, and it reads it as epoch <em>milliseconds</em>: so
+     *                    {@code at=1591020000} — epoch <em>seconds</em>, which is what most payment
+     *                    APIs speak — binds to a moment in <strong>1970</strong> rather than being
+     *                    refused. Here that answers 503 only because the oldest config is dated
+     *                    2020; against an estate whose terms predate the moment sent it is a 200 at
+     *                    the wrong rate, which is this endpoint's worst outcome and its quietest.
+     *                    Unreachable from {@code BrokerageClient}, which sends ISO-8601 and is
+     *                    pinned to it by a test on the wire, and written here so the next caller
+     *                    does not learn it from a receipt.
+     * @param on          the <em>day</em> the split should be struck on, kept beside {@code at} and
+     *                    used only when there is no {@code at}. It is not deprecated and must not be
+     *                    dropped, for two independent reasons.
+     *                    <p><strong>Compatibility.</strong> An older booking service knows nothing of
+     *                    {@code at} and sends only this; a newer one sends both, so an older
+     *                    <em>payout</em> that ignores an unknown parameter still gets a day rather
+     *                    than nothing. Dropping {@code on} would have left that deployment falling
+     *                    through to the clock, which is NEW-13 rebuilt in the other service.
+     *                    <p><strong>And some callers genuinely have no moment.</strong> The receipt
+     *                    for a booking that has not completed is struck on its scheduled day, and a
+     *                    day is the only truth there is about it. That is why that branch does not
+     *                    warn: a warning that fires on a correct state is one people learn to ignore,
+     *                    and payout cannot tell the two callers apart anyway.
      *                    <p>A date is not a moment, so turning one into an instant needs a calendar,
      *                    and it is the marketplace's — {@code decisions.md} D51. This read
      *                    {@code ZoneOffset.UTC}, which was never the NEW-10 defect: a named zone is a
@@ -69,19 +106,18 @@ public class BrokerageResource {
      *                    calendars that were never named. It is {@link MarketCalendar#MARKET_ZONE}
      *                    now because "which of the brokerage's terms were in force on this day" is a
      *                    <em>marketplace</em> day, and because one service answering the same
-     *                    question two ways is noise a reader has to rule out. <strong>No test can go
-     *                    red on this change</strong> and none was written: Ghana is UTC+0 all year,
-     *                    so the two spellings have never produced a different instant and never can
-     *                    while the estate's calendar is Accra's. It is a consolidation, not a fix.
-     *                    The {@code Instant.now()} beside it is untouched and correct — "now" is a
-     *                    moment and carries no calendar at all.
+     *                    question two ways is noise a reader has to rule out.
      */
     @GetMapping("/api/internal/brokerage/split")
-    public Split split(@RequestParam long amountMinor, @RequestParam(required = false) LocalDate on) {
+    public Split split(
+        @RequestParam long amountMinor,
+        @RequestParam(required = false) Instant at,
+        @RequestParam(required = false) LocalDate on
+    ) {
         if (amountMinor < 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "amountMinor cannot be negative");
         }
-        BrokerageConfig config = inForce(on == null ? Instant.now() : on.atStartOfDay(MarketCalendar.MARKET_ZONE).toInstant());
+        BrokerageConfig config = inForce(struckAt(at, on));
         long commission = Commission.on(amountMinor, config.getCommissionRate());
         return new Split(
             amountMinor,
@@ -94,13 +130,62 @@ public class BrokerageResource {
         );
     }
 
-    /** The latest config that had already taken effect — a rate scheduled for next month prices nothing today. */
+    /**
+     * The moment these terms are asked about — four cases, and the fourth one refuses.
+     *
+     * <ol>
+     *   <li><strong>{@code at} alone</strong>: it is the answer. Nothing else is consulted.
+     *   <li><strong>{@code at} and {@code on}</strong>: {@code at} wins. They are not redundant by
+     *       accident — booking sends both so that whichever version of this service answers has
+     *       something to work with — and {@code on} is a coarsening of {@code at} by construction, so
+     *       "they differ" is the normal case rather than an error. What is not normal is {@code on}
+     *       naming a different <em>day</em> from {@code at}, which only a caller holding two ideas of
+     *       when can produce. That is a WARN and not a refusal: the answer is {@code at} either way,
+     *       so refusing would cost a customer their receipt and buy nothing, and the line names both
+     *       so the caller can be fixed.
+     *   <li><strong>{@code on} alone</strong>: the start of that day in the marketplace's calendar.
+     *       See the parameter's javadoc for why that is an answer rather than a fallback.
+     *   <li><strong>Neither: refused, 400.</strong> Never {@code Instant.now()}, which is what this
+     *       did until D56 and is the shape D53 removed from the consumer. A request that failed to
+     *       say when is not a request about now — answering it prices a receipt at today's terms and
+     *       returns something indistinguishable from a correct answer. It is unreachable from any
+     *       version of booking that has ever run, since {@code Booking.scheduledDate} is required and
+     *       has always been sent, which is precisely when a closed door is free.
+     * </ol>
+     */
+    private static Instant struckAt(Instant at, LocalDate on) {
+        if (at == null && on == null) {
+            throw new ResponseStatusException(
+                HttpStatus.BAD_REQUEST,
+                "a split must be struck at a stated moment or on a stated day; neither 'at' nor 'on' was given"
+            );
+        }
+        if (at == null) {
+            return on.atStartOfDay(MarketCalendar.MARKET_ZONE).toInstant();
+        }
+        if (on != null && !on.equals(LocalDate.ofInstant(at, MarketCalendar.MARKET_ZONE))) {
+            LOG.warn(
+                "split asked for at={} and on={}, which is not that instant's day in {} — pricing at the instant and ignoring the day (decisions.md D56)",
+                at,
+                on,
+                MarketCalendar.MARKET_ZONE
+            );
+        }
+        return at;
+    }
+
+    /**
+     * The terms in force then. One selector, shared with {@code BookingEventConsumer} so that a
+     * receipt and the ledger row behind the same booking cannot resolve two different rows — see
+     * {@link BrokerageTerms}, {@code decisions.md} D56.
+     *
+     * <p>The refusal stays here rather than in the selector because the two callers refuse
+     * differently: 503 is right for a customer reading a receipt, and the consumer needs a throw the
+     * container will retry.
+     */
     private BrokerageConfig inForce(Instant at) {
-        List<BrokerageConfig> all = configs.findAll();
-        return all
-            .stream()
-            .filter(c -> c.getEffectiveFrom() != null && !c.getEffectiveFrom().isAfter(at))
-            .max(Comparator.comparing(BrokerageConfig::getEffectiveFrom))
+        return terms
+            .inForceAt(at)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "no brokerage configuration in force"));
     }
 }
