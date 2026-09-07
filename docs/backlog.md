@@ -1429,6 +1429,22 @@ unchanged code. Booking gets two more that cannot see each other's failure, and 
 assertions were each watched firing on their own mutation — a run that found the check banning a
 correct `Instant.now()` in `BookingEventConsumer` and got it narrowed.
 
+**The review found four more, the first of them in the new check itself.** It had copied D53's
+line-based comment stripper, blind to any block comment spanning more than one line, so deleting
+`queryParam("at", at)` and leaving a comment naming it exited **0** — NEW-16 restored on a green build,
+the eighth fail-open in this family. D54's stateful awk is now `.github/checks/strip-comments.awk` and
+**all four** text-matching checks call it, each watched firing separately; the implicit-zone one turns
+out to have had the same blind spot pointing the *other* way, as a false positive on correct code. Also
+corrected: this decision's own reason for the clock-ban narrowing (a **test** covers the consumer, not
+the check above it), a javadoc claiming a test that does not exist, and an undocumented binding where a
+numeric `at` is read as epoch **milliseconds**.
+
+**Watching those four run produced a fifth finding the consolidation itself created**: with the shared
+file absent, two of the four — the implicit-zone check and D54's CRUD check, the two whose whole
+subject is a silent gap — **exited 0 having read nothing**. Existence guards on all four, plus
+`strip-comments-test.sh` as the mechanism's own test. The fix for eight fail-opens arrived with a
+ninth, and running it is what found it.
+
 **Nothing was ever priced across the defect**, as far as could be established: quality holds one
 `brokerage_config` row at midnight 2020-01-01 against 260 ledger rows. The dev estate could not be
 read — its containers have been `Restarting` for a week and it has no databases running — so that is a

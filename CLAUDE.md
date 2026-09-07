@@ -674,6 +674,11 @@ keeps the estate uniformly Boot 4 — and matches all three sibling products. Se
   the name present and every request falling through to the day. It also bans `Instant.now()` in
   `BrokerageResource` and **deliberately not** in `BookingEventConsumer`, which writes one correctly on
   `ProcessedEvent`; the first version did include it and went red on `main`.
+  **What covers the consumer is a TEST, not the check above it** — D56 said otherwise and was wrong.
+  D53's check greps for `pricedAt(… "bookingCompletedAt")`, which asserts the literal appears at such a
+  call and **not that its value is used**: keep the call as a bare statement, price at `Instant.now()`
+  beside it, and that check still exits 0. `TheRateIsStruckWhenTheBookingHappenedTest` is what goes red.
+  Do not read any of these greps as covering more than the text they match.
   **`/api/internal/brokerage/split` IS gateway-routed**, unlike catalog's `/internal/**`, because the
   route predicate is `/services/healthconnectpayout/api/**` and this path begins `/api/`. Any token the
   estate accepts reaches it, by design: it discloses the public commission rate and arithmetic on an
@@ -707,6 +712,27 @@ the deployed image is the built one.
   happened here: the seed still regenerates identically from the prototype, the spec appendices
   still match the deploy scripts, all three compose files still interpolate, every shell script
   still parses, and the quality vhost still agrees with its compose about the upstream port.
+
+**Any check that matches source text must strip comments with `.github/checks/strip-comments.awk`,
+and never its own expression.** *"A check whose reach depends on prose is not a check"* has been the
+finding in eight successive fail-opens here, and by D56 three of the four text-matching checks had each
+grown a private stripper — the same line-based `sed`, which removes only a block comment that opens and
+closes on **one line**. Javadoc survived it by accident (a `grep -v` dropped `*`-prefixed continuation
+lines); a **non-javadoc** multi-line `/* … */`, which is the house style, passed straight through. So a
+comment naming a deleted call satisfied the check guarding it, verified on two of them. D54's stateful
+awk was the only correct copy and is now the shared file. It **preserves line numbering** — one blank
+line out per comment line in — because two callers quote the original line back by number. Adding a
+fifth text-matching check means calling it, not writing a fifth stripper.
+
+**Each caller guards that the file EXISTS, and that guard is measured rather than decorative.** One
+file four checks trust is a single point of failure, and absent it the two whose subject is a silent
+gap **passed**: the implicit-zone check printed `ok` for all five services having read nothing, and
+the CRUD check saw every resource strip to empty, so `maps` and `pre` were both 0 and a resource with
+no annotation passed as gated. Consolidating eight fail-opens produced a ninth, found by running it.
+All four exit 1 now with one error naming the cause. `strip-comments-test.sh` is the mechanism's own
+test — it rebuilds the comment the old `sed` could not see, asserts line numbering survives, and
+asserts **real code survives**, which is the control, because every other assertion there is satisfied
+by a stripper that outputs nothing.
 
 There was no CI before this. That is how the whole suite came to be skipped for a week: D9 switched
 local builds to `-DskipTests`, nothing else ran them, and when they were finally run booking had 137

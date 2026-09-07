@@ -7176,11 +7176,27 @@ every other check in the workflow.
 **It was written covering `BookingEventConsumer` too, and running it caught that.** The consumer writes
 `ProcessedEvent(eventId, type, Instant.now())`, an idempotency record's "when did we handle this",
 which is correct and is the use the workflow's own comment already names. The check went red on `main`,
-on a line nobody should change. Narrowed to the resource, with the reason written in place — and the
-consumer's pricing moment is already pinned one check above, since D53 requires its call site to be
-`pricedAt(…, "bookingCompletedAt")`. This is the third time in this family that watching a check run
-has found the check rather than the code, and the first where the finding was a **false positive**
-rather than a fail-open.
+on a line nobody should change. Narrowed to the resource, with the reason written in place. This is the
+third time in this family that watching a check run has found the check rather than the code, and the
+first where the finding was a **false positive** rather than a fail-open.
+
+**The narrowing is free — but not for the reason first written here, and the correction matters more
+than the conclusion.** This paragraph said the consumer's pricing moment "is already pinned one check
+above, since D53 requires its call site to be `pricedAt(…, "bookingCompletedAt")`". It is not. That
+check greps `pricedAt\([^)]*"bookingCompletedAt"\)` — it asserts the literal **appears at such a call**,
+never that the call's **value is used**. Keeping the call as a bare statement and pricing beside it:
+
+```java
+pricedAt(envelope, p, "bookingCompletedAt");
+BrokerageConfig config = configInForce(Instant.now());
+```
+
+leaves D53's check at **exit 0**, printing `ok bookingCompletedAt`. So the narrowing is covered by a
+**test** — `TheRateIsStruckWhenTheBookingHappenedTest`, four failures — and not by the check above it.
+Both the decision and the outcome stand; the *reason* was wrong, and a wrong reason recorded beside a
+right decision is how the next person concludes the check covers more than it does. Which is the same
+class of error as everything else in this family: **a claim about a check's reach, asserted rather than
+run.**
 
 ### What this deliberately does not touch
 
@@ -7193,3 +7209,91 @@ block above `cancellationPreview` and a conflict there is expected.
 `ledger.earned_on` is untouched and remains the day the event was **consumed** (D51, D53). That is the
 opposite answer to a different question and stays that way: a term the customer was shown must not
 move, and a reporting period must not be rewritten retrospectively.
+
+### Review of `2f33b64` — four findings, and the new check was one of them
+
+The compatibility matrix, the merged selector, the red-first evidence and the data claim all held on
+re-derivation. Four things did not.
+
+**1. The new check shipped with the wrong comment stripper, and it was a fail-open.** It copied D53's
+line-based `sed`, which removes only a block comment that opens and closes on **one line**. Javadoc
+survived it by accident — a trailing `grep -v` dropped `*`-prefixed continuation lines — so a
+**non-javadoc** `/* … */` spanning lines, which is the house style here
+(`booking/.../ErasureWorkflow.java:202` has a five-line one), passed through whole. Reproduced both
+ways, on both files the check guards: delete `uri.queryParam("at", at)`, leave a block comment naming
+it, and the check exits **0** printing `ok at — sent by booking`. **NEW-16 restored on a green build.**
+The eighth fail-open in this family, and the second time the fix was already in the file: D54's
+stateful `awk` handles blocks across lines and was sitting 200 lines further down.
+
+The awk is now **`.github/checks/strip-comments.awk`** and **all four** text-matching checks call it —
+the implicit-zone check, D53's, D54's and this one. D54's had the only correct copy, and *being a copy*
+is precisely why the other three could be wrong beside it.
+
+Watched, one check at a time — never as a batch, since a battery read through one exit status is what
+D53's review found:
+
+| check | probe | before (its own `sed`) | after (shared awk) |
+| --- | --- | --- | --- |
+| D53's | call site deleted, block comment naming `bookingCompletedAt` | **exit 0**, `ok` | exit 1 |
+| D56's | `queryParam("at", at)` deleted, block comment naming it | **exit 0**, `ok` | exit 1 |
+| implicit-zone | block comment *discussing* `LocalDate.now()` | **exit 1** | exit 0 |
+| implicit-zone | a real `LocalDate.now()` | exit 1, quoting the **comment** | exit 1, quoting the code |
+
+**The implicit-zone one points the other way and is worth separating**: there an unstripped comment is
+a **false positive**, not a fail-open — it reddened on correct code, and quoted the wrong line while
+doing it. That is not harmless. A check that fires on correct code is the one that gets disabled, and
+the second probe is there to show the fix did not buy quiet by going blind.
+
+**D54's check is a pure refactor and is evidenced as one**: its inline awk was byte-identical to the
+shared file, and both were run over **all 858 Java files in the estate** — 0 differ. Its own
+prose-mutations were not re-run; what was re-run is that the extracted step still fires, by removing
+one delete-table row and watching it name that entity. Also removed while touching the implicit-zone
+check: the trailing `grep -vE '^[0-9]+:[[:space:]]*\*'`, which was the only thing stripping javadoc
+continuations before and can now only drop matches.
+
+**And watching those four run produced a fifth finding, which the consolidation itself created.**
+Moving the stripper into a file makes four checks depend on a file being present, so the question is
+which way they fail when it is not. Measured by removing it:
+
+| check | stripper absent |
+| --- | --- |
+| implicit-zone | **EXIT 0** — `awk -f` errors, the pipeline yields no hits, and it prints `ok` for all five services having read nothing |
+| D54's CRUD | **EXIT 0** — every resource strips to an empty file, so `maps` and `pre` are both 0 and a resource with no annotation passes the authorization branch |
+| D53's | exit 1 (its greps find nothing in an empty string) |
+| D56's | exit 1, same reason |
+
+**Two of the four failed open**, and on the two whose whole subject is a silent gap. So each of the
+four now carries a two-line existence guard, worded like the "would scan nothing and pass" guards
+already beside them, and all four were re-measured as exit 1 with one error naming the cause. That is
+a defect this package **introduced and then found by running the thing it had just written** — the
+fix for eight fail-opens arriving with a ninth is the argument for watching rather than reasoning,
+made about as plainly as it can be.
+
+Beside them, **`.github/checks/strip-comments-test.sh`**, in the shape `pepper-wiring-test.sh`
+established: it builds the multi-line non-javadoc block comment the old `sed` could not see and
+asserts the new stripper removes it, asserts javadoc and `//` go, asserts **line numbering is
+preserved** (two callers quote lines by number), and asserts the predecessor really does still leave
+that comment intact — so the file documents the defect it defends against rather than describing it.
+**Its control is that real code survives**, because every other assertion there is satisfied by a
+stripper that outputs nothing, which is precisely the state a missing file produces.
+
+**2. This decision's own reason for narrowing the clock ban was wrong.** Corrected in place above:
+D53's check asserts the literal appears at a `pricedAt(...)` call, **never that its value is used**, so
+keeping the call as a bare statement while pricing at `Instant.now()` beside it leaves it at exit 0.
+What covers the consumer is `TheRateIsStruckWhenTheBookingHappenedTest`. The narrowing stands; the
+reason recorded for it did not, and a wrong reason beside a right decision is how the next person
+over-credits a grep.
+
+**3. A javadoc claimed a test that does not exist.** `BY_EFFECTIVE_FROM_THEN_NEWEST` was
+package-private "so `BrokerageTermsUnitTest` can assert the ordering itself" — nothing outside
+`BrokerageTerms` referenced it, every case goes through `inForceAt`, and the distinction it was
+reaching for is answered by that test asserting **both row orders**, which is what actually goes red.
+Now `private`, with the correction on the constant.
+
+**4. A numeric `at` binds as epoch MILLISECONDS, silently.** Spring's converter accepts a bare number,
+so `at=1591020000` — epoch **seconds**, the convention most payment APIs speak — binds to 1970 rather
+than being refused. It answers 503 here only because the oldest config is dated 2020; against an estate
+whose terms predate the moment sent, it is a **200 at the wrong rate**, which is this endpoint's worst
+outcome and its quietest. Unreachable from `BrokerageClient`, which sends ISO-8601 and is pinned to it
+by a test on the wire. Documented on the `@param` rather than defended against: refusing numeric input
+would need a second binder, and the honest boundary is that this endpoint's contract is ISO-8601.

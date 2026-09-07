@@ -834,9 +834,26 @@ jobs:
       # when the event was consumed rather than when the booking completed. That was NEW-13 and is
       # D53; nothing on that path reads a clock any more, and the check below cannot see the difference
       # because there is no calendar in it to get wrong. The one after it is the one that can.
+      # Four checks below match against source text, and each is only as good as the one stripper
+      # they all call. Three carried a private line-based `sed` until D56's review — blind to any
+      # block comment spanning more than one line, which is how a comment naming a deleted call came
+      # to satisfy the check guarding it. Consolidating fixed that and created a new single point of
+      # failure, so it gets a test of its own: it must strip the case its predecessor could not, and
+      # must not strip code. The last assertion is the control — every other one is satisfied by a
+      # stripper that outputs nothing, which is exactly how a MISSING one made two of the four
+      # callers pass. Same shape as the pepper-wiring pair above.
+      - name: The shared comment stripper must strip comments and nothing else
+        run: ./.github/checks/strip-comments-test.sh
+
       - name: No runtime class may read a date in an implicit zone
         run: |
           fail=0
+          # The shared stripper must EXIST, and the guard is not decoration — measured. Absent,
+          # `awk -f` errors, the pipeline below produces no hits, and this check reports `ok` for all
+          # five services while reading nothing. Moving the stripper out of the workflow and into a
+          # file is what created that, and two of its four callers failed open on it (decisions.md
+          # D56's review). Same wording as the other "would scan nothing and pass" guards here.
+          [ -f .github/checks/strip-comments.awk ] || { echo "::error::.github/checks/strip-comments.awk is missing — this check would strip nothing, match nothing and pass. See decisions.md D56."; exit 1; }
           for svc in payout booking messaging gateway catalog; do
             dir="$svc/src/main/java/net/jojoaddison"
             if [ ! -d "$dir" ]; then
@@ -865,9 +882,16 @@ jobs:
               scanned=$((scanned + 1))
               # Strip comments, THEN match. Dropping comment lines after the match is what let a
               # leading /* hide the code behind it.
-              hits=$(sed -E 's@/\*[^*]*\*+([^/*][^*]*\*+)*/@ @g; s@//.*@@' "$f" \
+              #
+              # The shared awk since D56's review, which found this one's `sed` blind to any block
+              # comment spanning more than one line — so a multi-line `/* … */` containing
+              # `LocalDate.now()` was invisible here, on the check that exists to find exactly that.
+              # The `grep -vE '^[0-9]+:[[:space:]]*\*'` that used to follow is GONE rather than kept
+              # as belt and braces: it was the only thing removing javadoc continuation lines, the
+              # awk now blanks them properly, and a filter that can only drop matches is a fail-open
+              # once the thing it compensated for is fixed.
+              hits=$(awk -f .github/checks/strip-comments.awk "$f" \
                        | grep -niE '(LocalDate|LocalDateTime|LocalTime|ZonedDateTime|OffsetDateTime|Year|YearMonth)\.now\(|Clock\.system|ZoneId\.systemDefault|TimeZone\.getDefault|systemDefaultZone|current_date|current_timestamp|localtimestamp|now\(\)[[:space:]]*::' \
-                       | grep -vE '^[0-9]+:[[:space:]]*\*' \
                        | cut -d: -f1)
               if [ -n "$hits" ]; then
                 for n in $hits; do
@@ -941,6 +965,10 @@ jobs:
       - name: Booking and payout must name the pricing instants identically
         run: |
           fail=0
+          # This one fails CLOSED without the stripper — the greps below find nothing in an empty
+          # string and it exits 1. Guarded anyway, so the four callers say the same thing and the
+          # error names the cause rather than reporting a field as missing from booking.
+          [ -f .github/checks/strip-comments.awk ] || { echo "::error::.github/checks/strip-comments.awk is missing — this check cannot read either file. See decisions.md D56."; exit 1; }
           producer=booking/src/main/java/net/jojoaddison/service/OutboxRecorder.java
           consumer=payout/src/main/java/net/jojoaddison/service/BookingEventConsumer.java
           for f in "$producer" "$consumer"; do
@@ -951,9 +979,11 @@ jobs:
           done
           if [ "$fail" = 0 ]; then
             # Comments removed before either half looks, so no javadoc quoting a field name can
-            # satisfy the check for it. Same sed as the implicit-zone check, same reason.
-            producer_code=$(sed -E 's@/\*[^*]*\*+([^/*][^*]*\*+)*/@ @g; s@//.*@@' "$producer" | grep -vE '^[[:space:]]*\*')
-            consumer_code=$(sed -E 's@/\*[^*]*\*+([^/*][^*]*\*+)*/@ @g; s@//.*@@' "$consumer" | grep -vE '^[[:space:]]*\*')
+            # satisfy the check for it. The SHARED awk since D56's review — this check invented the
+            # rule and then shipped a `sed` that only saw single-line block comments, so a multi-line
+            # `/* … */` naming a field could still satisfy it. Half-closing the hole it named.
+            producer_code=$(awk -f .github/checks/strip-comments.awk "$producer")
+            consumer_code=$(awk -f .github/checks/strip-comments.awk "$consumer")
             for field in bookingCompletedAt bookingCancelledAt; do
               # The producer must PUT it on the payload, not merely mention it.
               if ! printf '%s\n' "$producer_code" | grep -qF "payload.put(\"$field\""; then
@@ -1014,9 +1044,22 @@ jobs:
       # Comments are stripped before anything is matched, D53's review's finding: a check whose reach
       # depends on prose is not a check, and both of these files discuss `at`, `on` and Instant.now()
       # at length in their javadoc.
+      #
+      # THE STRIPPER IS THE SHARED ONE, and this check shipped with the wrong one. It copied D53's
+      # line-based `sed`, which removes only a block comment opening and closing on ONE line — javadoc
+      # survived it by accident, because a `grep -v` dropped `*`-prefixed continuation lines, and a
+      # non-javadoc multi-line `/* … */` (the house style here) passed through whole. Verified both
+      # directions on the two files below: delete `uri.queryParam("at", at)`, leave a block comment
+      # mentioning it, and the check printed `ok` for the parameter that was gone. NEW-16 restored on
+      # a green build — the EIGHTH fail-open in this family, and the second time the fix was already
+      # in this file. D54's stateful awk is now `.github/checks/strip-comments.awk` and all four
+      # text-matching checks call it.
       - name: Booking and payout must name the receipt's pricing parameters identically
         run: |
           fail=0
+          # Fails closed without it, like D53's above; guarded for the same reason — an error naming
+          # the missing stripper beats four errors saying booking stopped sending its parameters.
+          [ -f .github/checks/strip-comments.awk ] || { echo "::error::.github/checks/strip-comments.awk is missing — this check cannot read either file. See decisions.md D56."; exit 1; }
           asker=booking/src/main/java/net/jojoaddison/service/BrokerageClient.java
           answerer=payout/src/main/java/net/jojoaddison/web/rest/BrokerageResource.java
           for f in "$asker" "$answerer"; do
@@ -1026,7 +1069,7 @@ jobs:
             fi
           done
           if [ "$fail" = 0 ]; then
-            strip() { sed -E 's@/\*[^*]*\*+([^/*][^*]*\*+)*/@ @g; s@//.*@@' "$1" | grep -vE '^[[:space:]]*\*'; }
+            strip() { awk -f .github/checks/strip-comments.awk "$1"; }
             asker_code=$(strip "$asker")
             answerer_code=$(strip "$answerer")
 
@@ -1150,6 +1193,10 @@ jobs:
       - name: Every entity JHipster generates CRUD for must be deleted or authorized
         run: |
           fail=0
+          # Absent, every resource strips to an empty file, so `maps` and `pre` are both 0 and the
+          # authorization branch passes on a resource with no annotation at all. Measured, not
+          # supposed — decisions.md D56's review.
+          [ -f .github/checks/strip-comments.awk ] || { echo "::error::.github/checks/strip-comments.awk is missing — every resource would strip to nothing and this check would pass. See decisions.md D56."; exit 1; }
           jdls=$(ls jdl/*.jdl 2>/dev/null || true)
           if [ -z "$jdls" ]; then
             echo "::error::jdl/*.jdl matched nothing — this check would scan no entity and pass. See decisions.md D54."
@@ -1213,29 +1260,16 @@ jobs:
               # exactly the rule D53 established one check earlier — A CHECK WHOSE REACH DEPENDS ON
               # PROSE IS NOT A CHECK — and it was not applied here.
               #
-              # So: strip comments first, then count. The awk below removes /* */ blocks across lines
+              # So: strip comments first, then count. The stripper removes /* */ blocks across lines
               # (javadoc included) and then // to end of line, preserving line numbering so the
               # class-declaration comparison still means something.
+              #
+              # It lived inline here until D56's review, which found the OTHER three checks using a
+              # line-based `sed` blind to any block comment spanning more than one line — this one was
+              # the only correct copy in the file, and being a copy is why the other three could be
+              # wrong beside it. It is `.github/checks/strip-comments.awk` now, called from all four.
               stripped=$(mktemp)
-              awk '{
-                     line = $0
-                     while (1) {
-                       if (inblk) {
-                         p = index(line, "*/")
-                         if (p == 0) { line = ""; break }
-                         line = substr(line, p + 2); inblk = 0
-                       } else {
-                         p = index(line, "/*")
-                         if (p == 0) break
-                         pre = substr(line, 1, p - 1); rest = substr(line, p + 2)
-                         q = index(rest, "*/")
-                         if (q == 0) { line = pre; inblk = 1; break }
-                         line = pre substr(rest, q + 2)
-                       }
-                     }
-                     sub(/\/\/.*/, "", line)
-                     print line
-                   }' "$f" > "$stripped"
+              awk -f .github/checks/strip-comments.awk "$f" > "$stripped"
               clsline=$(grep -nE '^[[:space:]]*(public[[:space:]]+)?(final[[:space:]]+)?(abstract[[:space:]]+)?class[[:space:]]' "$stripped" | head -1 | cut -d: -f1)
               # Handler mappings only — those AFTER the class declaration. The class-level
               # @RequestMapping("/api/ledgers") is a path prefix and not something to authorize, and

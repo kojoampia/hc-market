@@ -92,11 +92,15 @@ public class BrokerageTerms {
     /**
      * Latest {@code effectiveFrom} first, and among those the highest {@code id}.
      *
-     * <p>Package-private so {@code BrokerageTermsUnitTest} can assert the ordering itself rather than
-     * only its effect through {@link #inForceAt}, which cannot distinguish "the tie-break works" from
-     * "the repository happened to return the rows in an order that made it look as though it did".
+     * <p>Private. It was package-private, with a javadoc claiming {@code BrokerageTermsUnitTest}
+     * asserted the ordering directly — a claim nothing in the tree made true, since every case there
+     * goes through {@link #inForceAt}. The distinction it was reaching for is real ("the tie-break
+     * works" against "the rows happened to arrive in a helpful order") and it is answered a better
+     * way: that test controls the list and asserts <strong>both</strong> orders, which is what
+     * actually goes red when the tie-break is removed. Visibility bought nothing, so it is gone —
+     * {@code decisions.md} D56's review.
      */
-    static final Comparator<BrokerageConfig> BY_EFFECTIVE_FROM_THEN_NEWEST = Comparator.comparing(
+    private static final Comparator<BrokerageConfig> BY_EFFECTIVE_FROM_THEN_NEWEST = Comparator.comparing(
         BrokerageConfig::getEffectiveFrom
     ).thenComparing(BrokerageConfig::getId, Comparator.nullsFirst(Comparator.naturalOrder()));
 }

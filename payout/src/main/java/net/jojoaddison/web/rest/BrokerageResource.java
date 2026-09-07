@@ -76,6 +76,16 @@ public class BrokerageResource {
      *                    receipt under the old — NEW-13's shape one granularity down, biting only
      *                    when {@code effectiveFrom} is not midnight in Accra, which the one row in
      *                    either estate is.
+     *                    <p><strong>Send ISO-8601.</strong> Spring's {@code Instant} converter also
+     *                    accepts a bare number, and it reads it as epoch <em>milliseconds</em>: so
+     *                    {@code at=1591020000} — epoch <em>seconds</em>, which is what most payment
+     *                    APIs speak — binds to a moment in <strong>1970</strong> rather than being
+     *                    refused. Here that answers 503 only because the oldest config is dated
+     *                    2020; against an estate whose terms predate the moment sent it is a 200 at
+     *                    the wrong rate, which is this endpoint's worst outcome and its quietest.
+     *                    Unreachable from {@code BrokerageClient}, which sends ISO-8601 and is
+     *                    pinned to it by a test on the wire, and written here so the next caller
+     *                    does not learn it from a receipt.
      * @param on          the <em>day</em> the split should be struck on, kept beside {@code at} and
      *                    used only when there is no {@code at}. It is not deprecated and must not be
      *                    dropped, for two independent reasons.
