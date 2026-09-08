@@ -1,8 +1,7 @@
 package net.jojoaddison.service.seed;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
-import java.time.Instant;
+import java.util.List;
 import net.jojoaddison.domain.BrokerageConfig;
 import net.jojoaddison.domain.Ledger;
 import net.jojoaddison.domain.enumeration.DeliveryMode;
@@ -14,12 +13,29 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Loads the payout service's slice of the seed: the brokerage configuration, and one ledger row per
- * completed session.
+ * Loads the payout service's slice of the seed: one ledger row per completed session.
  *
  * <p>What is <em>not</em> loaded: any total. There is no lifetime gross, no monthly earnings and no
  * per-professional summary anywhere in this schema. Those are SQL aggregates over the rows written
  * here, computed at read time — see {@code EarningsService}.
+ *
+ * <p><strong>And, since {@code decisions.md} D57, no {@code BrokerageConfig}.</strong> This class wrote
+ * one and {@link #clear()} deleted one, which made the estate's commission rate demo data — loadable
+ * only under the {@code test & dev} profile pair with {@code healthconnect.seed.enabled} true, and
+ * therefore absent from production, where {@code BookingEventConsumer} then retried every
+ * {@code booking.completed} for ever and every receipt was a 503 (backlog NEW-18). The founding terms
+ * are commercial configuration rather than demo data and belong to
+ * {@code net.jojoaddison.service.BrokerageBootstrap}, which writes them on every environment. Two
+ * consequences worth stating in place:
+ *
+ * <ul>
+ *   <li>a reseed no longer empties {@code brokerage_config}. It used to, between two transactions, on a
+ *       live dev estate — a window in which this service could price nothing;
+ *   <li>the rate the seeded ledger rows are computed at still comes from the seed file, because those
+ *       amounts are the prototype's figures and {@code extract-seed.mjs} asserts their totals. It is not
+ *       read back from the config, and {@link #warnIfTheSeedDisagreesWithTheEstate} is what stops the
+ *       two drifting in silence.
+ * </ul>
  */
 @Service
 public class PayoutSeeder {
@@ -38,10 +54,18 @@ public class PayoutSeeder {
         return ledgerRepository.count() > 0;
     }
 
+    /**
+     * Truncates what the seed owns, which since D57 is the ledger and nothing else.
+     *
+     * <p>{@code brokerageConfigRepository.deleteAllInBatch()} used to be the second line here, and
+     * removing it is the point rather than tidying: the founding terms are not seed data, and a reseed
+     * that empties {@code brokerage_config} is {@code deploy-dev.sh reseed} recreating NEW-18 on a
+     * running estate. {@code BrokerageBootstrap} only writes at startup, so nothing would have put the
+     * row back until the next restart.
+     */
     @Transactional
     public void clear() {
         ledgerRepository.deleteAllInBatch();
-        brokerageConfigRepository.deleteAllInBatch();
     }
 
     @Transactional
@@ -76,17 +100,7 @@ public class PayoutSeeder {
         }
 
         SeedFile.Brokerage b = seed.brokerage();
-        BrokerageConfig config = new BrokerageConfig()
-            .commissionRate(b.commissionRate())
-            .payoutLagDays(b.payoutLagDays())
-            .freeCancellationHours(b.freeCancellationHours())
-            .lateCancellationPct(b.lateCancellationPct())
-            .currency(b.currency())
-            // Backdated so that every seeded session completed *after* the config took effect —
-            // the whole point of versioning by effectiveFrom is that a booking prices against the
-            // config in force when it completed, and a config that starts today would price none.
-            .effectiveFrom(Instant.parse("2020-01-01T00:00:00Z"));
-        brokerageConfigRepository.save(config);
+        warnIfTheSeedDisagreesWithTheEstate(b.commissionRate());
 
         long gross = 0;
         long commission = 0;
@@ -113,4 +127,32 @@ public class PayoutSeeder {
         LOG.info("seeded {} ledger entries — gross {} commission {} net {}", seed.sessions().size(), gross, commission, gross - commission);
     }
 
+    /**
+     * Says so when the rate the seeded ledger was computed at is not a rate this estate holds.
+     *
+     * <p>Two numbers that must agree, in two places, with nothing comparing them — the shape this
+     * repository keeps rediscovering. Before D57 they could not disagree, because this class wrote both;
+     * now the founding rate is a deployment input ({@code HC_BROKERAGE_COMMISSION_RATE}) and the seed's
+     * is the prototype's, so an estate started with a different founding rate gets 256 seeded ledger
+     * rows priced at 12% and every new booking priced at something else. Both sets of rows are
+     * internally consistent and no count moves, which is exactly why it needs a line in the log.
+     *
+     * <p>A warning and not a refusal: it is a dev and quality condition by construction (production
+     * never seeds), the seeded amounts are the prototype's acceptance figures and must not move, and
+     * nothing about it is unsafe — only confusing.
+     */
+    private void warnIfTheSeedDisagreesWithTheEstate(BigDecimal seedRate) {
+        List<BrokerageConfig> held = brokerageConfigRepository.findAll();
+        if (held.stream().anyMatch(c -> c.getCommissionRate() != null && c.getCommissionRate().compareTo(seedRate) == 0)) {
+            return;
+        }
+        LOG.warn(
+            "the seed prices every ledger row at a commission of {}, which no BrokerageConfig in this " +
+            "estate carries ({}) — the seeded history and every new booking will be priced differently. " +
+            "The founding rate is HC_BROKERAGE_COMMISSION_RATE; the seed's is the prototype's and cannot " +
+            "move (decisions.md D57)",
+            seedRate.toPlainString(),
+            held.stream().map(c -> String.valueOf(c.getCommissionRate())).toList()
+        );
+    }
 }

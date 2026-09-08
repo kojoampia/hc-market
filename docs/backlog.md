@@ -53,7 +53,7 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **NEW-15** | Any authenticated user can change the brokerage's commission rate — **and eight other things** | DONE | D54 — the scope was **nine, not one**: `BrokerageConfig`, `Ledger`, `Payout`, `Credential`, `AvailabilitySlot`, `ServiceOffering`, `Highlight`, `Message` and `Conversation`, each with four write mappings and zero authorization. Measured in-process at 200/200/201/200 apiece before deletion — 36 assertions, 36 red. All nine deleted with their generated ITs, argued individually; three `GeneratedCrudIsNotAnApiIT` guards, each door mutated **separately**. **The root cause was the control**: one CI check now derives the expected set from `jdl/*.jdl` and demands, per entity, a delete-table row or real authorization. Eight mutations watched. Opened a tenth family as NEW-17 |
 | **NEW-16** | The receipt strikes its split to the day and the ledger to the instant | DONE | D56 — `at` (an `Instant`) beside `on`, **both sent**, `at` preferred, and neither present is a **400** rather than `Instant.now()`. `on` stays because a new booking calling an old payout would otherwise fall through to that service's own clock — NEW-13 rebuilt one service over. The two selectors are merged into `BrokerageTerms` with an explicit tie-break (newest `id`), closing a non-determinism neither copy could see. First tests for an endpoint that had none: 10 ITs through the real binder, **7 red first**; one CI check, all five assertions watched firing — and running it found the check itself was banning a correct `Instant.now()` |
 | **NEW-17** | The five generated Kafka sample resources are unauthenticated write endpoints | READY | D54 — `POST /api/healthconnect-<service>-kafka/publish` in all four services **and the gateway**, generated, no `@PreAuthorize`, gateway-routed. What it actually does on a running estate is **unestablished**: the binding and `auto-create-topics` live in `application-kafka.yml` and the `kafka` profile is active nowhere, so it is a `StreamBridge` dynamic destination against an unconfigured binding. Closing it also deletes **five ITs that currently assert the hole works** (`producesMessages`, expecting 200). NEW-15's CI check is entity-derived and **cannot** reach this family; a second `web/rest`-derived check is the answer |
-| **NEW-18** | Nothing can create a `BrokerageConfig`, and payout cannot price a booking without one | READY — **blocks the first production deploy** | D54's review. `BookingEventConsumer.configInForce` throws `IllegalStateException` on an empty table; the only writers were `PayoutSeeder` (`seed.enabled: false` under `prod`) and the `BrokerageConfigResource` D54 deleted; the Liquibase `loadData` is `context="faker"`. So on production the table is empty, **the first `booking.completed` throws and the consumer retries for ever** — no ledger row, no earnings, and the failure lands after the money moved. The deletion is still right; the bootstrap was always missing and the CRUD hid it |
+| **NEW-18** | Nothing can create a `BrokerageConfig`, and payout cannot price a booking without one | DONE | D57 — **shape (2), the seeded-once row**, argued against a Liquibase changeset (a rate is not schema, and a changeset cannot read the environment, so it *forces* a code constant) and against the append-only `ROLE_BROKERAGE` resource (**it bootstraps nothing** — a fresh estate still waits on a person, and the deploy check would then fail a healthy stack). `BrokerageBootstrap` writes one row into an **empty** table on every environment including `prod`, at `SmartLifecycle` phase `MIN_VALUE` so the consumer's container cannot start first. The founding values are code constants the environment **may** override — so nothing can be got wrong by omission, and a malformed one refuses startup. `effectiveFrom` is `Instant.EPOCH` and is deliberately *not* an input: it is the one field where a well-formed wrong value brings the defect back. The seed no longer writes or deletes the row at all. Preflight shipped with the remedy, never before it — and its first version was **wrong**, found by an actual `prod` boot: reading the aggregate `/management/health` would have rolled back a healthy stack whenever the Kafka binder was down. It reads `brokerage.termsInForce` from `/management/info` instead. 24 unit tests plus 4 IT cases, every guarded thing mutated separately; one CI check, watched firing six ways including on a comment |
 | **NEW-19** | Two sites convert an appointment with `ZoneOffset.UTC` and ignore `Booking.zoneId` | READY | D55 — was an open question until §13 #8 was ratified; now a defect. `BookingWorkflow.scheduledAt:238` and `CustomerBookingResource.cancellationPreview:235`. Nil consequence while every zone is `Africa/Accra`; the cancellation path prices a late fee off `scheduled`, so the zone moves a **customer-visible** boundary |
 
 ---
@@ -1534,7 +1534,7 @@ from the entities.
 
 ---
 
-## NEW-18 — Nothing can create a `BrokerageConfig`, and payout cannot price a booking without one · READY, blocks the first production deploy
+## NEW-18 — Nothing can create a `BrokerageConfig`, and payout cannot price a booking without one · DONE (D57)
 
 Opened by D54's review, which found it by asking what the `BrokerageConfigResource` deletion actually
 cost. D54 said "deleting it costs nothing and does not decide the question". **The first half was
@@ -1574,6 +1574,56 @@ assertion that payout holds at least one `BrokerageConfig` would turn a silent f
 failed deploy — but note that a smoke test for a condition with **no remedy** would simply fail every
 production deploy until one of the three above is built, and a failing smoke test triggers an automatic
 rollback (D49). So build the answer first, and the check with it.
+
+### Closed by D57 — shape (2), and the two rejections are the decision
+
+**Shape (2), the seeded-once row.** `BrokerageBootstrap` writes one row from `FoundingTerms` into an
+**empty** `brokerage_config`, on every environment including `prod`, at `SmartLifecycle` phase
+`Integer.MIN_VALUE` — so `BookingEventConsumer`'s listener container cannot start against a table this
+has not seen. `PayoutSeeder` no longer writes the row **or deletes it**; `clear()` deleting it meant
+`deploy-dev.sh reseed` recreated this defect on a running estate, with nothing to put the row back
+until the next restart.
+
+**(3) lost because it bootstraps nothing.** An append-only `ROLE_BROKERAGE` resource is what a
+terms-change screen needs and should still be built when there is one — but a fresh estate would sit
+with an empty table until a person remembered to POST, and the preflight below would then fail a
+perfectly healthy new stack, which rolls it back (D49). **(1) lost on four counts**, the sharpest being
+that a Liquibase changeset cannot read the environment, so it does not merely prefer a code constant —
+it forces one; and that every `master.xml` include here is a regeneration-hazard row, all of which have
+fired at least once.
+
+**The trade the decision actually turns on** — a wrong deployment input prices everything wrong versus
+a code constant needing a release — is answered by taking neither horn: the founding values are code
+constants (the prototype's `COMMISSION = 0.12`, `PAYOUT_LAG = 3`) **that the environment may
+override**. Nothing can be got wrong by omission; a malformed or out-of-range value refuses startup by
+name, on every estate, which is a thing a deployment input can do and a code constant cannot. A
+*plausible* wrong number is caught by nothing, and that residual is accepted and bounded: written once,
+into an empty table, logged at INFO, and never over an estate that already has terms.
+
+**`effectiveFrom` is `Instant.EPOCH` and is deliberately not an input.** It is the one field where a
+well-formed wrong value silently reintroduces "no config in force" — this defect, through its own fix.
+
+**The preflight shipped with the remedy — and its first version was wrong, found by a real `prod`
+boot.** It read the aggregate `/management/health`, which answered `DOWN` on an estate whose founding
+row was present and correct, because the Kafka **binder** indicator is in that aggregate and the boot
+had no broker. A smoke test reading it would have rolled back a healthy deploy on a broker blip: WP-19's
+defect, rebuilt by the check meant to prevent a different one. `smoke_test` now reads
+`brokerage.termsInForce` from payout's `/management/info`, which is about one thing, and prints the rate
+on success — the one failure `FoundingTerms` cannot validate is a plausible wrong number. It **cannot
+fire on a bootstrapped estate** for a structural reason: the founding row is dated to the epoch. The
+probe fails closed, so CI guards the endpoint's existence with it.
+
+**What quality could and could not show.** Nothing: the quality stack **seeds**, so
+`brokerage_config` was never empty there — one row, `id 1001`, `0.12 / 3 / 24 / 0.50 / GHS`, read
+rather than assumed. That is a large part of why this survived. The reproduction is in
+`AFreshEstateCanPriceABookingIT` against a real PostgreSQL with the bootstrap disabled: the consumer's
+`IllegalStateException` and the receipt's 503, both, in one run. The nearest thing to the production
+case that *could* be run was: payout's jar under `--spring.profiles.active=prod` against a throwaway
+empty database with `healthconnect.seed.enabled=true` forced. It founded the terms, wrote **no** seed,
+and a second boot wrote nothing at all.
+
+**Still open after this, and named in D57:** the terms-change path itself. There is no way to record a
+rate change other than inserting a row by hand, and shape (3) is what a screen would need.
 
 ## NEW-19 — An appointment is converted in UTC and its own zone is ignored · READY
 

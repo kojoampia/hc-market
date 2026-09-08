@@ -474,6 +474,34 @@ services:
       HEALTHCONNECT_SEED_ENABLED: 'true'
       HEALTHCONNECT_SEED_FILE: /app/seed/seed-data.json
       HEALTHCONNECT_SEED_ANCHOR_DATES: ${HEALTHCONNECT_SEED_ANCHOR_DATES:-false}
+      # --- The founding brokerage terms (decisions.md D57, backlog NEW-18) -------------------------
+      #
+      # BrokerageBootstrap writes ONE brokerage_config row from these, only into an EMPTY table, on
+      # every environment INCLUDING prod. Before D57 nothing outside the seed could write one, and
+      # production does not seed -- so the table was empty, the first booking.completed threw and the
+      # consumer retried it for ever with no ledger row and no earnings, and every receipt was a 503.
+      # THIS IS NOT THE SEED and shares none of the three variables above; the two lines are adjacent
+      # only because both end up in payout's environment. See BrokerageBootstrap's own class note.
+      #
+      # ALL FIVE MAY BE LEFT UNSET, AND AN ESTATE THAT SETS NONE IS PRICED CORRECTLY: the defaults are
+      # the prototype's own 12% commission and 3-day payout lag, held in FoundingTerms. They are passed
+      # here anyway because a variable this repository documents and no compose file carries is a
+      # variable that silently does nothing (D46, D50). Blank counts as absent, exactly as it does for
+      # a payment provider's secret in booking above.
+      #
+      # A value that is set and unreadable -- or a rate written as 12 rather than 0.12 -- REFUSES TO
+      # START rather than being ignored, on every estate, including one whose table is already
+      # populated and which would never have written these. There is deliberately no effective-from:
+      # the founding row is dated to the epoch, and any later date silently brings NEW-18 back.
+      #
+      # A DEV ESTATE SEEDS, so setting a rate here also makes the 256 seeded ledger rows -- priced at
+      # the prototype's 12%, which is an acceptance figure and cannot move -- disagree with every new
+      # booking. PayoutSeeder warns when they do.
+      HC_BROKERAGE_COMMISSION_RATE: ${HC_BROKERAGE_COMMISSION_RATE:-}
+      HC_BROKERAGE_PAYOUT_LAG_DAYS: ${HC_BROKERAGE_PAYOUT_LAG_DAYS:-}
+      HC_BROKERAGE_FREE_CANCELLATION_HOURS: ${HC_BROKERAGE_FREE_CANCELLATION_HOURS:-}
+      HC_BROKERAGE_LATE_CANCELLATION_PCT: ${HC_BROKERAGE_LATE_CANCELLATION_PCT:-}
+      HC_BROKERAGE_CURRENCY: ${HC_BROKERAGE_CURRENCY:-}
     # Long form — see the note in quality/compose.yml. The short syntax is split on colons and
     # an uninterpolated ${VAR:-default} source carries two of its own, so the file fails to
     # parse under `docker compose config --no-interpolate` on the CI runner's compose.

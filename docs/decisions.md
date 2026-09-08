@@ -6650,7 +6650,11 @@ screen to justify a gate".
   it, would be inventing a shape nobody has specified. Deleting it does not decide that question.
   **It does not cost nothing, though, which is what this said first and the review corrected**: it was
   the last thing in the estate that could create a `BrokerageConfig` at all, and payout cannot price a
-  booking without one. That is **NEW-18**, below.
+  booking without one. That is **NEW-18**, below — **closed by D57**, which put the bootstrap where it
+  always belonged (`BrokerageBootstrap`, one row into an empty table, on every environment) rather than
+  reinstating a write endpoint. The terms-change resource this paragraph declines to build
+  speculatively is still not built, and D57 declines it again for the same reason plus one more: it
+  bootstraps nothing.
 - **`ServiceOfferingResource`** — `ProWorkspaceResource` owns `/api/pro/services` and takes no
   professional parameter at all, which is what makes spec §9's "refuse any reference that is not the
   caller's" true by construction. The generated one is that property's exact opposite. It is also a
@@ -7297,3 +7301,338 @@ whose terms predate the moment sent, it is a **200 at the wrong rate**, which is
 outcome and its quietest. Unreachable from `BrokerageClient`, which sends ISO-8601 and is pinned to it
 by a test on the wire. Documented on the `@param` rather than defended against: refusing numeric input
 would need a second binder, and the honest boundary is that this endpoint's contract is ISO-8601.
+
+---
+
+## D57 — The founding rate is a bootstrap row, not a migration and not a screen
+
+NEW-18, opened by D54's review and confirmed twice since: at source by a release agent, and **live on
+the quality box**, where every receipt answered 503 against an empty `brokerage_config`. **`main`
+ended at D56 when this began and there were no open pull requests** — checked with
+`gh pr list --state open` and `git log main`, not assumed, because taking a number held on an unmerged
+branch is what cost the WP-19/Paystack pair a renumber and a rebase. **This is D57.**
+
+### The defect
+
+Nothing could create a `BrokerageConfig` on an estate that does not seed, and production does not
+seed. Four facts, each re-established here rather than inherited from the backlog:
+
+- `PayoutSeeder` was the only remaining writer in `src/main`, behind `@Profile("test & dev")` and
+  `healthconnect.seed.enabled`, which `application-prod.yml` sets false.
+- The other writer was the generated `BrokerageConfigResource`, which D54 deleted because it let any
+  authenticated user set this platform's commission rate. **That deletion was right and this gap
+  predates it** — the CRUD was hiding it, not filling it.
+- The generated `loadData` in `20231204031835_added_entity_BrokerageConfig.xml` is `context="faker"`,
+  and no environment here enables faker (the dev context is `dev`, not `dev, faker` — CLAUDE.md's
+  faker collision).
+- So `brokerage_config` is empty on a production estate.
+
+Then both callers fail, and they fail in the two worst available ways:
+
+| Caller | What it does | How it presents |
+| --- | --- | --- |
+| `BookingEventConsumer.configInForce` | throws `IllegalStateException`; `onBookingEvent` rethrows so the container retries | **the consumer retries for ever.** No ledger row, `/api/pro/earnings` stuck at zero, and booking perfectly happy — the failure is entirely inside payout's consumer, in payout's own log |
+| `BrokerageResource.inForce` | throws `SERVICE_UNAVAILABLE` | **every receipt is a 503** |
+
+Both land on the one path where the customer's money has already moved. And a production deploy of
+`main` would have **come up healthy and passed its catalogue smoke test** — that check counts
+professionals in catalog and cannot see payout at all.
+
+### The three shapes, and why two of them lose
+
+The backlog named three. Each is a real answer; the argument is about which failure each one leaves
+behind.
+
+**(3) An append-only `ROLE_BROKERAGE` resource — rejected, and deferred rather than dismissed.** It is
+what a terms-change screen needs, D54 says so, and it should be built when there is a screen. It is
+the wrong answer to *bootstrap* for one decisive reason: **it does not bootstrap anything.** A fresh
+estate still has an empty table until a person remembers to POST to it, in the window between the
+deploy and the first completed booking, and if they forget the failure is byte for byte the one above.
+It converts an automatic defect into a manual procedure — and it makes the deploy-time check
+unpassable on a healthy new estate, which rolls a healthy stack back (D49), the exact defect WP-19
+found. It is also the most work, but that is not why it loses.
+
+**(1) A Liquibase changeset outside `faker` — rejected, and it was close.** Its case is strong and
+should be recorded: a changeset runs exactly once per database by construction, before any application
+code, with no ordering question and no emptiness guard of our own to get wrong. Four things beat it.
+
+- **A rate is not schema.** The estate already has an answer for "a ratified commercial or legal figure
+  that must be settable per deployment", and it is not a migration: booking's retention periods are
+  `${HC_RETENTION_*}` placeholders in `application.yml`, counsel's ratified figures, injected by all
+  three compose files. Putting the commission rate in a changeset would make it the one such figure
+  reviewed as a database change.
+- **A changeset cannot read the environment.** Not without changelog parameters wired through
+  JHipster's generated `LiquibaseConfiguration`. So shape (1) does not merely *prefer* a code constant;
+  it *forces* one.
+- **The changelog is on the regeneration hazard table.** Every `master.xml` include here is a row
+  somebody has to remember after `jhipster jdl --force`, and CLAUDE.md records that **every row on that
+  table has fired.** A new `@Component` in a new file is left alone by a regeneration, which is why
+  `SeedProperties`, `MarketplacePublicSecurityConfiguration` and `InternalApiSecurityConfiguration` are
+  all shaped that way already.
+- **Its guard is untestable here.** "Liquibase will not run it twice" is true and is somebody else's
+  test. An emptiness guard in our own code is a behaviour four cases can pin, which is what
+  `BrokerageBootstrapUnitTest` does.
+
+**(2) A seeded-once row — taken.** `BrokerageBootstrap` writes one `brokerage_config` row from
+`FoundingTerms`, **only into an empty table**, on every environment including `prod`.
+
+### Which failure this prefers, said plainly
+
+The trade is real and worth stating rather than winning by assertion: *a deployment input set wrong
+prices every booking wrong and nothing catches it; a code constant needs a release to change.*
+
+**This takes neither horn, and the reason it can is that the two are not exclusive.** The founding
+values are code constants — the prototype's 12% and 3-day lag, in `FoundingTerms` — **that the
+environment may override**. So:
+
+- **An estate that sets nothing is priced correctly.** There is no way to get this wrong by omission,
+  which is the failure a *mandatory* deployment input would have added and the one this package exists
+  to remove.
+- **A malformed or out-of-range value refuses to start**, on every estate, including one whose table is
+  already populated and which would never have written it. A rate written as `12` rather than `0.12` is
+  a 1200% commission and is refused by name. **This is the argument for the deployment input over the
+  code constant**: an input can be validated at the moment it is set; a constant can only be validated
+  by a reviewer.
+- **A plausible wrong number — `0.15` where `0.12` was meant — is caught by nothing, and that is the
+  cost accepted here.** What bounds it: it is written **once**, into an **empty** table, on the day an
+  estate is created and while somebody is watching a deploy; `BrokerageBootstrap` logs every value it
+  wrote at INFO; and it can never re-price an estate that already has terms, because a non-empty table
+  is never written to.
+
+And the honest limitation, which neither (1) nor (2) escapes: **once the founding row exists, changing
+it needs a new effective-dated row** — by hand today, by shape (3) when there is a screen. "Deployment
+input" here means *settable at the moment it matters without a release*, not *editable afterwards*.
+
+### The separation from the seed is structural, not documentary
+
+CLAUDE.md records that seeding is double-locked on the `test & dev` profile pair **and**
+`healthconnect.seed.enabled`, and that `prod` was verified to refuse to seed with the property forced
+true. **This writes under `prod`.** If it travelled through the seed's switch that sentence would stop
+being true and the next person reading it would be wrong, so it shares nothing with the seed:
+
+| | the seed | the founding terms |
+| --- | --- | --- |
+| class | `service.seed.SeedDataLoader` | `service.BrokerageBootstrap` |
+| profile | `@Profile("test & dev")` | none |
+| property | `healthconnect.seed.enabled` | `healthconnect.brokerage.founding.*` |
+| switch | required, and false under `prod` | **there is none** — see below |
+| hook | `ApplicationRunner` | `SmartLifecycle` at `Integer.MIN_VALUE` |
+| input | a mounted JSON file | five optional environment values |
+
+And the two no longer share the table either. **`PayoutSeeder` no longer writes a `BrokerageConfig`,
+and `clear()` no longer deletes one.** That is not tidying: `clear()` deleting it meant
+`deploy-dev.sh reseed` emptied `brokerage_config` on a running estate, and after this change nothing
+would have put the row back until the next restart — NEW-18, recreated by a maintenance command.
+
+The distinction underneath is not mechanical. The seed is **demo data**: eighteen invented
+professionals and the sessions they never worked, which must never reach a real estate. The founding
+terms are this brokerage's **commercial configuration**, without which a real estate cannot function.
+Nothing about "prod must not seed" was ever an argument for "prod must not know its own commission
+rate"; the two were conflated only because one class happened to write both.
+
+**There is deliberately no off switch**, and the backlog's phrasing ("on a property safe to leave on in
+production") is departed from on purpose. Its only correct setting is on. The guard that matters is the
+emptiness of the table — a fact about the database rather than a property somebody can set wrongly —
+and it already provides every behaviour a flag would: an estate migrating its own terms in inserts them
+and the bootstrap stands down. A flag would add exactly one capability, running a payout that cannot
+price anything, which is the defect. It is also what keeps this off the seed's switch by construction:
+**there is no switch to confuse with `healthconnect.seed.enabled`.**
+
+### Two values that were established rather than invented
+
+**The rate is 0.12, and its provenance is the prototype.** `Abofonsa_BridgeCare_Marketplace.html`
+declares `const COMMISSION = 0.12; // platform brokerage fee` and `const PAYOUT_LAG = 3`, and prints
+"12% brokerage fee included" on every listing and "minus a 12% brokerage fee" in its how-it-works
+panel; `extract-seed.mjs` reads both into `seed-data.json`'s `brokerage` block; `jdl/payout.jdl`
+annotates the entity's fields `// 0.12`, `// 3`, `// 24`, `// 0.50`; and the one row in the quality
+estate carries exactly those five values — read to confirm it rather than assumed: `id 1001`,
+`0.12 / 3 / 24 / 0.50 / GHS`. Nothing here is a commercial term invented in a code comment.
+
+**`effectiveFrom` is `Instant.EPOCH`, and it is not a deployment input.** The requirement is that the
+founding row predate every booking this estate could ever be asked to price — D53 prices a ledger row
+at the booking's own instant and D56 the receipt at the same moment, so a founding row dated *later*
+than a completion resolves to "no config in force", which is **NEW-18 arriving through its own fix**.
+The epoch is the only value that satisfies that by construction rather than by a claim about history.
+Three alternatives, all rejected:
+
+- **`2020-01-01T00:00:00Z`**, which is what `PayoutSeeder` used and was right there — for seeded
+  sessions whose dates it also controlled. As a *founding* value it asserts that nothing older will ever
+  be priced here, which is a statement about estates that do not exist yet and about data that might be
+  migrated in.
+- **The bootstrap's own instant.** It reads a clock on the pricing path — the shape D53 removed from the
+  consumer and D56 from the receipt — and it makes any completion predating the deploy unpriceable.
+- **A deployment input.** It is the one field where a *well-formed* wrong value brings the defect back
+  silently, and no estate has a use for a different one. The other five are settable; this is not.
+
+It reads as a sentinel because it is one: "from the beginning". That is preferable to a date somebody
+will later try to interpret as the day the terms changed.
+
+### The hook, and why it is not an `ApplicationRunner`
+
+Borrowed wholesale from messaging's `ErasureRegisterGuard`, which learned this the hard way.
+`SpringApplication.callRunners()` runs **after** the context refresh has returned, while
+`KafkaListenerEndpointRegistry` is a `SmartLifecycle` started **inside** `finishRefresh()`. A runner
+would therefore let `BookingEventConsumer` take a `booking.completed` against a still-empty table:
+`configInForce` throws, the container retries, and the row is written a moment later. **That window is
+self-healing, which is exactly why it needs a test rather than a comment** — the retry eventually
+succeeds and nothing records that it happened. `getPhase()` is `Integer.MIN_VALUE`; phases start in
+ascending order, so nothing in the context can precede it. Liquibase comes for free at that phase:
+every singleton is instantiated during `finishBeanFactoryInitialization()`, and Liquibase is synchronous
+here (`application.liquibase.async-start: false`).
+
+`BrokerageBootstrapOrderingTest` pins it against a **real** `KafkaListenerEndpointRegistry` instance
+rather than a copy of `ContainerProperties.DEFAULT_PHASE`, and asserts both halves — that the listener
+phase is reached at all, and that the row was already written when it was. Under a runner the first is
+true and the second is false.
+
+**Replicas.** Two payout instances starting together against one empty database can both write. There
+is no unique constraint to make one lose, and adding one would reverse D56, which chose a stated
+tie-break precisely because two rows sharing an `effectiveFrom` is a state the schema allows. The
+outcome is harmless rather than merely unlikely: the rows are identical in every column that prices
+anything, and `BrokerageTerms` takes the newest `id` deterministically, so a receipt and a ledger row
+cannot disagree. Deployments here are single-instance in any case.
+
+### The preflight, built with the answer and not before it
+
+The backlog was explicit and it is right: a smoke assertion for a condition with **no remedy** fails
+every production deploy until the remedy exists, and a failing smoke test does not warn here — it rolls
+the deployment back (D49). So the remedy ships in this package and the check ships with it.
+
+**`deploy-prod.sh`'s `smoke_test` now asks payout whether it holds terms in force**, over the same bash
+`/dev/tcp` channel `health_gate` already uses, because the Jib images ship no curl and `/management` is
+404 at the public edge.
+
+#### The first version of this check would have rolled back a healthy stack, and a real boot found it
+
+It read the **aggregate** `/management/health`, where `BrokerageTermsHealthIndicator` contributes DOWN
+when nothing is in force. That looked right and is wrong, and the way it was found is the point: a
+`prod` boot of payout's own jar against a throwaway empty PostgreSQL, run because "not exercised: a
+prod boot" was an unsatisfying line to write. It answered:
+
+```
+{"groups":["liveness","readiness"],"status":"DOWN"}
+```
+
+on an estate whose founding row was **present and correct**. With details on, the cause was
+`binders.kafka` — `"Failed to retrieve partition information in 60 seconds"` — with no broker on that
+machine, beside `brokerageTerms: UP`. So the check as first written **fails the deploy of a healthy
+stack whenever the broker is briefly unreachable**, and a failing smoke test here does not warn: it
+rolls back (D49). That is WP-19's defect, rebuilt by the check meant to prevent a different one.
+`health_gate` already knew and probes `/management/health/readiness` (`readinessState,db`), not the
+aggregate; the smoke test had no equivalent narrowing available, so one had to be made.
+
+Two narrowings were possible and only one is safe.
+
+- **A `/management/health/brokerage` group** — rejected. A group is *configuration*: `application.yml`
+  is regenerated wholesale and the generated `src/test/resources` copy **shadows** it, so the path
+  would live in two files that drift, and losing either turns the request into a 404 and fails a
+  healthy deploy in the other direction.
+- **`BrokerageTermsInfoContributor` on `/management/info`** — taken. A `@Component` in a new file: no
+  configuration, and a regeneration leaves it alone. It publishes `brokerage.termsInForce` and, when
+  true, the rate, the currency and the effective instant. `smoke_test` greps `"termsInForce": true`
+  with whitespace tolerated, and **prints the rate on success** — a plausible-but-wrong founding value
+  is the one failure `FoundingTerms` cannot validate, and a deploy that states what the estate charges
+  is the last moment a person can catch it. The endpoint is already exposed and permitted, and
+  `smoke_test` already reads it from the gateway container for the version check.
+
+**The probe fails closed, and CI is what makes that safe.** "Could not be asked" and "holds nothing"
+are the same failure to the script, which would be a fail-open the other way round; so the check above
+asserts the contributor class exists, that payout still lists `info` in
+`management.endpoints.web.exposure.include`, and that the script still asks for `/management/info` and
+still reads `termsInForce` out of it. A build that passes CI cannot be missing the endpoint.
+
+**The health indicator stays**, out of `readiness` and in the root aggregate. It is what a dashboard and
+the compose `healthcheck` see, and an un-bootstrapped payout being unhealthy is the intended direction —
+a service that cannot price anything is not healthy. The prod boot incidentally established something
+else about that aggregate which is *not* this package's to fix and is worth recording: **a payout with
+no reachable broker already fails its compose healthcheck**, because the binder indicator is in it.
+CLAUDE.md's "a missing broker is silent" is true of the application and not of that probe.
+
+**"In force", not "exists".** A table holding only a future-dated row prices nothing either, and both
+callers fail identically. Both surfaces ask through the same `BrokerageTerms` selector the callers use.
+They read a clock, and that is correct here: the rule D53 and D56 established is that a *price* is a
+function of the event; these price nothing, and "can you price something now" is a question about now.
+
+**It cannot fire on a correctly bootstrapped estate**, and that is structural rather than hoped for:
+the founding row is dated to the epoch, so it is in force at every moment a clock can produce.
+`AFreshEstateCanPriceABookingIT` asserts both surfaces on an estate nothing planted a row in — through
+the beans rather than over HTTP, because the endpoint **path** differs under test (`/actuator`, since
+the shadowing test config carries no `management.endpoints.web.base-path`) and the path is not this
+package's subject. The info half goes through `contribute()` rather than the helper behind it, so what
+is asserted includes the `brokerage` key the deploy's grep depends on.
+
+### The CI check, and what it is not
+
+One new step in `build.yml`'s `consistency` job, guarding two silent gaps:
+
+- **The five values must be settable wherever payout runs.** They are optional, which is exactly what
+  makes a missing compose line invisible: `HC_BROKERAGE_COMMISSION_RATE=0.15` in `secrets.env` would be
+  silently ignored — compose does not forward a host variable it is not told about — and the estate
+  would price at 12% while its operator believed otherwise. D46's finding about documented-but-uncarried
+  variables, on the variable that decides what this platform charges. **The property name is derived
+  from the variable name**, so the two halves cannot come to name different things.
+- **`smoke_test` must still ask, and the surface it asks must still answer.** The probe is a few lines
+  in a function nobody runs locally; every other gate would still pass on an estate with no commission
+  rate. Comment lines are dropped **and backslash-continued lines joined** before matching, and the
+  match is the call site — verified to fire when the probe is removed *and* when a comment naming it is
+  added in its place, which is the fail-open this file's history is made of eight times over. The join
+  was not an afterthought: the first version of the check failed on a correct script, and running it is
+  how that was found. The contributor class and payout's `info` exposure are checked with it, because
+  the probe fails **closed**: without those two, every production deploy fails, including of a
+  completely healthy estate. Both arms watched firing.
+
+It is **not** a check on the founding rate's value. That would put the number in a second place, which
+is the drift the whole "derived, never enumerated" habit here exists to avoid; the value is pinned by
+`BrokerageBootstrapUnitTest` against the prototype's, in one place.
+
+### What was verified, and what was not
+
+- **Verified, in the build.** All 24 new unit tests and the four IT cases; payout's whole
+  `clean verify` on Java 25 — 138 unit and 56 integration tests, `TechnicalStructureTest` and
+  `modernizer` included. Each guarded thing was mutated **separately** — the emptiness guard, the
+  founding instant, the lifecycle phase, the rate bound, the constructor-time validation, and the
+  indicator's "in force" question — each producing a red that names it and nothing else.
+- **Verified, as a reproduction.** With `bootstrap()` made a no-op, `AFreshEstateCanPriceABookingIT`
+  fails with `IllegalStateException: no BrokerageConfig in force at 1970-01-02T00:00:00Z — cannot price
+  a booking` out of `BookingEventConsumer`, and `503` from the split endpoint. That is NEW-18's two
+  halves, in one run, against a real PostgreSQL.
+- **Verified: a `prod` boot against an empty database.** This started as a "not exercised" line and was
+  worth doing: payout's own jar, `--spring.profiles.active=prod`, a throwaway PostgreSQL with nothing in
+  it, **and `--healthconnect.seed.enabled=true` forced**, so one run answers both halves of the
+  structural claim. Profiles active: `kafka, prod`. It logged
+  `brokerage: founded this estate's terms — commission 0.12 of GHS … effective from 1970-01-01T00:00:00Z`
+  and **no seed line at all**; the database afterwards held **one** `brokerage_config` row
+  (`0.12 / GHS / 1970-01-01`) and **zero** ledger rows. So the founding row is written under `prod`, the
+  seed still refuses under `prod` with its property forced true, and the two really are independent.
+  A **second** `prod` boot against the same database wrote nothing and logged nothing: still one row.
+  That is the restart case, on a real database rather than a mock.
+- **Verified, and it changed the design: the first preflight would have rolled back a healthy stack.**
+  The same boot answered `{"status":"DOWN"}` on the aggregate health endpoint with the founding row
+  present, because `binders.kafka` was down with no broker — `brokerageTerms` itself was `UP`. Recorded
+  in full above. The check moved to `/management/info`.
+- **Verified: the preflight itself, both ways, against a `prod` boot of the built jar.** On a fresh
+  empty database it published
+  `"brokerage":{"termsInForce":true,"commissionRate":"0.12","currency":"GHS","effectiveFrom":"1970-01-01T00:00:00Z"}`,
+  `smoke_test`'s exact grep matched, and the rate it would print is `0.12`. With the row then **deleted
+  out from under the running service**, the same endpoint answered `{"termsInForce": false}` and the
+  grep did not match — so the check fails on an estate that cannot price and passes on one that can,
+  observed rather than reasoned about. This is the one thing in `deploy-prod.sh` that has now been run
+  against something; the ssh, the compose exec and the rollback around it have not.
+- **Verified against a real container.** The `/dev/tcp` probe shape `smoke_test` uses was run against
+  the running quality payout, which answered its `/management/health` and `/management/info` over that
+  channel unauthenticated. That container predates this change; what it verifies is the probe's
+  mechanics, not the contributor.
+- **NOT exercised: the defect on the quality box, and that is the point.** Quality **seeds**, so
+  `brokerage_config` was never empty there — read, not assumed: one row, `id 1001`, `0.12 / 3 / 24 /
+  0.50 / GHS`, `effective_from 2020-01-01`. That is a large part of why this survived. Reproducing it
+  there would mean emptying the table on a stack that is up on `07254eb` and must be left alone. What
+  quality *can* show after the next deploy is the other half — the bootstrap standing down against a
+  table that already holds a row, and exactly one row remaining afterwards.
+- **NOT exercised: a `prod` DEPLOY.** The boot above is a jar on this workstation with Consul disabled
+  and no broker. It is not `deploy-prod.sh`, not a host, and not an image — nothing in this repository
+  has ever deployed one, and `deploy/prod-server/`'s README says the same about everything in it.
+- **NOT exercised: two instances racing.** Argued above from D56's tie-break and the identity of the
+  rows, not measured. Deployments here are single-instance.
+- **NOT exercised: `deploy-prod.sh` itself.** The probe's HTTP question and its grep were run against a
+  real service, above; the `ssh`, the `docker compose exec` that carries them, and the rollback beneath
+  them have not been, and like everything else in that script have never run against a host.

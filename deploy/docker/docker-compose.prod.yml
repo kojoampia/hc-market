@@ -327,6 +327,29 @@ services:
       # the two above this one DEGRADES rather than failing closed — nextUpAvailable=false costs one
       # card, not the screen — which is exactly why it would have gone unnoticed indefinitely.
       HEALTHCONNECT_BOOKING_BASE_URL: http://${HC_BOOKING_HOST:-hc-market-booking}:8080
+      # --- The founding brokerage terms (decisions.md D57, backlog NEW-18) -------------------------
+      #
+      # BrokerageBootstrap writes ONE brokerage_config row from these, only into an EMPTY table, on
+      # every environment INCLUDING prod. Before D57 nothing outside the seed could write one, and
+      # production does not seed -- so the table was empty, the first booking.completed threw and the
+      # consumer retried it for ever with no ledger row and no earnings, and every receipt was a 503.
+      # This is not the seed and shares none of its switches; see BrokerageBootstrap's own class note.
+      #
+      # ALL FIVE MAY BE LEFT UNSET, AND AN ESTATE THAT SETS NONE IS PRICED CORRECTLY: the defaults are
+      # the prototype's own 12% commission and 3-day payout lag, held in FoundingTerms. They are passed
+      # here anyway because a variable this repository documents and no compose file carries is a
+      # variable that silently does nothing (D46, D50). Blank counts as absent, exactly as it does for
+      # a payment provider's secret above.
+      #
+      # A value that is set and unreadable -- or a rate written as 12 rather than 0.12 -- REFUSES TO
+      # START rather than being ignored, on every estate, including one whose table is already
+      # populated and which would never have written these. There is deliberately no effective-from:
+      # the founding row is dated to the epoch, and any later date silently brings NEW-18 back.
+      HC_BROKERAGE_COMMISSION_RATE: ${HC_BROKERAGE_COMMISSION_RATE:-}
+      HC_BROKERAGE_PAYOUT_LAG_DAYS: ${HC_BROKERAGE_PAYOUT_LAG_DAYS:-}
+      HC_BROKERAGE_FREE_CANCELLATION_HOURS: ${HC_BROKERAGE_FREE_CANCELLATION_HOURS:-}
+      HC_BROKERAGE_LATE_CANCELLATION_PCT: ${HC_BROKERAGE_LATE_CANCELLATION_PCT:-}
+      HC_BROKERAGE_CURRENCY: ${HC_BROKERAGE_CURRENCY:-}
       SPRING_DATASOURCE_URL: ${HC_PAYOUT_DB_URL:?payout datasource url is required}
       SPRING_DATASOURCE_USERNAME: ${HC_PAYOUT_DB_USER:-healthconnectPayout}
       SPRING_DATASOURCE_PASSWORD: ${HC_PAYOUT_DB_PASSWORD:?payout datasource password is required}

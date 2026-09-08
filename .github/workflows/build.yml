@@ -528,6 +528,88 @@ jobs:
           done
           exit "$fail"
 
+      # The founding brokerage terms, and the one check that guards them — decisions.md D57, NEW-18.
+      #
+      # brokerage_config was empty on every estate that does not seed, which is production. Nothing
+      # was red: BookingEventConsumer retried the first booking.completed for ever inside its own log,
+      # BrokerageResource answered 503 on every receipt, booking stayed green, and the catalogue smoke
+      # test passed. BrokerageBootstrap writes the founding row now, and this asserts the two things
+      # about it that no test in payout can see.
+      #
+      # ONE: the five values are settable wherever payout runs. They are optional — the defaults in
+      # FoundingTerms are the prototype's own, so an estate that sets none is priced correctly — which
+      # is exactly what makes a missing compose line invisible: `HC_BROKERAGE_COMMISSION_RATE=0.15` in
+      # secrets.env would be silently ignored, and the estate would price at 12% while its operator
+      # believed otherwise. That is D46's finding about documented-but-uncarried variables, on the one
+      # variable that decides what this platform charges. The property name is DERIVED from the
+      # variable name rather than listed twice, so the two halves cannot drift apart here.
+      #
+      # TWO: deploy-prod.sh still asks payout whether it can price anything, AND the surface it asks
+      # can still answer. The probe is the whole preflight NEW-18 asked for, it is a few lines inside a
+      # function nobody runs locally, and deleting it is invisible — every other gate in that script
+      # would still pass on an estate with no commission rate. Matched at its call site with comment
+      # lines removed and backslash continuations joined, not as prose: this file's own history is
+      # eight fail-opens where a comment naming a call satisfied the check guarding it.
+      #
+      # The three parts of that probe are checked together because it fails CLOSED, and a smoke test
+      # that fails on a healthy estate rolls it back (D49) — so "the endpoint is missing" must not be
+      # reachable from a build that passed CI. The contributor is a @Component in a new file, which a
+      # regeneration leaves alone; `info` in the exposure list is GENERATED configuration, which a
+      # regeneration rewrites, and without it /management/info is 404 and every deploy fails.
+      #
+      # The probe read /management/health until a real prod boot against an empty database showed the
+      # aggregate DOWN on a correct estate, because `binders.kafka` is down with no broker. That would
+      # have rolled back a healthy deploy over a broker blip. Hence a single fact on /management/info,
+      # and hence this check naming the endpoint rather than only the payout container.
+      - name: The founding brokerage terms must be settable, and the deploy must still ask about them
+        run: |
+          fail=0
+          yml=payout/src/main/resources/config/application.yml
+          [ -f "$yml" ] || { echo "::error::$yml is missing — this check would match nothing and pass. See decisions.md D57."; exit 1; }
+          for v in HC_BROKERAGE_COMMISSION_RATE HC_BROKERAGE_PAYOUT_LAG_DAYS HC_BROKERAGE_FREE_CANCELLATION_HOURS \
+                   HC_BROKERAGE_LATE_CANCELLATION_PCT HC_BROKERAGE_CURRENCY; do
+            # commission-rate from HC_BROKERAGE_COMMISSION_RATE. Derived, so the two halves of this
+            # check cannot name different things.
+            prop=$(printf '%s' "${v#HC_BROKERAGE_}" | tr 'A-Z_' 'a-z-')
+            if ! grep -q "$prop: \${$v:" "$yml"; then
+              echo "::error file=$yml::healthconnect.brokerage.founding.$prop does not read \$$v — the compose files carry a variable that binds to nothing, and the founding rate an operator sets is silently ignored. See decisions.md D57."
+              fail=1
+            fi
+            for f in quality/compose.yml deploy/docker/docker-compose.dev.yml deploy/docker/docker-compose.prod.yml; do
+              [ -f "$f" ] || { echo "::error::$f is missing — this check would match nothing and pass."; fail=1; continue; }
+              if ! grep -q "$v" "$f"; then
+                echo "::error file=$f::$v is not passed to payout — compose does not forward a host variable it is not told about, so setting the founding rate on that estate would do nothing at all and nothing would say so. See decisions.md D46 and D57."
+                fail=1
+              fi
+            done
+          done
+          contributor=payout/src/main/java/net/jojoaddison/service/BrokerageTermsInfoContributor.java
+          [ -f "$contributor" ] || { echo "::error::$contributor is missing — payout would publish no answer for the deploy to read, and smoke_test fails closed, so every production deploy would fail. See decisions.md D57."; fail=1; }
+          # `info` is GENERATED configuration and a regeneration rewrites this block. Without it the
+          # endpoint is 404, the probe below cannot get an answer, and a perfectly healthy deploy rolls
+          # back — which is the outcome the probe exists to avoid, arriving through the probe.
+          if ! sed -n '/exposure:/,/endpoint:/p' "$yml" | grep -qE '^ +- info$'; then
+            echo "::error file=$yml::payout no longer exposes the 'info' actuator endpoint, so deploy-prod.sh's brokerage probe would 404 and fail every deploy — including of a completely healthy estate. See decisions.md D57."
+            fail=1
+          fi
+          script=deploy/deploy-prod.sh
+          [ -f "$script" ] || { echo "::error::$script is missing — this check would match nothing and pass."; exit 1; }
+          # Comment lines dropped, then backslash-continued lines JOINED — the probe is written across
+          # two of them, so a line-at-a-time grep for the pair matches nothing and this check fails on
+          # a script that is perfectly correct. Found by running it, which is the only way this class
+          # of defect has ever been found here.
+          if ! grep -v '^[[:space:]]*#' "$script" | sed -e ':a' -e '/\\$/N; s/\\\n//; ta' \
+               | grep -q 'compose_name payout.*management/info'; then
+            echo "::error file=$script::smoke_test no longer asks payout whether it holds brokerage terms in force. An estate that cannot price a single booking would deploy, pass every gate, and answer 503 to every receipt — silently, which is the whole of NEW-18. See decisions.md D57."
+            fail=1
+          fi
+          if ! grep -v '^[[:space:]]*#' "$script" | grep -q 'termsInForce'; then
+            echo "::error file=$script::smoke_test asks payout for /management/info but no longer reads termsInForce out of it, so it would pass on any answer at all. See decisions.md D57."
+            fail=1
+          fi
+          [ "$fail" = 0 ] && echo "ok   the founding terms are settable in all three estates, and the deploy asks about them"
+          exit "$fail"
+
       # The erased-subject alias is derived by THREE copies of the same file, one per service, because
       # there is no shared library here — five standalone Maven projects with no aggregator pom.
       #

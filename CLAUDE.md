@@ -179,6 +179,7 @@ regeneration.
 | The `healthconnect.privacy.retention` block | booking **`src/test/resources/config/application.yml`** | same shadowing, different symptom: the three periods bind to `null` under test and `PrivacyResourceIT` fails asserting counsel's ratified figures against nothing, which reads as a broken assertion rather than a lost block |
 | The `healthconnect.payments` block | booking `config/application.yml` | **silent, and only on an estate that had a provider.** Every `enabled` flag binds to false, so the three adapters vanish from the registry: a booking naming one is refused 409 as an unknown provider, and every callback addressed to it is 401 — which reads as the provider having changed something. On today's estate, where all three are off anyway, losing it changes nothing at all, so nothing here will tell you |
 | The `healthconnect.privacy` block with its `${HC_RETENTION_*}` placeholders | booking `config/application.yml` | **silent.** The periods bind to `null`, the desk reports `null` for all three, and the estate's answer to "what is your retention policy" becomes "none" — with every test still green, because the test config carries its own copy |
+| The `healthconnect.brokerage.founding` block | payout `config/application.yml` | **silent, and the only row here that is HARMLESS by design** (D57). The five `${HC_BROKERAGE_*}` placeholders are the only way an estate can name its own founding terms; without them `FoundingTerms`' Java defaults — the prototype's 12% and 3-day lag — still found the estate correctly, so nothing breaks and nothing goes red. What is lost is the *overridability*, silently: `HC_BROKERAGE_COMMISSION_RATE=0.15` in `secrets.env` would bind to nothing and the estate would price at 12% while its operator believed otherwise. The defaults being in Java rather than in this file is deliberate for exactly this reason, and CI checks the placeholders by name |
 
 **Per app — generated classes to delete.** Each would otherwise win or tie an ambiguous mapping
 against the hand-written resource that replaced it:
@@ -197,7 +198,7 @@ against the hand-written resource that replaced it:
 | `DisputeResource`, `DisputeStatusChangeResource` | booking `web/rest/` | the `ROLE_BROKERAGE` desk resource |
 | `NotificationResource` | messaging `web/rest/` | `MessagingResource` |
 | `MessageResource`, `ConversationResource` | messaging `web/rest/` | `MessagingResource` — the **singular/plural** trap again, and the only thing that stopped these being name collisions. Generated CRUD returns **200 with every message in the estate to any `ROLE_USER`**: the body a customer wrote to a professional, and who wrote it to whom, unscoped by anything. The write half puts words in a named person's mouth in a thread there is no endpoint to delete from. It is an erasure surface too — a fresh row naming an erased customer makes a receipt (D31/D39) a statement about a moment rather than about the estate |
-| `BrokerageConfigResource` | payout `web/rest/` | **nothing.** A terms-change screen would need an **append-only** resource behind `ROLE_BROKERAGE`, not this: D53 prices every completed booking against the config in force at the booking's own instant, so `POST` of a backdated row reprices history, and `PUT`/`DELETE` on the config a ledger row was priced under destroys the only record of what that rate was. Generated CRUD would let **any authenticated user set this platform's commission rate** |
+| `BrokerageConfigResource` | payout `web/rest/` | **nothing on the wire — `BrokerageBootstrap` off it** (D57). A terms-change screen would need an **append-only** resource behind `ROLE_BROKERAGE`, not this: D53 prices every completed booking against the config in force at the booking's own instant, so `POST` of a backdated row reprices history, and `PUT`/`DELETE` on the config a ledger row was priced under destroys the only record of what that rate was. Generated CRUD would let **any authenticated user set this platform's commission rate**. D54 said deleting it cost nothing and was wrong: it was the estate's last writer of a `BrokerageConfig`, and an empty table means the consumer retries every completed booking for ever while every receipt answers 503 (NEW-18). The founding row is written at startup now, by a class with no HTTP door at all |
 | `LedgerResource` | payout `web/rest/` | `ProEarningsResource`, scoped to the caller's own login. Generated CRUD returns **every professional's earnings in the estate to any `ROLE_USER`** — gross, commission and net per booking, with `professionalLogin` on every row — and lets the same token **write an earning nobody worked for, or delete a commission**, in the table that is this platform's money record |
 | `PayoutResource` | payout `web/rest/` | `ProEarningsResource.payouts`, scoped to the caller — **and that reads a table nothing writes.** `grep -rn "new Payout()" payout/src/main` finds nothing outside the seeder: the deleted resource was the estate's only writer, so on an unseeded estate `/api/pro/payouts` returns `[]` and always will. Not a regression — the CRUD was never how a payout should be created — but do not read this row as "the replacement covers the use". Generated CRUD disclosed **every professional's settlement history** and let any token **record a payment that never happened, or mark an unpaid batch `PAID`** |
 
@@ -690,6 +691,47 @@ keeps the estate uniformly Boot 4 — and matches all three sibling products. Se
   REST paths are still `/api/threads`.
 - Seed loading is **double-locked**: the `test & dev` profile pair *and*
   `healthconnect.seed.enabled`. Verified that `prod` refuses to seed with the property forced true.
+  **That sentence is still exactly true, and one thing payout writes at startup is deliberately not
+  covered by it** (D57, backlog NEW-18). `BrokerageBootstrap` writes the estate's **founding brokerage
+  terms** into an empty `brokerage_config` on every environment, `prod` included — because
+  `brokerage_config` was empty on any estate that does not seed, and payout cannot price a booking or
+  serve a receipt without a row: the consumer threw and retried for ever, and every receipt was a 503,
+  both after the customer's money had moved.
+  **The separation from the seed is structural, so that "prod refuses to seed" cannot quietly become
+  false.** Different class (`service.BrokerageBootstrap`, not `service.seed.*`), different property
+  namespace (`healthconnect.brokerage.founding`, not `healthconnect.seed`), no profile condition, no
+  seed file, and a `SmartLifecycle` at `Integer.MIN_VALUE` rather than an `ApplicationRunner` — so the
+  row is written before `BookingEventConsumer`'s listener container can start, which a runner cannot
+  promise. **There is no enable flag at all**, deliberately: the guard is the emptiness of the table,
+  which is a fact rather than a setting, and a switch would add only the ability to run a payout that
+  cannot price anything. That is also what makes it impossible to confuse with
+  `healthconnect.seed.enabled`. **`PayoutSeeder` no longer writes a `BrokerageConfig` or deletes one** —
+  the founding terms are commercial configuration, not demo data, and `clear()` deleting them meant a
+  `deploy-dev.sh reseed` recreated NEW-18 on a running estate.
+  The five values (`HC_BROKERAGE_COMMISSION_RATE`, `_PAYOUT_LAG_DAYS`, `_FREE_CANCELLATION_HOURS`,
+  `_LATE_CANCELLATION_PCT`, `_CURRENCY`) are **optional in all three compose files**, blank counts as
+  absent, and the defaults are the prototype's own 12% and 3-day lag — **an estate that sets none is
+  priced correctly**. A value that is set and unreadable, or a rate written as `12` rather than `0.12`,
+  **refuses to start**, on every estate including one whose table is already populated. **`effectiveFrom`
+  is `Instant.EPOCH` and is not settable**: it is the one field where a well-formed wrong value
+  reintroduces "no config in force", which is NEW-18 through its own fix.
+  `deploy-prod.sh`'s smoke test asks payout's **`/management/info`** for
+  `brokerage.termsInForce` (`BrokerageTermsInfoContributor`) and **not** the aggregate
+  `/management/health` — a `prod` boot with no broker answered `{"status":"DOWN"}` with the founding row
+  present and correct, because the Kafka **binder** indicator is in that aggregate, so a smoke test
+  reading it would roll back a healthy deploy on a broker blip. There is deliberately no
+  `/management/health/brokerage` group either: a group is configuration, `application.yml` is
+  regenerated and its test copy shadows it, and losing it would 404 and fail a healthy deploy the other
+  way. The probe fails **closed**, so CI asserts the contributor exists, that payout still exposes
+  `info`, and that the script still reads `termsInForce`.
+  Two things that boot also settled and that are easy to get wrong from the outside: **`prod` writes the
+  founding row and still refuses to seed** with `healthconnect.seed.enabled=true` forced (one config
+  row, zero ledger rows, and no seed log line), and **a payout with no reachable broker already fails
+  its compose healthcheck** — "a missing broker is silent" is true of the application, not of that
+  probe. `BrokerageTermsHealthIndicator` is in the root aggregate deliberately and out of `readiness`
+  deliberately, so it can never roll a deploy back.
+  **The quality box cannot demonstrate any of this**: it seeds, so its table was never empty (read: one
+  row, `0.12 / 3 / 24 / 0.50 / GHS`).
 - `deploy-prod.sh` is multi-channel; GHCR has no nested-path namespaces, so the channel switches the
   **separator** (`/` vs `-`) as well as the host. Jib credentials go through
   `JIB_TO_USERNAME`/`JIB_TO_PASSWORD` in the environment, never `-D` flags — verified not to leak

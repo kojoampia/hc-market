@@ -1617,6 +1617,16 @@ esac
 #     HC_PUBLIC_URL                 what the smoke test asks (default https://market.abofonsa.com)
 #     HC_SMOKE_MIN_PROFESSIONALS    minimum catalogue count the smoke test will accept (default 0)
 #
+#  Optional ON THE HOST, in $REMOTE_PATH/secrets.env or .env — the founding brokerage terms
+#  (decisions.md D57, backlog NEW-18). All five may be left unset and an estate that sets none is
+#  priced correctly; the defaults are the prototype's 12% commission and 3-day payout lag:
+#     HC_BROKERAGE_COMMISSION_RATE  HC_BROKERAGE_PAYOUT_LAG_DAYS  HC_BROKERAGE_CURRENCY
+#     HC_BROKERAGE_FREE_CANCELLATION_HOURS  HC_BROKERAGE_LATE_CANCELLATION_PCT
+#
+#  They are deliberately NOT in the required-secret list below, for the same reason a payment
+#  provider's secret is not: absence is a working configuration. A value that is set and unreadable
+#  refuses to start, which the health gate reports.
+#
 #  That default is 0 and is not an oversight. Production never seeds, so the honest count on a fresh
 #  estate is 0, and a failing smoke test does not warn here — it rolls the deployment back. The check
 #  requires a NUMBER, not a positive one; see smoke_test. Raise the floor to 1 once there is real
@@ -2253,6 +2263,61 @@ smoke_test() {
     warn "  Set HC_SMOKE_MIN_PROFESSIONALS=1 once there is real data, and 0 becomes a failure again."
   else
     ok "catalogue answering — $n published professionals"
+  fi
+
+  # --- CAN PAYOUT PRICE ANYTHING? (decisions.md D57, backlog NEW-18) ------------------------------
+  #
+  # The catalogue check above cannot see this and never could. brokerage_config was empty on every
+  # estate that does not seed — which is production — because nothing outside the seeder and the
+  # generated CRUD D54 deleted could write a row. A deploy of that estate came up healthy, PASSED the
+  # catalogue smoke test, and then: BookingEventConsumer threw on the first booking.completed and
+  # retried it for ever (no ledger row, /api/pro/earnings stuck at zero, booking perfectly happy), and
+  # BrokerageResource answered 503, so every receipt was a 503. Both after the customer's money moved.
+  #
+  # THE REMEDY EXISTS FIRST, AND THAT ORDER IS THE POINT. A gate for a condition with no fix fails
+  # every deploy until the fix ships — and a failing gate here does not warn, it rolls the stack back
+  # (D49). BrokerageBootstrap writes the founding row during payout's context refresh, on every
+  # environment, so by the time this runs a correct estate cannot be in the state being checked for.
+  #
+  # WHAT IT ASKS, AND WHY IT IS /management/info RATHER THAN /management/health.
+  #
+  # This was written against the aggregate health endpoint first, and a real prod boot against an empty
+  # throwaway database settled it: /management/health answered DOWN on an estate whose founding row was
+  # present and correct, because `binders.kafka` was down with no broker on that machine. A smoke test
+  # reading the aggregate would therefore have FAILED A HEALTHY DEPLOY over a broker blip — and this
+  # gate does not warn, it rolls back. That is WP-19's defect rebuilt by the check meant to prevent a
+  # different one. Note that health_gate above already knew: it probes /management/health/readiness,
+  # which is `readinessState,db` and deliberately not the aggregate.
+  #
+  # A named health GROUP would have been the other narrowing, and it is rejected in
+  # BrokerageTermsHealthIndicator: a group is configuration, application.yml is regenerated wholesale,
+  # and losing it would make this request a 404 and fail a healthy deploy in the other direction.
+  # BrokerageTermsInfoContributor is a @Component in a new file — no configuration, and a regeneration
+  # leaves it alone. CI asserts the class exists, that payout still exposes `info`, and that this line
+  # still asks for it, so a build that reaches here cannot be missing the endpoint; that is what makes
+  # failing CLOSED below safe.
+  #
+  # It prints the rate on success on purpose. A plausible-but-wrong founding value — 0.15 where 0.12
+  # was meant — is the one failure FoundingTerms cannot validate, and a deploy that states what this
+  # estate charges is the last moment a person can catch it.
+  #
+  # Asked of the CONTAINER over bash's /dev/tcp, exactly as health_gate does: /management is 404 at the
+  # public edge on purpose, and the Jib images ship no curl.
+  local brokerage
+  brokerage="$(ssh "$HOST" "cd '$REMOTE_PATH' && $REMOTE_COMPOSE exec -T $(compose_name payout) bash -c \
+    'exec 3<>/dev/tcp/localhost/8080 && printf \"GET /management/info HTTP/1.0\\r\\n\\r\\n\" >&3 && cat <&3'" 2>/dev/null || true)"
+  if printf '%s' "$brokerage" | grep -qE '"termsInForce"[[:space:]]*:[[:space:]]*true'; then
+    ok "payout holds brokerage terms in force — $(printf '%s' "$brokerage" \
+      | grep -oE '"commissionRate"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | cut -d'"' -f4) commission"
+  else
+    warn "payout holds NO brokerage terms in force, or could not be asked."
+    warn "  This is silent everywhere else: booking stays green, the catalogue check above passes, and"
+    warn "  the first completed booking then retries for ever — no ledger row, no earnings — while"
+    warn "  every receipt answers 503. Both land after the customer's money has moved."
+    warn "  BrokerageBootstrap should have written the founding row at startup (decisions.md D57)."
+    warn "  Look for 'brokerage: founded this estate's terms' in payout's log, and check that"
+    warn "  HC_BROKERAGE_COMMISSION_RATE and friends are readable — a malformed one refuses startup."
+    return 1
   fi
 
   # The version comes from the CONTAINER, not from the edge, and that is deliberate.
