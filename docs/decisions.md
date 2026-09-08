@@ -7478,7 +7478,11 @@ self-healing, which is exactly why it needs a test rather than a comment** — t
 succeeds and nothing records that it happened. `getPhase()` is `Integer.MIN_VALUE`; phases start in
 ascending order, so nothing in the context can precede it. Liquibase comes for free at that phase:
 every singleton is instantiated during `finishBeanFactoryInitialization()`, and Liquibase is synchronous
-here (`application.liquibase.async-start: false`).
+here (`application.liquibase.async-start: false`, set in `application.yml` and therefore on every
+profile). **Two independent guarantees hold that ordering and only one is the property** — JHipster's
+`AsyncSpringLiquibase` goes async under `dev|heroku` alone, so flipping the property would race in
+**dev only**. Corrected after D57's review, which caught the javadoc naming the property as though it
+were the whole reason.
 
 `BrokerageBootstrapOrderingTest` pins it against a **real** `KafkaListenerEndpointRegistry` instance
 rather than a copy of `ContainerProperties.DEFAULT_PHASE`, and asserts both halves — that the listener

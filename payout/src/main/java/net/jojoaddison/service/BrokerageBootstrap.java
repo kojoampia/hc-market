@@ -75,8 +75,14 @@ import org.springframework.stereotype.Component;
  *
  * <p>Liquibase comes for free at that phase: every singleton is instantiated during
  * {@code finishBeanFactoryInitialization()}, before any lifecycle bean starts, and Liquibase is
- * synchronous here ({@code application.liquibase.async-start: false}). That is the same ordering
- * {@code SeedDataLoader} depends on and the same race if it were ever turned back on.
+ * synchronous here ({@code application.liquibase.async-start: false} in {@code application.yml}, which
+ * every profile loads). That is the same ordering {@code SeedDataLoader} depends on.
+ *
+ * <p><strong>Turning it back on would be a race in {@code dev} only</strong>, and it is worth knowing
+ * which of the two guarantees is doing the work: JHipster's {@code AsyncSpringLiquibase} goes async
+ * only under {@code dev|heroku} at all, so under {@code test} and {@code prod} the profile condition
+ * holds the ordering even with the property flipped. Naming only the property would leave a reader
+ * expecting a production race that cannot happen, and missing the dev one that can.
  *
  * <h2>Replicas</h2>
  *
