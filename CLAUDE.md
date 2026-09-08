@@ -947,13 +947,19 @@ time.**
   which is precisely why they needed separate rules. It closed **NEW-14** with no code change —
   `ProWorkspaceResource`'s two window defaults were already right, and `MARKET_ZONE` is now *chosen*
   there rather than merely unchallenged — and it opened **NEW-19**, because the other half found a
-  defect. **Two sites are still NOT on `Booking.zoneId` and each says so in place**:
-  `BookingWorkflow.scheduledAt:238` and `CustomerBookingResource.cancellationPreview:235` convert an
-  appointment's wall clock with `ZoneOffset.UTC` and ignore the booking's own zone. **The fix is
+  defect. **NEW-19 is closed by D58 and an appointment is read in the BOOKING'S OWN ZONE**:
+  `BookingWorkflow.scheduledAt` does `.atZone(booking.getZoneId())`, and `CustomerBookingResource
+  .cancellationPreview` asks it rather than converting a second time — the two sites the item named
+  were one quantity written twice, and the preview already called `isLate` on the first copy. **It is
   `Booking.zoneId`, NOT `MARKET_ZONE`** — the marketplace's constant behaves identically today and is
-  wrong for the one case the ratification exists for, which is the trap this family has spent five
-  packages avoiding. Nil consequence while every zone is `Africa/Accra`; the cancellation one prices a
-  late fee, so the zone moves a **customer-visible** boundary. There was a third until D53 — `BookingEventConsumer.configInForce`'s
+  wrong for the one case the ratification exists for, which is the trap this family spent five
+  packages avoiding, and `MARKET_ZONE` appears on this path in exactly one place: the fallback for a
+  `zone_id` tzdb cannot read, which without it would make a booking impossible to **cancel** as well
+  as to preview. Nothing moved for any existing booking — `zone_id` is not-null with **no column
+  default** (D55 and the backlog both said otherwise), written once from the offering and never
+  recomputed, and all 298 rows on quality say `Africa/Accra`. A CI check bans `ZoneOffset` **and
+  `MARKET_ZONE`** on any line reading `getScheduledTime()` in any service, because the tests cover the
+  two call sites that exist and cannot see a **third** one being written. There was a third until D53 — `BookingEventConsumer.configInForce`'s
   `Instant.now()`, correct as an instant and wrong as a *moment* — and it is gone rather than moved:
   that path reads no clock at all now (NEW-13, below). **And a fourth of the same kind until D56**:
   `BrokerageResource.split`'s `on == null ? Instant.now()`, which priced a receipt at today's terms for

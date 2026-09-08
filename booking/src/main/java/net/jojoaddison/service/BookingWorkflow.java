@@ -1,10 +1,11 @@
 package net.jojoaddison.service;
 
+import java.time.DateTimeException;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
-import java.time.ZoneOffset;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 import net.jojoaddison.domain.Booking;
@@ -222,27 +223,65 @@ public class BookingWorkflow {
     }
 
     /**
-     * Africa/Accra is GMT with no offset and no DST — spec §13 #8 was ratified as D55 on 2026-09-07.
+     * When the appointment happens, on the line — read in <strong>the booking's own zone</strong>.
      *
-     * <p><strong>Not a NEW-10 site; left alone by D51 when the question was open.</strong> This is an
-     * APPOINTMENT's wall clock becoming an instant, which is D21's question rather than the
-     * brokerage's calendar — and the booking carries its own {@code zoneId} that this line ignores.
+     * <p>{@code decisions.md} D58, backlog NEW-19. This converts an APPOINTMENT's wall clock, which
+     * spec §13 #8 — ratified as D55 on 2026-09-07 — puts in the professional's calendar and not the
+     * brokerage's. {@code Booking.zoneId} is that calendar: not-null, captured from the offering at
+     * creation ({@code CustomerBookingResource.create}) and never recomputed, so reading it here is
+     * reading the term the customer was quoted rather than re-deciding it. Emphatically <strong>not
+     * {@link MarketCalendar#MARKET_ZONE}</strong>, which is the marketplace's own calendar and would
+     * behave identically today while being wrong for the one case the ratification exists for.
      *
-     * <p><strong>§13 #8 is ANSWERED and this line is now a defect — decisions.md D55, backlog
-     * NEW-19.</strong> D21 is ratified: an appointment's wall clock is the professional's, so the
-     * fix is {@code booking.getZoneId()} and emphatically <em>not</em> {@code
-     * MarketCalendar.MARKET_ZONE} — the marketplace's constant would give identical behaviour today
-     * and be wrong for exactly the case the ratification exists to handle. It is not fixed here
-     * because {@code CustomerBookingResource.cancellationPreview} has the identical line and prices
-     * a late fee off it, so moving the zone moves a boundary a customer was quoted.
+     * <p>It converted with {@code ZoneOffset.UTC} until D58 — nil consequence while every
+     * {@code Booking.zoneId} is {@code Africa/Accra} and Ghana is UTC+0 all year, and a wrong
+     * late-cancellation boundary on a live booking the day a professional is onboarded outside GMT.
      *
-     * <p>Nil consequence while every {@code Booking.zoneId} is {@code Africa/Accra} and Ghana is
-     * UTC+0 all year: the two spellings cannot produce a different instant. It becomes real with the
-     * first professional onboarded outside GMT.
+     * <p><strong>Public because there is one derivation and two callers.</strong>
+     * {@code CustomerBookingResource.cancellationPreview} quotes the hours remaining from the same
+     * instant this decides the fee on, and it had a second copy of the line — which is how one
+     * quantity came to need fixing in two places twice. Two copies of an appointment's conversion is
+     * the defect, not the duplication.
      */
-    private static Instant scheduledAt(Booking booking) {
+    public Instant scheduledAt(Booking booking) {
         LocalDate date = booking.getScheduledDate();
-        return date.atTime(booking.getScheduledTime()).toInstant(ZoneOffset.UTC);
+        return date.atTime(booking.getScheduledTime()).atZone(zoneOf(booking)).toInstant();
+    }
+
+    /**
+     * The booking's zone, or the marketplace's when the stored value cannot be read.
+     *
+     * <p>{@code zone_id} is {@code NOT NULL} with no column default and every row in every estate
+     * says {@code Africa/Accra}, so neither branch below is reachable from anything this service has
+     * ever written. It is a {@code varchar(64)} holding free text all the same, and {@link ZoneId#of}
+     * throws on a name that is not in the tzdb — so without this, one unreadable row would make its
+     * booking impossible to cancel <em>and</em> impossible to preview, a 500 on the money path
+     * because of a string.
+     *
+     * <p>{@link MarketCalendar#MARKET_ZONE} rather than {@code ZoneOffset.UTC} for the stand-in, and
+     * this is the <strong>only</strong> place on this path where that constant belongs: it is what
+     * the write side already defaults a blank offering zone to ({@code CustomerBookingResource
+     * .zoneOf}), so a row we cannot read is read in the same calendar it would have been written in.
+     * UTC would be the same instant and would say a calendar was never chosen. The WARN names the
+     * booking and the value because the row, not the reader, is what needs correcting.
+     */
+    private static ZoneId zoneOf(Booking booking) {
+        String zone = booking.getZoneId();
+        if (zone == null || zone.isBlank()) {
+            LOG.warn("booking {} has no zoneId; reading its appointment in {}", booking.getReference(), MarketCalendar.MARKET_ZONE);
+            return MarketCalendar.MARKET_ZONE;
+        }
+        try {
+            return ZoneId.of(zone);
+        } catch (DateTimeException e) {
+            LOG.warn(
+                "booking {} carries an unreadable zoneId {}; reading its appointment in {}",
+                booking.getReference(),
+                zone,
+                MarketCalendar.MARKET_ZONE
+            );
+            return MarketCalendar.MARKET_ZONE;
+        }
     }
 
 }

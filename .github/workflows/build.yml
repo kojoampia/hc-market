@@ -999,6 +999,62 @@ jobs:
           done
           exit "$fail"
 
+      # An APPOINTMENT's wall clock belongs to whoever delivers it, so the only zone it may be read in
+      # is the booking's own — decisions.md D55 (the ratification) and D58 (the fix), backlog NEW-19.
+      #
+      # WHAT THIS CATCHES THAT THE TESTS DO NOT. TheAppointmentIsInTheBookingsZoneTest and
+      # TheCancellationBoundaryIsInTheBookingsZoneIT both go red if either of D58's two sites
+      # regresses, and that was measured one site at a time rather than as a battery. Neither can see
+      # a THIRD site: a screen that wants "hours until the appointment" and writes the conversion
+      # again is exactly how NEW-19 came to name two lines rather than one, and a test can only cover
+      # a call site that exists.
+      #
+      # It bans MARKET_ZONE beside ZoneOffset, and that is the half worth having. The marketplace's
+      # constant behaves identically today and is wrong for the one case the ratification exists for,
+      # so a sweep onto it would read as tidying, pass a check that only banned UTC, and undo six
+      # packages of keeping the two questions apart.
+      #
+      # ITS REACH IS ONE LINE, stated rather than implied: splitting the conversion across two
+      # statements evades it. The tests are what cover the sites that exist; this covers the shape a
+      # new one would take. Comments are stripped first, so the prose at both sites — which now names
+      # ZoneOffset.UTC in order to say what the code no longer does — cannot satisfy or fail it.
+      - name: An appointment's wall clock may only be read in the booking's own zone
+        run: |
+          fail=0
+          # Same guard as every other caller: absent the stripper, awk errors, nothing is matched and
+          # this reports ok having read nothing (decisions.md D56's review).
+          [ -f .github/checks/strip-comments.awk ] || { echo "::error::.github/checks/strip-comments.awk is missing — this check would strip nothing, match nothing and pass. See decisions.md D56."; exit 1; }
+          # And a guard of its own kind: everything below keys on the accessor's name, so a rename of
+          # it leaves this check green and blind. The entity is where that name is decided.
+          if ! grep -q 'public LocalTime getScheduledTime()' booking/src/main/java/net/jojoaddison/domain/Booking.java; then
+            echo "::error::Booking.getScheduledTime() is gone or renamed — this check keys on that name and would now match nothing. See decisions.md D58."
+            exit 1
+          fi
+          scanned=0
+          for svc in payout booking messaging gateway catalog; do
+            dir="$svc/src/main/java/net/jojoaddison"
+            [ -d "$dir" ] || { echo "::error::$dir does not exist — this check would scan nothing and pass."; fail=1; continue; }
+            while IFS= read -r f; do
+              # An empty find yields one EMPTY line through a here-string, not none.
+              [ -z "$f" ] && continue
+              scanned=$((scanned + 1))
+              bad=$(awk -f .github/checks/strip-comments.awk "$f" | grep -nE 'getScheduledTime\(\)' | grep -E 'ZoneOffset|MARKET_ZONE' | cut -d: -f1)
+              [ -n "$bad" ] || continue
+              for n in $bad; do
+                # The original line, not the stripped one — quote what is written.
+                echo "  $f:$n:$(sed -n "${n}p" "$f")"
+              done
+              echo "::error file=$f::an appointment's wall clock is read here in a zone that is not the booking's — use booking.getZoneId(), which BookingWorkflow.scheduledAt already does. See decisions.md D58."
+              fail=1
+            done <<< "$(find "$dir" -name '*.java' -type f | sort)"
+          done
+          if [ "$scanned" -eq 0 ]; then
+            echo "::error::no Java file was scanned — this check is now blind. See decisions.md D58."
+            exit 1
+          fi
+          [ "$fail" -eq 0 ] && echo "ok   $scanned files scanned — every appointment is read in its own booking's zone"
+          exit "$fail"
+
       # The moment a rate is struck at travels on the event, so both ends must spell it the same way —
       # decisions.md D53, backlog NEW-13.
       #

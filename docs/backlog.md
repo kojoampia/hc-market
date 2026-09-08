@@ -54,7 +54,7 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **NEW-16** | The receipt strikes its split to the day and the ledger to the instant | DONE | D56 — `at` (an `Instant`) beside `on`, **both sent**, `at` preferred, and neither present is a **400** rather than `Instant.now()`. `on` stays because a new booking calling an old payout would otherwise fall through to that service's own clock — NEW-13 rebuilt one service over. The two selectors are merged into `BrokerageTerms` with an explicit tie-break (newest `id`), closing a non-determinism neither copy could see. First tests for an endpoint that had none: 10 ITs through the real binder, **7 red first**; one CI check, all five assertions watched firing — and running it found the check itself was banning a correct `Instant.now()` |
 | **NEW-17** | The five generated Kafka sample resources are unauthenticated write endpoints | READY | D54 — `POST /api/healthconnect-<service>-kafka/publish` in all four services **and the gateway**, generated, no `@PreAuthorize`, gateway-routed. What it actually does on a running estate is **unestablished**: the binding and `auto-create-topics` live in `application-kafka.yml` and the `kafka` profile is active nowhere, so it is a `StreamBridge` dynamic destination against an unconfigured binding. Closing it also deletes **five ITs that currently assert the hole works** (`producesMessages`, expecting 200). NEW-15's CI check is entity-derived and **cannot** reach this family; a second `web/rest`-derived check is the answer |
 | **NEW-18** | Nothing can create a `BrokerageConfig`, and payout cannot price a booking without one | DONE | D57 — **shape (2), the seeded-once row**, argued against a Liquibase changeset (a rate is not schema, and a changeset cannot read the environment, so it *forces* a code constant) and against the append-only `ROLE_BROKERAGE` resource (**it bootstraps nothing** — a fresh estate still waits on a person, and the deploy check would then fail a healthy stack). `BrokerageBootstrap` writes one row into an **empty** table on every environment including `prod`, at `SmartLifecycle` phase `MIN_VALUE` so the consumer's container cannot start first. The founding values are code constants the environment **may** override — so nothing can be got wrong by omission, and a malformed one refuses startup. `effectiveFrom` is `Instant.EPOCH` and is deliberately *not* an input: it is the one field where a well-formed wrong value brings the defect back. The seed no longer writes or deletes the row at all. Preflight shipped with the remedy, never before it — and its first version was **wrong**, found by an actual `prod` boot: reading the aggregate `/management/health` would have rolled back a healthy stack whenever the Kafka binder was down. It reads `brokerage.termsInForce` from `/management/info` instead. 24 unit tests plus 4 IT cases, every guarded thing mutated separately; one CI check, watched firing six ways including on a comment |
-| **NEW-19** | Two sites convert an appointment with `ZoneOffset.UTC` and ignore `Booking.zoneId` | READY | D55 — was an open question until §13 #8 was ratified; now a defect. `BookingWorkflow.scheduledAt:238` and `CustomerBookingResource.cancellationPreview:235`. Nil consequence while every zone is `Africa/Accra`; the cancellation path prices a late fee off `scheduled`, so the zone moves a **customer-visible** boundary |
+| **NEW-19** | Two sites convert an appointment with `ZoneOffset.UTC` and ignore `Booking.zoneId` | DONE | D58 — both read `booking.getZoneId()` now, and the **two sites are one derivation**: `cancellationPreview` already called `isLate` while computing the same instant a second time, so the resource asks `BookingWorkflow.scheduledAt` for it. The decision the item reserved is **answered by construction, re-established rather than inherited**: `zone_id` is `NOT NULL` with **no column default** (the item and D55 both say otherwise), written at exactly one live site and never recomputed, so no in-flight booking's quoted boundary moves and nothing needed migrating. A zone tzdb cannot read falls back to `MARKET_ZONE` with a WARN rather than making a booking impossible to cancel. 9 tests east and west of UTC, both sites **mutated separately** — the resource alone is red at the endpoint while every unit test stays green. One CI check, watched firing three ways, for the third site no test can cover |
 
 ---
 
@@ -1625,7 +1625,34 @@ and a second boot wrote nothing at all.
 **Still open after this, and named in D57:** the terms-change path itself. There is no way to record a
 rate change other than inserting a row by hand, and shape (3) is what a screen would need.
 
-## NEW-19 — An appointment is converted in UTC and its own zone is ignored · READY
+## NEW-19 — An appointment is converted in UTC and its own zone is ignored · DONE (D58)
+
+**Closed by D58.** Both sites read `Booking.zoneId` now — and there is **one** site afterwards, which
+is the finding: `cancellationPreview` already called `isLate`, so the instant it quoted hours from was
+a second copy of the one the fee is decided on, and that is why a single defect needed two lines
+named. `BookingWorkflow.scheduledAt` is public and the resource asks for it.
+
+**The decision this item reserved did not need making, and D58 establishes that rather than assuming
+it.** `booking.zone_id` is `NOT NULL` with **no column default** — this item's own closing paragraph
+below says the column defaults to Accra and so does D55; both are wrong, the default is application
+code in two places — and it is written at exactly one live site (`CustomerBookingResource.create`,
+from the professional's offering) and never recomputed, the generated `BookingService` having no
+caller anywhere. So the column *is* the record of the term the customer was quoted, reading it
+honours D53 rather than testing it, no in-flight boundary moves, and no migration was needed. All
+298 rows on the quality box read `Africa/Accra`.
+
+A third decision the item did not anticipate: `ZoneId.of` throws on a name tzdb does not know, and
+`isLate` is on the `/cancel` path as well as the preview's, so an unreadable zone would have made a
+booking impossible to cancel. It falls back to `MARKET_ZONE` — the write side's own default for a
+blank offering zone — with a WARN naming the row.
+
+Nine tests, east and west of UTC because a fixture in Accra can distinguish nothing and one zone
+agrees with UTC by accident at some hours; both sites mutated separately, and the mutation that
+matters leaves every unit test green while the endpoint is red.
+
+Everything below is the item as it stood, kept because it is the record of what was known before.
+
+---
 
 Opened by **D55**, which is what turned it from a question into a defect. Two sites do
 `.toInstant(ZoneOffset.UTC)` on an appointment's wall clock and never read `Booking.zoneId`:
