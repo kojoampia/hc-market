@@ -473,6 +473,26 @@ services:
       HEALTHCONNECT_SEED_ENABLED: "true"
       HEALTHCONNECT_SEED_FILE: /app/seed/seed-data.json
       HEALTHCONNECT_SEED_ANCHOR_DATES: "true"
+      # --- The founding brokerage terms (decisions.md D57, backlog NEW-18) -------------------------
+      #
+      # BrokerageBootstrap writes ONE brokerage_config row from these, only into an EMPTY table, on
+      # every environment INCLUDING prod. Before D57 nothing outside the seed could write one, and
+      # production does not seed -- so the table was empty, the first booking.completed threw and the
+      # consumer retried it for ever with no ledger row and no earnings, and every receipt was a 503.
+      # THIS IS NOT THE SEED and shares none of the three variables above.
+      #
+      # THE QUALITY BOX CANNOT DEMONSTRATE THE DEFECT OR ITS FIX, which is a large part of why it
+      # survived: this stack seeds, so brokerage_config was never empty here. What quality does prove
+      # is the other half -- that the bootstrap stands down against a table that already holds a row.
+      #
+      # All five may be left unset and an estate that sets none is priced correctly; the defaults are
+      # the prototype's own, held in FoundingTerms. Passed anyway, because a variable this repository
+      # documents and no compose file carries silently does nothing (D46, D50). Blank is absent.
+      HC_BROKERAGE_COMMISSION_RATE: ${HC_BROKERAGE_COMMISSION_RATE:-}
+      HC_BROKERAGE_PAYOUT_LAG_DAYS: ${HC_BROKERAGE_PAYOUT_LAG_DAYS:-}
+      HC_BROKERAGE_FREE_CANCELLATION_HOURS: ${HC_BROKERAGE_FREE_CANCELLATION_HOURS:-}
+      HC_BROKERAGE_LATE_CANCELLATION_PCT: ${HC_BROKERAGE_LATE_CANCELLATION_PCT:-}
+      HC_BROKERAGE_CURRENCY: ${HC_BROKERAGE_CURRENCY:-}
     # Long form, not "${SEED_DIR:-./seed}:/app/seed:ro". The short syntax is split on colons,
     # and an uninterpolated ${VAR:-default} source carries two of its own — so
     # `docker compose config --no-interpolate`, which .github/checks/pepper-wiring.sh needs in

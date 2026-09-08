@@ -61,6 +61,24 @@ management:
           include: livenessState
         readiness:
           include: readinessState,db
+        # decisions.md D57, backlog NEW-18: BrokerageTermsHealthIndicator is DELIBERATELY absent from
+        # both groups above, and there is deliberately no third group for it.
+        #
+        # Not in `readiness`, because a failing deploy gate rolls the stack back (D49) and a rollback
+        # cannot fix a missing commission rate -- the stack it restores has none either. That failure
+        # belongs in deploy-prod.sh's smoke test, where it is reported and a person decides.
+        #
+        # And not in a group of its own, which is what a precise `/management/health/brokerage` would
+        # have needed. A group is configuration, this file is regenerated wholesale, and the generated
+        # src/test/resources copy SHADOWS it -- so the path would have had to be spelled in two files
+        # that drift, and losing either makes the deploy's request a 404 on a correctly bootstrapped
+        # estate. That is the exact shape WP-19 found: a gate that rolls back a healthy stack.
+        #
+        # The indicator contributes to the ROOT aggregate, which is what a dashboard and the compose
+        # healthcheck read -- and which deploy-prod.sh deliberately does NOT read. A real prod boot
+        # answered DOWN there with the founding row present and correct, because `binders.kafka` is in
+        # the same aggregate and that machine had no broker. The deploy asks
+        # BrokerageTermsInfoContributor on /management/info instead: one fact, no configuration.
     jhimetrics:
       access: read-only
   info:
@@ -271,6 +289,32 @@ healthconnect:
     enabled: false
     file: demo/seed-data.json
     anchor-dates: false
+
+  # --- The founding brokerage terms (decisions.md D57, backlog NEW-18) ---------------------------
+  #
+  # NOT the seed, and nothing here travels through the seed's switches. brokerage_config was empty on
+  # every estate that does not seed -- which is production -- so the first booking.completed threw and
+  # payout retried it for ever, and every receipt was a 503. BrokerageBootstrap writes ONE row from
+  # these values, only into an EMPTY table, on every environment including prod.
+  #
+  # EVERY ONE OF THESE MAY BE LEFT UNSET, AND AN ESTATE THAT SETS NONE IS PRICED CORRECTLY. The
+  # defaults live in FoundingTerms as Java constants -- the prototype's own 12% and 3-day lag -- so a
+  # regeneration that drops this block costs the ability to OVERRIDE the founding terms and not the
+  # terms themselves. Blank counts as absent, exactly as a payment provider's secret does (D45),
+  # because compose's `${X:-}` sets an empty variable rather than leaving it unset.
+  #
+  # There is no effective-from here on purpose: the founding row is dated to the epoch, which is the
+  # only value that predates every booking this estate could ever be asked to price. A well-formed
+  # wrong one silently reintroduces "no config in force" -- NEW-18 through its own fix. See
+  # FoundingTerms.EFFECTIVE_FROM.
+  brokerage:
+    founding:
+      commission-rate: ${HC_BROKERAGE_COMMISSION_RATE:}
+      payout-lag-days: ${HC_BROKERAGE_PAYOUT_LAG_DAYS:}
+      free-cancellation-hours: ${HC_BROKERAGE_FREE_CANCELLATION_HOURS:}
+      late-cancellation-pct: ${HC_BROKERAGE_LATE_CANCELLATION_PCT:}
+      currency: ${HC_BROKERAGE_CURRENCY:}
+
   # Where the booking service lives. The Overview screen's "next up" card reads the professional's
   # schedule from it; a failure there degrades the card rather than the screen.
   booking:
