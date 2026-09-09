@@ -161,6 +161,25 @@ services:
       OTEL_SERVICE_NAME: hc-market-gateway
       # SPRING_MONGODB_URI: Spring Boot 4 renamed spring.data.mongodb.* to spring.mongodb.*
       SPRING_MONGODB_URI: ${HC_GATEWAY_MONGODB_URI:?gateway mongodb uri is required}
+      # The first administrator's password — decisions.md D61. On the GATEWAY only: it is the one
+      # service holding accounts, and a secret handed to four services that cannot read it is four
+      # more places for it to be seen.
+      #
+      # Required, like the signing key and the pepper, and for the same reason: the generated
+      # InitialSetupMigration created `admin` with a bcrypt hash of the string "admin", committed in
+      # this public repository, in EVERY profile — Mongock's scan package is declared in the base
+      # application.yml with no prod override, so nothing excluded it from production, and a first
+      # production deploy creates exactly the empty database it seeds. That account holds ROLE_ADMIN
+      # on a gateway whose tokens all five services accept.
+      #
+      # It is only consulted for a database that has no administrator yet. Once one exists, and
+      # however its password is later rotated through the UI, this value is never read again — so it
+      # is safe, and intended, to leave the same value in secrets.env for the life of the host. Do
+      # not rotate it expecting the account's password to follow; it will not.
+      #
+      # The container variable is GATEWAY_ADMIN_PASSWORD, which is how Spring's relaxed binding
+      # spells the property `gateway.admin-password`. Same mechanism as SPRING_MONGODB_URI above.
+      GATEWAY_ADMIN_PASSWORD: ${HC_GATEWAY_ADMIN_PASSWORD:?the first administrator's password is required — generate one with `head -c 24 /dev/urandom | base64 -w0` into secrets.env. Without it the gateway refuses to create an administrator rather than falling back to a published default — decisions.md D61}
       # --- STATIC ROUTES. Production did not have these, and every document said it did ---------
       #
       # Found on 2026-08-31 while narrowing the routes for decisions.md D28. This file set nothing

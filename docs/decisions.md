@@ -8481,3 +8481,224 @@ normalising spellings, plus `Etc/GMT-3` unchanged) and the quality-box figures.
   `deploy/prod-server/` was run.
 - **Out of scope, and left as it was**: the read-side fallback's *behaviour* (D58 argued it and it is
   load-bearing for rows written before this change — only its javadoc changed), NEW-21, and WP-19.
+
+---
+
+## D61 — The gateway seeded a published administrator password, in every profile including production
+
+Backlog **NEW-22**, opened by this work. **`main` ended at D60 when this began, the backlog's highest
+item was NEW-21, and there were no open pull requests** — `git log -1` on `main` answered
+`ba30b4feac4d30c00fcce5fd3820ba58adb80f75`, `gh pr list --state open` answered nothing, and both were
+checked rather than taken on trust, for the reason D58 and D60 both state: a number held on an unmerged
+branch is what cost the WP-19/Paystack pair a renumber. **This is D61.**
+
+### The defect, re-derived rather than accepted
+
+`gateway/src/main/java/net/jojoaddison/config/dbmigrations/InitialSetupMigration.java` was the
+untouched generated Mongock changeunit: `@ChangeUnit(id = "users-initialization", order = "001")`,
+**no `@Profile`**, creating `admin` and `user` with `setActivated(true)` and two committed bcrypt
+hashes.
+
+Four things had to hold for this to be a production defect, and all four were established here:
+
+1. **The changeunit runs in production.** `mongock.migration-scan-package` is declared in the **base**
+   `gateway/src/main/resources/config/application.yml` and there is no override in
+   `application-prod.yml` — grepped, and the only other occurrence in the repository is the test copy.
+   A changeunit runs against any database that has not recorded it, and a first production deploy
+   creates exactly that database.
+2. **The hash is the login.** Not assumed from the fact that it is JHipster's published constant —
+   *measured*. The first version of `InitialSetupMigrationTest` asserted
+   `new BCryptPasswordEncoder().matches("admin", admin.getPassword())` was false against the generated
+   file, and it went **red**: the committed hash is bcrypt of the string `admin`.
+3. **The account is privileged, and the token travels.** `/api/admin/**` is `hasAuthority(ADMIN)` in
+   the gateway's `SecurityConfiguration`, the seeded `admin` carries `ROLE_ADMIN`, and one signing key
+   serves all five services — so a token minted from this account is accepted estate-wide.
+4. **Nothing said so.** `grep -rn InitialSetupMigration` over `docs/` and `CLAUDE.md` returned zero
+   hits before this. It was not a known risk being carried; it was invisible.
+
+And the reason it survived: **nothing about it is red, and nothing ever would have been.** The estate
+comes up perfectly. The quality box demonstrates the end state — its `jhi_user` collection holds
+exactly `user-1`/`admin` and `user-2`/`user`, activated, with the two published hashes, read directly
+from `hc-market-quality-gateway-db`.
+
+### The decision: hc-professional's shape, with hc-market's answer to the missing secret
+
+The architect's instruction is to follow the siblings, and the siblings do not agree, so the choice
+between them was settled before this work began. **hc-professional's shape is taken**: the
+administrator is seeded in **every** profile because on an empty production database it is the only
+way in, its password comes from configuration, the **demo** accounts are what `prod` skips, and
+`saveUserIfMissing` makes the whole thing idempotent.
+
+Three structural consequences follow from that shape, and the first is the largest:
+
+**It stops being a Mongock changeunit and becomes an `ApplicationRunner`.** This is not decoration. A
+changeunit is not a Spring bean, so there is nowhere to put an `Environment`, a `@Value` or a
+`PasswordEncoder` — the profile decision and the configured password have no home in it. And Mongock
+records a changeunit as executed and never runs it again, which makes "seed whatever is still missing"
+impossible to express: an authority added later would never appear on a database that had already run
+version 001. Both siblings reached this same shape independently.
+
+Mongock itself is **left in place** — dependencies, configuration and all — with a now-empty scan
+package. That is deliberate: removing it would mean editing a generated `pom.xml` and the generated
+`application.yml`, which is more regeneration surface for no behaviour. **It tolerates an empty
+package**, which was the one real unknown in this shape and was settled by running rather than by
+reading: `DomainUserDetailsServiceIT` boots the full context, Mongock creates its `mongockLock`
+collection, finds nothing to run, and its six tests pass.
+
+**Why hc-admin's answer is rejected, stated accurately.** hc-admin puts
+`@Profile({DEVELOPMENT, TEST})` on its seeder, and the instruction to reject it came with the reason
+"a fresh production estate comes up with no operator account at all". **That is half right, and the
+correction matters**, because it is the half that makes hc-admin's answer defensible: hc-admin has a
+*second* class, `config/AdminBootstrapInitializer`, which runs in every profile and creates the
+administrator from `gateway.admin.password`. So hc-admin's estate has a way in — *provided the variable
+is set*, and it does nothing at all when it is not. Its real cost is a different one, and it is a good
+enough reason on its own: **two classes that both create an administrator, in two packages, with two
+different property names**, one of which silently declines to act. One seeder with one decision in it
+is easier to be right about, and this repository already has the D50 lesson that a class which quietly
+does nothing is the hardest kind to notice.
+
+### What happens under `prod` with no password: this estate refuses, and the sibling does not
+
+This is the part the instruction left open, and it is a **deliberate departure from hc-professional**.
+
+hc-professional's `@Value("${gateway.admin-password:}")` defaults to empty and its `createAdmin` falls
+back to `derivedPassword("admin")` with a `logger.warn`. Checked rather than inferred: nothing in
+hc-professional's `application*.yml` or any of its compose files sets `GATEWAY_ADMIN_PASSWORD` at all.
+So on that estate the fallback is not a corner case — it is what production gets by default, and the
+value is computable from a rule written in a public repository. **That is the defect NEW-22 exists to
+close, wearing a warning.**
+
+So this estate follows **D35 and D45** instead, which is its own settled rule for a required secret
+with no safe default: `JWT_BASE64_SECRET` and `HC_PRIVACY_PEPPER` are refused rather than defaulted,
+because a committed default in a public repository is not a secret. `gateway.admin-password` is the
+third of that family.
+
+**The refusal is scoped to the case that needs it, and that scoping is the whole design:**
+
+| Profile | Configured password | Administrator exists | What happens |
+| --- | --- | --- | --- |
+| `prod` | set | no | created with it. Demo accounts absent |
+| `prod` | absent | **no** | **`IllegalStateException`, the context fails, the estate does not come up** |
+| `prod` | absent | yes | **nothing at all** — no throw, no write, the deploy proceeds |
+| not `prod` | either | no | `admin` and `user` created, passwords derived from their own logins |
+| any | either | yes | nothing written, nothing logged above DEBUG |
+
+The third row is the one worth arguing for. The refusal lives inside the `Supplier` that
+`saveUserIfMissing` invokes **only when the account is missing**, so it is a refusal to *create a
+well-known credential*, not a refusal to start. An estate whose administrator exists and has since
+rotated their password through the UI keeps deploying whether or not the variable is present. Without
+that, every deploy for the life of the host would depend on a value that stopped mattering after the
+first one — and the pressure to delete it from `secrets.env` once it looked stale would eventually
+produce an outage for no security gain.
+
+**And the blast radius of the refusal is bounded by machinery that already exists.** D49's
+`deploy-prod.sh` health-gates the deploy and rolls back on failure, so a production deploy that trips
+this ends as *a deploy that does not land*, not as an estate that is down. That is what makes refusing
+affordable here.
+
+### The demo accounts, and what depends on them
+
+`user` stays in `dev` and `test` and is absent under `prod`. Nothing in this repository depends on
+either account: `deploy/`, `quality/` and the tests were grepped, and no script logs in —
+`verify-cycle.sh` and `verify-outbox-recovery.sh` mint HS512 tokens directly, and
+`SecurityUtilsUnitTest`'s `"admin"` is a string in a mock security context, not the seeded row.
+
+**Their passwords change in dev, and that is a real consequence to state.** They are derived from
+their own logins at runtime now rather than read from a committed hash, which is how the sibling does
+it and is what lets "no hash in a tracked file" hold. Nothing rewrites an account that exists, so **the
+running quality box is untouched** and its current credentials keep working until its volume is
+recreated with `./quality/startup.sh --local --clean`. Said in `quality/compose.yml` beside the
+gateway, because that is where somebody will be standing when it surprises them.
+
+**The predicate is *not production*, never an allow-list of `dev` and `test`.** That is this
+repository's own trap, and it was re-measured here rather than recalled: the quality gateway's
+`SPRING_PROFILES_ACTIVE` is `dev,test`, and `GET /management/info` on the running container reports
+`activeProfiles: ["secret-samples","kafka","api-docs","dev","test"]` — three profiles nobody named,
+active through `spring.profiles.group`. An allow-list is a list somebody is eventually surprised by;
+there is exactly one profile whose answer matters, and it is the one being excluded.
+
+### Wiring, and why the variable is required in only one place
+
+The property is `gateway.admin-password`, spelled exactly as hc-professional spells it so that a reader
+moving between the two repositories finds one name. The container variable is therefore
+`GATEWAY_ADMIN_PASSWORD`, through the same relaxed binding that makes `SPRING_MONGODB_URI` work for
+`spring.mongodb.uri` — a mechanism this repository already depends on and documents.
+
+- **`docker-compose.prod.yml`** requires `HC_GATEWAY_ADMIN_PASSWORD` with `:?`, **on the gateway
+  service only** rather than on the shared `x-service-env` anchor: it is the one service that holds
+  accounts, and a secret handed to four services that cannot read it is four more places for it to be
+  seen. Verified both ways — the file interpolates with the variable set, and without it fails with the
+  intended message.
+- **`docker-compose.dev.yml` and `quality/compose.yml` set nothing**, and each says why in place. Those
+  estates run `dev`/`test`, so they derive; requiring it there would break `deploy-dev.sh up` for
+  everyone in order to protect a credential those boxes deliberately publish anyway.
+- **`deploy-prod.sh`** adds it to `SECRET_KEYS`, so preflight refuses **before the running stack is
+  touched** — earlier and more usefully than the compose `:?`, which would fire after `.env` had been
+  overwritten and `.env.previous` rotated. Its `secret_hint` says the thing an operator will otherwise
+  get wrong: the value is consulted only while no administrator exists, so it should be left in place
+  and must not be expected to reset anybody's password.
+- **`secrets.env.example`** gets the key with no value and a generation command, like its neighbours.
+
+### What guards it
+
+Eight unit tests over a mocked `MongoTemplate` — `prod` with a password, `prod` without and no admin,
+`prod` without but with an admin, `dev`, `test`, an unanticipated profile, a second boot, and the
+authorities — plus a CI check, `.github/checks/admin-seed-wiring.sh`.
+
+**The first of the check's four parts is the one that survives a regeneration, and it is deliberately
+not a grep for the logic.** `InitialSetupMigration` is a **generated file**: `jhipster jdl --force`
+rewrites it wholesale and puts the changeunit back, hashes and all — at which point a check asserting
+the new logic is *present* would be red for the right reason, but any check reasoning about that logic
+would be matching a file which no longer contains it. So part one sweeps every service's `src/main`,
+`deploy/` and `quality/` for a **committed bcrypt hash**, which is the one thing the generated version
+cannot come back without. `src/test` and `*-secret-samples.yml` are excluded, because those are the two
+places this estate tolerates a committed credential.
+
+Parts two and three match source text and therefore **strip comments first** through the shared
+`strip-comments.awk` — this decision's own prose about `acceptsProfiles` would otherwise satisfy the
+check guarding it, which is the fail-open this repository has now found nine times. Part four asserts
+the deployment still asks for the variable, in the compose file and in `SECRET_KEYS` rather than in a
+comment, because preflight iterates the array.
+
+**Every guarded thing was mutated separately and watched fire**, in
+`.github/checks/admin-seed-wiring-test.sh` — 14 cases, all built rather than described: a regenerated
+changeunit's hash; a hash quoted in a comment (still caught, because a published hash in a comment is
+still published); ordinary source **not** reported, which is the control without which every other
+assertion is satisfied by a sweep that reports everything; the `!` dropped from the profile test; the
+refusal softened into a warning; a file that only *talks* about the gate; the compose `:?` relaxed to
+`:-`; the key dropped from `SECRET_KEYS`; the key named only in a comment; and each of the three
+subject files missing, each of which must **fail** rather than pass having read nothing.
+
+**One neighbouring check was widened, and the gap it had was measured rather than assumed.** *"The
+connection template must carry no value for any secret"* matched `HC_[A-Z]+_DB_PASSWORD`, and `[A-Z]+`
+does not match an underscore — so `HC_GATEWAY_ADMIN_PASSWORD` could have been committed there with a
+value and passed. Probed against a three-line fixture: the old expression saw 2 of 3, the widened
+`HC_[A-Z_]+_PASSWORD` sees 3 of 3, and the real template is still clean.
+
+### Verified, assumed, not exercised
+
+- **Verified by running**: the committed hash is bcrypt of `admin` (a red test against the generated
+  file); the eight unit tests; the gateway's full `clean verify` on JDK 25, never incremental; Mongock
+  boots with an empty scan package; all 14 mutation cases; all three compose files interpolate, and the
+  production one refuses without the new variable with the intended message; `build.yml` parses and both
+  new steps extract as runnable bash; every shell script parses; `sync-appendices.sh --check` clean
+  after re-embedding Appendix B; `extract-seed.mjs` byte-identical.
+- **Verified by reading a running container**, not a compose file: the quality gateway's five active
+  profiles against the two its environment names, and its `jhi_user` collection. **Read-only** — no
+  restart, no reseed, no write, and no password changed anywhere.
+- **Assumed**: that `GATEWAY_ADMIN_PASSWORD` reaches `gateway.admin-password` through relaxed binding.
+  It is the same mechanism as `SPRING_MONGODB_URI`, which this estate depends on and documents, but it
+  was not exercised end-to-end with a real environment variable against a running gateway — that would
+  need a `prod`-profile boot, and this repository has never run one.
+- **Not exercised: production, in any form.** The refusal path, the compose variable and the preflight
+  entry have never run against a host. Nothing in `deploy/prod-server/` was executed.
+- **Not exercised: a real fresh-database boot in any profile.** The seeding decisions are covered by
+  unit tests over a mocked `MongoTemplate` and by the context starting in an IT; no estate was brought
+  up from an empty volume, because doing that on the quality box would have meant destroying it.
+- **Out of scope and left alone**: NEW-21, WP-19, `deploy/prod-server/` execution, and the wedged
+  `healthconnect-dev-*` containers.
+- **Reported, not fixed — a different repository, and not this one's to touch**: **`hc-patient/gateway`
+  has the identical defect.** Its `InitialSetupMigration` is the same untouched `@ChangeUnit` with no
+  `@Profile`, and its `mongock.migration-scan-package` is likewise in the base `application.yml`.
+  **hc-professional is a milder variant** of the same thing: its administrator falls back to a password
+  derivable from a public rule, and nothing in that repository sets the variable that would prevent it.

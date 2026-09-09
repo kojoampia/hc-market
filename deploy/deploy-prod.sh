@@ -60,10 +60,11 @@
 #  requires a NUMBER, not a positive one; see smoke_test. Raise the floor to 1 once there is real
 #  data, at which point an estate answering 0 is a failure and should roll back.
 #
-#  Required ON THE HOST, in $REMOTE_PATH/secrets.env, and NOT here. ELEVEN values, all of them `:?`
+#  Required ON THE HOST, in $REMOTE_PATH/secrets.env, and NOT here. TWELVE values, all of them `:?`
 #  in docker-compose.prod.yml, all of them checked in preflight by name before the stack is touched:
 #     JWT_BASE64_SECRET       this ESTATE's signing key   (decisions.md D37 — NOT the platform key)
 #     HC_PRIVACY_PEPPER       the erasure pepper           (decisions.md D35)
+#     HC_GATEWAY_ADMIN_PASSWORD  the FIRST administrator   (decisions.md D61)
 #     HC_GATEWAY_MONGODB_URI  the gateway's user store
 #     HC_{CATALOG,BOOKING,MESSAGING,PAYOUT}_DB_URL       the four PostgreSQL instances
 #     HC_{CATALOG,BOOKING,MESSAGING,PAYOUT}_DB_PASSWORD  and their credentials
@@ -84,7 +85,7 @@
 #  counsel's ratified figures are the committed fallback (HC_RETENTION_FINANCIAL_DAYS and its two
 #  siblings override them only if a deployment has to be corrected without cutting a release).
 #
-#  Those eleven are the stack's long-lived values and this script never sees them. It generates .env
+#  Those twelve are the stack's long-lived values and this script never sees them. It generates .env
 #  on every deploy and overwrites what was there, so anything kept in .env survives exactly until
 #  the next deploy — which is why docker-compose.prod.yml's two `:?` variables lived in a file that
 #  could not hold them, and why every production `up` would have died on
@@ -98,7 +99,7 @@
 #
 #      ssh $HC_PROD_HOST
 #      mkdir -p /srv/healthconnect && cd /srv/healthconnect
-#      umask 077 && cat > secrets.env      # paste all eleven, filled in, then Ctrl-D
+#      umask 077 && cat > secrets.env      # paste all twelve, filled in, then Ctrl-D
 #      chmod 600 secrets.env
 #
 #  JWT_BASE64_SECRET IS GENERATED FRESH — `head -c 64 /dev/urandom | base64 -w0` — AND IS NOT THE
@@ -158,7 +159,7 @@ HEALTH_TIMEOUT=240
 # header. Never read, written or printed by this script — its whole contribution is to insist the
 # file is there and to hand its name to compose.
 SECRETS_FILE="secrets.env"
-SECRET_KEYS=(JWT_BASE64_SECRET HC_PRIVACY_PEPPER)
+SECRET_KEYS=(JWT_BASE64_SECRET HC_PRIVACY_PEPPER HC_GATEWAY_ADMIN_PASSWORD)
 # ...and the nine connection values that are ALSO `:?` in docker-compose.prod.yml and were also
 # emitted by nothing.
 #
@@ -309,6 +310,8 @@ secret_hint() {
       printf 'ONE KEY FOR THIS ESTATE, GENERATED FRESH: `head -c 64 /dev/urandom | base64 -w0`. Do NOT copy it from ~/webroot/01-healthconnect/.env — that is the key hc-admin, hc-patient and hc-professional share, and hc-market is deliberately not in that set (decisions.md D37). Sharing it would let these five services mint tokens the other three products accept.' ;;
     HC_PRIVACY_PEPPER)
       printf 'The erasure pepper (decisions.md D35). If this host has never been deployed, generate one once with `head -c 32 /dev/urandom | base64 -w0` and keep it forever; if it HAS, the old value is the only correct one — a new pepper leaves every erased subject unrecognisable and nothing reports it.' ;;
+    HC_GATEWAY_ADMIN_PASSWORD)
+      printf 'The first administrator on this estate (decisions.md D61). Generate one with `head -c 24 /dev/urandom | base64 -w0`. It is read ONLY by a gateway database that has no administrator yet: once the account exists, and however its password is later rotated, this value is never consulted again — so keep it here rather than removing it, and do not expect changing it to reset anybody. Absent, the gateway refuses to create an administrator rather than falling back to the value published in this repository, and the deploy is rolled back by the health gate.' ;;
     HC_GATEWAY_MONGODB_URI)
       printf 'mongodb://<user>:<pass>@hc-market-gateway-db:27017/healthconnectGateway?authSource=admin — the store declared in deploy/prod-server/compose.yml. Use a HEX password: base64 (+ / =) is not legal unescaped in a URI and the driver rejects the rest as an invalid host:port.' ;;
     HC_*_DB_URL)
