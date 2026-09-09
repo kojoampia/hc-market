@@ -258,6 +258,12 @@ services:
       # gateway dies in Mongock with "Connection refused ... localhost:27017" -- a message that points
       # at the database, not at the variable name. The sibling stacks use SPRING_MONGODB_URI too.
       SPRING_MONGODB_URI: mongodb://gateway-db:27017/healthconnectGateway
+      # No GATEWAY_ADMIN_PASSWORD here, and its absence is the decision rather than an omission —
+      # decisions.md D61. This stack runs `test,dev`, so the seeder creates `admin` and `user` with
+      # passwords derived from their own logins by a rule written in InitialSetupMigration — in a
+      # public repository, so treat both accounts as having no password at all. That is acceptable on
+      # a developer estate and is exactly what must not happen in production, where the same variable
+      # is required and the gateway refuses to create an administrator without it.
       # Static routes, and the locator OFF. See the long note on the anchor above: the generated
       # default is `true`, and on a SHARED Consul that would route this gateway into whatever else
       # is registered on the host.

@@ -215,6 +215,16 @@ services:
       # and the old name sets something nothing reads — the gateway then dies inside Mongock with
       # "Connection refused ... localhost:27017", pointing at the database rather than the variable.
       SPRING_MONGODB_URI: mongodb://gateway-db:27017/healthconnectGateway
+      # No GATEWAY_ADMIN_PASSWORD, deliberately — decisions.md D61. This box runs `dev,test`, so the
+      # seeder creates `admin` and `user` with passwords derived from their own logins by a rule
+      # written in InitialSetupMigration, in a public repository. That is the same bargain the rest of
+      # this stack already makes: `dev,test` on one private LAN box, and the whole security story is
+      # that it is not reachable from anywhere else. Production requires the variable instead.
+      #
+      # The accounts on the RUNNING box predate this and were written by the generated Mongock
+      # changeunit, so they still hold the generator's published hashes until the volume is recreated
+      # — `./quality/startup.sh --local --clean`. Nothing rewrites an existing account: the seeder
+      # only creates what is missing, which is what lets a rotated password survive a restart.
       # Static routes, because the discovery LOCATOR is off — not because Consul is (it is on, for
       # registration; see the header). Without these the gateway starts, answers /management
       # perfectly, and 404s every /services/** path — a healthy edge in front of nothing.

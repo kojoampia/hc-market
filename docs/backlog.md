@@ -57,6 +57,7 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **NEW-19** | Two sites convert an appointment with `ZoneOffset.UTC` and ignore `Booking.zoneId` | DONE | D58 — both read `booking.getZoneId()` now, and the **two sites are one derivation**: `cancellationPreview` already called `isLate` while computing the same instant a second time, so the resource asks `BookingWorkflow.scheduledAt` for it. The decision the item reserved is **answered by construction, re-established rather than inherited**: `zone_id` is `NOT NULL` with **no column default** (the item and D55 both say otherwise), written at exactly one live site and never recomputed, so no in-flight booking's quoted boundary moves and nothing needed migrating. A zone tzdb cannot read falls back to `MARKET_ZONE` with a WARN rather than making a booking impossible to cancel. 9 tests east and west of UTC, both sites **mutated separately** — the resource alone is red at the endpoint while every unit test stays green. One CI check, watched firing three ways, for the third site no test can cover. Reviewed 2026-09-09, three non-blocking findings, all applied — the sharpest being a **pre-existing** test whose fixture set no zone and so began routing ten assertions through the new fallback. Opened **NEW-20** for the write side |
 | **NEW-20** | A booking stores whatever zone the catalogue hands it, and nothing parses it | DONE | D60 — the decision is a **split**, not either shape the item offered: *absent is a state, unreadable is an error*. Null or blank still defaults (a catalogue one release behind, D56's deployment); a non-blank value tzdb cannot read is **502 and no booking**, because no release of catalog produces one and this estate refuses at a boundary (D45/D50/D57, and D22 on this very endpoint). `CapturedZone` follows `SlotTime`; it stores `ZoneId.of(x).getId()`, so the column round-trips — **measured**, all 604 region ids are their own id while the offset spellings normalise. `DEFAULT_ZONE_ID` deleted, default is `MARKET_ZONE`, three zone constants stay three. **The read-side fallback is NOT dead code** and the item was wrong to expect it: 302 rows were written before this, and a parse at one door is not a check constraint — said on `zoneOf` itself. 25 unit + 5 IT, **four mutations run separately** (the derivation can be right while the door is wrong, and it was). Catalog gets a test on its sole writer's constant plus a CI check scanning **all five** services, watched firing seven ways, so the day catalog grows onboarding its `setZoneId` is red. **Reviewed 2026-09-09, sound, two findings applied**: the sweep was line-based so a **wrapped** `.zoneId(\n raw)` evaded it — and prettier formats Java here, so that shape arrives without intent — and the ERROR log did not delimit the value, hiding the trailing-space fixture in the one place the refusal sends an operator. The check's service list is **enumerated, not derived**, now said so in both places |
 | **NEW-21** | The generated Kafka sample writes to the shared broker with no caller at all, and has written 5.6 million times | READY | D59 — found while establishing NEW-17, and **larger than the door NEW-17 closed**. `broker.KafkaProducer` is a generated `Supplier<String>` bound to `kafkaProducer-out-0` and polled on Spring Cloud Stream's default one-second schedule, in **all five** services. Measured on the shared broker: end offset **5,603,896**, rising at **6/s** over a timed 60 s window. Nothing consumes it and nothing asked for it. The gateway's `broker.KafkaConsumer` sink is the other half — `unicast().onBackpressureBuffer()` with no subscriber since NEW-17. Not fixed there because the remedy is an edit to the generated `application-kafka.yml` (a `spring.cloud.function.definition` naming a bean that no longer exists refuses to bind), which is a regeneration-hazard row and a decision of its own |
+| **NEW-22** | The gateway seeds `admin` with a published default password, in every profile including `prod` | DONE | D61 — the generated Mongock changeunit had **no `@Profile`**, and `mongock.migration-scan-package` is in the **base** `application.yml` with no `prod` override, so it ran on any fresh Mongo — which is exactly what a first production deploy creates. The hash was **measured, not assumed**: a red test proved it is bcrypt of the string `admin`, on an account carrying `ROLE_ADMIN` on the gateway whose tokens all five services accept. **Nothing was ever red and nothing would have been.** Takes **hc-professional's shape** — admin in every profile because an empty prod database has no other way in, demo accounts skipped under `prod`, idempotent `saveUserIfMissing` — which means it stops being a changeunit and becomes an `ApplicationRunner` (a changeunit is not a Spring bean, so the `Environment` and the `@Value` have nowhere to live). Mongock stays, with an empty scan package; **it tolerates that**, established by booting an IT rather than by reading. **Departs from that sibling on the open question**: `prod` with no password **refuses** rather than falling back to a derived value with a warning, following D35/D45 — hc-professional's fallback is what production gets by default there, since nothing in that repository sets the variable. The refusal is inside the missing-account supplier, so an estate whose admin already exists keeps deploying. hc-admin's `@Profile({dev,test})` rejected, and the stated reason **corrected**: it does have a prod path (`AdminBootstrapInitializer`), and its real cost is two admin-creating classes with two property names, one silently inert. 8 unit tests, a CI check whose first part sweeps for a **committed bcrypt hash** rather than for the logic — because the file is generated and a regeneration takes the logic with it — watched firing **14 ways**, each mutated separately. A neighbouring check was widened after **measuring** that `HC_[A-Z]+_DB_PASSWORD` could not see `HC_GATEWAY_ADMIN_PASSWORD`. **`hc-patient` has the identical defect and was not touched** — different repository, raise it there |
 
 ---
 
@@ -1838,6 +1839,62 @@ the test that would have to come back in some form to pin whichever is chosen.
 estates on the same broker and the sixth publisher is probably one of them; if so, this is a
 workspace-wide finding rather than an hc-market one, and the parent `CLAUDE.md` is where it belongs.
 That was not checked — D59 was not authorised to touch another product's repositories.
+
+---
+
+## NEW-22 — The gateway seeded `admin` with a published password, in every profile · DONE (D61)
+
+Opened and closed by **D61**. The gateway's `InitialSetupMigration` was the untouched generated
+Mongock changeunit — `@ChangeUnit(id = "users-initialization", order = "001")`, **no `@Profile`** —
+creating `admin` and `user` with two committed bcrypt hashes and `setActivated(true)`.
+
+**What made it a production defect rather than a dev convenience**, each part established rather than
+assumed:
+
+| | |
+| --- | --- |
+| Does it run under `prod`? | **Yes.** `mongock.migration-scan-package` is in the **base** `application.yml`, no `prod` override anywhere |
+| Is the hash the login? | **Yes — measured.** A test asserting `matches("admin", hash)` was false went red against the generated file |
+| Is the account privileged? | **Yes.** `ROLE_ADMIN`, and `/api/admin/**` is `hasAuthority(ADMIN)` |
+| Does the token travel? | **Yes.** One signing key, five services |
+| Did anything say so? | **No.** Zero hits for `InitialSetupMigration` across `docs/` and `CLAUDE.md` |
+
+A first production deploy creates exactly the empty database this seeds, so the estate would have come
+up on `market.abofonsa.com` with `admin`/`admin` working. **Nothing in any suite was red, and nothing
+would ever have been.**
+
+**The shape is hc-professional's** — administrator in every profile because an empty production
+database has no other way in, demo accounts skipped under `prod`, idempotent `saveUserIfMissing`. That
+forces it from a `@ChangeUnit` to an `@Component implements ApplicationRunner`: a changeunit is not a
+Spring bean, so an `Environment`, a `@Value` and a `PasswordEncoder` have nowhere to live in one, and
+Mongock never re-runs a recorded changeunit, which makes "seed whatever is missing" inexpressible.
+Mongock stays with an **empty scan package** — and that it tolerates one was established by booting an
+IT, not by reading, because it was the one genuine unknown in this shape.
+
+**The open question — `prod` with no password configured — is answered `refuse`, and that departs
+from the sibling.** hc-professional falls back to a value derived from the login and warns; nothing in
+that repository sets `GATEWAY_ADMIN_PASSWORD`, so on that estate the fallback *is* production. This
+estate follows D35/D45, its own rule for a required secret with no safe default. The refusal sits
+inside the supplier that only runs when the account is missing, so an estate whose administrator
+already exists — and has since rotated their password — keeps deploying without the variable.
+
+**hc-admin's `@Profile({dev,test})` was rejected, and the reason given for rejecting it needed
+correcting**: hc-admin *does* have a production path, `AdminBootstrapInitializer`, so it is not true
+that a fresh hc-admin estate has no operator account. Its actual cost is two classes that both create
+an administrator, in two packages, under two property names, one of which silently does nothing when
+unset.
+
+**What guards it.** Eight unit tests, plus `.github/checks/admin-seed-wiring.sh`. The first of its
+four parts sweeps for a **committed bcrypt hash** rather than for the new logic, because
+`InitialSetupMigration` is a generated file and a regeneration would put the changeunit back and take
+the logic with it — a hash is the one thing the generated version cannot return without. Watched
+firing **14 ways** in `admin-seed-wiring-test.sh`, each guarded thing mutated separately, including
+the three fail-open cases this repository keeps rediscovering: a missing subject file must fail rather
+than pass having read nothing, and prose describing the gate must not satisfy the check.
+
+**Left for someone else, in another repository:** `hc-patient/gateway` has the **identical** defect —
+same untouched changeunit, same base-config scan package, no profile gate. Not touched; it is a
+different product. `hc-professional` is a milder variant of the same family.
 
 ---
 

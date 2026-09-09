@@ -180,6 +180,7 @@ regeneration.
 | The `healthconnect.payments` block | booking `config/application.yml` | **silent, and only on an estate that had a provider.** Every `enabled` flag binds to false, so the three adapters vanish from the registry: a booking naming one is refused 409 as an unknown provider, and every callback addressed to it is 401 — which reads as the provider having changed something. On today's estate, where all three are off anyway, losing it changes nothing at all, so nothing here will tell you |
 | The `healthconnect.privacy` block with its `${HC_RETENTION_*}` placeholders | booking `config/application.yml` | **silent.** The periods bind to `null`, the desk reports `null` for all three, and the estate's answer to "what is your retention policy" becomes "none" — with every test still green, because the test config carries its own copy |
 | The `healthconnect.brokerage.founding` block | payout `config/application.yml` | **silent, and the only row here that is HARMLESS by design** (D57). The five `${HC_BROKERAGE_*}` placeholders are the only way an estate can name its own founding terms; without them `FoundingTerms`' Java defaults — the prototype's 12% and 3-day lag — still found the estate correctly, so nothing breaks and nothing goes red. What is lost is the *overridability*, silently: `HC_BROKERAGE_COMMISSION_RATE=0.15` in `secrets.env` would bind to nothing and the estate would price at 12% while its operator believed otherwise. The defaults being in Java rather than in this file is deliberate for exactly this reason, and CI checks the placeholders by name |
+| The **whole of** `InitialSetupMigration` | gateway `config/dbmigrations/` | **the worst row in this table, because what comes back is a working credential** (D61, NEW-22). This is the only entry here that is a Java class rather than config, and it is here because the generated version is not a stub to fill in — it is the defect. `--force` restores `@ChangeUnit(id = "users-initialization")` with **no `@Profile`**, creating `admin` with a committed bcrypt hash of the string `admin`, activated, carrying `ROLE_ADMIN`. `mongock.migration-scan-package` is in the **base** `application.yml`, so it runs in `prod` too, and a first production deploy creates exactly the empty database it seeds. **Completely silent**: the estate comes up, every test passes, and `admin`/`admin` works against the gateway that issues tokens all five services accept. What is lost is the `ApplicationRunner` rewrite — the not-production gate on the demo accounts, the configured `gateway.admin-password`, the refusal to create an administrator without one, and `saveUserIfMissing`'s idempotency, which is what stops a restart resetting a rotated password. **CI catches this one**, and deliberately by sweeping for the *hash* rather than for the logic (`.github/checks/admin-seed-wiring.sh`), because a check reasoning about the new logic would be matching a file that no longer contains any of it |
 
 **Per app — generated classes to delete.** Each would otherwise win or tie an ambiguous mapping
 against the hand-written resource that replaced it:
@@ -872,6 +873,26 @@ time.**
   indistinguishable from a removal as far as those rows are concerned. Absent, the three services
   start and the erasure desk answers 503 — except messaging, which refuses to start if it has already
   erased somebody, because unpeppered it cannot recognise its own erased subjects.
+- **The gateway seeds the FIRST administrator, and production must supply its password** (`decisions.md`
+  D61, backlog NEW-22). `HC_GATEWAY_ADMIN_PASSWORD` → the container's `GATEWAY_ADMIN_PASSWORD` →
+  `gateway.admin-password`. It joins the signing key and the pepper as a `:?` variable in
+  `docker-compose.prod.yml` and a `SECRET_KEYS` entry in `deploy-prod.sh`, and it is set in **neither**
+  dev nor quality: those run `dev`/`test`, where `admin` and `user` are created with passwords derived
+  from their own logins by a rule published in this repository.
+  **Under `prod` with nothing configured the gateway REFUSES to create an administrator** rather than
+  falling back to that derived value — D35's rule, and a departure from `hc-professional`, which warns
+  and falls back. The refusal fires **only when the account is missing**, so an estate whose
+  administrator exists keeps deploying without the variable and a rotated password is never reset by
+  it; `deploy-prod.sh`'s health gate rolls back a deploy that trips it, so the failure is a deploy that
+  does not land rather than an estate that is down.
+  `InitialSetupMigration` is an `ApplicationRunner`, **not** a Mongock changeunit — a changeunit is not
+  a Spring bean and cannot be given an `Environment` or a `@Value`, and Mongock never re-runs one, which
+  makes "seed whatever is still missing" impossible to write. Mongock stays, with an empty scan package,
+  which it tolerates. **Never restore the generated version**; it is the top row of the delete-and-restore
+  reasoning above and the only regeneration hazard here that hands back a working credential.
+  The gate is `!acceptsProfiles(prod)` and must never become an allow-list of `dev`/`test`:
+  `spring.profiles.group` makes profiles active without their appearing in `SPRING_PROFILES_ACTIVE` —
+  quality's gateway reports five for the two its environment names.
 - **An erasure receipt is the deliverable, not a convenience** (`decisions.md` D31, D36, D38, D39). It
   is what an operator files against a legal request, so a count that is too small reads as "we held
   nothing about this person" and a count that is too large reads as "data was still exposed". Two
