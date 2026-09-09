@@ -52,6 +52,25 @@ Bring the shared plane up **first** — `startup.sh` does not, and these service
 cd /home/kojo/webroot/01-healthconnect/hc-infra && ./startup.sh
 ```
 
+### And a third network, which this stack does create
+
+The five app services sit on **three** networks since D64 — `hc-market-quality` (its own, shared with
+the five databases and nothing else), **`qualitynet`** and `hcnet`. `qualitynet` belongs to the
+quality *monitoring* stack in `~/work/infra`: it is the only place `otel-collector` resolves, and it
+is what lets Alloy reach these containers. hc-market was the only quality stack on this host not
+joined to it, so D63's `HC_OTEL_JAVA_OPTS` switch would have attached an agent that exported into
+nothing.
+
+Unlike `hcnet`, `startup.sh` **creates** it when it is missing rather than refusing — a downed
+monitoring project in another repository must not make this stack unstartable, and `docker compose
+up` does refuse outright on a missing external network. Override the name with `HC_OTEL_NETWORK`,
+which both this script and `compose.yml` read.
+
+The databases stay off it, exactly as they stay off `hcnet`, and CI refuses any service without a
+`JAVA_OPTS` on it. Joining changed no name resolution: every application container on `qualitynet` is
+also on `hcnet`, so every collision it could create already existed there — measured with `getent
+hosts` before and after, see `docs/decisions.md` D64 §2.
+
 ### Consul registers; it does not route
 
 Two separate statements. This section read "Consul is off" until 2026-08-31, and half of that is

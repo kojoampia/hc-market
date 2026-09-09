@@ -9392,3 +9392,216 @@ deleted with `SERVER_PORT` left alone, the script's span kind renamed, the guide
 script, the script deleted); the same `SERVER` mutation run against the **committed** step to
 establish it had been green there; `observability-claims.sh` and its nine-assertion harness re-run
 under `bash -e` and unchanged; the rules file, both compose files and the workflow re-parsed.
+
+---
+
+## D64 — The quality stack joins the network its collector is on, and joining changed no name
+
+Backlog **NEW-24**, opened by **D63** while it was establishing what turning the OpenTelemetry agent
+on in quality would actually do. **`main` ended at D63, the backlog's highest item was NEW-24, and
+`gh pr list --state open` answered nothing** — all three re-checked at `8c1e593` rather than taken
+from the brief, which is this document's rule for its own numbering.
+
+The item named no decision, deliberately: it named a shape to copy. `hc-admin`, `hc-patient` and
+`hc-professional` each declare `networks: [quality, qualitynet, hcnet]` and each has its `startup.sh`
+create `qualitynet` when it is missing. hc-market declared two of the three. This package copies the
+shape, and what follows is the reasoning for the two places where copying is not the whole answer.
+
+### §1 What was established, and how
+
+Every figure is a read off something running, or a measurement. The `monitoring-quality` stack was
+**not** started, and nothing in `~/work/infra` was touched.
+
+| | |
+| --- | --- |
+| containers on `qualitynet` before | **six**, two each from hc-admin, hc-patient, hc-professional — **none of ours** |
+| the network's own labels | empty — no compose project owns it, exactly as its declaration says |
+| hc-market's five app containers, before | `hc-market-quality` and `hcnet` only |
+| the collector's published ports | `127.0.0.1:4327` / `4328`, the **host's** loopback |
+| `otel-collector` from inside `hc-market-quality-catalog` | **no answer**, before and after — the collector is down |
+| `monitoring-quality` | still exited; it was not started and is not this package's |
+| `docker compose up` with the external network absent | **exit 1**, `network … declared as external, but could not be found` |
+| `docker compose config` and `docker compose down`, same state | **exit 0** both — measured on compose **v5.5.0** |
+
+The last two rows are why the change is two files rather than one, and why only one of the two is on
+the `up` path.
+
+### §2 The alias question, which the item asked and which had a sharper answer than expected
+
+NEW-24 asked whether joining a third network changes name resolution, and said of its own guess that
+*"the risk looks low and looks low is not the standard this repository uses"*. It was right to say
+so, because the first measurement makes the risk look **high**: `gateway` was already claimed on
+`qualitynet` by three sibling containers, and `api` by three more. Joining makes ours the fourth
+`gateway` there.
+
+**Nothing moved, and the reason is structural rather than lucky.** Every application container on
+`qualitynet` is *also* on `hcnet` — it is a subset — and on `hcnet` `gateway` was **already** a
+four-way claim including ours, from before this package. So every colliding pair that joining could
+create already existed one network along. Measured with `getent hosts` from inside four containers,
+before and after, and the two transcripts are identical for every name either estate cares about:
+
+```
+before / after, from hc-market-quality-catalog
+  gateway    172.22.0.7      (ours, on the project's own network — it wins over both shared planes)
+  catalog    172.22.0.10     (ours)
+  api        172.21.0.3 / .12 / .14   (three siblings, on hcnet — no qualitynet address appears)
+
+before / after, from hc-admin-quality-service
+  gateway    172.30.0.3      (its own)
+  catalog    172.21.0.7 -> 172.21.0.10   (ours, on HCNET both times — a new container, not a new net)
+```
+
+Docker's embedded resolver answers from the querying container's networks in order and returns the
+first that matches, so a name already satisfied on a nearer network never reaches `qualitynet` at
+all. **No answer in either direction carries a `172.24.x` address.** The five names we now publish
+there — `gateway`, `catalog`, `booking`, `messaging`, `payout` — collide with nothing the monitoring
+stack brings either: its eight service names are `mimir`, `loki`, `tempo`, `otel-collector`,
+`alloy`, `node-exporter`, `docker-stats` and `grafana`.
+
+**This is a fact about today's membership, not a theorem**, and it is written down as such: the day
+something new joins `qualitynet` that is *not* also on `hcnet`, the subset argument stops holding and
+the probe has to be re-run. The compose comment says so at the line that joins.
+
+**One resolution did change and it is not ours.** From both sibling containers `booking` answered
+`(no answer)` before and `172.21.0.9` after. That is the restart, not the network:
+`hc-market-quality-booking` was carrying `aliases=[]` on `hcnet`, because
+`deploy/verify-outbox-recovery.sh` reconnects it with `docker network connect` and no `--alias`, so
+its short name stays lost until the container is recreated. Recorded as **NEW-26** rather than fixed
+here.
+
+### §3 Decision one: external, and created by `startup.sh` — which are two decisions pulling apart
+
+**External**, because several application stacks join it and none owns it. The alternative the brief
+asked to have argued rather than asserted is declaring it non-external and letting compose create it,
+and it is wrong for a reason that is invisible from the file: compose would build
+**`hc-market-quality_qualitynet`**, a *different* network with a similar name that the collector is
+not on. Every export would go nowhere while `quality/compose.yml` read as though it were connected,
+and `docker network ls` would show a plausible entry. It also inverts ownership — a network compose
+owns is a network compose **deletes**, so `--down` here would take three other products' telemetry
+path with it. Measured in passing: `--down` on the real file removed `hc-market-quality` and left
+both `qualitynet` and the throwaway standing, which is the property `external` exists for.
+
+**Created rather than merely required**, which is the opposite call to `hcnet` in the same file, and
+the difference is what absence *means*:
+
+- No `hcnet` means the estate's broker and Consul are down. A stack that starts anyway publishes into
+  nowhere **in silence**, so `check_shared_plane` refuses and prints hc-infra's start command.
+- No `qualitynet` means somebody has `down`ed a monitoring project in a repository this one does not
+  own. Refusing then would make hc-market's quality stack unstartable for a reason that has nothing
+  to do with hc-market — and `up` really does refuse, exit 1, measured. Nothing is lost by creating
+  it: while no agent is attached no container here needs it, and the monitoring compose declares it
+  external too, so whichever project reaches it first is fine.
+
+Three alternatives lost — trust the list and not the number:
+
+- **Require it and die, as with `hcnet`.** Symmetrical and wrong, for the reason above. The failure
+  it would prevent costs nothing today; the failure it would cause is a gate that cannot be run.
+- **Create it only when `HC_OTEL_JAVA_OPTS` is set.** Reads as thrift and is worse: the network has
+  to exist for `up` to succeed *at all* once compose declares it, so this makes the stack startable
+  or not depending on an unrelated variable. Compose does not care whether an agent is attached.
+- **Attach the containers at runtime with `docker network connect`, as `hc-professional` does for
+  its sibling routes.** That is the right tool for a network which may legitimately be absent and is
+  not this stack's own dependency. This one *is* this stack's own dependency, it is declared, and a
+  runtime attach is exactly the thing that lost `booking`'s alias in §2.
+
+### §4 Decision two, which the item did not anticipate: the variable is read by both halves or by neither
+
+`hc-admin` and `hc-professional` keep `OTEL_NETWORK="${OTEL_NETWORK:-qualitynet}"` in `startup.sh`
+while their compose files hardcode `qualitynet`. Copied verbatim, that gives a variable that changes
+which network the script *creates* and not which network compose *joins* — the shape D46 and D50 each
+found the hard way, in the end-to-end scripts and in the Paystack knobs. **It already exists in this
+file and is not hypothetical**: `quality/startup.sh` reads `HC_SHARED_NETWORK`, `HC_SHARED_CONSUL`
+and `HC_SHARED_KAFKA`, `quality/compose.yml` hardcodes all three, and `CLAUDE.md` says both scripts
+read them. `deploy-dev.sh` gets it right and exports them into a compose file that interpolates.
+Recorded as **NEW-25**; not fixed here, because it moves the quality stack's broker address and that
+is its own package.
+
+So `HC_OTEL_NETWORK` is read by **both**: `name: ${HC_OTEL_NETWORK:-qualitynet}` in compose and
+`OTEL_NETWORK="${HC_OTEL_NETWORK:-qualitynet}"` in the script, exported by `env_for_compose` on every
+action including teardown, so a `--down` cannot address a different network from the `up` that made
+the containers. CI asserts the two defaults are the same string.
+
+It is not a knob for its own sake. It is what made the absent-network case **testable**: `qualitynet`
+carries six sibling containers and removing it to prove the creation path would have taken three
+other products' telemetry down, which the brief forbids and which would be a worse outcome than the
+defect. With the variable, the whole path runs against a throwaway name.
+
+A third thing was considered here and rejected. Adding `OTEL_EXPORTER_OTLP_ENDPOINT:
+http://otel-collector:4317` beside the two inert `OTEL_*` variables would shorten D63's documented
+incantation to a bare `-javaagent:`. D63's argument for those two is that the per-service name **is
+the only part of the switch that cannot go into one shared variable**; the endpoint can, and putting
+it in two places is how the two would eventually disagree. The compose comment now says why it is
+absent, which is the part that would otherwise read as an oversight.
+
+### §5 What the restart proved, and what it did not
+
+The gate for this item is a real `./quality/startup.sh --local`, not compose output, and it was run
+three times.
+
+**Proved.** The creation path, end to end and against a throwaway: with
+`HC_OTEL_NETWORK=hc-market-d64-probe` naming a network that did not exist, `startup.sh` created it,
+compose joined all five app services to it, and the stack came up healthy and verified — which is
+the same state as a host whose monitoring project has been fully `down`ed, because a network with
+nothing on it is indistinguishable from one whose collector is stopped. Then the real run: all five
+app containers on `hc-market-quality`, `qualitynet` (172.24.0.8–.12) and `hcnet`; all five
+**databases on `hc-market-quality` alone**; all five services healthy; `--javaagent` **absent in all
+five**, `ERROR` **zero in all five**, and `catalog`'s argv byte-for-byte the line it had before —
+`java -Xmx512m -Xms256m -noverify -XX:+AlwaysPreTouch -cp …`. `--verify` green on its own afterwards,
+including the two assertions through `http://market.healthconnect.local`. The six sibling containers
+on `qualitynet` were not touched and are all still on it.
+
+**Not proved, and not provable here.** Whether the agent is quiet against a *live* collector. D63
+measured it loud — 35 ERROR lines per 150 seconds — against a **dead** one, and the whole case for
+leaving it off rests on that number. `monitoring-quality` has been exited since 2026-09-05 and
+starting it is another repository's business and outside this package. **Joining the network removes
+the second obstacle, not the first**, and no telemetry flowed at any point in this work:
+`otel-collector` still answers nothing from inside our containers, which is the correct state.
+Anybody quoting D63's number as an argument should know it is a measurement of one endpoint state
+only.
+
+**Not proved, and worth naming.** That Alloy can now scrape these containers. It could not be
+checked with the collector stack down, and the parent workspace's own finding — that Alloy's config
+declares no application scrape targets at all, on purpose — means the reachability is for the OTLP
+direction rather than a scrape one.
+
+### §6 One trap found by running this from a worktree
+
+`quality/.jwt-secret` and `quality/.privacy-pepper` are **gitignored**, so a git worktree has
+neither, and `resolve_secret` would have generated a fresh pepper against databases whose
+`erased_subject` aliases were written under the old one — D35's silent orphaning, arrived at by
+nobody making a decision. The two files were copied across from the main checkout before the first
+run. Recorded as **NEW-27**: the script cannot tell a first run from a worktree, and the same
+sentence in `resolve_secret`'s comment that explains why the pepper is persisted is the one that does
+not survive the directory changing.
+
+### §7 The CI check, and what it reaches
+
+Losing this again is silent in the direction that matters: two networks and three networks are
+indistinguishable from outside while no agent is attached, so nothing goes red until somebody turns
+telemetry on and finds an empty dashboard. *"The quality stack must sit on the network its collector
+is on"* asserts four things, each with its own message:
+
+- every app service joins `qualitynet` — the service list **derived** as "renders a `JAVA_OPTS`",
+  the same derivation `observability-claims.sh` uses, with a count of zero refused;
+- no **database** joins it, which is the other half of the same rule and the reason the change is one
+  line on the `x-service` anchor rather than five per-service edits;
+- it renders **external** and named `qualitynet`, which is the non-external trap in §3;
+- `startup.sh` creates it, and the two defaults are the same string.
+
+It reads what `docker compose config` **renders**, never the file's text, so the long prose above the
+`networks:` line — which names `qualitynet` a dozen times — cannot satisfy it; that is
+`observability-claims.sh`'s own argument for needing no stripper. The one textual half is the
+`startup.sh` create, and it is anchored past `#` comment lines: watched green on a clean tree and red
+**seven** ways, each with a distinct message — the anchor dropping the network, a database joining
+it, the declaration losing `external`, the create deleted, the create **commented out**, the two
+defaults disagreeing, and every `JAVA_OPTS` removed so the subject is empty. That last one is D63's
+review's lesson, which this repository has now had ten times: *a check must refuse an empty subject
+before it refuses a wrong one*.
+
+**Verified in this round, by running**: `bash -n quality/startup.sh`; `docker compose -f
+quality/compose.yml config` rendering five app services on three networks and five databases on one;
+`./deploy/sync-appendices.sh --check`; `node deploy/demo/extract-seed.mjs` leaving the seed
+unchanged; the new CI step extracted from `build.yml` and executed under **`bash -e`**, green once
+and red seven ways; `./quality/startup.sh --local` twice and `--local --verify` once, all green; and
+the before/after `docker inspect` and `getent hosts` transcripts quoted in §2. No Java changed, so no
+Maven build was run, and there is no root prettier configuration covering `quality/` or `.github/`.

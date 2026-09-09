@@ -155,6 +155,46 @@ check_shared_plane() {
   ok "shared plane: $SHARED_CONSUL (leader elected), $SHARED_KAFKA on $SHARED_NETWORK"
 }
 
+# --- The observability plane is created here, and that is the opposite call to the one above ------
+#
+# decisions.md D64, backlog NEW-24. compose.yml joins `qualitynet`, the network the quality
+# monitoring stack (another repository, ~/work/infra) sits on: it is the only place `otel-collector`
+# resolves, and the only way Alloy can reach these containers. All three sibling quality stacks
+# declare it and all three create it here, which is the shape being copied.
+#
+# CREATED rather than merely checked, unlike the shared plane above, because absence means something
+# different. A missing hcnet means the estate's broker and Consul are down and a stack that starts
+# regardless publishes into nowhere in silence — worth refusing. A missing qualitynet means somebody
+# has `down`ed a monitoring project in a repository this one does not own, and refusing then would
+# make hc-market's quality stack unstartable for a reason that has nothing to do with hc-market.
+# Nothing is lost by creating it: no application container needs it while no agent is attached, and
+# the monitoring stack declares it external too, so it adopts whichever of us got there first.
+#
+# Only on `up`. Measured on compose v5.5.0: with the network absent, `up` exits 1 with "declared as
+# external, but could not be found", while `config` and `down` both exit 0 — so a teardown needs
+# nothing here, and creating a network during one would be the wrong direction anyway.
+#
+# HC_OTEL_NETWORK is read by BOTH halves — this script and compose.yml's `name:` — because a
+# variable only one side reads is a variable that silently does nothing (D46, D50). It exists so the
+# creation path can be exercised against a throwaway name: `qualitynet` itself carries six sibling
+# containers and removing it to test this would take three other products' telemetry down with it.
+OTEL_NETWORK="${HC_OTEL_NETWORK:-qualitynet}"
+ensure_otel_network() {
+  if docker network inspect "$OTEL_NETWORK" >/dev/null 2>&1; then
+    ok "observability plane: $OTEL_NETWORK exists"
+  else
+    docker network create "$OTEL_NETWORK" >/dev/null \
+      || die "could not create the '$OTEL_NETWORK' network — compose declares it external and 'up' refuses without it"
+    ok "observability plane: created $OTEL_NETWORK (nothing was collecting on it)"
+  fi
+  # Not fatal, and deliberately so: these five services attach no agent by default (decisions.md
+  # D63), so a collector that is down costs this stack exactly nothing. The line exists because the
+  # day somebody sets HC_OTEL_JAVA_OPTS, "the network is there" and "anything is listening on it"
+  # are two different facts and only one of them is checked above.
+  [[ "$(docker inspect -f '{{.State.Running}}' otel-collector-quality 2>/dev/null)" == "true" ]] \
+    || warn "otel-collector-quality is not running — nothing would collect telemetry even with HC_OTEL_JAVA_OPTS set"
+}
+
 # --- The estate's shared secrets ----------------------------------------------------------------
 #
 # Two of them, both one value across all five services and both persisted beside this script:
@@ -233,6 +273,10 @@ env_for_compose() {
     export REGISTRY="${REGISTRY:-ghcr.io/kojoampia/hc-market}" IMAGE_SEP="-"
   fi
   export GATEWAY_PORT CATALOG_PORT BOOKING_PORT MESSAGING_PORT PAYOUT_PORT
+  # compose.yml reads this as the `name:` of its external `qualitynet` declaration, and
+  # ensure_otel_network creates whatever it names. Exported on every action, teardown included, so
+  # `--down` cannot address a different network from the `up` that created the containers.
+  export HC_OTEL_NETWORK="$OTEL_NETWORK"
   export SEED_DIR="$ROOT/deploy/demo"
 }
 
@@ -431,6 +475,7 @@ step "Preflight"
 assert_not_production
 check_ports
 check_shared_plane
+ensure_otel_network
 resolve_secret
 env_for_compose
 [[ -f "$ROOT/deploy/demo/seed-data.json" ]] || die "no seed at $ROOT/deploy/demo/seed-data.json"
