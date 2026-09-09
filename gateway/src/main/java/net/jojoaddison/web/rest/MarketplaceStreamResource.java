@@ -51,8 +51,13 @@ import reactor.core.publisher.Flux;
  * <h2>A new file</h2>
  *
  * <p>Regeneration leaves it alone, unlike the generated {@code HealthconnectGatewayKafkaResource}
- * beside it — which is a sample, serves every event to every subscriber, and is not SSE. The two are
- * easy to confuse by name, which is the reason this comment says so.
+ * that used to sit beside it — a sample that served every event to every subscriber and was not SSE.
+ * The two were easy to confuse by name, which is the reason this comment says so.
+ *
+ * <p>That resource is <strong>deleted</strong> — backlog NEW-17, {@code decisions.md} D59 — because
+ * its {@code POST /publish} had no {@code @PreAuthorize} under a blanket {@code .authenticated()}.
+ * A regeneration puts it back, and {@code KafkaSampleIsNotAnApiIT} is what goes red when it does. So
+ * this paragraph is still the thing to read before assuming the class next door is this one.
  */
 @RestController
 @RequestMapping("/api")

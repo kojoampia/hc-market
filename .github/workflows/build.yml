@@ -1442,6 +1442,127 @@ jobs:
           fi
           exit "$fail"
 
+      # A SECOND check rather than a wider first one, and that is the whole point of it — backlog
+      # NEW-17, decisions.md D59.
+      #
+      # The check above iterates ENTITIES. JHipster's Kafka sample has no entity behind it: it is
+      # generated because the `application` block says `messageBroker kafka`, one class per
+      # application, named upperFirst(baseName) + "KafkaResource". No widening of an entity loop
+      # reaches something that lives one level up from entities, so the derivation is a different one
+      # — `baseName` and `messageBroker`, still from jdl/*.jdl, still never a list in this file.
+      #
+      # Five resources were live on main carrying `@PostMapping("/publish")` with no @PreAuthorize,
+      # under each service's blanket .requestMatchers("/api/**").authenticated() and gateway-routed,
+      # so any token the estate accepts published an arbitrary string onto the broker four products
+      # borrow (D27). Each also had a passing IT asserting exactly that, which is part of why nobody
+      # looked.
+      - name: Every generated Kafka sample resource must be deleted or authorized
+        run: |
+          fail=0
+          # Absent, every resource strips to an empty file and the authorization branch passes on a
+          # resource with no annotation at all. Measured on this check's siblings, not supposed —
+          # decisions.md D56's review.
+          [ -f .github/checks/strip-comments.awk ] || { echo "::error::.github/checks/strip-comments.awk is missing — every resource would strip to nothing and this check would pass. See decisions.md D56."; exit 1; }
+          jdls=$(ls jdl/*.jdl 2>/dev/null || true)
+          if [ -z "$jdls" ]; then
+            echo "::error::jdl/*.jdl matched nothing — this check would scan no application and pass. See decisions.md D59."
+            exit 1
+          fi
+          # The same delete table, extracted the same way, so a row added anywhere in it counts and a
+          # resource merely mentioned in the prose around it does not.
+          table=$(awk '/^\*\*Per app — generated classes to delete\.\*\*/{p=1} /^\*\*And their tests\.\*\*/{p=0} p' CLAUDE.md)
+          if [ "$(printf '%s' "$table" | wc -l)" -lt 5 ]; then
+            echo "::error file=CLAUDE.md::the delete table did not extract — its heading or the 'And their tests.' paragraph that closes it has moved, and every deletion below would report ok against an empty table. See decisions.md D54."
+            exit 1
+          fi
+          scanned=0
+          derived=""
+          for jdl in $jdls; do
+            svc=$(basename "$jdl" .jdl)
+            rest="$svc/src/main/java/net/jojoaddison/web/rest"
+            # No kafka, no sample. Leading whitespace tolerated for the reason D54's review found:
+            # JDL does not care about it and the generator does not either.
+            if ! grep -qE '^[[:space:]]*messageBroker[[:space:]]+kafka([[:space:]]|$)' "$jdl"; then
+              echo "ok   $jdl declares no Kafka broker, so it generates no sample"
+              continue
+            fi
+            base=$(grep -oE '^[[:space:]]*baseName[[:space:]]+[A-Za-z][A-Za-z0-9]*' "$jdl" | awk '{print $2}' | head -1)
+            if [ -z "$base" ]; then
+              echo "::error file=$jdl::$jdl declares messageBroker kafka but no baseName this check can read, so the class it generates cannot be named and this check is blind to it. See decisions.md D59."
+              fail=1
+              continue
+            fi
+            if [ ! -d "$rest" ]; then
+              echo "::error file=$jdl::$rest does not exist, but $jdl declares an application — the service has moved and this check is now blind to it. See decisions.md D59."
+              fail=1
+              continue
+            fi
+            # JHipster names the class upperFirst(baseName) + "KafkaResource": healthconnectGateway
+            # gives HealthconnectGatewayKafkaResource. The sweep after this loop is what catches the
+            # generator ever spelling it differently.
+            cls="$(printf '%s' "$base" | cut -c1 | tr '[:lower:]' '[:upper:]')$(printf '%s' "$base" | cut -c2-)KafkaResource"
+            f="$rest/${cls}.java"
+            scanned=$((scanned + 1))
+            derived="$derived $f"
+            if [ ! -f "$f" ]; then
+              # The row must name the resource in the DELETE column and this service in the FROM
+              # column — a bare grep of the table matched the "Replaced by" column too, which is
+              # D54's review, finding 3.
+              if printf '%s\n' "$table" |
+                   awk -F'|' -v c="\`${cls}\`" -v svc="$svc" \
+                     'index($2, c) > 0 && index($3, svc) > 0 { found = 1 } END { exit !found }'; then
+                echo "ok   $svc/$cls — deleted, and CLAUDE.md's delete table says so for $svc"
+              else
+                echo "::error file=CLAUDE.md::$svc has no $cls and the delete table does not name one for $svc — either it was deleted without being written down, or a regeneration has just put an unauthenticated publish endpoint back. Add a row, or gate the resource. See backlog NEW-17 and decisions.md D59."
+                fail=1
+              fi
+              continue
+            fi
+            # IT SURVIVES, SO IT MUST BE GATED — and gated means annotated, not mentioned. Same rule
+            # and same stripper as the entity check above, for the same reason: a check whose reach
+            # depends on prose is not a check.
+            stripped=$(mktemp)
+            awk -f .github/checks/strip-comments.awk "$f" > "$stripped"
+            clsline=$(grep -nE '^[[:space:]]*(public[[:space:]]+)?(final[[:space:]]+)?(abstract[[:space:]]+)?class[[:space:]]' "$stripped" | head -1 | cut -d: -f1)
+            # Handler mappings only — those after the class declaration. The class-level
+            # @RequestMapping("/api/healthconnect-<svc>-kafka") is a path prefix, not something to
+            # authorize, and counting it demands one more @PreAuthorize than the resource has
+            # handlers, which refuses a correct fix.
+            maps=$(awk -v c="${clsline:-0}" 'NR > c && /^[[:space:]]*@(Get|Post|Put|Patch|Delete|Request)Mapping\(/ { n++ } END { print n + 0 }' "$stripped")
+            pre=$(grep -cE '^[[:space:]]*@PreAuthorize' "$stripped")
+            preline=$(grep -nE '^[[:space:]]*@PreAuthorize' "$stripped" | head -1 | cut -d: -f1)
+            rm -f "$stripped"
+            if [ -n "$preline" ] && [ -n "$clsline" ] && [ "$preline" -lt "$clsline" ]; then
+              echo "ok   $svc/$cls — kept, gated at class level"
+            elif [ "$pre" -gt 0 ] && [ "$pre" -ge "$maps" ]; then
+              echo "ok   $svc/$cls — kept, $pre @PreAuthorize for $maps mappings"
+            else
+              echo "::error file=$f::$cls exists with $pre @PreAuthorize for $maps mappings — its POST /publish puts a caller's string on the broker four products borrow, and its GET /register attaches the caller to a fan-out with no per-user filter. Delete it and put it on CLAUDE.md's delete table, or gate it. See backlog NEW-17 and decisions.md D59."
+              fail=1
+            fi
+          done
+          # THE DERIVATION'S OWN FAIL-OPEN, CLOSED. Everything above trusts that JHipster spells the
+          # class upperFirst(baseName) + "KafkaResource". If it ever spells it otherwise, every loop
+          # above reports "deleted, and the table says so" about a file that was never there, while
+          # the real resource sits in web/rest answering. So sweep for the family by shape and refuse
+          # anything the derivation did not name.
+          for found in $(find . -path '*/src/main/java/net/jojoaddison/web/rest/*KafkaResource.java' -not -path './*/target/*' | sed 's|^\./||' | sort); do
+            case " $derived " in
+              *" $found "*) ;;
+              *)
+                echo "::error file=$found::$found is a Kafka sample resource this check did not derive from any JDL — the generator's naming has changed, so every 'deleted' verdict above is about a filename that never existed. See decisions.md D59."
+                fail=1
+                ;;
+            esac
+          done
+          if [ "$scanned" -eq 0 ]; then
+            echo "::error::no application declaring messageBroker kafka was scanned — this check passed having looked at nothing. See decisions.md D59."
+            fail=1
+          else
+            echo "scanned $scanned applications declaring messageBroker kafka"
+          fi
+          exit "$fail"
+
       # An unparseable rules file is only discovered when Mimir silently declines to load it, and
       # the symptom is an alert that never fires — indistinguishable from a system that is fine.
       - name: The alert rules must parse and stay uniquely named

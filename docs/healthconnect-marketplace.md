@@ -552,9 +552,13 @@ proxy that believes it has stalled.
 never replayed on reconnect. The durable copy is messaging's notification table, which is what a
 client reads on connect and after any gap. This is a toast, not an accounting entry.
 
-The generated `broker.KafkaConsumer` and `/api/healthconnect-gateway-kafka/consume` beside it are a
+The generated `broker.KafkaConsumer` and `/api/healthconnect-gateway-kafka/consume` beside it were a
 **sample, not this feature**: the sink is `unicast()` so the second client errors, it is not SSE, it
-binds to a topic nothing publishes to, and it has no per-user filtering at all.
+binds to a topic nothing publishes to, and it has no per-user filtering at all. **`/consume` and the
+`POST /publish` beside it are deleted** — decisions.md D59, backlog NEW-17 — along with the same
+sample in all four microservices. `sse-topic`'s end offset on the shared broker is 0, so `/consume`
+never carried a byte; `/publish` had no `@PreAuthorize` under a blanket `.authenticated()`.
+`broker.KafkaConsumer` stays as an orphaned generated class with no HTTP door.
 
 ### Verification desk (`ROLE_BROKERAGE`, added D16/D29)
 
