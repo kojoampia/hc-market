@@ -55,7 +55,7 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **NEW-17** | The five generated Kafka sample resources are unauthenticated write endpoints | DONE | D59 — all five **deleted**, gateway included, with the five ITs that asserted the hole worked. **What `/publish` did is established, and both of D54's readings of it were wrong**: `application.yml` puts `kafka` in `spring.profiles.group.dev` *and* `.prod`, so the profile is active in every environment — read off the running quality container — and the sibling bindings from the same file have auto-created their topics on the shared broker. The write was real. The gateway's `/consume` was the decision rather than the deletion, and it is answered by a measurement: `sse-topic`'s end offset is **0**, so it never carried a byte. `broker.KafkaConsumer` and `KafkaProducer` **stay** as orphaned generated classes with no HTTP door. Second CI check, derived from `baseName` + `messageBroker` rather than from entities, with a `find` sweep closing its own rename fail-open; **14 mutations watched**, and the first harness run reverted the very rows the check depends on. Five guards, each service mutated separately. Opened **NEW-21** |
 | **NEW-18** | Nothing can create a `BrokerageConfig`, and payout cannot price a booking without one | DONE | D57 — **shape (2), the seeded-once row**, argued against a Liquibase changeset (a rate is not schema, and a changeset cannot read the environment, so it *forces* a code constant) and against the append-only `ROLE_BROKERAGE` resource (**it bootstraps nothing** — a fresh estate still waits on a person, and the deploy check would then fail a healthy stack). `BrokerageBootstrap` writes one row into an **empty** table on every environment including `prod`, at `SmartLifecycle` phase `MIN_VALUE` so the consumer's container cannot start first. The founding values are code constants the environment **may** override — so nothing can be got wrong by omission, and a malformed one refuses startup. `effectiveFrom` is `Instant.EPOCH` and is deliberately *not* an input: it is the one field where a well-formed wrong value brings the defect back. The seed no longer writes or deletes the row at all. Preflight shipped with the remedy, never before it — and its first version was **wrong**, found by an actual `prod` boot: reading the aggregate `/management/health` would have rolled back a healthy stack whenever the Kafka binder was down. It reads `brokerage.termsInForce` from `/management/info` instead. 24 unit tests plus 4 IT cases, every guarded thing mutated separately; one CI check, watched firing six ways including on a comment |
 | **NEW-19** | Two sites convert an appointment with `ZoneOffset.UTC` and ignore `Booking.zoneId` | DONE | D58 — both read `booking.getZoneId()` now, and the **two sites are one derivation**: `cancellationPreview` already called `isLate` while computing the same instant a second time, so the resource asks `BookingWorkflow.scheduledAt` for it. The decision the item reserved is **answered by construction, re-established rather than inherited**: `zone_id` is `NOT NULL` with **no column default** (the item and D55 both say otherwise), written at exactly one live site and never recomputed, so no in-flight booking's quoted boundary moves and nothing needed migrating. A zone tzdb cannot read falls back to `MARKET_ZONE` with a WARN rather than making a booking impossible to cancel. 9 tests east and west of UTC, both sites **mutated separately** — the resource alone is red at the endpoint while every unit test stays green. One CI check, watched firing three ways, for the third site no test can cover. Reviewed 2026-09-09, three non-blocking findings, all applied — the sharpest being a **pre-existing** test whose fixture set no zone and so began routing ten assertions through the new fallback. Opened **NEW-20** for the write side |
-| **NEW-20** | A booking stores whatever zone the catalogue hands it, and nothing parses it | READY | D58 — `CustomerBookingResource.zoneOf:546` passes `offering.zoneId()` through verbatim and defaults only null/blank, so a garbage zone is **stored** and afterwards read as Accra for ever, WARN-only, on the late-cancellation boundary. D58's read-side fallback keeps that from being an outage; validating at **capture** is what would make it dead code, and it is a change to what `POST /api/bookings` accepts — D22's territory, its own decision (parse-or-default, or refuse). Not reachable today: catalog has no write path for `Professional.zoneId` either, so every zone in the estate comes from a seeder |
+| **NEW-20** | A booking stores whatever zone the catalogue hands it, and nothing parses it | DONE | D60 — the decision is a **split**, not either shape the item offered: *absent is a state, unreadable is an error*. Null or blank still defaults (a catalogue one release behind, D56's deployment); a non-blank value tzdb cannot read is **502 and no booking**, because no release of catalog produces one and this estate refuses at a boundary (D45/D50/D57, and D22 on this very endpoint). `CapturedZone` follows `SlotTime`; it stores `ZoneId.of(x).getId()`, so the column round-trips — **measured**, all 604 region ids are their own id while the offset spellings normalise. `DEFAULT_ZONE_ID` deleted, default is `MARKET_ZONE`, three zone constants stay three. **The read-side fallback is NOT dead code** and the item was wrong to expect it: 302 rows were written before this, and a parse at one door is not a check constraint — said on `zoneOf` itself. 24 unit + 5 IT, **four mutations run separately** (the derivation can be right while the door is wrong, and it was). Catalog gets a test on its sole writer's constant plus a CI check scanning **all five** services, watched firing six ways, so the day catalog grows onboarding its `setZoneId` is red |
 | **NEW-21** | The generated Kafka sample writes to the shared broker with no caller at all, and has written 5.6 million times | READY | D59 — found while establishing NEW-17, and **larger than the door NEW-17 closed**. `broker.KafkaProducer` is a generated `Supplier<String>` bound to `kafkaProducer-out-0` and polled on Spring Cloud Stream's default one-second schedule, in **all five** services. Measured on the shared broker: end offset **5,603,896**, rising at **6/s** over a timed 60 s window. Nothing consumes it and nothing asked for it. The gateway's `broker.KafkaConsumer` sink is the other half — `unicast().onBackpressureBuffer()` with no subscriber since NEW-17. Not fixed there because the remedy is an edit to the generated `application-kafka.yml` (a `spring.cloud.function.definition` naming a bean that no longer exists refuses to bind), which is a regeneration-hazard row and a decision of its own |
 
 ---
@@ -1723,7 +1723,7 @@ is the same.
 
 ---
 
-## NEW-20 — A booking stores whatever zone the catalogue hands it, and nothing parses it · READY
+## NEW-20 — A booking stores whatever zone the catalogue hands it, and nothing parses it · DONE
 
 Opened by **D58**'s review, and deliberately not fixed there. `CustomerBookingResource.zoneOf:546`
 returns `offering.zoneId()` unchanged whenever it is neither null nor blank, so whatever string
@@ -1754,6 +1754,31 @@ day.
 Whoever takes it should put the same question to `catalog` in the same pass: a zone written there is
 what a booking copies, so validating only the copy leaves the source wrong and the profile screen
 rendering it.
+
+**Built as D60, and the decision is a SPLIT rather than either of the two the item offered.** *Absent
+is a state; unreadable is an error.* A null or blank zone still defaults to the marketplace's calendar
+— that is a catalogue one release behind, the deployment D56 keeps payout's `on` for, and refusing it
+would fail every booking in the estate over an empty field. A **non-blank value tzdb cannot read** is a
+**502 and no booking**: no release of catalog produces one, so it can only be a row somebody wrote
+wrong, and this estate refuses at a boundary rather than storing something wrong (D45, D50, D57 — and
+D22, which is this endpoint's own rule). `CapturedZone` follows `SlotTime`, the other string on the
+same builder chain that must become a time before it is stored. What it stores is
+`ZoneId.of(x).getId()`, so the column round-trips by construction — measured, not assumed: all **604**
+tzdb region ids are their own `getId()` so no real calendar is rewritten, while the offset spellings do
+normalise. `CustomerBookingResource.DEFAULT_ZONE_ID` is gone and the default is `MARKET_ZONE`, so the
+three zone constants stay three and D58's read-side argument becomes structural.
+
+**The read-side fallback stays and the item's expectation of it was wrong.** It does not become dead
+code: it is a live path for the **302** rows already written by a capture that did not parse, and for
+anything that writes a `varchar(64)` without going through capture. It is unreachable from
+`POST /api/bookings` and from nothing else, and that is now said on `BookingWorkflow.zoneOf` itself.
+
+**Catalog got the proportionate half.** No write path exists to guard, so a boundary there would be a
+guard on a door that does not exist; a unit test asserts its sole writer's constant is a readable zone,
+and — the part that matters — the CI check *"A zone may not be stored without being parsed"* scans all
+five services, so the day catalog grows onboarding the `setZoneId` that comes with it is red. Watched
+firing six ways. Two shapes rejected and argued in D60: catalog refusing to *serve* a bad zone, and
+parse-or-default with a loud signal (a signal after an irreversible write is a receipt, not a control).
 
 ---
 

@@ -18,6 +18,7 @@ import net.jojoaddison.repository.BookingHistoryRepository;
 import net.jojoaddison.security.SecurityUtils;
 import net.jojoaddison.service.BookingMapper;
 import net.jojoaddison.service.BookingWorkflow;
+import net.jojoaddison.service.CapturedZone;
 import net.jojoaddison.service.MarketCalendar;
 import net.jojoaddison.service.payment.BookingPayments;
 import net.jojoaddison.service.payment.PaymentChoiceRefused;
@@ -57,9 +58,6 @@ import org.springframework.web.server.ResponseStatusException;
 public class CustomerBookingResource {
 
     private static final Logger LOG = LoggerFactory.getLogger(CustomerBookingResource.class);
-
-    /** See {@link #zoneOf}. Ghana is UTC+0 all year, which is what makes this a safe fallback. */
-    private static final String DEFAULT_ZONE_ID = "Africa/Accra";
 
     private final BookingWorkflow bookings;
     private final BookingQueryRepository repository;
@@ -128,6 +126,14 @@ public class CustomerBookingResource {
      * not (409), and never quietly replaced with a provider of the platform's choosing. Absent means
      * "no preference" and is honoured only while there is nothing to choose between; with more than
      * one provider configured, a request that names none is a 400 listing the ones that exist.
+     *
+     * <p><strong>The professional's calendar is parsed before it is stored</strong> —
+     * {@code decisions.md} D60. It is not a client-supplied field, but it is the last thing on this
+     * request that arrives as free text and ends up deciding money: {@code booking.zone_id} is what
+     * the late-cancellation boundary is read in, so a value tzdb cannot read is a <strong>502</strong>
+     * here rather than a row that is misread for the rest of its life. An absent zone still defaults,
+     * because that is a catalogue one release behind rather than a wrong answer. See
+     * {@link net.jojoaddison.service.CapturedZone}.
      */
     @PostMapping
     public ResponseEntity<BookingView> create(@Valid @RequestBody CreateBooking request) {
@@ -152,8 +158,9 @@ public class CustomerBookingResource {
             .currency(offering.service().currency())
             // The professional's zone, from the same answer that priced the booking (D21). Stored
             // rather than resolved at read time: a booking already made must not move on the clock
-            // because the professional later relocated.
-            .zoneId(zoneOf(offering))
+            // because the professional later relocated — and PARSED before it is stored (D60), so
+            // the column cannot acquire a value the cancellation boundary will misread for ever.
+            .zoneId(CapturedZone.of(offering.zoneId(), request.professionalRef()))
             .scheduledDate(request.scheduledDate())
             .scheduledTime(SlotTime.parse(request.scheduledTime()))
             .deliveryMode(DeliveryMode.valueOf(request.deliveryMode()))
@@ -531,19 +538,6 @@ public class CustomerBookingResource {
             taken.outcome().nextAction().kind().name(),
             taken.outcome().nextAction().url()
         );
-    }
-
-    /**
-     * The zone the booking's wall clock belongs to — {@code decisions.md} D21.
-     *
-     * <p>Falls back to Africa/Accra rather than refusing, and that is the one place in this resource
-     * where a default is right. Ghana is UTC+0 all year, so an absent zone cannot make the time
-     * wrong today; a catalogue one release behind would otherwise make every booking in the estate
-     * fail on a field that changes nothing. The price and the owner get no such latitude because
-     * guessing either produces a figure that is actually incorrect.
-     */
-    private static String zoneOf(CatalogClient.Offering offering) {
-        return offering.zoneId() == null || offering.zoneId().isBlank() ? DEFAULT_ZONE_ID : offering.zoneId();
     }
 
     /**

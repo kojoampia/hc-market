@@ -1031,11 +1031,39 @@ time.**
   wrong for the one case the ratification exists for, which is the trap this family spent five
   packages avoiding, and `MARKET_ZONE` appears on this path in exactly one place: the fallback for a
   `zone_id` tzdb cannot read, which without it would make a booking impossible to **cancel** as well
-  as to preview — a read-side stand-in, not a licence to store an unparsed zone, which is **NEW-20**. Nothing moved for any existing booking — `zone_id` is not-null with **no column
+  as to preview — a read-side stand-in, not a licence to store an unparsed zone. Nothing moved for any existing booking — `zone_id` is not-null with **no column
   default** (D55 and the backlog both said otherwise), written once from the offering and never
-  recomputed, and all 298 rows on quality say `Africa/Accra`. A CI check bans `ZoneOffset` **and
+  recomputed, and all 298 rows on quality say `Africa/Accra`.
+  **NEW-20 / D60 closed the WRITE side, and the decision is a split: absent is a state, unreadable is
+  an error.** `CapturedZone.of` is the one place a calendar becomes a `Booking.zoneId` — null or blank
+  still defaults to `MARKET_ZONE` (a catalogue one release behind sends no zone, and refusing would
+  fail every booking in the estate over an empty field), while a **non-blank value tzdb cannot read is
+  a 502 and no booking**, because no release of catalog produces one and this estate refuses at a
+  boundary rather than storing something wrong (D45, D50, D57 — and D22, on this very endpoint). It
+  follows `SlotTime`, the other string on the same builder chain that must become a time before it is
+  stored, and it stores `ZoneId.of(x).getId()` so the column round-trips by construction: **measured**,
+  all 604 tzdb region ids are their own `getId()` (no real calendar is ever rewritten) while the offset
+  spellings normalise, and the longest region id is 32 characters against a `varchar(64)`, which is why
+  there is no length check.
+  `CustomerBookingResource.DEFAULT_ZONE_ID` is **gone** — the default is `MARKET_ZONE`, so the three
+  zone constants stay three and D58's read-side argument is structural rather than a coincidence.
+  **The read-side fallback is not dead code and must not be deleted as such**: it is unreachable from
+  `POST /api/bookings` and from nothing else, and it is a live path for the 302 rows written before
+  D60 and for anything that writes the column without going through capture. Its javadoc says so.
+  The refusal names **neither** the zone (free text off another service's wire — D44 one wire along)
+  nor the `professionalRef` (D45 never echoes what was asked for); both go to an ERROR log, because
+  the row is what needs correcting.
+  A CI check bans `ZoneOffset` **and
   `MARKET_ZONE`** on any line reading `getScheduledTime()` in any service, because the tests cover the
-  two call sites that exist and cannot see a **third** one being written. There was a third until D53 — `BookingEventConsumer.configInForce`'s
+  two call sites that exist and cannot see a **third** one being written.
+  **Its twin on the write side is *"A zone may not be stored without being parsed"*** (D60): every
+  `.zoneId(` with an argument and every `.setZoneId(` in all five services must name `CapturedZone`, a
+  seeder's `DEFAULT_ZONE_ID` (which a unit test asserts is a readable zone, in booking and in catalog)
+  or be the entity's own `this.setZoneId(`. It scans **catalog** deliberately: the day catalog grows
+  professional onboarding is the day a second writer appears in a service that has never had one, and
+  no test is yet written to be red about it. Watched firing six ways, including the accessor renamed
+  across all five files — which would otherwise leave every service clean by matching nothing.
+  There was a third until D53 — `BookingEventConsumer.configInForce`'s
   `Instant.now()`, correct as an instant and wrong as a *moment* — and it is gone rather than moved:
   that path reads no clock at all now (NEW-13, below). **And a fourth of the same kind until D56**:
   `BrokerageResource.split`'s `on == null ? Instant.now()`, which priced a receipt at today's terms for
