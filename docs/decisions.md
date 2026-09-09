@@ -10644,3 +10644,426 @@ byte-identical to the original afterwards. `quality-pepper-persistence-test.sh` 
 `6d401ec`, `sync-appendices.sh --check` green, `extract-seed.mjs` leaving the tree clean. **Nothing
 was started, stopped, recreated or reseeded on the live quality stack, and its ten containers and five
 volumes were re-counted afterwards.**
+
+
+---
+
+## D68 — What a script severs it must put back, and the alias set is not its to name
+
+Backlog **NEW-26**, opened by **D64** while measuring name resolution across the quality stack for an
+unrelated reason. **`main` ends at D67, the backlog's highest item is NEW-30, and `gh pr list --state
+open` answers nothing** — all three re-checked at `e834137` rather than taken from the brief, which is
+this document's rule for its own numbering.
+
+`deploy/verify-outbox-recovery.sh` severs `hc-market-quality-booking` from `hcnet` to prove the outbox
+survives a broker it cannot reach, and reconnects it twice — on an `EXIT` trap and again on the normal
+path. Both were a bare `docker network connect "$NET" "$BOOKING_CTR"`, which restores the **connection**
+and not the **names**.
+
+### §1 The defect, measured on the running box rather than reasoned
+
+```
+$ docker inspect hc-market-quality-booking --format '…{{$k}}={{$v.Aliases}}…'
+hc-market-quality=[hc-market-quality-booking booking] ; hcnet=[] ; qualitynet=[hc-market-quality-booking booking]
+
+$ docker inspect hc-market-quality-catalog …
+hc-market-quality=[hc-market-quality-catalog catalog] ; hcnet=[hc-market-quality-catalog catalog] ; …
+```
+
+One container out of five carries an empty alias set on one network out of three, and it is the one
+this script cuts. `DNSNames` says the same thing from the other side: catalog's is
+`[hc-market-quality-catalog, catalog, 201733547f8e]`, booking's is `[hc-market-quality-booking,
+fd58fa5d6378]` — the service name is simply absent.
+
+Compose supplies **both** names explicitly when it creates a container. That is worth stating because
+docker does not: created with `docker run --network-alias alpha --network-alias bravo`, a container's
+`Aliases` is `["alpha","bravo"]` and the container name appears only in `DNSNames`, added by the
+daemon. Compose's sets contain the container name because compose passed it. **So the alias set is a
+thing somebody chose, not a thing docker derives** — which is the whole of §2.
+
+**And the endpoint carries a fingerprint saying who made it**, which is what lets §9 reconstruct the
+live box's history rather than guess at it. A compose-created endpoint has `IPAMConfig: <nil>`; one
+made by `docker network connect` has the CLI's empty structs, `{invalid IP invalid IP []}`. On the
+quality box all five application containers were created in the same instant and only booking's
+`hcnet` endpoint carries the second signature.
+
+### §2 The decision, and the three losers
+
+**Taken: read the set back off `docker inspect` immediately before the disconnect, and hand it to the
+reconnect.** `aliases_on_net` is the reader, `BOOKING_ALIASES` the capture, `reconnect` the only
+`docker network connect` in the file.
+
+- **Hardcode `--alias booking`.** Correct today for the quality estate and wrong the moment anything
+  changes: the dev compose's booking is `dev-booking`/`hc-market-dev-booking`, and `HC_BOOKING_CTR`
+  exists precisely so this script can be pointed at an estate whose names it does not know. A script
+  that names the aliases restores whatever was true the day the line was written, and — worse — it
+  restores them **whether or not they were there**, which is the repair this decision refuses in §4.
+- **Hardcode both names**, container plus service, derived from the `com.docker.compose.service`
+  label. Closer, and still an invention: `networks: <net>: aliases:` is an ordinary compose feature
+  and would make the set something else entirely, with nothing here able to tell. It also asserts
+  that the container was created by compose, which `HC_BOOKING_CTR` does not promise.
+- **Do nothing.** The strongest loser, because the cost today is genuinely zero and §3 shows the item
+  understated *how* zero. It is refused on the ground that a measuring instrument must leave its
+  subject as it found it: this script's whole claim is that severing booking from `hcnet` is a
+  faithful stand-in for a broker outage, and an instrument that quietly shrinks the estate every time
+  it runs is making a change it does not report. The residue is also **invisible between recreates**,
+  so "it costs nothing" is a statement nobody is in a position to keep checking.
+
+### §3 Why it costs nothing today is NOT the reason the item gave, and the difference matters
+
+NEW-26 says *"nothing addresses booking by its short name over `hcnet`: `quality/compose.yml` uses
+`http://hc-market-quality-messaging:8080` for exactly this class of reason"*. That sentence is true of
+the line it quotes and false as a generalisation, and `CLAUDE.md` carried the same generalisation
+(*"every intra-stack address in both compose files is a container name rather than a short service
+name"*). Measured:
+
+| File | short-name addresses |
+| --- | --- |
+| `deploy/docker/docker-compose.dev.yml` | **none** |
+| `quality/compose.yml` | **nine**, enumerated below |
+
+The nine, by line, because a count is what this whole section is about:
+
+| Line | Setting | Host |
+| --- | --- | --- |
+| 337 | gateway route 0 | `catalog` |
+| 341 | gateway route 1 | **`booking`** |
+| 345 | gateway route 2 | `messaging` |
+| 349 | gateway route 3 | `payout` |
+| 369 | gateway route 4 (the webhook route) | **`booking`** |
+| 406 | catalog's `HEALTHCONNECT_BOOKING_BASE_URL` | **`booking`** |
+| 447 | booking's `HEALTHCONNECT_CATALOG_BASE_URL` | `catalog` |
+| 449 | booking's `HEALTHCONNECT_PAYOUT_BASE_URL` | `payout` |
+| 579 | payout's `HEALTHCONNECT_BOOKING_BASE_URL` | **`booking`** |
+
+**`booking` alone is four of the nine.** This table said "five" at review, while its own prose
+enumerated seven and omitted 447 and 449 — and the reviewer's correction of it said "three". So the
+number has now been wrong three times in a section whose entire subject is a count asserted rather
+than measured, which is the house rule stated against itself: **trust the list and not the number.**
+The list above is the artefact; if you need the number, derive it from the list.
+
+So the quality compose file is **mixed**, and `booking` by short name is very much in use. What
+actually costs nothing is something else, and it is two accidents deep:
+
+```
+$ docker exec hc-market-quality-catalog  getent hosts booking   →  172.22.0.8   (hc-market-quality)
+$ docker exec hc-admin-quality-service   getent hosts booking   →  172.24.0.9   (qualitynet)
+$ docker exec hc-admin-quality-service   getent hosts catalog   →  172.21.0.7   (hcnet)
+```
+
+Docker's resolver walks the **querying** container's networks in order and answers from the first that
+matches (D64 §2). For the stack's own five, `booking` is satisfied on the project network, which this
+script never severs. For anything outside it, `booking` is satisfied on **`qualitynet`** — a plane
+this stack joined three packages ago, in D64, *the same decision that found this defect*. Compare
+`catalog` in the same container: it comes back on `hcnet`, because catalog's `hcnet` alias is intact
+and hcnet is nearer in that container's order.
+
+**The name never went missing. It moved planes, and one of the two planes it moved to was added by the
+package that discovered the problem.** NEW-26's own measurement — *"`getent hosts booking` from inside
+two sibling containers answered nothing"* — was taken **before** D64's `qualitynet` join landed, and it
+would not reproduce today. That is not a criticism of the item; it is the reason the item is worth
+closing. "It costs nothing" rested on a membership fact that changed within three packages, twice, in
+opposite directions, with nobody editing this script.
+
+**A stated consequence, so the next person does not find it as a surprise.** Restoring booking's
+`hcnet` alias puts the name back on a second plane for containers that are on both, so a sibling's
+`booking` may resolve to `172.21.0.6` rather than `172.24.0.9` after the next recreate. Both addresses
+are the same container and nothing chooses between them on anything but network order, so this is a
+change in *which address* and never in *which service*. It also restores the state D64 measured
+`getent` against — which was, for this one name, already the damaged one.
+
+### §4 An empty set restores nothing, and that is the sub-question that needed deciding
+
+The quality box is in the broken state **right now**, so the first thing the fixed script will read
+back on that box is an empty list. Three answers, and they are not close once written down:
+
+- **Restore what was found — TAKEN.** The script puts back exactly what it captured, which for an
+  already-stripped container is nothing. The run then prints a `note` naming the container and the
+  network, saying that a compose recreate is what restores them and that this script will not invent
+  them.
+- **Repair it** — reconstruct `[container name, service name]` from the compose labels. Refused for
+  §2's second reason, one step further along: it is not merely a guess about the alias set, it is a
+  guess *asserted against a container the script has no evidence about*. A tool that quietly improves
+  the thing it is measuring has stopped measuring it, and the improvement would be indistinguishable
+  in the output from a container that never lost anything.
+- **Refuse the run.** Refused because the condition costs nothing, the remedy is a **recreate** —
+  which is a roll-time act somebody else schedules — and the script would therefore withhold the
+  outbox proof until an unrelated person did an unrelated thing. This is D65's shape without D65's
+  justification: there, refusing prevented an irreversible orphaning; here it would prevent a
+  read-only measurement over a cosmetic residue.
+
+**Silence was the fourth option and is the one actually rejected.** What let this live is precisely
+that nobody looks at a container's alias set between recreates. The script is somebody looking, at the
+moment they are looking, so it says what it found either way: the set it is about to restore, or the
+fact that there is none.
+
+### §5 The ordering, which no behavioural test can see
+
+Four positions in one chain, and each of the three relations is asserted against the thing it is
+positioned against rather than against a line number in the abstract — D67 §11's finding, applied
+before it could be repeated:
+
+```
+BOOKING_ALIASES=()        declared ABOVE the trap
+trap … reconnect … EXIT   can fire at any point below this line
+mapfile -t BOOKING_ALIASES   the capture
+docker network disconnect    the cut
+```
+
+- **Declared above the trap**, because `check_estate` exits 1 on four separate paths below it and the
+  trap runs on every one. Measured on bash 5.3: `"${undeclared[@]}"` expands to nothing under `set -u`
+  rather than aborting — so today the trap would survive an undeclared array by luck, and the
+  declaration is what makes it survive by construction.
+- **Captured below the trap**, so a run that dies before the cut reconnects with what it found, which
+  for a container nothing has severed is a no-op.
+- **Captured above the disconnect**, because a disconnected container has no alias list left to read.
+  This is the failure that would be entirely silent: `index .NetworkSettings.Networks "hcnet"` is a
+  template error on a nil map entry, `docker inspect` exits non-zero, the function prints nothing, and
+  the reconnect restores an empty set with every assertion in the script still green.
+
+`reconnect` is also the **only** `docker network connect` in the file, which is not tidiness: two bare
+call sites written out twice is exactly how this defect existed in the first place, and a fix applied
+to one of them would have read as a fix.
+
+### §6 What docker actually does with `--alias`, measured on a throwaway
+
+Not read off the documentation. A throwaway network and container, created and removed:
+
+| Asked | Answer |
+| --- | --- |
+| Multiple `--alias` on one `connect` | accepted; `Aliases` is `["alpha","beta"]`, **in the order given** |
+| The container's **own name** as an alias | accepted, rc **0**, no warning — which matters, because compose's sets contain it |
+| A duplicate alias | accepted; stored verbatim in `Aliases` (`["x","alpha","alpha"]`), de-duplicated in `DNSNames` |
+| A **bare** reconnect | `Aliases=[]`, `DNSNames=[<name>, <short id>]` — today's booking, reproduced exactly |
+| `getent hosts alpha` from a peer, alias present | `172.29.0.2`, rc 0 |
+| …alias absent | rc **2**, no answer |
+| `getent hosts <container name>`, alias absent | still answers — **the masking, demonstrated** |
+
+The last three are the instrument's own control. Every reading this decision takes is of a name
+expected to be **present**, and a probe that cannot make the name disappear proves nothing by finding
+it — the `grep -c ' ERROR '` lesson, one tool along.
+
+The order row is why the script's new assertion compares the **joined, ordered** strings rather than
+sets: docker preserves what it was given, so ordered is strictly stronger, and if a future release
+ever reorders them the check goes red and sends somebody to look rather than passing a silent change.
+
+### §7 A defect in the fix, found by the test rather than by reading it
+
+The first version of `aliases_on_net` ended at the template. `docker inspect -f` appends a newline of
+its **own** after the template output, so the raw result is one blank line longer than the alias set,
+and the run's new "the aliases came back" assertion compared `alpha bravo ` against `alpha bravo` —
+**red on a correct reconnect**. It is fixed with `| sed '/^$/d'`, and with `sed` rather than
+`grep -v '^$'` deliberately: this script sets `pipefail`, a grep matching nothing exits 1, and the
+case that must succeed here is exactly the one where every line is dropped. That is the two-silent-
+aborts-this-week shape, and it would have landed in the one branch nobody exercises.
+
+Worth recording as a finding rather than tidied away: the behavioural half of the check earned its
+place on its first run, against code that had been read twice.
+
+### §8 The check, and why it needed a second comment stripper
+
+`.github/checks/outbox-alias-restore-test.sh`, wired into `consistency` and run under `bash -e` as
+Actions runs it. It extracts `aliases_on_net` and `reconnect` **from the shipped file** and evaluates
+them, as `quality-project-checkout-test.sh` does with `check_project_checkout`; sourcing the whole
+script is not an option, since it books a real booking and severs a real container. §1–§4 are
+structural and need no daemon; §5 asks docker, on its own throwaway network and two containers, and
+never looks at `hc-market-quality`.
+
+**`strip-comments.awk` could not be used, and this is not a widening of it.** That file is a *Java*
+stripper — `//` and `/* */` — and run over a shell script it removes nothing while reporting success,
+which is this family's ninth fail-open waiting to happen. `strip-sh-comments.awk` is beside it,
+line-numbering preserved for the same reason (§5's ordering assertions quote line positions), with the
+rule stated as a limit: blank from the first `#` that begins a word, so `${#arr[@]}` and `$#` survive
+and a `#` inside a quoted string truncates the line. That direction is deliberate — removing too much
+makes a check go **red on correct code**, which sends somebody to look.
+
+The stripper is load-bearing here rather than precautionary, and measured both ways:
+
+| | raw | stripped |
+| --- | --- | --- |
+| the correct script | 3 | 1 |
+| a bare connect back in the trap | 4 | 2 |
+
+Unstripped, the count is the code **plus however many times the header's prose mentions it** — and the
+header now explains this very defect, twice. The expectation would have to be maintained in lockstep
+with a comment, and the obvious repair when somebody tightens the prose is to change the number, at
+which point the check is asserting the length of a paragraph. *"A check whose reach depends on prose is
+not a check"* (D53's review), reached from the other end.
+
+**Watched firing, red and green, on nine mutations, each asserted to have applied — original gone,
+mutant present, `bash -n` clean — and the file confirmed byte-identical afterwards. None passed:**
+
+| # | Mutation | What went red |
+| --- | --- | --- |
+| 1 | the reconnect goes bare again (the defect itself) | the shipped reconnect puts the set back; the name resolves again; round-trips unchanged |
+| 2 | `--alias booking` hardcoded | no alias is spelled out on a connect; + the three behavioural |
+| 3 | the trap calls docker itself again | exactly one `docker network connect`; the trap reconnects through it |
+| 4 | the capture moved below the disconnect | the capture is after the trap; **and before the disconnect** |
+| 5 | the declaration taken out from above the trap | the array is declared before the trap that reads it |
+| 6 | the restore assertion deleted | the run compares what it got back against what it captured |
+| 7 | `aliases_on_net` loses the blank-line drop (§7's own bug) | the shipped reader sees the set docker holds; round-trips unchanged |
+| 8 | `aliases_on_net` renamed, so the extraction is empty | the extraction guard, **and** the two readings behind it |
+| 9 | `strip-sh-comments.awk` deleted | exit 1 with one error naming the cause, before any match |
+
+Mutation 9 is the one this family keeps getting wrong: absent the stripper, `awk -f` prints nothing,
+every text assertion reads an empty file, and a check with no subject reports green. It is guarded at
+the top, and the guard was watched firing rather than assumed.
+
+**Verified by running** — as this section stood before review, and superseded by §12's counts:
+the check green at **32** under `bash -e`; all nine mutations red on the
+assertions that name them; `bash -n` on all 23 shell scripts the CI step names, which includes the
+new check and **not** `strip-sh-comments.awk` — an awk file is not one of that glob's subjects, which
+is part of why it needed a test of its own (§12);
+`extract-seed.mjs` regenerating identically and leaving the tree clean;
+`sync-appendices.sh --check` green — `verify-outbox-recovery.sh` is not an appendix, and this confirms
+neither appendix moved. **No Java changed, so no Maven gate was run**; saying so rather than running
+one for show. **`deploy/verify-outbox-recovery.sh` was never executed against the live quality stack** —
+it books a real booking and severs a real container — and the stack's ten containers were re-counted
+healthy afterwards, with booking's three alias sets unchanged from the reading in §1. Every throwaway
+container and network was removed and the host swept for leftovers.
+
+### §9 What the roll has to do — and "a restart fixes it" is FALSE for the restart people actually run
+
+This is the second finding the item did not anticipate, and it is the one that changes an instruction.
+NEW-26 says *"A restart fixes it, silently, so the state is invisible unless somebody looks between
+one"*, and the first half is wrong for the commonest case. **Measured on a throwaway compose project
+with an external network, created and removed:**
+
+| Act | `Aliases` on the external network |
+| --- | --- |
+| compose creates the container | `[<container name>, svc]` — and `IPAMConfig` is `<nil>` |
+| a bare `docker network connect` | `[]` — and `IPAMConfig` becomes `{invalid IP invalid IP []}` |
+| **`compose up -d`, nothing changed** | **`[]` — compose says `Running` and does NOT repair** |
+| `compose up -d` after the image tag changed | `[<container name>, svc]` — `Recreate`, `Recreated` |
+| `compose up -d --force-recreate` | `[<container name>, svc]` |
+| `compose down` then `up -d` | `[<container name>, svc]` |
+
+**This is D67's measured rule one docker object along**: `compose up` recreates only the services whose
+configuration *changed*, so a service nothing changed is left exactly as the CLI left it, alias set
+included. `quality/startup.sh` runs a plain `compose up -d` (no `--force-recreate`), so **re-running it
+at the same `TAG` does not repair booking** — and that is the run somebody reaching for a fix would
+most likely make.
+
+The empty-struct `IPAMConfig` is the fingerprint, and it settles the live box's history without
+guesswork. All five application containers were created in the **same instant**
+(`2026-09-09T22:12:42`); four carry `IPAMConfig=<nil>` on `hcnet`, booking carries `{invalid IP
+invalid IP []}`. So compose created booking's container *and* its `hcnet` endpoint, and something
+severed-and-bare-reconnected it **afterwards** — this script, on a run since that create — and every
+`up` since has reported `Running` and left it. *Who* ran it is **not established**: the daemon's event
+history does not reach back that far (measured — 0 network events at `--since 180m`, one at
+`--since 20m`, so the window is real and short, not a broken filter).
+
+**So the roll does have something to do, and it is one specific thing.** Repairing
+`hc-market-quality-booking` needs a **recreate** — `./quality/startup.sh --local --clean` then a fresh
+`up`, or any roll to a **new `TAG`**, which recreates as a side effect and needs no extra step. A
+same-tag re-run will not do it. This package deliberately did not do the repair: it is a roll-time act,
+and the residue costs what §3 measured, which is nothing. From the next run onward the script reports
+the condition instead of quietly adding to it.
+
+### §10 The roll, in the order it has to happen — for whoever releases this
+
+Three facts, and their order is the whole of it.
+
+1. **Repairing the live container needs a RECREATE**, per §9: `./quality/startup.sh --local --clean`
+   then a fresh `up`, or any roll to a **new `TAG`**, which recreates as a side effect. A same-tag
+   re-run of `startup.sh` reports `Running` and repairs nothing.
+2. **The fix only closes the loop if the sweep that runs afterwards is the FIXED script.** A
+   `verify-outbox-recovery.sh` from a pre-D68 checkout severs and bare-reconnects in the same run,
+   so a roll followed by a sweep from an old tree ends exactly where it started — and looks like the
+   fix not working rather than the wrong file being run.
+3. So: **merge, roll to a new tag, and run every subsequent sweep from the merged tree.** In that
+   order. Nothing else about the roll changes, and no runbook step is added beyond "roll to a new
+   tag", which a roll does anyway.
+
+Worth stating because the two halves are in different places: the repair is a *deployment* act and
+the guarantee is a *checkout* property, and neither one is visible from the other.
+
+### §11 Review, first finding: the check had a fail-open of its own, and it was the argument it made
+
+`§2`'s comment said *"two call sites written out twice is how one of them gets fixed and the other
+does not"* and applied `count == 1` to the connect and **not** to the capture. Reproduced by the
+reviewer and again here: adding a **second** capture after the disconnect — the shape of a
+well-meant *"refresh it before reconnecting"* edit — passed everything.
+
+```
+captures now: 2   parses: yes   check: 32 passed, 0 failed
+```
+
+At run time the second capture overwrites the array with the now-empty set, `reconnect` restores
+nothing, and the script's own `chk "…carrying the same aliases"` compares `""` against `""` and
+prints `ok`. **The defect fully back, both suites green** — which is the same class of thing D68
+exists to fix, one level up: a guard that measures the shape it happens to have rather than the
+property it needs.
+
+Two independent guards now, not one and a restatement:
+
+- **`count == 1` on `^mapfile -t BOOKING_ALIASES`** — catches a second capture wherever it is put.
+- **`ln_of` takes `tail -1`, not `head -1`** — so the ordering relation reads the *last* capture and
+  catches it being in the wrong place even if somebody merges the two back into one.
+
+And the four ordering anchors are asserted to appear **exactly once** rather than merely to be
+present, because `tail -1` on a doubled anchor silently compares one occurrence and says nothing
+about the other. "Present at all" was the weaker half of the property the arithmetic needs; the
+count subsumes it.
+
+### §12 Review, remaining findings
+
+**The capture could not tell "empty" from "docker could not be asked".** `mapfile < <(aliases_on_net)`
+discards the process substitution's status entirely, so an unaskable docker produced an empty
+capture, fired §4's note **with the wrong diagnosis** — *"that is what a pre-D68 run leaves
+behind"* — and then severed and bare-reconnected, recreating this defect with the run green. **This
+is not §4's question**: that argues what to do with an *empty answer*; this is a *failed probe*, and
+D65 and D67 both landed the same rule one docker object along — non-zero from a probe means the
+question went **unanswered**, never that the answer is nothing. Status-checked assignment now, then
+the array is filled from the captured string; a failed probe refuses **before anything is cut**.
+Probability is low — `check_estate` has just exec'd docker three times — and it sits at the one
+decision point this package added, which is where low probability stops being a defence.
+
+That also makes `pipefail` load-bearing here rather than idle, which the reviewer flagged: this
+script sets `-uo pipefail` with no `-e`, so the old comment's *"a grep that matches nothing exits 1"*
+described a breakage that could not occur. It can now — the function's **exit status** is read, and
+`pipefail` is what carries docker's failure past `sed`'s success. With `grep -v` there, an estate
+whose container genuinely has no aliases would report failure and be refused. The comment says so.
+
+**The count correcting a false count was itself wrong, four times.** The measured answer is **nine**
+short-name addresses in `quality/compose.yml`, with `booking` on **four** lines. §3 said five while
+its own prose enumerated seven and omitted 447 and 449; the backlog said five; `CLAUDE.md` said five;
+the check's header said "five places" for a host that appears four times — and the reviewer's
+correction of all that said "three". Six statements of one number, four of them wrong, in the section
+whose entire subject is *a count asserted rather than measured*. All four sites now carry the
+**enumeration by line** and say to derive the number from it. **Trust the list and not the number** —
+the rule this repository already had, applied to the document that was busy citing it.
+
+**`strip-sh-comments.awk` had no test of its own.** Its caller's three inline controls do cover
+outputs-nothing, strips-nothing and real-code-survives *against the real subject*, and that is
+genuine. What they do not cover is the **survival** properties the awk's header documents —
+`${#arr[@]}`, `$#`, `${x#pfx}` — and `verify-outbox-recovery.sh` depends on the first of those on a
+line no assertion greps. "Documented in three places, enforced nowhere" is this repository's named
+failure mode, and it is what the sibling stripper spent eight fail-opens establishing.
+`strip-sh-comments-test.sh` mirrors `strip-comments-test.sh` deliberately, so the two read side by
+side, and its case 8 **reproduces why there are two files**: the Java stripper leaves a shell comment
+intact *and exits 0 while doing so*. Case 9 pins both of the awk's stated limits — the quoted `#`
+that truncates (fail-**closed**, the deliberate direction) and `;#` that is not seen
+(fail-**open**, named and tolerated: widening the rule to catch it would truncate punctuation-adjacent
+expansions nobody has written yet, trading a limit nothing can exploit for one that fires on correct
+code).
+
+**The `peer` container was created one line before its cleanup knew its name.** An abort in that
+window leaked a container. All three throwaway names are known to the `EXIT` trap before anything is
+created now — naming a container that does not exist yet costs nothing, since `docker rm -f` on an
+absent name is what the `|| true` is for.
+
+**Verified after review, by running**: `outbox-alias-restore-test.sh` green at **46** under `bash -e`
+(32 before review), `strip-sh-comments-test.sh` green at **11** — both counts read off the run rather
+than written from memory, which is the correction §12 is largely about; **nineteen** mutations red on the assertions that name
+them — the original nine plus the second capture, the capture below the cut with only one of them, the
+status check removed two ways, a refusal downgraded to a warning, and four mutations of the awk
+(column-1 branch, space/tab guard, outputs-nothing, deletes-lines) — each asserted to have applied
+(original gone, mutant present, parses) with every file byte-identical afterwards, and both strippers
+deleted in turn to watch each caller exit 1 naming the cause. The refusal block is **executed** rather
+than grepped for, lifted by line range from the shipped file, with a succeeding probe beside it as the
+control so it cannot pass by refusing everything. `bash -n` on all 24 shell scripts the CI step names;
+`extract-seed.mjs` regenerating identically; `sync-appendices.sh --check` green. No Java changed, so
+no Maven gate. **The recovery script was still never executed against the live quality stack**, whose
+ten containers were re-counted healthy with booking's three alias sets unchanged. Throwaways removed
+and the host swept.
