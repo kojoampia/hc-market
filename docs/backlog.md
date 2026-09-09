@@ -2214,7 +2214,7 @@ the probe against a real daemon on a throwaway project of its own.
 **Closed as engineering by D67; the live repair is a roll-time step and is not done.** The
 recurrence is prevented — `quality/startup.sh` asks docker which checkout the project's containers
 were created from and refuses an `up` from anywhere else, with
-`.github/checks/quality-project-checkout-test.sh` green at 27 assertions and red nine ways. What
+`.github/checks/quality-project-checkout-test.sh` green at 28 assertions and red ten ways. What
 remains is the half this item names below and no worktree may do: **recreating the five database
 containers from the main checkout**, which is `./quality/startup.sh --local --down` (keeps every
 volume) then a fresh `up`, from `main`, after merge. D67 §10 is the procedure, with what to check

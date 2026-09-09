@@ -10476,13 +10476,14 @@ nothing about whether compose writes that label at all. It uses `compose create`
 the labels are written at create time (measured), so nothing starts. If `busybox` cannot be obtained
 it **skips loudly** rather than reporting a green section that created nothing.
 
-**Watched red, nine mutations, one at a time, each asserted to have applied — original gone, mutant
+**Watched red, ten mutations, one at a time, each asserted to have applied — original gone, mutant
 present, `bash -n` clean — before its result was believed:**
 
 | Mutation | Red on |
 | --- | --- |
 | the guard call deleted | 2, incl. *"the guard is called at all"* |
 | the guard moved before the router, so a teardown is refused too | *"…after 'step Preflight', so only an up reaches it"* |
+| the whole preflight block moved above the router (added at review, §11) | *"…and the router runs BEFORE preflight, so a teardown never gets there"* |
 | the looser reading (`grep -Fxq` for "among them") | 7, incl. *"a split project is fatal even though this checkout is one of the two"* |
 | no containers treated as fatal | 2 — the first-run case a strict fix breaks |
 | a docker error swallowed as an empty answer | *"an unreachable daemon is an error"* |
@@ -10530,17 +10531,38 @@ From the **main checkout**, on `jacserver`, after this branch is merged:
    `docker ps -a --filter label=com.docker.compose.project=hc-market-quality --format
    '{{.Names}} {{.Label "com.docker.compose.project.config_files"}}'` should still show the five
    `-db` containers naming the pruned worktree. Record `docker volume ls | grep hc-market-quality`
-   — five volumes, and they must all survive.
+   — five volumes, and they must all survive. **And record the tag that is running**, which is the
+   value step 4 needs: `docker inspect -f '{{.Config.Image}}' hc-market-quality-gateway`, at the time
+   of writing `ghcr.io/kojoampia/hc-market-gateway:6d401ecd4e80b0fad94a10601fcba1b20ac6fa91`.
 2. `./quality/startup.sh --local` will **refuse**, naming both paths. That is the guard working, not
    a fault.
 3. `./quality/startup.sh --local --down` — **not** `--clean`. This stops and removes all ten
    containers and keeps every database volume. It is not refused, by design (§5).
 4. `TAG=<sha> ./quality/startup.sh --local` — recreates all ten from the main checkout, and this time
    the guard sees no containers, reports a first run and proceeds.
+   **Name the sha; do not let it default.** `env_for_compose` defaults `TAG` to the main checkout's
+   `git rev-parse HEAD`, which after a merge is the **merge commit** — a tag `release.yml` may not
+   have published yet, and *"a green publish does not mean the image is in the registry"* is this
+   repository's own finding: one run logged success for all five and GHCR held three. So use **the
+   tag recorded in step 1** to roll the stack in place, or the merge sha **only once
+   `release.yml`'s "All five published" job is green for it**.
+   This matters here more than it usually would, because of *when* the pull happens: `compose pull ||
+   die` runs inside this step, **after step 3 has already removed all ten containers**. The script's
+   own message says a pull failure "leaves the stack exactly as it was", and that is true of an
+   ordinary `up` and not of this sequence. Nothing is lost — the volumes are untouched and re-running
+   step 4 with a published tag recovers it — but the stack is down in the meantime, so this is not
+   the step to discover a missing image on.
 5. **After:** `docker compose ls` must name **one** config file; all ten containers must carry it;
    the five volumes must be the same five, with the same creation dates; and `./deploy/verify-cycle.sh`
    against the quality box (the `HC_*_PORT`/`HC_*_DB_CTR` invocation in CLAUDE.md) must pass, which
    is what proves the data came back rather than merely that containers started.
+   **One dangling anonymous volume afterwards is expected and is not leaked data.** `gateway-db` has a
+   second mount — mongo's `/data/configdb`, an anonymous volume carrying no compose project label
+   (§6). **Measured on a throwaway project rather than read off the documentation**, because it goes
+   into a procedure somebody follows: a bare `down` keeps it and it becomes dangling
+   (`still present: 1`, `dangling: 1`), and the recreated container gets a fresh one. So
+   `docker volume ls -qf dangling=true` will name one hex id that was not there before. It holds
+   nothing this estate reads, and it is invisible to D65's `project_volumes` under either filter.
 
 `quality/.jwt-secret` and `quality/.privacy-pepper` must be the main checkout's own — untouched, not
 copied from anywhere. If they are missing there, **stop**: D65's guard will refuse the `up` in step 4
@@ -10553,7 +10575,7 @@ reproducing the split with one directory deleted; the relabel-only-what-is-recre
 a second throwaway project, including that `down`+`up` restores both labels; `bash -n
 quality/startup.sh`; the new guard **lifted out and run against the live `hc-market-quality` project
 twice** — once with `HERE` in this worktree and once with `HERE` at the main checkout, both refusing
-and both starting nothing; the new check under **`bash -e`**, green at **27** and red nine ways;
+and both starting nothing; the new check under **`bash -e`**, green at **28** and red ten ways;
 `.github/checks/quality-pepper-persistence-test.sh` green at 40 and
 `.github/checks/shared-plane-wiring-test.sh` green at 16, neither disturbed;
 `docker compose -f quality/compose.yml config` clean and `quality/compose.yml` **byte-identical to
@@ -10563,3 +10585,62 @@ in any mode that starts, recreates or stops a container; neither gitignored secr
 this worktree; no volume of any real project was created, dropped or reseeded; no database container
 was touched; nothing was published to the broker.** The two throwaway compose projects were removed
 and their absence checked. No Java changed, so no Maven build was run.
+
+### §11 At review — the ordering assertion pinned the wrong relation
+
+**No blocking findings.** The review attacked the guard as a false positive and found none: a first
+run proceeds (verified two ways, including on a throwaway after a full `down`), a routine roll to a
+new `TAG` does not false-fire because the unrecreated databases keep the *same-path* label, the exact
+set holds, a stray labelled container fails closed, and `--down` keeps the volumes — that last one
+re-measured on a throwaway split project with one config directory deleted. §6's mount table was
+re-enumerated independently and matched, which is also what confirms NEW-30's deferral: compose writes
+no checkout-identifying label on a volume (the live labels are `project`, `volume`, `version`,
+`config-hash` — and the hash identifies the *volume's* config, not the checkout).
+
+**The one real defect was in the check, and it is the fourteenth of this family here.** §6b asserted
+`call_ln > pre_ln` — the guard sits after `step "Preflight"` — and that each of `down`/`clean`/`verify`
+has a router arm containing `exit 0`. **It never asserted that the router precedes preflight**, so
+moving the *whole* preflight block above the router satisfied every assertion in the file:
+
+```
+committed  case "$ACTION" in @760  ->  step "Preflight" @766  ->  check_project_checkout @772
+mutant     case "$ACTION" in @768  ->  step "Preflight" @760  ->  check_project_checkout @766
+           bash -n clean        check: 27 passed, 0 failed, exit 0
+```
+
+In that mutant `--down` reaches the guard, and against a split project the guard refuses **the very
+remedy its own message prints** — the wedged stack §5's exemption exists to prevent, shipped with CI
+green. The committed file was correct throughout; what fell short was the check's reach against its
+assertion's own *name*, *"…so only an `up` reaches it"*. It pins all three now —
+`router < preflight < call` — and the mutation above goes red on the new assertion **and only on it**,
+which is what establishes that the missing relation was the missing one.
+
+**Two things the review asked for in the roll procedure, both about the highest-consequence step.**
+`env_for_compose` defaults `TAG` to the main checkout's `HEAD`, which after a merge is the merge
+commit — a tag `release.yml` may not have published, against a repository whose own record is that a
+green matrix shipped three images of five. And `compose pull || die` runs in **step 4, after step 3
+has removed all ten containers**, so a pull failure lands with the stack down rather than "exactly as
+it was" as the script's message says. §10 now records the running tag in step 1 and names which sha to
+use in step 4, with the reason stated rather than implied.
+
+**Three optionals, all taken.** (1) The refusal's first remedy — *"run this from the checkout docker
+names above"* — has no answer for a split project, which is the state it was built for; the review ran
+the lifted guard from **both** named checkouts and got rc 3 each. It is qualified now, and option 2 is
+named as the remedy for a split. (2) §10 step 5 says a dangling anonymous volume afterwards is
+expected and not leaked data — `gateway-db`'s `/data/configdb`, measured on a throwaway rather than
+read off the documentation, because it goes into a procedure somebody follows. (3) A container
+carrying this project's label and **no** `config_files` label was annotated *"this path does not
+exist"* against an empty string; it says *"docker records no compose file for this container"* now,
+which is the same fail-closed refusal with the right cause on it.
+
+**Verified at review, by running**: the reviewer's mutation reproduced as an asserted mutant and
+watched red on exactly the new assertion; the line numbers above printed from the committed file and
+the mutant rather than reasoned; the anonymous-volume behaviour measured on its own throwaway project,
+which was removed; the running gateway tag read off the daemon rather than copied from the brief; the
+whole check re-run under **`bash -e`** at **28** green, and **all ten** mutations red on the
+assertions that name them, each asserted to have applied and to parse first, with the file confirmed
+byte-identical to the original afterwards. `quality-pepper-persistence-test.sh` (40) and
+`shared-plane-wiring-test.sh` (16) re-run green, `quality/compose.yml` still byte-identical to
+`6d401ec`, `sync-appendices.sh --check` green, `extract-seed.mjs` leaving the tree clean. **Nothing
+was started, stopped, recreated or reseeded on the live quality stack, and its ten containers and five
+volumes were re-counted afterwards.**

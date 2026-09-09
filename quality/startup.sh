@@ -333,9 +333,17 @@ check_project_checkout() {
   local report="" name cfg one note
   while IFS=$'\t' read -r name cfg; do
     note=""
-    while IFS= read -r one; do
-      [[ -f "$one" ]] || note="   <- this path does not exist on this host"
-    done < <(printf '%s\n' "$cfg" | tr ',' '\n')
+    if [[ -z "$cfg" ]]; then
+      # A container carrying this project's label and NO config_files label at all — `docker run
+      # --label` by hand, or a compose old enough not to have written one. Without this arm it was
+      # annotated "this path does not exist" against an empty string, which is fail-closed and reads
+      # as a deleted directory rather than as a container compose did not create.
+      note="(docker records no compose file for this container)"
+    else
+      while IFS= read -r one; do
+        [[ -f "$one" ]] || note="   <- this path does not exist on this host"
+      done < <(printf '%s\n' "$cfg" | tr ',' '\n')
+    fi
     report+="      ${name}  ${cfg}${note}"$'\n'
   done < <(printf '%s\n' "$rows")
 
@@ -351,9 +359,12 @@ $report
     from the wrong place splits the project rather than moving it, and no later 'up' from the right
     place puts it back (decisions.md D67).
     Do one of:
-      - run this from the checkout docker names above, if it still exists;
+      - run this from the checkout docker names above — but only if every row above names the SAME
+        one. Where the rows disagree, as they do on a project that has been split, no checkout on
+        this host satisfies the requirement and this option has no answer: use the next one;
       - move the project here deliberately: './startup.sh --local --down' (not refused, keeps every
-        database volume), then run this again — that recreates all ten from here in one step;
+        database volume), then run this again — that recreates all ten from here in one step, and
+        it is the remedy for a split project;
       - './startup.sh --local --clean' if you also mean to drop the data."
 }
 

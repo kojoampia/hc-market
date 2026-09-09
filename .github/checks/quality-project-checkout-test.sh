@@ -147,14 +147,27 @@ rm -rf "$here"
 #     refusal recommends — refusing it would refuse the remedy along with the mistake, D65 §6 one
 #     guard along — so this asserts the ordering that makes it exempt, not a flag inside the guard.
 #     Line numbers, because "the call is after preflight" is exactly the claim.
-#     `|| x=""` on both, and that is not defensive noise: `grep` exits 1 having matched nothing,
-#     this file sets `pipefail`, so the assignment fails and `set -e` aborts the whole run — with no
-#     output, which reads as no failures. Watched happen, on the mutation that deletes the call.
+#
+#     THREE relations, not two, and the missing one was a real fail-open found at review. Asserting
+#     only `call > preflight` pins the guard to the preflight block and says nothing about where
+#     that block sits: moving the WHOLE of preflight above the router satisfies it, parses, and
+#     leaves this file green at 27 — while `--down` then reaches the guard, and against a split
+#     project the guard refuses **the very remedy its own message prints**. That is the wedged stack
+#     the exemption exists to prevent, shipped with CI green. So the router is pinned too:
+#     `router < preflight < call`.
+#
+#     `|| x=""` on all three, and that is not defensive noise: `grep` exits 1 having matched
+#     nothing, this file sets `pipefail`, so the assignment fails and `set -e` aborts the whole run
+#     — with no output, which reads as no failures. Watched happen, on the mutation that deletes the
+#     call.
+router_ln="$(grep -n '^case "\$ACTION" in' "$STARTUP" | head -1 | cut -d: -f1)" || router_ln=""
 pre_ln="$(grep -n '^step "Preflight"' "$STARTUP" | head -1 | cut -d: -f1)" || pre_ln=""
 call_ln="$(grep -n '^check_project_checkout$' "$STARTUP" | head -1 | cut -d: -f1)" || call_ln=""
 check "the guard is called at all" "$([[ -n "$call_ln" ]] && echo yes || echo no)" "yes"
 check "…after 'step Preflight', so only an up reaches it" \
   "$([[ -n "$pre_ln" && -n "$call_ln" ]] && (( call_ln > pre_ln )) && echo yes || echo no)" "yes"
+check "…and the router runs BEFORE preflight, so a teardown never gets there" \
+  "$([[ -n "$router_ln" && -n "$pre_ln" ]] && (( router_ln < pre_ln )) && echo yes || echo no)" "yes"
 for a in down clean verify; do
   check "…and '$a' still exits at the router before preflight" \
     "$(sed -n "/^case \"\$ACTION\" in/,/^esac/p" "$STARTUP" | grep -c "^ *$a)\(  *\)\?.*exit 0" || true)" "1"

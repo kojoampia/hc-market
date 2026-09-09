@@ -1026,6 +1026,11 @@ time.**
   is also the remedy the refusal prints, and it is why `down`, `clean` and `verify` are exempt — they
   exit at the router before preflight, the property D66's shared-plane check already relies on, so
   the exemption is structural rather than a flag.
+  **That structure is pinned as THREE relations, not two** — `router < preflight < call` — and the
+  third was missing for one commit (D67 §11). Asserting only "the guard is after preflight" is
+  satisfied by moving the *whole* preflight block above the router, which parses, keeps CI green, and
+  makes `--down` reach the guard: on a split project the guard then refuses **the very remedy its own
+  message prints**. Never assert a position without asserting what it is positioned against.
   **The EXACT set is required**, not "this checkout is among the ones docker names": today's split
   satisfies the looser reading, which is to say the looser reading is satisfied by precisely the
   state the guard exists to end. **No containers at all is a first run and proceeds** — the case a
