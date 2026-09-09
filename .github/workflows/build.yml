@@ -404,6 +404,125 @@ jobs:
       - name: That check's own test
         run: ./.github/checks/observability-claims-test.sh
 
+      # The quality stack must sit on the network its collector is on — decisions.md D64, NEW-24.
+      #
+      # The check above proves the agent is one variable away from being attached. It says nothing
+      # about whether that variable would achieve anything, and for most of this repository's life
+      # it would not have: `otel-collector` resolves on `qualitynet` and nowhere else, the collector
+      # publishes on the HOST's loopback, and this was the only quality stack on jacserver not
+      # joined to that network. All three siblings were, and had been for weeks.
+      #
+      # Losing this again is completely silent in the direction that matters: the five services
+      # start, serve and report healthy on two networks exactly as on three, so nothing here or on
+      # the box goes red until somebody turns telemetry on and finds an empty dashboard.
+      #
+      # THE SERVICE LIST IS DERIVED, never enumerated — every enumerated list in this repository's
+      # CI has gone stale or failed open. It is the services that render a JAVA_OPTS, which is the
+      # same derivation observability-claims.sh uses and picks out exactly the five app services;
+      # the five databases have none and must NOT be on a shared plane. A count of zero is refused,
+      # because "no service is missing the network" is satisfied perfectly by reading no services.
+      #
+      # It reads what compose RENDERS, so no comment stripper is needed for that half. The
+      # startup.sh half is text and is anchored past `#` comment lines instead.
+      - name: The quality stack must sit on the network its collector is on
+        run: |
+          fail=0
+          rendered=$(JWT_BASE64_SECRET=ci-placeholder HC_PRIVACY_PEPPER=ci-placeholder TAG=ci \
+            docker compose -f quality/compose.yml config --format json)
+
+          # 1. Every app service joins it.
+          apps=$(printf '%s' "$rendered" | jq -r '.services | to_entries[]
+                   | select(.value.environment.JAVA_OPTS != null) | .key' | sort)
+          n=$(printf '%s\n' "$apps" | grep -c . || true)
+          if [ "$n" -eq 0 ]; then
+            echo "::error file=quality/compose.yml::no service renders a JAVA_OPTS, so this check established nothing. See decisions.md D64."
+            fail=1
+          else
+            missing=$(printf '%s' "$rendered" | jq -r '.services | to_entries[]
+                        | select(.value.environment.JAVA_OPTS != null)
+                        | select((.value.networks | keys) | index("qualitynet") | not) | .key' | sort)
+            if [ -n "$missing" ]; then
+              echo "::error file=quality/compose.yml::these services are not on qualitynet: $(echo $missing). That is the network the quality monitoring stack sits on; off it, otel-collector resolves nowhere and the agent exports into nothing while every service stays healthy. See decisions.md D64 and backlog NEW-24."
+              fail=1
+            else
+              echo "ok   all $n app services join qualitynet"
+            fi
+            # …and the databases must NOT. A product's Postgres has no business being reachable
+            # from another product's stack, which is the same rule that keeps them off hcnet.
+            leaked=$(printf '%s' "$rendered" | jq -r '.services | to_entries[]
+                       | select(.value.environment.JAVA_OPTS == null)
+                       | select((.value.networks | keys) | index("qualitynet")) | .key' | sort)
+            if [ -n "$leaked" ]; then
+              echo "::error file=quality/compose.yml::these non-application services are on qualitynet: $(echo $leaked). The databases stay on the project's own network. See decisions.md D64."
+              fail=1
+            else
+              echo "ok   no database joins qualitynet"
+            fi
+          fi
+
+          # 2. External, and named `qualitynet` by default.
+          #
+          # Without `external:`, ownership of the collector's network becomes a function of start
+          # order — measured, and narrower than D64 first claimed. With `name:` kept, as it is here,
+          # a non-external declaration ADOPTS a network that already exists and writes no label, so
+          # `down` leaves it alone; but on a host where the monitoring project has been downed and
+          # the network is absent, compose CREATES it carrying this project's labels, and `down`
+          # then removes it — refused while a sibling endpoint is attached, and succeeding the
+          # moment the siblings are stopped too, which is what a reboot looks like. `external: true`
+          # is what makes the answer the same on every host.
+          ext=$(printf '%s' "$rendered" | jq -r '.networks.qualitynet.external // false')
+          name=$(printf '%s' "$rendered" | jq -r '.networks.qualitynet.name // ""')
+          echo "qualitynet external=$ext name=$name"
+          if [ "$ext" != "true" ] || [ "$name" != "qualitynet" ]; then
+            echo "::error file=quality/compose.yml::qualitynet must render as external with the name 'qualitynet'; got external=$ext name=$name. See decisions.md D64."
+            fail=1
+          fi
+
+          # 3. startup.sh creates it, or the stack is unstartable whenever somebody has downed a
+          # monitoring project in another repository — measured: `up` exits 1 on a missing external
+          # network, while `config` and `down` exit 0.
+          #
+          # And both sides must read the SAME variable: a variable only the script reads changes
+          # which network gets created and inspected while compose keeps joining the default, which
+          # is exactly the trap D46 and D50 found twice and which `HC_SHARED_NETWORK` still has in
+          # this very file (backlog NEW-25). `env_for_compose` exports it on every action so a
+          # `--down` cannot address a different network from the `up` that made the containers, and
+          # that property is worth nothing unless compose actually interpolates it.
+          #
+          # THE COMPOSE HALF IS RENDERED, NOT GREPPED, and that is a correction rather than a
+          # preference. This sub-check originally matched `name: ${HC_OTEL_NETWORK:-…}` as text
+          # while the two around it read `docker compose config`, and the departure was the defect:
+          # commenting the line out left the grep matching the commented text, while an external
+          # network with no `name:` renders under its own key — so part 2 stayed green on
+          # `name=qualitynet`, both `ok` lines printed, and the step exited 0 with the variable
+          # reaching nothing. Reproduced before it was fixed. A second render with the variable SET
+          # tests the interpolation instead of its spelling, and no comment can satisfy it.
+          #
+          # The default is compared against part 2's RENDERED name for the same reason — that is
+          # what an operator who sets nothing gets, and it is the name the monitoring stack is on.
+          created=$(grep -vE '^[[:space:]]*#' quality/startup.sh \
+                     | grep -cE 'docker network create +"\$OTEL_NETWORK"' || true)
+          script_default=$(grep -oE '^OTEL_NETWORK="\$\{HC_OTEL_NETWORK:-[a-z0-9_.-]+\}"' quality/startup.sh \
+                     | sed -E 's/.*HC_OTEL_NETWORK:-([a-z0-9_.-]+)\}"/\1/')
+          probed=$(HC_OTEL_NETWORK=ci-probe JWT_BASE64_SECRET=ci-placeholder \
+                     HC_PRIVACY_PEPPER=ci-placeholder TAG=ci \
+                     docker compose -f quality/compose.yml config --format json \
+                   | jq -r '.networks.qualitynet.name // ""')
+          echo "creates=$created script_default='$script_default' HC_OTEL_NETWORK=ci-probe renders name='$probed'"
+          if [ "$created" -eq 0 ]; then
+            echo "::error file=quality/startup.sh::nothing creates \$OTEL_NETWORK. compose declares it external, so 'up' refuses outright when the monitoring project has been downed. See decisions.md D64."
+            fail=1
+          fi
+          if [ "$probed" != "ci-probe" ]; then
+            echo "::error file=quality/compose.yml::with HC_OTEL_NETWORK=ci-probe the qualitynet network still renders as '$probed'. compose must interpolate the same variable startup.sh creates, or the script creates one network and compose joins another — and '--down' then addresses a third. See decisions.md D64 §4."
+            fail=1
+          fi
+          if [ -z "$script_default" ] || [ "$script_default" != "$name" ]; then
+            echo "::error::quality/startup.sh defaults HC_OTEL_NETWORK to '$script_default' and quality/compose.yml renders '$name' with it unset. They must be the same name. See decisions.md D64."
+            fail=1
+          fi
+          exit $fail
+
       # "The agent must be verified as INSTRUMENTING, not merely loading" has been in CLAUDE.md
       # since D25 and was a paragraph of prose that had been run once, by hand. It is a script now
       # (deploy/verify-otel-agent.sh) and this holds the two together.

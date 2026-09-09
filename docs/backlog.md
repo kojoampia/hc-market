@@ -1,6 +1,6 @@
 # Backlog — hc-market
 
-Every open item in this repository, folded into work packages. Sources: `docs/decisions.md` D1–D63,
+Every open item in this repository, folded into work packages. Sources: `docs/decisions.md` D1–D64,
 the two code reviews of 2026-09-01, and the verification runs against the quality box.
 
 **This is a derived document.** `decisions.md` holds the reasoning and stays the record; this holds
@@ -2033,7 +2033,7 @@ nothing answers its queries, held there by CI in both directions. It opened **NE
 
 ---
 
-## NEW-24 — hc-market's quality stack is the only one not on `qualitynet`, so it cannot reach a collector · READY
+## NEW-24 — hc-market's quality stack is the only one not on `qualitynet`, so it cannot reach a collector · DONE (D64)
 
 Opened by **D63**, which found it while establishing what turning the agent on in quality would
 actually do. Deliberately not fixed there: it is a change to the network topology of the last gate
@@ -2087,6 +2087,94 @@ not expose Micrometer to be scraped — they PUSH OpenTelemetry to the collector
 quality JVM carries `-javaagent` either, on eight readings of `/proc/1/cmdline`. The quality box
 therefore collects container logs and docker stats for the whole estate and **no application metrics
 from any product**. Four products wide, and hc-market is the only one that has written it down.
+
+**Closed by D64.** `quality/compose.yml` declares `networks: [quality, qualitynet, hcnet]` on the
+`x-service` anchor — the five app services and not the five databases — with `qualitynet` external
+and named from `${HC_OTEL_NETWORK:-qualitynet}`, and `quality/startup.sh` creates it when it is
+missing, which is the siblings' shape. Exercised by a real `./quality/startup.sh --local`: all five
+containers on 172.24.0.8–.12, all five healthy, `--javaagent` absent and `ERROR` zero in all five,
+the same argv as before, and `--verify` green including through the hostname. The six sibling
+containers were not touched.
+
+Both of the item's questions were taken up, and only one of them could be answered. **Name
+resolution did not change at all** — measured with `getent hosts` from four containers before and
+after, and identical: `gateway` was already a four-way claim on `hcnet` including ours, every
+application container on `qualitynet` is also on `hcnet`, and Docker answers from the nearer network
+first, so no answer in either direction carries a `172.24.x` address. **Whether the agent is quiet
+against a live collector is still unmeasured**, and that is stated rather than reasoned around:
+`monitoring-quality` has been exited since 2026-09-05, starting it is another repository's, and D63's
+35-ERROR figure remains a measurement of a *dead* endpoint only. Joining the network removed the
+second obstacle, not the first. It opened **NEW-25**, **NEW-26** and **NEW-27**.
+
+---
+
+## NEW-25 — `HC_SHARED_NETWORK`, `_CONSUL` and `_KAFKA` do nothing on the quality box · READY
+
+Found by **D64** while deciding how `HC_OTEL_NETWORK` should be wired, and it is the same defect one
+variable family along.
+
+`quality/startup.sh` reads all three and uses them in `check_shared_plane`, so overriding one changes
+which network and which containers the **preflight checks**. `quality/compose.yml` then hardcodes
+every one of them — `name: hcnet`, `hc-shared-quality-consul:8500`, `hc-shared-quality-kafka:9092` —
+so the stack joins and addresses the default regardless. `CLAUDE.md` says *"Override which shared
+plane a stack uses with `HC_SHARED_CONSUL`, `HC_SHARED_KAFKA` and `HC_SHARED_NETWORK` — both
+`deploy-dev.sh` and `quality/startup.sh` read them"*, and for the quality half that is true of the
+reading and false of the effect.
+
+**`deploy-dev.sh` is the correct shape and is the model**: it exports all three and
+`docker-compose.dev.yml` interpolates them (`name: ${HC_SHARED_NETWORK:-hcnet}`). D64 wired
+`HC_OTEL_NETWORK` that way deliberately rather than copying the siblings, whose `OTEL_NETWORK` has
+exactly this defect.
+
+Costs nothing today — nobody has run the quality stack against a second shared plane, and there is
+only one. It is worth closing because a variable that half-works is worse than one that does not
+exist: preflight would pass against the plane you named and the stack would come up on the other one,
+which reads as the override not being implemented rather than as it being half-implemented.
+
+---
+
+## NEW-26 — `verify-outbox-recovery.sh` reconnects booking without its alias · READY
+
+Found by **D64**, by measuring name resolution before and after a restart for an unrelated reason.
+
+The script severs `hc-market-quality-booking` from `hcnet` and reconnects it — on an `EXIT` trap and
+again at the end — with a bare `docker network connect "$NET" "$BOOKING_CTR"`. That restores the
+*connection* and not the **alias**: compose publishes the service name as a DNS alias when it creates
+the container, and a manual reconnect publishes only the container name. Measured on the running
+quality box before this package's restart: `hc-market-quality-booking` carried `aliases=[]` on
+`hcnet`, and `getent hosts booking` from inside two sibling containers answered nothing. A restart
+fixes it, silently, so the state is invisible unless somebody looks between one.
+
+**It costs nothing today and that is why it is an item rather than a fix.** Nothing addresses booking
+by its short name over `hcnet`: `quality/compose.yml` uses `http://hc-market-quality-messaging:8080`
+for exactly this class of reason, and booking's own callers use `booking` over the *project* network,
+which is never severed. The repair is `--alias booking` on both reconnects — but the alias set
+belongs to compose, not to this script, so the honest version reads it back off `docker inspect`
+before disconnecting rather than hardcoding one name.
+
+---
+
+## NEW-27 — `startup.sh` cannot tell a first run from a git worktree, and mints a new pepper · READY
+
+Found by **D64**, which ran the quality stack from a worktree and had to notice this before running
+anything.
+
+`quality/.jwt-secret` and `quality/.privacy-pepper` are gitignored, deliberately (D35): they are
+secrets even in quality. A **git worktree** therefore has neither, while the databases those secrets
+belong to are the same containers and the same volumes. `resolve_secret`'s `else` branch cannot tell
+the two situations apart — no file, no environment variable, so generate — and a fresh pepper against
+databases whose `erased_subject` rows were written under the old one is D35's orphaning, arrived at
+without anybody deciding anything. The signing key half is merely annoying; the pepper half is the
+one that cannot be undone.
+
+D64 side-stepped it by copying both files across before its first run. What would close it: the
+script knows its compose project name and can ask docker whether that project's **volumes already
+exist**. Volumes present and no pepper on disk is not a first run, whatever the directory says, and
+is exactly the state that should refuse rather than generate — the same refusal `resolve_secret`
+already makes when the environment and the file disagree, extended to the case where the file is
+simply somewhere else.
+
+It is a worktree-only hazard today, and worktrees are how work is done here.
 
 ---
 

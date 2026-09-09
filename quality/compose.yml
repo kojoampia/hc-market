@@ -28,10 +28,28 @@ name: hc-market-quality
 
 x-service: &service
   restart: unless-stopped
-  # hcnet is where the shared broker and Consul live. The DATABASES deliberately stay on `quality`
-  # alone — nothing on the shared plane should reach a product's Postgres, and keeping them off is
-  # also what keeps `gateway-db`, `catalog-db` and the rest unambiguous without rewriting them.
-  networks: [quality, hcnet]
+  # THREE networks, and each is a different plane with a different owner (decisions.md D64).
+  #
+  #   quality     this project's own — the five databases and nothing else share it
+  #   qualitynet  the quality MONITORING stack's, in another repository. `otel-collector` resolves
+  #               here and nowhere else, and Alloy reaches these containers over it. hc-market was
+  #               the only quality stack on this host not joined to it (backlog NEW-24); all three
+  #               siblings declare exactly this list.
+  #   hcnet       the shared broker and Consul (hc-infra, D27)
+  #
+  # The DATABASES deliberately stay on `quality` alone — nothing on either shared plane should reach
+  # a product's Postgres, and keeping them off is also what keeps `gateway-db`, `catalog-db` and the
+  # rest unambiguous without rewriting them. This anchor is applied by the five app services only,
+  # which is what makes that true by construction rather than by five separate edits.
+  #
+  # JOINING qualitynet ADDED NO NEW NAME COLLISION, and that was measured rather than assumed
+  # (D64 §2). Compose publishes the service name as a DNS alias on every network a container joins,
+  # so these five now answer to `gateway`, `catalog`, `booking`, `messaging` and `payout` there too.
+  # Every application container on qualitynet is ALSO on hcnet — it is a subset — so every name pair
+  # that could collide already collided, and `gateway` was already claimed by four stacks on hcnet
+  # before this line changed. Re-measure with `getent hosts <name>` from inside a container if the
+  # monitoring stack ever puts something new there; none of its eight service names is one of ours.
+  networks: [quality, qualitynet, hcnet]
   environment: &service-env
     # BOTH profiles, and that is load-bearing rather than habit. SeedDataLoader is
     # @Profile("test & dev") — it requires both, never one alone — so `dev,test` is precisely what
@@ -123,9 +141,17 @@ x-service: &service
     #   HC_OTEL_JAVA_OPTS='-javaagent:/app/otel-javaagent.jar -Dotel.exporter.otlp.endpoint=http://otel-collector:4317' \
     #     ./quality/startup.sh --local
     #
-    # and note the collector only resolves once these containers are on `qualitynet`, which every
-    # OTHER quality stack on this host joins and this one does not — backlog NEW-24. Until that is
-    # closed, turning telemetry on here is one variable plus one network, not one variable.
+    # ONE VARIABLE, since D64. It was one variable plus one network until then — `otel-collector`
+    # resolves on `qualitynet` and nothing else, and this was the only quality stack on this host not
+    # joined to it (backlog NEW-24, now closed). The endpoint stays inside HC_OTEL_JAVA_OPTS rather
+    # than becoming an OTEL_EXPORTER_OTLP_ENDPOINT beside the two variables below, deliberately: the
+    # per-service name genuinely cannot go into one shared variable and the endpoint genuinely can,
+    # and writing it in both places is how the two would eventually disagree (D64 §4).
+    #
+    # WHETHER THE AGENT IS QUIET AGAINST A LIVE COLLECTOR IS STILL UNMEASURED. D63's 35 ERROR lines
+    # per 150 seconds were measured against a collector that is DOWN, and `monitoring-quality` has
+    # been exited since 2026-09-05. Joining the network does not change that number and does not
+    # answer that question — it removes the second obstacle, not the first.
     #
     # TWO variables, not one, copied from docker-compose.prod.yml deliberately. Folding the agent
     # flag into HC_JAVA_OPTS's default would mean an operator raising the heap silently detaches
@@ -570,6 +596,40 @@ services:
 networks:
   quality:
     name: hc-market-quality
+  # The observability plane, owned by the quality monitoring stack in ~/work/infra
+  # (infrastructure/quality/monitoring/services) — decisions.md D64, backlog NEW-24. Its compose
+  # states the contract: `qualitynet` is what lets Alloy reach these containers and lets these
+  # containers resolve `otel-collector`. The collector publishes on 127.0.0.1:4327/4328, which is the
+  # HOST's loopback and not a container's, so without this network the agent could be attached and
+  # would export into nothing — a service that starts, serves, reports healthy and says nothing.
+  #
+  # EXTERNAL, and created by startup.sh when it is missing. Both halves are deliberate and they pull
+  # opposite ways, which is why they are written down (D64 §3):
+  #
+  #   external, because several application stacks join it and none of them owns it. Without it,
+  #   ownership of the collector's network becomes a function of START ORDER — measured on a
+  #   throwaway project, and narrower than D64 first claimed. With `name:` kept, as it is below, a
+  #   non-external declaration ADOPTS a network that already exists: no error, no label written, and
+  #   `down` leaves it standing. (The decoy `hc-market-quality_qualitynet` appears only if `name:` is
+  #   dropped as well, which is a mutation this file does not admit.) The branch that bites is the
+  #   one this whole decision is about: monitoring downed and the network ABSENT, where compose
+  #   creates `qualitynet` carrying THIS project's `com.docker.compose.project` label, and `down`
+  #   then tries to remove it — refused with "Resource is still in use" while a sibling endpoint is
+  #   attached, and succeeding the moment the siblings are stopped too, which is what a reboot or a
+  #   full estate restart looks like. `external: true` gives the same answer on every host.
+  #
+  #   created rather than merely required, because `docker compose up` refuses outright on a missing
+  #   external network (measured: exit 1, "declared as external, but could not be found"), and that
+  #   would make hc-market's quality stack unstartable whenever somebody had `down`ed a monitoring
+  #   project in a different repository. `config` and `down` are unaffected (both exit 0).
+  #
+  # This is the OPPOSITE call to hcnet below, and the difference is what absence means. No hcnet
+  # means the estate's broker and Consul are down, and a stack that starts anyway publishes into
+  # nowhere in silence — so that one is checked and refused. No qualitynet means only that nothing is
+  # collecting, which costs this stack nothing at all while no agent is attached.
+  qualitynet:
+    external: true
+    name: ${HC_OTEL_NETWORK:-qualitynet}
   # The application plane: where the shared Kafka and Consul live. External because hc-infra owns it
   # and every stack joins it — a network compose owns is a network compose deletes, and a
   # `docker compose down` here must not take the estate's event bus with it.

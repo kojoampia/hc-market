@@ -88,7 +88,12 @@ export HC_GATEWAY_PORT=18200 HC_CATALOG_PORT=18201 HC_BOOKING_PORT=18202 \
 There is no `HC_CONSUL_PORT` and no `HC_KAFKA_PORT` any more: this repository publishes neither,
 because it runs neither. `hc-infra` publishes them once, on **18510** (Consul UI) and **19192**
 (broker, from the host). Override *which* shared plane a stack uses with `HC_SHARED_CONSUL`,
-`HC_SHARED_KAFKA` and `HC_SHARED_NETWORK` — both `deploy-dev.sh` and `quality/startup.sh` read them.
+`HC_SHARED_KAFKA` and `HC_SHARED_NETWORK` — **and that works in dev only** (backlog NEW-25, found by
+D64). `deploy-dev.sh` exports all three and `docker-compose.dev.yml` interpolates them.
+`quality/startup.sh` reads them for its **preflight check** and `quality/compose.yml` hardcodes all
+three, so on the quality box an override checks the plane you named and then joins the default one.
+`HC_OTEL_NETWORK` — the quality stack's `qualitynet`, D64 — is deliberately wired the other way, read
+by the script *and* by the compose file's `name:`, which is the shape all four should have.
 
 Only the host mapping moves. Inside the containers every service listens on **8080**, because the
 compose files set `SERVER_PORT: 8080` explicitly — overriding the per-service `serverPort` the JDL
@@ -456,7 +461,22 @@ name** rather than a short service name. `deploy-dev.sh` keeps the un-prefixed n
 maps them, so `--services catalog` is unchanged.
 
 The databases stay **off** `hcnet` for the same reason, in reverse: never reachable from another
-product, and free to keep the short names `catalog-db`, `gateway-db`.
+product, and free to keep the short names `catalog-db`, `gateway-db`. They stay off `qualitynet`
+too, and for once that is enforced: CI refuses any service without a `JAVA_OPTS` on it.
+
+**A third network was added to the quality stack in D64 and moved nothing, and the mechanism is
+worth knowing before the next one.** Docker's embedded resolver walks the *querying* container's
+networks in order and answers from the **first** that matches — it does not merge across them. So a
+name already satisfied on a nearer network never reaches a farther one, which is why our five
+services resolve `gateway`, `catalog`, `booking`, `messaging` and `payout` to their own containers on
+`hc-market-quality` while three sibling `gateway`s sit on two shared planes they are also on.
+Measured with `getent hosts` from four containers before and after, identical both times.
+
+That is a fact about **membership**, not a rule. Joining `qualitynet` was free because every
+application container on it is *also* on `hcnet`, so every collision it could create already existed;
+add a network whose members are not a subset of one you are already on, and the probe has to be run
+again. Run it — `getent hosts <name>` from inside a container — rather than reasoning from the
+compose files.
 
 ### Grepping docker for `market` hides the dev estate entirely
 
@@ -561,20 +581,37 @@ omission before it. Both now assemble `JAVA_OPTS` from the same two variables pr
 **`HC_OTEL_JAVA_OPTS` sets the flag** and unset renders a byte-identical JVM command line to the one
 each has always had.
 
-**It is one variable plus one NETWORK on the quality box, and the variable alone is not enough
-there** (backlog NEW-24). hc-market's quality stack is the only one on this host not joined to
-`qualitynet` — hc-admin, hc-patient and hc-professional all are, and that is what makes
-`otel-collector` resolve. The collector publishes on `127.0.0.1:4327`, which is the *host's*
-loopback and not a container's, so with the flag set and the network absent all five services
-attach the agent and export into nothing. Say "one variable" only about dev, or about a stack that
-already has a route to a collector.
+**It is ONE variable on the quality box too, since D64** — it was one variable plus one network
+until then (backlog NEW-24, now closed). hc-market's quality stack was the only one on this host not
+joined to `qualitynet`, which is where `otel-collector` resolves and nowhere else; the collector
+publishes on `127.0.0.1:4327`, the *host's* loopback and not a container's, so with the flag set and
+the network absent all five services would have attached the agent and exported into nothing.
+`quality/compose.yml` now declares `networks: [quality, qualitynet, hcnet]` on its `x-service`
+anchor — the five app services, never the five databases — and `quality/startup.sh` creates
+`qualitynet` when it is missing, so a host whose monitoring project has been fully `down`ed still
+starts. CI asserts all four halves.
+
+**Joining it changed no name, and that was measured rather than reasoned** (D64 §2). Compose
+publishes the service name as an alias on every network a container joins, so these five now answer
+to `gateway`, `catalog`, `booking`, `messaging` and `payout` on `qualitynet` too — and `gateway` was
+already claimed there by three siblings. Nothing moved, because every application container on
+`qualitynet` is **also** on `hcnet`, where `gateway` was already a four-way claim including ours, and
+Docker's resolver answers from the querying container's nearest network first. `getent hosts` from
+four containers before and after is identical and **no answer carries a `172.24.x` address**. That is
+a fact about today's membership, not a theorem: the day something joins `qualitynet` that is not also
+on `hcnet`, re-run the probe.
 
 Off by measurement rather than by taste: against a collector that is down — which
-`monitoring-quality` on this host has been for days — the agent writes **35 ERROR lines with stack
-traces every 150 seconds** at its own default intervals, and all five quality services carry
+`monitoring-quality` on this host has been since 2026-09-05 — the agent writes **35 ERROR lines with
+stack traces every 150 seconds** at its own default intervals, and all five quality services carry
 **zero** ERROR lines across their entire life. `deploy/observability/hc-market-rules.yaml` says so
 at the top and carries a `NOT-YET-ATTACHED` marker that CI holds against what the compose files
 render, in both directions.
+
+**Nobody has measured it against a LIVE collector, and D64 did not either.** The whole case for
+leaving the agent off rests on that 35, and 35 is a number about a *dead* endpoint. Joining the
+network removed the second obstacle, not the first. Starting `monitoring-quality` is another
+repository's business.
 
 ### Jib images have no `curl` and no `wget`
 
