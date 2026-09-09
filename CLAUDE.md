@@ -558,13 +558,23 @@ its live constants and CI compares them against this section, which is what stop
 NEW-23). `deploy/docker/docker-compose.prod.yml` attaches it and production has never been
 deployed; `quality/compose.yml` and `docker-compose.dev.yml` do not, deliberately since D63 and by
 omission before it. Both now assemble `JAVA_OPTS` from the same two variables production uses, so
-**`HC_OTEL_JAVA_OPTS` alone turns it on** and unset renders a byte-identical JVM command line to
-the one each has always had. Off by measurement rather than by taste: against a collector that is
-down — which `monitoring-quality` on this host has been for days — the agent writes **35 ERROR
-lines with stack traces every 150 seconds** at its own default intervals, and all five quality
-services currently carry **zero** ERROR lines across their entire life. `deploy/observability/
-hc-market-rules.yaml` says so at the top and carries a `NOT-YET-ATTACHED` marker that CI holds
-against what the compose files render, in both directions.
+**`HC_OTEL_JAVA_OPTS` sets the flag** and unset renders a byte-identical JVM command line to the one
+each has always had.
+
+**It is one variable plus one NETWORK on the quality box, and the variable alone is not enough
+there** (backlog NEW-24). hc-market's quality stack is the only one on this host not joined to
+`qualitynet` — hc-admin, hc-patient and hc-professional all are, and that is what makes
+`otel-collector` resolve. The collector publishes on `127.0.0.1:4327`, which is the *host's*
+loopback and not a container's, so with the flag set and the network absent all five services
+attach the agent and export into nothing. Say "one variable" only about dev, or about a stack that
+already has a route to a collector.
+
+Off by measurement rather than by taste: against a collector that is down — which
+`monitoring-quality` on this host has been for days — the agent writes **35 ERROR lines with stack
+traces every 150 seconds** at its own default intervals, and all five quality services carry
+**zero** ERROR lines across their entire life. `deploy/observability/hc-market-rules.yaml` says so
+at the top and carries a `NOT-YET-ATTACHED` marker that CI holds against what the compose files
+render, in both directions.
 
 ### Jib images have no `curl` and no `wget`
 

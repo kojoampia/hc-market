@@ -108,9 +108,11 @@ x-service: &service
     # OTLP endpoint the agent is loud, permanently: 35 ERROR lines with full stack traces in 150
     # seconds at the agent's OWN default intervals (18 logs, 13 spans, 3 metrics; nothing forced),
     # from io.opentelemetry.exporter.otlp.internal.HttpExporter. All five services on this box
-    # currently carry ZERO ERROR lines across their entire life — 271 to 2,821 log lines each —
-    # so attaching it unconditionally would replace the estate's one free signal with about 840
-    # ERROR lines an hour per service, for ever, and bury a real one inside known noise.
+    # currently carry ZERO ERROR lines across their entire life — a few hundred to a few thousand
+    # log lines each, and the ZERO is the load-bearing half; the counts move with uptime and were
+    # 271-2,821 when this was written. So attaching it unconditionally would replace the estate's
+    # one free signal with about 840 ERROR lines an hour per service, for ever, and bury a real
+    # one inside known noise.
     #
     # The siblings agree, and it is worth knowing they do: no hc-admin, hc-patient or
     # hc-professional QUALITY JVM carries `-javaagent` either, nor does either hc-vendor one —

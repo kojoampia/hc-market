@@ -9098,7 +9098,7 @@ container was started, stopped or written to; the `monitoring-quality` stack was
 | `-javaagent` on `/proc/1/cmdline`, five hc-market quality containers | **absent in all five** |
 | the same, **eight** sibling JVMs — hc-admin, hc-patient and hc-professional quality (two each) plus hc-vendor (two) | **absent in all eight** |
 | `deploy/docker/docker-compose.prod.yml` | the only file that attaches it, and **production has never been deployed** (D49) |
-| ERROR lines in all five quality services, whole container life (271–2,821 log lines each) | **zero** |
+| ERROR lines in all five quality services, whole container life | **zero** — of 271–2,821 log lines each when D63 was written, 341–3,944 at its review, still zero |
 | the agent against an unreachable OTLP endpoint, defaults, 150 s | **35 ERROR lines** with stack traces — 18 logs, 13 spans, 3 metrics |
 
 The Jib wiring works. The image is right. The flag is never passed.
@@ -9127,7 +9127,8 @@ That is ~840 an hour per service. Against the estate's current **zero** ERROR li
 across its whole life, attaching it unconditionally would replace this box's one free signal with
 permanent known noise and hide the next real error inside it.
 
-Three alternatives were considered and each is recorded with the reason it lost:
+**Four** alternatives were considered and each is recorded with the reason it lost — trust the list
+and not the number, which this document has got wrong before and got wrong here too, at review:
 
 - **Attach it unconditionally.** The quality box exists to surface deploy-shaped defects, and this is
   one — the strongest argument on the table. It loses on the number above. A gate that is red about
@@ -9196,7 +9197,8 @@ make the script unrunnable in the loop it exists for. The trade is deliberate.
 every push. What rots is the *recipe*, so `--describe` prints the script's **live constants** — the
 same values its assertions use, never a second copy — and a CI step compares them against the words
 in CLAUDE.md. The script side of that comparison is therefore behavioural: a comment in the script
-naming the right variable cannot satisfy it. Watched firing five ways, including the guide edited
+naming the right variable cannot satisfy it. Watched firing **seven** ways after §9's corrections,
+including the guide edited
 past the script and the script edited past the guide.
 
 ### §5 Decision three: the rules file says what it is for, in place
@@ -9291,7 +9293,8 @@ does not exist; these alerts have a data source) are corrected where they were m
   `OTEL_BLRP_SCHEDULE_DELAY` — which is the correction NEW-23's opening measurement asked for.
 - **Verified by running**: `verify-otel-agent.sh` green, and red three ways (loads-but-instruments-
   nothing, a JRE with no `javac`, no agent jar found); the recipe-agreement check green and red five
-  ways; `observability-claims.sh` green and its test's eight assertions all behaving as required,
+  ways; `observability-claims.sh` green and its test's **nine** assertions — seven red, two green —
+  all behaving as required,
   under `bash -e` as Actions runs a step; both compose files rendering in **both** variable states;
   the entrypoint's word-splitting reproduced; `sync-appendices.sh --check`; the seed regenerating
   byte-identically; every touched shell script parsing.
@@ -9312,3 +9315,80 @@ does not exist; these alerts have a data source) are corrected where they were m
 - **Out of scope and left alone**: the Jib `extraDirectories` wiring (correct, and proven by the jar
   being in all five images); the `monitoring-quality` stack and everything in its repository; joining
   `qualitynet` (NEW-24); the wedged `healthconnect-dev-*` containers.
+
+### §9 At review: the tenth fail-open, inside the commit that closed the ninth
+
+Two findings, both in the *"CLAUDE.md's agent recipe and verify-otel-agent.sh must agree"* step, both
+reproduced by the reviewer and then again here before being fixed. Neither was in the check this
+package was written to add — they were in the small step beside it, which is where they always are.
+
+**The needle built from a missing key was the empty string.** `get()` was `sed -n "s/^$1=//p"` and
+nothing else, so a `--describe` key that is *renamed* rather than revalued yields empty — and
+`grep -qF -- ""` matches every line of every file. Measured, by renaming `span-kind=` to `kind=` in
+the script's own output: the step printed `ok CLAUDE.md names ''` six times and exited 0. So the one
+realistic drift it exists for — the script's contract moving while the guide stands still — passed
+silently.
+
+**This is the tenth instance of the class, and it arrived inside the commit closing the ninth.** D48
+through D56 found eight comment-stripping fail-opens; the ninth was inside the fix for the previous
+eight (`strip-comments.awk`'s own callers passing having read nothing); this is the tenth, in a check
+whose commit message argued it needed no stripper. **The mechanism is different and the shape is
+identical**: a matcher whose subject can become vacuous, matching vacuously, and reporting `ok`. The
+lesson generalises past comments — *a check must refuse an empty subject before it refuses a wrong
+one* — and the four existing text checks each guard the existence of `strip-comments.awk` for exactly
+this reason, which is the precedent this one had failed to copy.
+
+Fixing it inside `get()` would have been the same defect through its own fix, and that is worth
+recording because it is the obvious repair: `get` is called from `$( )`, a **subshell**, so an
+`exit 1` there ends the substitution and leaves the step running with the empty needle it was meant
+to prevent. The keys are validated in a loop in the step's own shell instead, before any needle is
+built, each named in its own message.
+
+**The bare `SERVER` needle was already satisfied by a compose port.** The step's comment said values
+are asserted as pairs because bare ones *"would match something unrelated for ever"* — and only two
+of six needles were pairs. Measured in `CLAUDE.md`: `SERVER` matched five lines, **two of them
+nothing to do with this** — `SERVER_PORT: 8080` in the compose section at line 94, and
+`OTEL_INSTRUMENTATION_JAVA_HTTP_SERVER_ENABLED` in the neighbouring paragraph. Deleting every
+sentence about `SERVER` spans from the recipe left it green off the compose port. Verified
+before-and-after against the committed step and the fixed one: `exit=0 GREEN — fail-open` and
+`exit=1 RED — caught`, with the same mutation.
+
+That is D53's rule about a stated reason, one level along: **the safeguard was true of the check's
+design and was not the thing doing the work for four of its six needles.** The needle is
+`SERVER span` now.
+
+**`http.route` was deliberately left bare, and the reason is measured rather than aesthetic.** It has
+two matches, both in the recipe sections, and it is a dotted semantic-convention attribute name — a
+token that cannot occur by accident in prose, which is precisely what `SERVER` was not. Pairing it
+into a phrase was tried and rejected: it drops two in-context matches to one and goes red on a
+harmless rewording, which is a red on correct text rather than margin. `/app/otel-javaagent.jar` (3
+matches) and the script's own path (1) are the same case. The step's comment now states this per
+needle, with the counts, instead of claiming a pairing rule it did not follow.
+
+**A third thing, found only by running it.** The first harness for the key-rename case used an
+anchored `sed 's/^echo "span-kind=/…/'` against a line that is **indented**, so the mutation silently
+applied to nothing and the case reported green — a mutation that does not apply is indistinguishable
+from a check that holds. It is called out here because it is the same failure as the two above, in
+the tooling rather than the check: the harness now prints `--describe`'s actual output before
+asserting, so a no-op mutation is visible rather than inferred.
+
+Four documentation corrections went in beside them, all one defect — *trust the list, not the
+number*, which this repository has been wrong about before: §3 said "three alternatives" over four
+bullets; §8 said "eight assertions" where `grep -c '^expect '` says nine (seven red, two green); a
+path was split across a line inside a code span in `CLAUDE.md`; and the quality log-line figures were
+a moving number restated as a fact — 271–2,821 when written, 341–3,944 at review, **zero ERROR
+throughout**, which is the half that was ever load-bearing. Both places now say so.
+
+And one sentence was carrying a claim the rest of the package had already qualified: `CLAUDE.md` said
+`HC_OTEL_JAVA_OPTS` alone turns the agent on, while the quality compose comment and §6 both say **one
+variable plus one network** on this box. The guide's sentence is the one people quote, and on the only
+quality host that exists the flag alone attaches an agent that exports into nothing. It now carries
+NEW-24's caveat where it is stated, not one section away.
+
+**Verified in this round, by running**: the recipe step extracted from `build.yml` on every run and
+executed under `bash -e` — green on a clean tree and red **six** ways, each with a distinct message
+naming its cause (a renamed `--describe` key, an emptied one, the recipe's `SERVER span` sentences
+deleted with `SERVER_PORT` left alone, the script's span kind renamed, the guide no longer naming the
+script, the script deleted); the same `SERVER` mutation run against the **committed** step to
+establish it had been green there; `observability-claims.sh` and its nine-assertion harness re-run
+under `bash -e` and unchanged; the rules file, both compose files and the workflow re-parsed.
