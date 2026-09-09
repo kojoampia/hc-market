@@ -9071,3 +9071,244 @@ found false.
 - **Not exercised: production, in any form.**
 - **Out of scope and left alone**: WP-19, `deploy/prod-server/`, the OTel fix (opened as NEW-23 and
   not fixed), `hc-patient`'s administrator defect, and the wedged `healthconnect-dev-*` containers.
+
+---
+
+## D63 — The agent is in every image and attached in no environment, and five alerts over a signal nobody emits
+
+Backlog **NEW-23**, opened by **D62** while it was reading the running quality containers for an
+unrelated reason. **`main` ended at D62 when this began, the backlog's highest item was NEW-23, and
+`gh pr list --state open` answered nothing** — all three re-checked rather than taken from the brief.
+
+D25 decided the observability story: bake the OpenTelemetry Java agent into the Jib image, push OTLP
+to the host's shared collector, mount alert rules per application. Every part of that was built and
+every part of it is guarded — `combine.self="override"` so Jib cannot silently drop the jar, a CI
+check that each `pom.xml` still carries the wiring by name, a rules file with its own install
+instructions. **All of it guards the build half of a runtime path that has executed nowhere.**
+
+### §1 What was established, and how
+
+Every figure here is a read off something already running, or a measurement on a throwaway JVM. No
+container was started, stopped or written to; the `monitoring-quality` stack was **not** started.
+
+| | |
+| --- | --- |
+| `/app/otel-javaagent.jar` in the five quality images | present in **all five**, **24,665,598 bytes** each |
+| its `Implementation-Version` | **2.30.0**, matching `<opentelemetry-javaagent.version>` in all five poms |
+| `-javaagent` on `/proc/1/cmdline`, five hc-market quality containers | **absent in all five** |
+| the same, **eight** sibling JVMs — hc-admin, hc-patient and hc-professional quality (two each) plus hc-vendor (two) | **absent in all eight** |
+| `deploy/docker/docker-compose.prod.yml` | the only file that attaches it, and **production has never been deployed** (D49) |
+| ERROR lines in all five quality services, whole container life (271–2,821 log lines each) | **zero** |
+| the agent against an unreachable OTLP endpoint, defaults, 150 s | **35 ERROR lines** with stack traces — 18 logs, 13 spans, 3 metrics |
+
+The Jib wiring works. The image is right. The flag is never passed.
+
+### §2 The backlog's own premise was false, and the real question was different
+
+NEW-23 says *"`jacserver` has no `otel-collector` on it, so the exporter would fail on every export"*.
+**It has one.** `docker compose ls -a` names the project `monitoring-quality`, working directory
+`/home/kojo/work/infra/infrastructure/quality/monitoring/services` — a **different repository** —
+with `otel-collector-quality`, `grafana-quality`, `mimir-quality`, `loki-quality`, `tempo-quality`,
+`alloy-quality` and two exporters. All eight have been **exited for days**.
+
+So the question is not "is there a collector" but "what happens when the agent is attached and the
+collector is down", and that is a measurement rather than an argument. This is D51/D52's rule again,
+one subject along: *a data answer of this kind is never transferable.* The premise was reasonable, it
+was written by someone who had just read five containers correctly, and it was wrong — which is why
+it is stated here rather than quietly corrected.
+
+### §3 Decision one: quality and dev attach nothing, and it becomes one variable
+
+**Measured, not preferred.** With the collector down, the agent is loud at **ERROR with a full stack
+trace, for ever**: 35 in 150 seconds at the agent's *own* defaults, nothing forced — 18 log-export
+failures, 13 span, 3 metric, from `io.opentelemetry.exporter.otlp.internal.HttpExporter` (default
+protocol `http/protobuf` on :4318; production sets `grpc`, and the shape is identical either way).
+That is ~840 an hour per service. Against the estate's current **zero** ERROR lines per service
+across its whole life, attaching it unconditionally would replace this box's one free signal with
+permanent known noise and hide the next real error inside it.
+
+Three alternatives were considered and each is recorded with the reason it lost:
+
+- **Attach it unconditionally.** The quality box exists to surface deploy-shaped defects, and this is
+  one — the strongest argument on the table. It loses on the number above. A gate that is red about
+  something else for ever is not a gate, and the failure it would mask is the class this repository
+  has caught by reading logs eight times.
+- **Attach it with `OTEL_*_EXPORTER=none`, or `logging`.** Silent, and worse than not attaching it:
+  it makes `/proc/1/cmdline` say `-javaagent` while nothing is exported, so the one cheap check that
+  distinguishes the two states starts lying. `logging` trades the ERROR flood for an INFO flood.
+- **Leave it hardcoded as today.** This is `main`, and it is the defect: `JAVA_OPTS: -Xmx512m
+  -Xms256m` in quality and no `JAVA_OPTS` at all in dev are not statements that the agent is off,
+  they are the absence of any statement. Nobody could tell from either file that a decision had been
+  taken, because none had.
+- **Start `monitoring-quality`.** Out of bounds: another repository's containers, and this package
+  does not touch infrastructure other products depend on.
+
+**What replaced it.** Both files now assemble `JAVA_OPTS` from the same **two** variables production
+uses, for production's stated reason — an operator raising the heap must not be able to detach the
+agent, because that failure is completely silent:
+
+```yaml
+quality:  JAVA_OPTS: ${HC_JAVA_OPTS:--Xmx512m -Xms256m} ${HC_OTEL_JAVA_OPTS:-}
+dev:      JAVA_OPTS: ${HC_JAVA_OPTS:-}                  ${HC_OTEL_JAVA_OPTS:-}
+```
+
+**Unset renders a byte-identical JVM command line to today's**, which was proved rather than assumed:
+`docker compose config` renders `-Xmx512m -Xms256m ` and `< >` respectively — the interpolation adds
+whitespace — and the entrypoint's `exec java ${JAVA_OPTS}` is unquoted, so a faithful reproduction of
+that line yields `argc=7` and `argc=5`, the same argv in both cases. Set, all five services in both
+files render the flag. Both states are read off `docker compose config`, never off the YAML.
+
+Five `OTEL_SERVICE_NAME` entries and an `OTEL_RESOURCE_ATTRIBUTES` go in beside it, inert while no
+agent is attached because nothing in these services reads an `OTEL_*` variable. They are there
+because the per-service name is **the only part of the switch that cannot go into one shared
+variable**, and without them a reversal reports five services as `unknown_service:java` — a switch
+that produces unusable telemetry is not a reversal. Quality takes production's names, exactly as its
+Consul service names already do; dev takes the `hc-market-dev-` infix its Consul names already carry,
+for the same reason those exist. `deployment.environment` separates the three if they ever reach one
+tenant.
+
+### §4 Decision two: the instrumentation proof becomes a command
+
+There was nothing to decide — CLAUDE.md has stated the rule and the recipe since D25 — and the gap
+was that the recipe was **prose that had been run once, by hand, in August 2026**. A check nobody can
+re-run is a claim.
+
+`deploy/verify-otel-agent.sh` is that recipe as a command. It needs no estate, no database, no
+container and no network egress: a JDK, the agent jar, and one loopback request against an embedded
+`com.sun.net.httpserver`. It reports **loading** and **instrumenting** separately, because collapsing
+them is the entire failure mode — `jvm_thread_count` comes off JMX MBeans and arrives whether or not
+a single application class is rewritten, which is what makes `service:up:current` green for an agent
+that instruments nothing.
+
+Watched red three ways and green once. The red that matters is
+`OTEL_INSTRUMENTATION_JAVA_HTTP_SERVER_ENABLED=false`: the banner still logs, the check still says
+`ok agent LOADED`, and it fails on the second assertion — hc-patient's 2.9.0 failure reproduced on
+demand. **CLIENT spans still appear in that run**, so a check that had merely grepped for "a span"
+would have passed it.
+
+**What it does not prove, said in the file as well as here.** The probe is instrumented by the
+agent's `java-http-server` module. That is a real rewrite of a real application class, which is the
+property in question, but it is not Tomcat and not `reactor-netty`; a regression confined to those
+would pass. Running a service jar instead would need a PostgreSQL or a MongoDB per service and would
+make the script unrunnable in the loop it exists for. The trade is deliberate.
+
+**It is not wired into CI as a run.** CI has no service to point it at and no reason to pull 24 MB on
+every push. What rots is the *recipe*, so `--describe` prints the script's **live constants** — the
+same values its assertions use, never a second copy — and a CI step compares them against the words
+in CLAUDE.md. The script side of that comparison is therefore behavioural: a comment in the script
+naming the right variable cannot satisfy it. Watched firing five ways, including the guide edited
+past the script and the script edited past the guide.
+
+### §5 Decision three: the rules file says what it is for, in place
+
+Five alerts over two metric families that only the agent emits, with **two of them `absent()`
+queries**. Installed today against a tenant hc-market has never reported to, `HcMarketGatewayDown`
+and `HcMarketServiceDown` would fire continuously and permanently, and the other three could never
+fire at all. The existing CI check asserts the YAML parses and that group names are unique — which a
+file describing a signal nobody emits satisfies perfectly.
+
+Three shapes were considered:
+
+- **Delete it.** Rejected. It is right about what to alert on and right about the label schema
+  (`http_response_status_code`, not `status`; `http_server_request_duration_seconds_count`, not the
+  Micrometer name), and deleting it loses a correct artefact along with the record of why it was
+  never installed. This repository corrects in place and keeps the history — D58 over D55's text,
+  `host-site.conf`'s stale CSP comment.
+- **Move it to a `not-yet-active/` directory.** Rejected, and it is the tempting one. A path is not a
+  statement: `deploy/prod-server/` is a whole directory of unexecuted configuration and its README
+  still has to say so in words, before it says anything else, because the directory name never did.
+- **Annotate in place.** Taken. A header block naming the state, what is true of each of the three
+  environments, why installing it now would be worse than no rules, and the three things that must be
+  true before it is installed. `HcMarketGatewayDown`'s annotation is corrected too: it told the reader
+  to check `JAVA_OPTS` for the agent flag *before concluding the service is down*, which is advice
+  written for an exceptional case that turned out to be the permanent state.
+
+**And the notice is held against the compose files rather than trusted.** `NOT-YET-ATTACHED:` is a
+marker line, **required** while dev and quality attach no agent and **refused** once either does. The
+day telemetry is genuinely turned on, that paragraph goes red and has to be rewritten — which is the
+only mechanism that stops a true statement quietly becoming false in the other direction, and every
+previous instance of this failure here was a document that stayed still while the code moved.
+
+The check reads what `docker compose config` **renders**, never the compose text, and that is the
+point rather than convenience: the comment now above quality's `JAVA_OPTS` names
+`-javaagent:/app/otel-javaagent.jar` four times in prose, and a grep would have been satisfied by it.
+**A check reading a resolved value has no prose in its subject at all**, which is why this one needs
+no comment stripper — the alternative to writing a fifth stripper is not writing a check that needs
+one. Nine fail-opens across D48–D56 is the reason that sentence is here.
+
+`observability-claims-test.sh` mutates each of the four guarded things separately and requires a
+distinct red for each, plus **two** states that must stay green: the tree as committed, and the
+future one where quality attaches the agent and the marker is gone. Without that second control the
+whole suite is satisfied by a check that refuses everything.
+
+### §6 A fourth thing this item did not anticipate: quality cannot reach a collector at all
+
+Surfaced rather than fixed, and opened as **NEW-24**.
+
+`monitoring-quality`'s own compose says the quality applications *"need to resolve `otel-collector` to
+export OTLP"* over the external network **`qualitynet`**, and *"each application compose file
+therefore also joins qualitynet"*. **All three sibling quality stacks do** — `networks: [quality,
+qualitynet, hcnet]`, and six of their containers are on it right now. **hc-market's does not**, and
+never has. Its collector ports are published on loopback only (`127.0.0.1:4327`), which is the host's
+loopback and not a container's, so there is no address that works from inside without that network.
+
+So `HC_OTEL_JAVA_OPTS` turns the agent on, and on this box it would then export into nothing. **The
+honest statement is one variable plus one network, not one variable**, and the compose comment says
+exactly that rather than implying otherwise.
+
+Joining `qualitynet` here was considered and deliberately **not** done in this package. It is a new
+external-network dependency for the last gate before production, `docker compose up` fails outright
+until such a network exists, and the only way to exercise it is to restart the quality stack — which
+this package was instructed not to do and which would prove nothing about the agent anyway, since the
+collector is down. An unexercised change to the network topology of the quality box is precisely the
+class of change this repository insists on measuring. NEW-24 carries it, with the sibling pattern
+(their `startup.sh` creates the network if absent) as the shape to copy.
+
+**A second observation, in another repository and therefore not ours to fix.** That Alloy config also
+says *"the quality applications do not expose Micrometer to be scraped — they PUSH OpenTelemetry to
+the collector"*, and it has **no application scrape targets** on that basis. No sibling quality JVM
+carries `-javaagent` either, on eight readings of `/proc/1/cmdline`. So that host collects container
+logs and docker stats for the whole estate and **no application metrics from anybody** — the same
+defect this item is about, four products wide. Reported here; not touched.
+
+### §7 What this does not do
+
+It does not make telemetry flow anywhere, and that was never the goal. It makes the estate honest
+about observability and makes turning it on a one-variable change — plus, on this box, one network.
+Nothing is now claimed that is not true, and the two claims that were false (`monitoring-quality`
+does not exist; these alerts have a data source) are corrected where they were made.
+
+### §8 Verified, assumed, not exercised
+
+- **Verified by reading running containers, read-only**: the jar present at 24,665,598 bytes in all
+  five quality images and its manifest version 2.30.0; no `-javaagent` on `/proc/1/cmdline` in any of
+  the five, nor in eight sibling quality JVMs; zero ERROR lines in all five hc-market quality
+  services over their whole life; `monitoring-quality` present and exited; `qualitynet` existing with
+  six sibling containers on it and none of ours.
+- **Verified by measurement on a throwaway JVM**: 35 ERROR lines in 150 s against an unreachable OTLP
+  endpoint at the agent's own default intervals, split 18/13/3 by signal. **The interval was not
+  forced** — no `OTEL_METRIC_EXPORT_INTERVAL`, no `OTEL_BSP_SCHEDULE_DELAY`, no
+  `OTEL_BLRP_SCHEDULE_DELAY` — which is the correction NEW-23's opening measurement asked for.
+- **Verified by running**: `verify-otel-agent.sh` green, and red three ways (loads-but-instruments-
+  nothing, a JRE with no `javac`, no agent jar found); the recipe-agreement check green and red five
+  ways; `observability-claims.sh` green and its test's eight assertions all behaving as required,
+  under `bash -e` as Actions runs a step; both compose files rendering in **both** variable states;
+  the entrypoint's word-splitting reproduced; `sync-appendices.sh --check`; the seed regenerating
+  byte-identically; every touched shell script parsing.
+- **Assumed**: that production would behave as the measurement predicts if it were ever deployed.
+  Its compose attaches the agent and joins the `monitoring` network, and there is no production
+  estate to ask — there never has been.
+- **Assumed**: that the ERROR volume measured on an idle-ish JVM is representative of a Spring Boot
+  service's. It is driven by export *attempts* rather than by application volume, so the metric floor
+  (one attempt per 60 s per service) is solid; the log and span rates depend on how much the
+  application emits, and a busy service would attempt more often, not less.
+- **Not exercised: the quality box after this change.** It runs `a33d3cd`'s published images and was
+  left untouched. Nothing about its behaviour changes with the agent still off, and the rendered
+  `JAVA_OPTS` was proved identical rather than observed on a restarted container.
+- **Not exercised: the agent under Tomcat or reactor-netty**, for the reason in §4. D25 recorded
+  Tomcat `SERVER` spans and JDBC `db.operation` spans from the one hand run in August; that remains
+  the only evidence for those two stacks and it is not reproducible by anything committed here.
+- **Not exercised: production, in any form.**
+- **Out of scope and left alone**: the Jib `extraDirectories` wiring (correct, and proven by the jar
+  being in all five images); the `monitoring-quality` stack and everything in its repository; joining
+  `qualitynet` (NEW-24); the wedged `healthconnect-dev-*` containers.

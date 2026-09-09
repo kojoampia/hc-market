@@ -711,9 +711,19 @@ None of this has been done, and none of it can be done from a workstation.
 10. Decide whether alert rules from `deploy/observability/hc-market-rules.yaml` should be mounted per
     application into the host's Mimir. They are mounted per application everywhere else in the estate,
     never appended to a shared fleet file, so a YAML mistake costs one app's alerting.
+    **Not yet, and that file now says so in its own header** (decisions.md D63): every alert in it is
+    a query over metrics only the OTel agent emits, two of them are `absent()`, and no environment
+    has ever started a JVM with `-javaagent` — so mounting it against a tenant hc-market has never
+    reported to would fire two alerts continuously and for ever. It carries a `NOT-YET-ATTACHED`
+    marker that CI holds against what the compose files render, so this item becomes actionable when
+    that marker goes rather than on a judgement call. **Do item 11 first**; it is the precondition.
 11. Verify the OTel agent is **instrumenting**, not merely loading. A green `service:up` tile is
     derived from `jvm_thread_count`, which the agent reports from MBeans whether or not it rewrites a
-    single application class. The check that counts is a `SERVER` span carrying `http.route`.
+    single application class. The check that counts is a `SERVER` span carrying `http.route`, and it
+    is a command now rather than a paragraph: `./deploy/verify-otel-agent.sh` (D63). Note it proves
+    the *agent binary* instruments, using an embedded JDK HTTP server — not Tomcat and not
+    reactor-netty — so on the host itself the answer is still to run a real service under
+    `OTEL_TRACES_EXPORTER=logging` and read its log.
 12. Run the estate's own end-to-end shape against production **once**, by hand and with intent, and
     decide first what data it is acceptable to create. The two scripts in `deploy/` are not it.
 

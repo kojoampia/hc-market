@@ -152,6 +152,38 @@ x-service-base: &service-base
     HC_RETENTION_OPERATIONAL_DAYS: ${HC_RETENTION_OPERATIONAL_DAYS:-365}
     HC_RETENTION_CARE_SUMMARY_DAYS: ${HC_RETENTION_CARE_SUMMARY_DAYS:-90}
     HC_DPC_REGISTRATION: ${HC_DPC_REGISTRATION:-}
+    # --- OpenTelemetry: the agent is IN the image and is NOT attached here ----------------------
+    #
+    # decisions.md D63, backlog NEW-23. This file carried no JAVA_OPTS at all until D63, which is
+    # not the same statement as "the agent is off": it is the absence of any statement. The agent
+    # is baked into all five images and no JVM in any environment has ever been started with
+    # `-javaagent`, so the estate's whole observability story was build-time wiring in front of a
+    # runtime path that has executed nowhere.
+    #
+    # A developer machine has no collector at all, so this default is not a close call. It matters
+    # anyway that it is written down: attached against an unreachable OTLP endpoint the agent emits
+    # 35 ERROR lines with stack traces every 150 seconds at its own default intervals, measured on
+    # 2.30.0, which reads as a broken estate rather than as absent monitoring.
+    #
+    # TO TURN IT ON against a collector you are running yourself:
+    #
+    #   HC_OTEL_JAVA_OPTS='-javaagent:/app/otel-javaagent.jar -Dotel.exporter.otlp.endpoint=http://host:4317' \
+    #     ./deploy/deploy-dev.sh up
+    #
+    # deploy-dev.sh sources deploy/.env with `set -a`, so the variable can live there instead.
+    #
+    # The DEFAULT is empty on BOTH halves, so an unset pair renders the empty JAVA_OPTS this file
+    # has always had — the entrypoint's `exec java ${JAVA_OPTS}` word-splits it away. Two variables
+    # rather than one for docker-compose.prod.yml's reason: an operator raising the heap must not
+    # be able to detach the agent, because that failure is completely silent.
+    JAVA_OPTS: ${HC_JAVA_OPTS:-} ${HC_OTEL_JAVA_OPTS:-}
+    # Inert while no agent is attached — nothing in these services reads an OTEL_* variable. Set
+    # anyway, because they are the only part of the switch that cannot go into one shared variable
+    # and without them a reversal reports five services as `unknown_service:java`. The names carry
+    # the `dev` infix for the reason the Consul service names below do: two estates registered
+    # under one name present as instances of one service, and either one's health reads as both.
+    OTEL_RESOURCE_ATTRIBUTES: deployment.environment=development
+    OTEL_EXPORTER_OTLP_PROTOCOL: grpc
   # The Jib images contain no curl and no wget -- a CMD-based HTTP check fails with "executable
   # file not found" forever and the container sits in `health: starting` for its whole life. They
   # DO contain bash, so this uses bash's /dev/tcp to speak HTTP with no external tools at all.
@@ -247,6 +279,7 @@ services:
       SPRING_CLOUD_CONSUL_DISCOVERY_HOSTNAME: hc-market-dev-gateway
       SPRING_CLOUD_CONSUL_DISCOVERY_INSTANCE_ID: hc-market-dev-gateway
       SPRING_CLOUD_CONSUL_DISCOVERY_SERVICE_NAME: hc-market-dev-gateway
+      OTEL_SERVICE_NAME: hc-market-dev-gateway
       # An explicit consumer group. Without one an anonymous group is generated per instance: no
       # committed offsets, so a restart resumes at the end of the log and everything published in
       # between is gone. Worse, two applications landing in the same generated group split the
@@ -328,6 +361,7 @@ services:
       SPRING_CLOUD_CONSUL_DISCOVERY_HOSTNAME: hc-market-dev-catalog
       SPRING_CLOUD_CONSUL_DISCOVERY_INSTANCE_ID: hc-market-dev-catalog
       SPRING_CLOUD_CONSUL_DISCOVERY_SERVICE_NAME: hc-market-dev-catalog
+      OTEL_SERVICE_NAME: hc-market-dev-catalog
       SPRING_CLOUD_STREAM_DEFAULT_GROUP: hc-market-dev-catalog
       SPRING_DATASOURCE_URL: jdbc:postgresql://catalog-db:5432/healthconnectCatalog
       SPRING_DATASOURCE_USERNAME: healthconnectCatalog
@@ -362,6 +396,7 @@ services:
       SPRING_CLOUD_CONSUL_DISCOVERY_HOSTNAME: hc-market-dev-booking
       SPRING_CLOUD_CONSUL_DISCOVERY_INSTANCE_ID: hc-market-dev-booking
       SPRING_CLOUD_CONSUL_DISCOVERY_SERVICE_NAME: hc-market-dev-booking
+      OTEL_SERVICE_NAME: hc-market-dev-booking
       SPRING_CLOUD_STREAM_DEFAULT_GROUP: hc-market-dev-booking
       SPRING_DATASOURCE_URL: jdbc:postgresql://booking-db:5432/healthconnectBooking
       SPRING_DATASOURCE_USERNAME: healthconnectBooking
@@ -441,6 +476,7 @@ services:
       SPRING_CLOUD_CONSUL_DISCOVERY_HOSTNAME: hc-market-dev-messaging
       SPRING_CLOUD_CONSUL_DISCOVERY_INSTANCE_ID: hc-market-dev-messaging
       SPRING_CLOUD_CONSUL_DISCOVERY_SERVICE_NAME: hc-market-dev-messaging
+      OTEL_SERVICE_NAME: hc-market-dev-messaging
       SPRING_CLOUD_STREAM_DEFAULT_GROUP: hc-market-dev-messaging
       SPRING_DATASOURCE_URL: jdbc:postgresql://messaging-db:5432/healthconnectMessaging
       SPRING_DATASOURCE_USERNAME: healthconnectMessaging
@@ -470,6 +506,7 @@ services:
       SPRING_CLOUD_CONSUL_DISCOVERY_HOSTNAME: hc-market-dev-payout
       SPRING_CLOUD_CONSUL_DISCOVERY_INSTANCE_ID: hc-market-dev-payout
       SPRING_CLOUD_CONSUL_DISCOVERY_SERVICE_NAME: hc-market-dev-payout
+      OTEL_SERVICE_NAME: hc-market-dev-payout
       SPRING_CLOUD_STREAM_DEFAULT_GROUP: hc-market-dev-payout
       SPRING_DATASOURCE_URL: jdbc:postgresql://payout-db:5432/healthconnectPayout
       SPRING_DATASOURCE_USERNAME: healthconnectPayout

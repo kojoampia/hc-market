@@ -195,7 +195,8 @@ jobs:
           # ever runs on a host nothing in this workflow can reach, which is precisely why parsing
           # it in CI is the only gate it will ever get.
           for s in deploy/deploy-dev.sh deploy/deploy-prod.sh deploy/sync-appendices.sh \
-                   deploy/verify-cycle.sh deploy/verify-outbox-recovery.sh quality/startup.sh \
+                   deploy/verify-cycle.sh deploy/verify-outbox-recovery.sh \
+                   deploy/verify-otel-agent.sh quality/startup.sh \
                    deploy/prod-server/infra.sh deploy/prod-server/backup.sh deploy/prod-server/start \
                    .github/checks/*.sh; do
             bash -n "$s" && echo "ok   $s"
@@ -379,6 +380,66 @@ jobs:
               fi
             done
             [ "$fail" = 0 ] && echo "ok   $service/pom.xml"
+          done
+          exit "$fail"
+
+      # The step above guards the BUILD half of a runtime path that had executed nowhere. The agent
+      # is in all five images and, until decisions.md D63, no JVM in any environment had ever been
+      # started with -javaagent — while deploy/observability/hc-market-rules.yaml declared five
+      # alerts over metrics only the agent emits, two of them `absent()` queries that would have
+      # fired continuously and for ever if the file were installed. Nothing could see it: the rules
+      # check below asserts the YAML parses and that group names are unique, which a file
+      # describing a signal nobody emits satisfies perfectly.
+      #
+      # This one asserts the RELATIONSHIP between the rules file and the three compose files, and
+      # it reads what `docker compose config` RENDERS rather than the compose text — so the long
+      # comment in quality/compose.yml, which names -javaagent:/app/otel-javaagent.jar four times
+      # in prose, cannot satisfy it. That is why it needs no comment stripper: a check reading a
+      # resolved value has no prose in its subject at all. Its own test mutates each of the four
+      # things it guards separately and requires a distinct red for each, plus the two states that
+      # must stay green — including the future one, where telemetry is on and the marker is gone.
+      - name: The alert rules and the compose files must agree about whether anything reports
+        run: ./.github/checks/observability-claims.sh
+
+      - name: That check's own test
+        run: ./.github/checks/observability-claims-test.sh
+
+      # "The agent must be verified as INSTRUMENTING, not merely loading" has been in CLAUDE.md
+      # since D25 and was a paragraph of prose that had been run once, by hand. It is a script now
+      # (deploy/verify-otel-agent.sh) and this holds the two together.
+      #
+      # It does NOT run the verifier. That needs a 24MB agent download and a JVM, and CI has no
+      # running service to point it at; the script is for a workstation. What rots between now and
+      # then is the RECIPE — the two environment variables and the span attribute — so the script
+      # prints its own live constants with --describe and this compares them against the words in
+      # CLAUDE.md. The script side is therefore behavioural rather than textual: a comment in it
+      # naming the right variable cannot satisfy this, because --describe echoes the constants the
+      # assertions actually use.
+      - name: CLAUDE.md's agent recipe and verify-otel-agent.sh must agree
+        run: |
+          fail=0
+          test -x ./deploy/verify-otel-agent.sh || {
+            echo "::error::deploy/verify-otel-agent.sh is missing or not executable — the only re-runnable proof that the agent instruments rather than loads. See decisions.md D63."
+            exit 1
+          }
+          described=$(./deploy/verify-otel-agent.sh --describe)
+          echo "$described"
+          get() { printf '%s\n' "$described" | sed -n "s/^$1=//p"; }
+          # Asserted as PAIRS, not as bare values: `none` and `logging` on their own appear all
+          # over a 900-line guide and would match something unrelated for ever.
+          for needle in \
+            "$(get traces-exporter-var)=$(get traces-exporter-value)" \
+            "$(get metrics-exporter-var)=$(get metrics-exporter-value)" \
+            "$(get span-kind)" \
+            "$(get route-attribute)" \
+            "$(get agent-jar-in-image)" \
+            "deploy/verify-otel-agent.sh"; do
+            if grep -qF -- "$needle" CLAUDE.md; then
+              echo "ok   CLAUDE.md names '$needle'"
+            else
+              echo "::error file=CLAUDE.md::CLAUDE.md no longer names '$needle', which deploy/verify-otel-agent.sh --describe reports as part of the recipe it runs. Either the script changed and the guide did not, or the guide was edited past the script. See decisions.md D63."
+              fail=1
+            fi
           done
           exit "$fail"
 
