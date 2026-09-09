@@ -249,10 +249,29 @@ authorized"* is the same demand one level up the JDL: the first iterates **entit
 sample has no entity behind it — it exists because the `application` block says `messageBroker kafka`,
 and its class name is `upperFirst(baseName) + "KafkaResource"`. So it is derived from `baseName` and
 `messageBroker` rather than from `entity`, and it is **not** a list of five in a workflow file; every
-enumerated list in this repository's CI has gone stale or failed open. It closes a rename with a
-second half: a `find` sweep over every service's `web/rest` refuses any `*KafkaResource.java` the
-derivation did not name, so a generator that spells the class differently is caught rather than
-reported as deleted. See backlog NEW-17 and `decisions.md` D59.
+enumerated list in this repository's CI has gone stale or failed open. It closes part of a rename with
+a second half: a `find` sweep over every service's `web/rest` refuses any `*KafkaResource.java` the
+derivation did not name, so a class renamed to `CatalogMessagingKafkaResource` is caught rather than
+reported as deleted.
+
+**Both checks reach less far than they read, in three ways worth knowing before trusting either.**
+None is a defect to fix here; each is a limit to state, and the guard ITs are what stands behind them
+at the HTTP layer — for the paths they already name, and no further. Two of the three were **measured**
+rather than reasoned from the expression, which is the same discipline this whole decision is about:
+
+- **The sweep only sees the `KafkaResource.java` suffix.** A generator renaming to
+  `KafkaSampleController` escapes the derivation *and* the sweep, and nothing in CI would say so. A
+  rename that keeps the suffix **is** caught — that one is measured.
+- **The gate branch counts, it does not attribute.** `pre >= maps` is positional. Measured: three
+  `@PreAuthorize` stacked on one handler, with `/publish` and `/register` bare, passes as *"kept, 3
+  `@PreAuthorize` for 3 mappings"*.
+- **Only the literal simple name counts.** Measured: a fully-qualified
+  `@org.springframework.security.access.prepost.PreAuthorize` at class level is counted as **zero** and
+  refused. That fails **closed** — it rejects a correct gate rather than passing an open one — and it
+  is worth saying, because the error message tells people to gate and this is the one spelling of a
+  gate it will not accept.
+
+See backlog NEW-17 and `decisions.md` D59.
 
 **Restore the two fixtures**, which regeneration replaces with real test classes:
 `BookingResourceIT` (0 tests → 139) and `ProfessionalResourceIT` (0 tests → 120). Both carry

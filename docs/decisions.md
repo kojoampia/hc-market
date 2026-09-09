@@ -6754,6 +6754,10 @@ for it (fails). That last one is the claim the check is bought for.
 
 ### A tenth family, reported and not fixed: the Kafka sample resources
 
+**Closed by D59** — all five deleted, gateway included. This section is the record of what was found
+here; read D59 for what `/publish` turned out to do, which is what the paragraph beginning *"Three
+corrections"* below gets wrong.
+
 Asking the same question of resources carrying **no** `BadRequestAlertException` — the marker the nine
 share — finds `HealthconnectBookingKafkaResource`, `HealthconnectCatalogKafkaResource`,
 `HealthconnectMessagingKafkaResource`, `HealthconnectPayoutKafkaResource` and
@@ -6769,7 +6773,20 @@ package because it touches the **gateway**, which NEW-15 does not, and because r
 means deciding what becomes of `broker.KafkaConsumer` and the `/consume` endpoint CLAUDE.md discusses
 under D25/D29 — a decision, not a deletion.
 
-**Three corrections from the review, and the first is the kind this document keeps making.** This
+**Three corrections from the review, and the first is the kind this document keeps making.**
+
+> **The correction below is itself wrong, and D59 overturns it.** The `kafka` profile **is** active in
+> every environment — `application.yml` lists it in `spring.profiles.group.dev` *and*
+> `spring.profiles.group.prod`, and a group member never appears in `SPRING_PROFILES_ACTIVE`, so
+> checking that variable is not checking the profile. The original claim this paragraph withdrew was
+> right, for a reason nobody had stated. **The correction committed the very error it warns about**:
+> it read a mechanism out of a config file — the compose files' `SPRING_PROFILES_ACTIVE` — without
+> establishing what the running system loads, and the file name `application-kafka.yml` does not tell
+> you either. See **D59 §1**, where it is settled by reading a running container and the shared
+> broker's own topic list. Everything from "That cites" to "about the running system" is kept as the
+> record of what was believed.
+
+This
 section originally said the binder is pointed at the shared broker with `auto-create-topics: true`, so
 any authenticated caller can publish onto infrastructure four products share. **That cites
 `application-kafka.yml`, and the `kafka` profile is active in no environment** — dev `test,dev`,
@@ -7897,6 +7914,19 @@ establishing which environment loads it is not a statement about the running sys
 as misleading a name as this repository could offer. Ask a running container. It is now a trap section
 in CLAUDE.md, because the same wrong reading is available for `secret-samples` and `api-docs`.
 
+**And the sharpest thing in this package is that D54's correction is an instance of the rule it
+states.** That paragraph exists to warn against reading a mechanism out of a config file without
+checking which profile loads it — and to make the warning it read `SPRING_PROFILES_ACTIVE` out of
+three compose files and concluded something about which profiles are active. **Checking the variable
+is not checking the profile.** A `spring.profiles.group` member never appears in it, so the one
+artefact that looks like the authoritative answer is exactly the one that cannot give it. The
+withdrawal was more confident than the claim it withdrew, arrived with the vocabulary of rigour
+("that cites a file no environment loads"), and was bolded. **A correction is a claim, and it earns no
+discount for being a correction** — this document has now made the same class of error twice about one
+paragraph, in opposite directions, and only reading a running container settled it. D54 is annotated
+in place rather than rewritten; the wrong text stays, because a decisions log whose errors disappear
+teaches nothing.
+
 ### §2 The other half of the sample, which is a disclosure rather than a write
 
 `GET /register` hands the caller an `SseEmitter` that `broker.KafkaConsumer.accept` writes to — and
@@ -7909,7 +7939,9 @@ does not know that.
 
 ### §3 Delete or gate, per resource
 
-**All five deleted.** Nothing in the repository called any of the fifteen paths: checked against the
+**All five deleted.** Nothing in the repository called any of the fourteen paths — three mappings in
+each of the four microservices and **two** on the gateway, which has `/consume` where they have
+`/register` and `/unregister`: checked against the
 prototype, `deploy/verify-cycle.sh`, `verify-outbox-recovery.sh`, `verify-prototype-live.mjs`, both
 deploy scripts, `quality/startup.sh` and the other four services. The only hits for those path strings
 were each resource's own `@RequestMapping`, its own generated IT, and three sentences of prose.
@@ -8071,6 +8103,26 @@ verdict was believed** (D54's review: two mutations that never landed read as br
 | M10 | `strip-comments.awk` missing | FAIL | FAIL |
 | M11 | the generator spells the class differently | FAIL | FAIL, at the `find` sweep — the second half firing |
 
+**Three limits this check has, found by the review and then measured rather than accepted on
+argument** — because a limit stated from reading the expression is the same move D54's correction
+made. Two more mutations, run after the fourteen above:
+
+| | Mutation | Result |
+| --- | --- | --- |
+| F1 | a **fully-qualified** class-level `@org.springframework.security.access.prepost.PreAuthorize` | **FAIL** — counted as `0 @PreAuthorize for 3 mappings`. It reads as ungated, and **fails closed**: it refuses a correct gate rather than passing an open one. Worth knowing because the error message tells people to gate and this is the one spelling of a gate it will not accept |
+| F2 | three `@PreAuthorize` stacked on **one** handler, `/publish` and `/register` bare | **PASS** — *"kept, 3 `@PreAuthorize` for 3 mappings"*. `pre >= maps` counts; it does not attribute |
+
+The third needs no mutation because it is a property of the glob: **the sweep only sees the
+`KafkaResource.java` suffix**, so a generator renaming to `KafkaSampleController` escapes the
+derivation *and* the sweep, and nothing in CI would say so. M11 proves the sweep catches a rename that
+keeps the suffix, which is the likely one, and not more than that.
+
+**In all three the guard ITs are what stands behind the check**, at the HTTP layer where attribution
+and reachability can actually be observed — and only for the paths they already name. None of the
+three is fixed here: F1 fails closed, F2 and the suffix limit are backstopped, and widening the check
+to parse Java rather than grep it is a different tool. They are written into CLAUDE.md beside the
+check so the prose does not outrun the mechanism, which is the whole subject of this decision.
+
 **The harness's own defect, recorded because it is D54's lesson repeating.** The first run restored
 CLAUDE.md and `jdl/` with `git checkout --`, which reverted the **uncommitted delete-table rows the
 check under test depends on**. Five mutations after that point failed for the wrong reason and the
@@ -8121,7 +8173,8 @@ does not answer and that the service is nonetheless serving.
   all five guards red first with their resources restored one at a time; `clean verify` in all five
   services; `sync-appendices.sh --check`; the seed regenerating byte-identically; the workflow parsing
   and the new step extracting as runnable bash.
-- **Verified by grep, and stated as such**: that nothing called any of the fifteen paths.
+- **Verified by grep, and stated as such**: that nothing called any of the fourteen paths (4 × 3 + the
+  gateway's 2 — this said fifteen until the review, against §7's own table).
 - **Assumed**: that the destination of `binding-out-0` is the binding name. It is Spring Cloud
   Stream's documented default and the deleted ITs asserted it through the test binder
   (`output.receive(1000, "binding-out-0")`), which is why the topic name is stated with confidence —
