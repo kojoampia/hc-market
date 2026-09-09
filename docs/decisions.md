@@ -8906,15 +8906,82 @@ closes on a repeated baseline** — which is the check that catches a harness re
 | M14 | a **commented-out** `definition: kafkaConsumer;kafkaProducer` above the real line | **PASS** | PASS — prose does not satisfy this check, and prose does not break it either |
 | baseline | as committed, again | PASS | PASS |
 
-**Two limits, stated because a limit read off an expression is the move D59 was corrected for.**
+**Four limits, stated because a limit read off an expression is the move D59 was corrected for.**
 The `kafkaProducer` test is a substring match, so `kafkaProducerV2` is refused too — fail-closed, and
 fine. But the `kafkaConsumer` test is a substring match as well, so a `definition` naming
 `kafkaConsumerThatIsNotTheBean` would satisfy the static check; what refuses that is the guard IT's
 control, which is why the pair exists rather than either alone. And the check reads what is bound, not
 what a *renamed* supplier bean might be called: a `broker.KafkaProducer` renamed to `SampleEmitter`
 and bound as `sampleEmitter` escapes the grep entirely, and the guard IT catches it only because the
-binding name would have to change too, which changes the destination it asserts on. Neither is fixed
-here; both are written down.
+binding name would have to change too, which changes the destination it asserts on.
+
+The fourth is cosmetic and found by the review: `cut -d: -f2-` keeps everything after the key,
+**including a trailing YAML comment**. So `definition: kafkaConsumer # kafkaProducer stays out` fails
+CI, spuriously — the binding is correct and the check refuses it. It is **fail-closed** and therefore
+not worth engineering around, and the five committed files keep their prose in whole-line comments
+*above* the key rather than trailing it, so nothing hits it today. Written down here so that whoever
+does hit it recognises the check being blunt rather than a real binding.
+
+None of the four is fixed here; all four are written down.
+
+### §6a The byte-identity the first commit documented and did not enforce
+
+`573456b` asserted in **three** documents that the guard IT is byte-identical in all five services and
+enforced it **nowhere**: the check demanded only that each copy *exist*. That is this repository's own
+house failure mode — a documented property nothing enforces — arriving inside a package whose entire
+subject is a defect nothing could see. It was found by review, and it is fixed in the second commit.
+
+**The convention it violated is settled and has three precedents.** `SubjectPseudonym` (D35),
+`SeedCalendar` (D48) and `MarketCalendar` (D51/D52) are each copied verbatim *and diffed in CI*. This
+is the fourth family. It is the mildest of them — the other three desynchronise two services'
+*answers*, while a weakened copy here un-guards **one** service — which is why the review marked it
+non-blocking and why the fix is the obvious one rather than something larger.
+
+**What actually drifts is not a deletion.** A missing copy was already caught (M9). What was
+unguarded is a *weakened* copy: a lengthened timeout, an inverted assertion, a service whose guard
+quietly stops guarding while every suite stays green.
+
+**The diff lives inside this package's own step rather than beside the other three**, and that is a
+choice with a reason: that step already derives exactly the right service list from `messageBroker
+kafka` in `jdl/*.jdl`, and a second copy of the derivation is how the two would eventually disagree
+about which services are in the family. A pointer comment sits where a maintainer of the copy families
+would look, so all four are findable from one place.
+
+**The reference is derived, not named** — D52's review is explicit that an enumerated list let a rogue
+copy sit unchecked in a service nobody had listed. It is the first service in sorted order and it is
+**printed on every run**, because a reference nobody can see is a reference nobody can reason about.
+Two fail-closed guards travel with it: a family of **one** is refused (a copy with nothing to compare
+against is not being compared), and if fewer copies are found than services scanned, the reduced
+comparison is **announced** rather than silently made — "diffed 4 of 5" must read as itself.
+
+**Five more mutations, each landed with evidence, closing on a repeated baseline:**
+
+| | Mutation | Want | Got |
+| --- | --- | --- | --- |
+| baseline | as committed | PASS | PASS, *"5 copies"*, reference printed |
+| N1 | one character changed — the timeout — in **one copy at a time, all five services** | FAIL | FAIL each time, naming the file that differs |
+| N2 | the assertion inverted in one copy | FAIL | FAIL |
+| N3 | a copy deleted | FAIL | FAIL **twice**: the existence error, *and* *"4 of 5 services carry the guard IT"* |
+| N4 | four JDLs lose `messageBroker kafka`, leaving a family of one | FAIL | FAIL, *"only 1 service carries the guard IT"* |
+| N5 | one **extra newline** in one copy | FAIL | FAIL — verbatim means verbatim |
+| baseline | as committed, again | PASS | PASS |
+
+**One limit, and it is inherited from the three families this copies.** When the drifted copy *is* the
+reference, the check goes red naming **the other four** rather than the one that changed — observed in
+N1's booking case and in N5. It is loud and it is correct to fail; it just points at the wrong files.
+Pairwise diffing would fix it and none of the three existing families does that either, so the error
+message names the reference file explicitly and this paragraph exists instead.
+
+**And a harness defect worth more than the mutation it was found by: all twenty mutations are now run
+under `bash -e`, because that is what Actions uses.** `build.yml` sets no `shell:` and has no
+`defaults:` block, so every `run:` block executes as `bash -e {0}` — while the first commit's harness
+invoked the extracted step as plain `bash`. The two differ on exactly the construct this step added,
+`[ "$g" = "$reference" ] && continue`: under `-e` a mid-script AND-list whose left side fails is
+exempt, so it behaves — but that is a fact to *establish*, not to reason to, and the same harness would
+have reported fifteen confident successes for a step that aborted on its first iteration in CI. Four
+pre-existing steps use the identical construct, which is corroboration and was not proof either.
+Re-running both harnesses under `-e` is now the standard: baseline green **and reaching its final
+line**, every mutation red for its own stated reason.
 
 ### §7 Counts
 
@@ -8938,6 +9005,30 @@ so the totals below are `+2` on failsafe and `+0` on surefire, in each. The prio
 
 ### §8 Verified / assumed / not exercised
 
+**Everything in this section is THIS package's own runs unless the next paragraphs say otherwise.**
+Two sets of eyes are not two independent observations, and the difference matters when the subject is
+a measurement.
+
+**What the review reproduced independently, on its own throwaway broker**: that as committed
+`sse-topic` is provisioned and `kafkaProducer-out-0` is **never created**, and that mutated back it
+carries **63 messages in 62 s** — this package measured 61, and the two agree to within scheduling
+noise. It re-read the shared broker at **6.0/s** past 5,804,896, with **zero** consumer groups on that
+topic and `hc-admin-service` on `sse-topic` only. It confirmed the guard IT red-first in catalog and
+green in messaging, and landed ten of the CI mutations including both comment cases.
+
+**And it ran the one experiment this package argued for rather than performed** — §4's claim that a
+lone function bean is auto-bound. It built a catalog jar with `broker/KafkaConsumer.java` **deleted**
+and the `definition:` line removed, which is the exact end state of the "finish the cleanup" tidy-up,
+and `kafkaProducer-out-0` was auto-created and held **104 messages within two minutes**. So §4 is
+fact rather than an inference from a warning message, and the warning in all five configs, the IT
+javadoc, the CLAUDE.md row and §4 itself are all earned.
+
+**What it did NOT independently confirm**, and which therefore rests on this package alone: the
+gateway's reactive throwaway-broker run; the guard IT in gateway, booking and payout; and the 1s
+`fixed-delay` default read out of `PollerConfigEnvironmentPostProcessor`'s bytecode — which it
+corroborated *behaviourally* at 63-in-62s rather than by reading the constant. Nothing it checked was
+found false.
+
 - **Verified by reading the shared broker** (read-only, on a quality estate running `85fba79`): the
   topic list; `kafkaProducer-out-0` at 5,779,754 and 367 more over a timed 62 s; `sse-topic` at 0;
   every consumer group on the broker described and none subscribed to `kafkaProducer-out-0`;
@@ -8951,10 +9042,11 @@ so the totals below are `+2` on failsafe and `+0` on surefire, in each. The prio
 - **Verified by reading library bytecode**: the 1s `fixed-delay` default in
   `PollerConfigEnvironmentPostProcessor`, and that nothing in this repository configures any of the
   three properties that would override it.
-- **Verified by running**: all fifteen CI-check mutations with landing evidence; the guard IT green in
-  all five services and **red** in catalog with the config mutated back, naming its own subject; all
-  five `clean verify`; `sync-appendices.sh --check`; the seed regenerating byte-identically; the
-  workflow parsing and the new step extracting as runnable bash.
+- **Verified by running**: all fifteen CI-check mutations with landing evidence, plus **five more**
+  for the byte-identity half added in the second commit (§6a); the guard IT green in all five services
+  and **red** in catalog with the config mutated back, naming its own subject; all five `clean verify`;
+  `sync-appendices.sh --check`; the seed regenerating byte-identically; the workflow parsing and the
+  edited step extracting as runnable bash.
 - **Verified by reading a running quality container**: that `/app/otel-javaagent.jar` is present at
   24,665,598 bytes and the JVM's `/proc/1/cmdline` carries **no `-javaagent`** — backlog **NEW-23**,
   opened here and deliberately not fixed.

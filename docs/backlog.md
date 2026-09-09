@@ -1830,6 +1830,19 @@ opposite question, with the consumer half as its positive control. Watched red f
 the config mutated back. Plus a derived CI check, *"No service may bind the generated Kafka sample
 supplier"*, watched firing **fifteen ways** including the five services mutated one at a time.
 
+**The first commit documented the byte-identity in three places and enforced it nowhere**, which
+review caught — the house failure mode inside a package about a defect nothing could see. The second
+commit makes the guard the **fourth verbatim-copy family** beside `SubjectPseudonym`, `SeedCalendar`
+and `MarketCalendar`: CI diffs the copies, deriving both the service list and the reference from
+`messageBroker kafka` in `jdl/*.jdl` rather than enumerating either, refusing a family of one and
+announcing a reduced comparison instead of making one silently. Five more mutations, including one
+character changed in each service's copy in turn and a single extra newline.
+
+**Review also ran the experiment this package argued for rather than performed**: a catalog jar built
+with `broker/KafkaConsumer.java` deleted and the `definition:` line removed — the exact end state of
+the "finish the cleanup" tidy-up — auto-created `kafkaProducer-out-0` and held **104 messages within
+two minutes**. The reason `kafkaConsumer` must stay named is therefore measured, not reasoned.
+
 **The consumer half is settled, not omitted.** `kafkaConsumer` stays named, and it has to: Spring
 Cloud Function auto-discovers a *lone* function bean when there is no explicit `definition`, which the
 build itself says out loud — `Multiple functional beans were found [kafkaProducer, kafkaConsumer],

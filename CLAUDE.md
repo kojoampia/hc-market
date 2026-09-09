@@ -229,11 +229,11 @@ against a real estate is NEW-21, so carrying it forward would be CI asserting th
 See `decisions.md` D59.
 
 **That last case is back, asking the opposite question** (D62). `KafkaSampleSupplierIsNotPolledIT`, in
-all five services and byte-identical in each, asserts through the same test binder that
-`kafkaProducer-out-0` carries **nothing** — with the consumer half as its positive control, because an
-unbound binder would satisfy a negative assertion for the wrong reason. It is a new file, so a
-regeneration leaves it in place while it puts `kafkaProducer` back in the definition, and it is then the
-only thing in the estate that goes red.
+all five services and byte-identical in each — **the fourth verbatim-copy family, and CI diffs it** —
+asserts through the same test binder that `kafkaProducer-out-0` carries **nothing**, with the consumer
+half as its positive control, because an unbound binder would satisfy a negative assertion for the
+wrong reason. It is a new file, so a regeneration leaves it in place while it puts `kafkaProducer` back
+in the definition, and it is then the only thing in the estate that goes red.
 
 **Fifteen of these rows now have a test that fails if you miss them, and two CI checks that fail if
 you miss the row itself.** `AuditTrailIsNotAnApiIT` in booking was the first and is still the pattern;
@@ -921,10 +921,12 @@ time.**
   has to compare before it counts. And **every row the sweep touches gets a number on the receipt** —
   catalog deleted favourites and reported nothing about them for a week. The nine counters and which
   two were wrong are tabulated in D39.
-- **Two families of file are copied verbatim across services, and CI diffs the copies.** There is no
+- **FOUR families of file are copied verbatim across services, and CI diffs the copies.** There is no
   shared library here, so a derivation whose answers must match across services is duplicated instead;
-  edit one copy and you must edit them all identically, **comments included**. Both are new files, so a
-  regeneration leaves them alone.
+  edit one copy and you must edit them all identically, **comments included**. All are new files, so a
+  regeneration leaves them alone. **The count in this sentence has been wrong before** — it read "two"
+  while listing three, from D51 until D62's review — so trust the list and not the number, and CI is
+  what actually holds each family together.
   - `SubjectPseudonym.java` + `SubjectPseudonymUnitTest.java` — **booking, catalog, messaging** (D35).
     The erasure alias. Diverge and one person acquires two irreconcilable aliases.
   - `SeedCalendar.java` + `SeedCalendarUnitTest.java` — **catalog, booking, messaging, payout** (D48).
@@ -942,6 +944,19 @@ time.**
     every copy against **payout's**, which is the reference, rather than pairwise — and it **derives**
     which services hold a copy rather than listing them, so a fourth copy is checked the moment it
     exists and an unchecked one cannot be created by copying the file somewhere new.
+  - `KafkaSampleSupplierIsNotPolledIT.java` — **all five**, gateway included (D62). That the generated
+    Kafka sample's supplier is not bound, asked of the test binder rather than of a config file. Unlike
+    the three above it is a **test**, so divergence un-guards one service rather than desynchronising
+    two — milder, and still exactly the drift nothing else can see: a lengthened timeout or a gutted
+    assertion leaves CI green while that service stops being guarded. Its diff lives **inside** the
+    *"No service may bind the generated Kafka sample supplier"* step rather than beside the other three,
+    because that step already derives the service list from `messageBroker kafka` in `jdl/*.jdl` and a
+    second copy of the derivation is how the two would eventually disagree; there is a pointer comment
+    where you would expect to find it. Same rules as `MarketCalendar`: the reference is derived (the
+    first service in sorted order, printed on every run), a family of one is refused, and a copy that is
+    missing is reported **and** the reduced comparison is announced rather than silently made.
+    It was documented as byte-identical in three places and enforced nowhere for one commit — D62's
+    review, and the house failure mode in miniature.
 - **The scripts and the spec appendices are the same bytes in two places.** Appendix A is
   `deploy/deploy-dev.sh`, Appendix B is `deploy/deploy-prod.sh`. This is enforced mechanically —
   after editing either script, re-embed; before trusting the spec, check:

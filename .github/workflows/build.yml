@@ -845,6 +845,13 @@ jobs:
           done
           exit "$fail"
 
+      # THE FOURTH VERBATIM-COPY FAMILY IS NOT HERE, deliberately — look for it in "No service may
+      # bind the generated Kafka sample supplier" further down. `KafkaSampleSupplierIsNotPolledIT` is
+      # copied byte-identically into every service declaring `messageBroker kafka` and diffed inside
+      # that step, because the step already derives exactly that service list from `jdl/*.jdl` and
+      # duplicating the derivation here is how the two would eventually disagree. Named here so that
+      # somebody maintaining the copy families finds all four from one place. See decisions.md D62.
+
       # …and nothing anywhere in the five services may read a date from an implicit zone.
       #
       # This is D48's seed-package grep widened from a package to five whole services, because NEW-10
@@ -1732,6 +1739,7 @@ jobs:
           fi
           scanned=0
           derived=""
+          guards=""
           for jdl in $jdls; do
             svc=$(basename "$jdl" .jdl)
             cfg="$svc/src/main/resources/config/application-kafka.yml"
@@ -1779,8 +1787,48 @@ jobs:
               fail=1
               continue
             fi
+            guards="$guards $guard"
             echo "ok   $svc binds kafkaConsumer and not kafkaProducer, and carries the guard IT"
           done
+          # THE FOURTH VERBATIM-COPY FAMILY. `SubjectPseudonym` (D35), `SeedCalendar` (D48) and
+          # `MarketCalendar` (D51/D52) are each copied byte-identically across services and DIFFED
+          # here; three documents said this guard was too, and nothing compared the copies — the house
+          # failure mode, a documented property nothing enforces, inside a package about a defect
+          # nothing could see. D62's review.
+          #
+          # What drifts is not a deletion — that is caught above — but a WEAKENED copy: a lengthened
+          # timeout, a gutted assertion, one service whose guard quietly stops guarding while CI stays
+          # green. Milder than the other three families, which desynchronise two services; this
+          # un-guards one.
+          #
+          # The reference is DERIVED, not named: the first service in the sorted list the loop above
+          # already built from `messageBroker kafka`. D52's review established why — an enumerated
+          # list let a rogue copy sit unchecked in a service nobody had listed, so this check must
+          # never grow a hard-coded service name.
+          count=$(printf '%s\n' $guards | grep -c . || true)
+          if [ "$count" -lt 2 ]; then
+            echo "::error::only $count service carries the guard IT — a copied file with no copy to compare against is not being compared with anything, and this check would pass having diffed nothing. See decisions.md D62."
+            fail=1
+          else
+            reference=$(printf '%s\n' $guards | head -1)
+            echo "guard reference copy: $reference ($count copies)"
+            # A copy that is missing has already been reported above and `fail` is already 1, so this
+            # cannot pass — but the comparison below would quietly be over fewer files than were
+            # scanned, and "diffed 4 of 5" must read as itself rather than as a clean run.
+            if [ "$count" -ne "$scanned" ]; then
+              echo "::error::$count of $scanned services carry the guard IT, so the identity comparison below covers fewer services than were scanned. See decisions.md D62."
+              fail=1
+            fi
+            for g in $guards; do
+              [ "$g" = "$reference" ] && continue
+              if ! diff -u "$reference" "$g"; then
+                echo "::error file=$g::$g differs from $reference — the guard is copied verbatim into every service declaring messageBroker kafka, so a weakened copy un-guards that service while the others stay green. Edit one, edit them all, comments included. See decisions.md D62."
+                fail=1
+              else
+                echo "ok   $g — identical to the reference copy"
+              fi
+            done
+          fi
           # THE DERIVATION'S FAIL-OPEN, CLOSED, exactly as the check above closes its own. Everything
           # here is reached from a JDL that says `messageBroker kafka`. A service whose JDL loses that
           # line, or one added without a JDL, keeps its config file and its bound supplier while every
