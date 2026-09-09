@@ -7640,3 +7640,191 @@ is the drift the whole "derived, never enumerated" habit here exists to avoid; t
 - **NOT exercised: `deploy-prod.sh` itself.** The probe's HTTP question and its grep were run against a
   real service, above; the `ssh`, the `docker compose exec` that carries them, and the rollback beneath
   them have not been, and like everything else in that script have never run against a host.
+
+---
+
+## D58 — An appointment is read in the booking's own zone, and no customer's quoted boundary moves
+
+NEW-19, opened by **D55** and deliberately not folded into it. **`main` ended at D57 when this began
+and there were no open pull requests** — `gh pr list --state open` answered `[]` and `git log
+origin/main -1` answered `331ec34`, checked rather than assumed, because taking a number held on an
+unmerged branch is what cost the WP-19/Paystack pair a renumber and a rebase. **This is D58.**
+
+### The defect
+
+Two sites converted an appointment's wall clock with `ZoneOffset.UTC` and never read
+`Booking.zoneId`:
+
+| Where | What it decides |
+| --- | --- |
+| `BookingWorkflow.scheduledAt` | the instant an appointment is treated as happening at, which `isLate` prices the 50% late-cancellation fee off — on the stored `booking.late_cancellation` flag written by `apply`, and through it on the ledger |
+| `CustomerBookingResource.cancellationPreview` | the hours quoted to a customer before they commit, from a **second copy of the same line** |
+
+Spec §13 #8's ratification (D55) is what makes this a defect rather than the open question the two
+comments described: an appointment's wall clock belongs to whoever delivers it, and `Booking.zoneId`
+is where that calendar was captured. Both now read `booking.getZoneId()`, and emphatically **not**
+`MarketCalendar.MARKET_ZONE`, which behaves identically today and is wrong for exactly the case the
+ratification exists to handle.
+
+### The decision the item said had to be made, and why it was already made
+
+NEW-19 asked whether an in-flight booking keeps the boundary it was quoted or is re-evaluated, and
+said that was this package's decision rather than an assumption to inherit. **It is answered by
+construction, and the four facts were re-established here rather than taken from the backlog:**
+
+- `booking.zone_id` is `NOT NULL` **with no column default** — `@NotNull @Size(max = 64) @Column(name
+  = "zone_id", length = 64, nullable = false)`, `nullable="false"` in
+  `20231209110409_added_entity_Booking.xml`, and `information_schema.columns` on the quality box
+  agrees: `is_nullable = NO`, `column_default` empty. **Both the backlog item and D55 say "the column
+  defaults to it" and that is wrong** — the default is application code, twice over
+  (`CustomerBookingResource.DEFAULT_ZONE_ID`, `BookingSeeder.DEFAULT_ZONE_ID`), which is a different
+  guarantee and worth stating correctly, because a column default would survive a writer that forgot.
+- There are exactly **two** places that construct a `Booking` in `booking/src/main`:
+  `CustomerBookingResource.create:157`, which sets `.zoneId(zoneOf(offering))` from the professional's
+  offering, and `BookingSeeder:129`. Nothing else calls `setZoneId`, and the generated
+  `BookingService` — which could update one from a DTO — **has no caller anywhere in the service**,
+  its resource having been deleted (`BookingResource`, on the delete table).
+- So a booking's zone is written once and never recomputed, exactly as `CatalogClient.Offering`'s
+  javadoc and CLAUDE.md both claim. **Reading it therefore honours D53's rule rather than testing
+  it**: the column *is* the record of the term the customer was quoted, and no in-flight booking's
+  boundary moves. Nothing needed migrating and nothing was migrated.
+- All **298** rows on the quality box read `Africa/Accra`, one distinct value. Ghana is UTC+0 all
+  year, so this change moves no boundary on any booking that exists.
+
+### The second decision: the two sites are one derivation
+
+`BookingWorkflow.scheduledAt` fed only `isLate`, and `cancellationPreview` **already called
+`isLate`** while computing the same instant a second time for the hours it quotes. So the two sites
+were not two questions with possibly-two answers; they were one quantity written twice, which is why
+one item had to name two lines and why a reviewer of either alone would have seen a correct file.
+`scheduledAt` is public now and the resource asks for it. That is a departure from the item's framing
+— it says "both sites", and there is one site afterwards — and it is the point: a third copy is how
+this recurs.
+
+**The two are still independently covered, which the mutations below demonstrate**, because the
+resource can be wrong while the workflow is right: it quotes `hoursUntilAppointment` from what it
+asks for.
+
+### The third decision: a zone that cannot be read
+
+`ZoneId.of` throws on a name tzdb does not know, so this change introduces a way to fail that
+`ZoneOffset.UTC` did not have — and it lands on `/cancellation-preview` **and** on `POST /cancel`,
+because `apply` calls `isLate`. A booking nobody can cancel, over a string, on the money path.
+
+`zoneOf` therefore falls back rather than throwing, and **`MarketCalendar.MARKET_ZONE` is the
+stand-in** — the only place on this path where that constant belongs. It is what the write side
+already defaults a blank offering zone to, so a row that cannot be read is read in the calendar it
+would have been written in; `ZoneOffset.UTC` would be the same instant and would say no calendar was
+chosen at all. The WARN names the booking and the value, because the row is what needs correcting.
+Neither branch is reachable from anything this estate has written — catalog has no write path for
+`Professional.zoneId` either, so every zone in play comes from a seeder — and `zone_id` is
+`varchar(64)` of free text all the same. No fourth zone constant was created; the three stay three.
+
+### What is deliberately not changed
+
+- **`ProWorkspaceResource`'s two window defaults** stay on `MARKET_ZONE`. D55 settled that half and
+  closed NEW-14 by decision: a window's start is a question about the page, not about an appointment.
+- **`BookingSeeder.atStartOfDay` and `MessagingSeeder`'s two equivalents** keep `LocalTime.NOON
+  .toInstant(ZoneOffset.UTC)`. Those write `raisedAt`, `completedAt` and `cancelledAt` — "when did
+  this happen" instants for demo rows, which D21 puts in its *other* category — and they read no
+  clock and no JVM zone, so the implicit-zone check passes them deliberately. Inspected, not a
+  defect, not touched.
+- **`Booking.scheduledDate` and `scheduledTime` stay a wall clock.** Nothing here converts an
+  appointment to a stored `Instant`, which is the model D21 ratified.
+
+### The tests, and the mutations that prove they see each site
+
+`TheAppointmentIsInTheBookingsZoneTest` (6 cases, surefire) pins the derivation;
+`TheCancellationBoundaryIsInTheBookingsZoneIT` (3 cases, failsafe, through MockMvc) pins the
+endpoint. Both use `Pacific/Kiritimati` (+14) and `Pacific/Honolulu` (-10): a fixture in
+`Africa/Accra` cannot distinguish an implementation that reads the booking's zone from one that
+inherits UTC, and **one** zone cannot either, because at some hours an eastward zone agrees with
+UTC's verdict by accident. Both have kept a fixed offset for decades and observe no daylight saving
+in 2026, so no asserted instant depends on a transition rule — *not* that their histories are empty,
+which is false of Honolulu (1933, and war time 1942–45) and was the first spelling here. The unit
+test's instants are anchored in 2026 against a fixed
+`now` no real clock will be at; the IT cannot anchor — `cancellationPreview` reads `Instant.now()`
+and there is no seam, since `MarketCalendar` is a copied-and-diffed file and giving one resource a
+clock is a different question — so it places every appointment at least four hours from the 24-hour
+boundary in **both** spellings and asserts verdicts the UTC spelling gets backwards.
+
+Each guarded thing was mutated separately, because an aggregate exit status cannot tell "both sites
+guarded" from "one site guarded":
+
+| Mutation | Unit | IT |
+| --- | --- | --- |
+| `scheduledAt` back to `.toInstant(ZoneOffset.UTC)` | **4 of 6 red** — the Accra and unreadable-zone cases stay green, correctly: Accra *is* UTC | **3 of 3 red** |
+| the resource given back its own local UTC conversion, workflow left correct | 6 of 6 green | **3 of 3 red** |
+| the `zoneOf` fallback removed, both call sites correct | **1 of 6 red** — `anUnreadableZoneFallsBack` alone; `BookingWorkflowLateCancellationTest` stays 7 of 7 | not run |
+| neither (as shipped) | 6 green | 3 green |
+
+**The first row is two invocations, not one**, and a reader reproducing it needs to know: `verify`
+halts at surefire, so the IT column was obtained from a second run with the surefire selection muted
+(`-Dtest=SecurityUtilsUnitTest -Dit.test=…`). Nothing in the table is a single command's exit status,
+which is the point of it.
+
+The second row is the one that matters: it is the state the estate was in for the whole of D55's
+window, and it is red at the endpoint while every unit test agrees the derivation is right.
+
+**The third row is a coverage change this package introduced and then closed** (the review's finding).
+`BookingWorkflowLateCancellationTest.at()` set no `zoneId`, so once `scheduledAt` read one, **ten** of
+that class's assertions were reaching the right answer through the fallback and a WARN — a class whose
+subject is the *window* silently exercising the *stand-in*, correct only because Accra is UTC. The
+fixture now says `Africa/Accra`: 7 of 7 green with **zero** WARNs, measured before and after. That is
+what makes the third row meaningful, and it was measured after the fixture was fixed — with the
+fallback removed, the only red case in the estate is the one whose subject it is.
+
+### The CI check, and what it is for
+
+*"An appointment's wall clock may only be read in the booking's own zone"* bans `ZoneOffset` **and
+`MARKET_ZONE`** on any line that reads `getScheduledTime()`, across all five services' `src/main`,
+comments stripped with the shared awk. It exists because **the tests cannot see a third site**: they
+cover the two call sites that exist, and a new screen wanting "hours until the appointment" writing
+the conversion again is precisely how this item came to name two lines. Banning `MARKET_ZONE` beside
+UTC is the half worth having — a sweep onto the marketplace's constant behaves identically today,
+reads as tidying, and would pass a check that banned only UTC.
+
+**Its reach is one line and the step says so**, because a conversion split across two statements
+evades it. It carries the stripper guard every other text check here carries, and one of its own
+kind: it keys on the accessor's name, so it asserts `Booking.getScheduledTime()` still exists and
+exits 1 if it does not — a rename would otherwise leave it green and blind, which is this family's
+recurring fail-open. Watched firing **three** ways: the workflow line reverted to `ZoneOffset.UTC`
+(red, naming that file), the resource swept onto `MARKET_ZONE` (red, naming that file), and the
+accessor renamed on the entity (red at the guard, before any scanning). Green as shipped, 534 files
+scanned.
+
+### Verified, assumed, not exercised
+
+- **Verified, read-only, against the quality box** (up on `331ec34`, not restarted, reseeded or
+  written to): `zone_id` is `NOT NULL` with no column default; 298 rows, one distinct value,
+  `Africa/Accra`.
+- **Verified at source**: two `Booking` constructors in `booking/src/main`, one `setZoneId` on the
+  entity and no caller outside the builder, no caller of the generated `BookingService` anywhere.
+- **Verified by running**: `./mvnw clean verify` in booking on JDK 25 — **205 unit + 118 IT**, zero
+  failures, checkstyle 0, modernizer silent. Both new classes appear in the reports of that clean run
+  rather than only of a targeted one.
+  **Two runs of that gate failed on this workstation and neither was this change**: the generated
+  `CucumberTest` could not load its context because Testcontainers' `postgres:18.4` exceeded its
+  60-second `database system is ready to accept connections` wait, twice, at load average ~15 with 44
+  containers up. Run alone the same class passed — in 330 seconds, having logged one timeout and
+  retried. No `src/main` file differed between the red and the green runs. Worth knowing before
+  reading a red booking gate here as a regression.
+- **Verified by running**: all four mutation rows above, each observed red and green, plus the
+  fixture's before/after — 10 fallback WARNs from `BookingWorkflowLateCancellationTest` before, 0
+  after, 7 of 7 green either way.
+- **Assumed**: that no estate holds a booking with a zone outside tzdb. Argued from there being no
+  write path rather than measured beyond the 298 quality rows; the fallback exists precisely because
+  the argument is about today's writers and the column outlives them.
+  **The write side is where that assumption should stop being needed, and it is NEW-20** rather than
+  a line in this package: `CustomerBookingResource.zoneOf` passes catalog's `offering.zoneId()`
+  through verbatim, defaulting only null and blank, so a garbage zone would be **stored** and then
+  read as Accra for ever afterwards on a money boundary. Validating at capture is a change to what
+  `POST /api/bookings` accepts, which is D22's territory and its own decision to take.
+- **Not exercised: the case this is for.** No professional has been onboarded outside GMT, no estate
+  holds a non-Accra booking, and this change is therefore unobservable on every running box — which
+  is the same reason it was cheap to make. What can be observed is that nothing moved: the seeded
+  bookings' late-cancellation verdicts are unchanged, because Accra and UTC are the same instant.
+- **Not exercised: production.** Nothing here has ever been deployed there, and nothing in
+  `deploy/prod-server/` was run.
+- **Not exercised: a live cancellation through the quality gateway.** `verify-cycle.sh` writes, and
+  the box was left alone; the endpoint is covered by the IT against a real PostgreSQL instead.

@@ -36,10 +36,23 @@ class BookingWorkflowLateCancellationTest {
     /** Collaborators are unused by isLate; passing null keeps this a unit test. */
     private final BookingWorkflow workflow = new BookingWorkflow(null, null, null, WINDOW_HOURS);
 
+    /**
+     * The zone is set explicitly, and it is not decoration — {@code decisions.md} D58.
+     *
+     * <p>{@code scheduledAt} reads {@code Booking.zoneId} since then, so a fixture that leaves it
+     * null takes the <em>fallback</em> path: ten of the assertions below were arriving at the right
+     * answer through a WARN, and holding only because the stand-in is Accra and Accra is UTC. The
+     * subject of this class is the <strong>window</strong>; the fallback is
+     * {@code TheAppointmentIsInTheBookingsZoneTest.anUnreadableZoneFallsBack}'s alone, and a WARN
+     * that fires on a correct state is one people learn to ignore.
+     *
+     * <p>{@code Africa/Accra} rather than a zone with an offset, because the instants here are
+     * derived from {@code when} in UTC and the window arithmetic is what is being pinned.
+     */
     private static Booking at(Instant when) {
         LocalDate date = LocalDate.ofInstant(when, ZoneOffset.UTC);
         LocalTime time = LocalTime.ofInstant(when, ZoneOffset.UTC).withSecond(0).withNano(0);
-        return new Booking().reference("b-test").scheduledDate(date).scheduledTime(time);
+        return new Booking().reference("b-test").scheduledDate(date).scheduledTime(time).zoneId("Africa/Accra");
     }
 
     @Test

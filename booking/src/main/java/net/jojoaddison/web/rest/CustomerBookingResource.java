@@ -5,7 +5,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
-import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
 import net.jojoaddison.service.CatalogClient;
@@ -224,19 +223,20 @@ public class CustomerBookingResource {
             );
         }
         Instant now = Instant.now();
-        // STILL NOT MarketCalendar.MARKET_ZONE, and now a DEFECT rather than an open question —
-        // decisions.md D55, backlog NEW-19. This converts an APPOINTMENT's wall clock to an instant,
-        // which is D21's territory: the booking carries its own zoneId and this line ignores it.
-        // Spec §13 #8 was ratified on 2026-09-07 and D21's answer IS the professional's zone, so the
-        // fix is booking.getZoneId() — not the marketplace's constant, which would read as tidying,
-        // behave identically today, and be wrong for the one case the ratification is for.
-        // Not fixed here because this line prices the late-cancellation fee below: moving the zone
-        // moves the hour at which a cancellation becomes late, which is a term the customer was
-        // quoted, and D53's rule is that such a term must not move under them. Whether an in-flight
-        // booking keeps its quoted boundary is NEW-19's decision to make.
-        // Nil consequence while every Booking.zoneId is Africa/Accra. BookingWorkflow.scheduledAt
-        // has the identical line and the identical reason.
-        Instant scheduled = booking.getScheduledDate().atTime(booking.getScheduledTime()).toInstant(ZoneOffset.UTC);
+        // The appointment's wall clock, read in the BOOKING'S OWN ZONE — decisions.md D58, backlog
+        // NEW-19. This line converted with ZoneOffset.UTC until then, which spec §13 #8's
+        // ratification (D55) made a defect rather than the open question it had been: an
+        // appointment belongs to the professional's calendar, and Booking.zoneId is where that
+        // calendar was captured at creation. NOT MarketCalendar.MARKET_ZONE, which behaves
+        // identically today and is wrong for the one case the ratification exists for.
+        //
+        // Asked of BookingWorkflow rather than computed here, because the hours quoted below and the
+        // fee decided by isLate() are two readings of one instant: the previous copy of this line
+        // meant the same quantity had to be found and fixed in two places, which is how NEW-19 came
+        // to be an item with two sites rather than one. The customer's quoted boundary does not move
+        // — zoneId is not-null, written once from the offering and never recomputed, so reading it is
+        // honouring the term rather than re-striking it (D53).
+        Instant scheduled = bookings.scheduledAt(booking);
         long hours = Duration.between(now, scheduled).toHours();
         return new CancellationPreview(
             booking.getReference(),
