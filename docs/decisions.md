@@ -10719,8 +10719,28 @@ name"*). Measured:
 
 | File | short-name addresses |
 | --- | --- |
-| `deploy/docker/docker-compose.dev.yml` | none |
-| `quality/compose.yml` | **five** — `http://booking:8080` twice in the gateway's routes, `http://catalog:8080`, `http://messaging:8080`, `http://payout:8080`, plus `HEALTHCONNECT_BOOKING_BASE_URL` in catalog and in payout |
+| `deploy/docker/docker-compose.dev.yml` | **none** |
+| `quality/compose.yml` | **nine**, enumerated below |
+
+The nine, by line, because a count is what this whole section is about:
+
+| Line | Setting | Host |
+| --- | --- | --- |
+| 337 | gateway route 0 | `catalog` |
+| 341 | gateway route 1 | **`booking`** |
+| 345 | gateway route 2 | `messaging` |
+| 349 | gateway route 3 | `payout` |
+| 369 | gateway route 4 (the webhook route) | **`booking`** |
+| 406 | catalog's `HEALTHCONNECT_BOOKING_BASE_URL` | **`booking`** |
+| 447 | booking's `HEALTHCONNECT_CATALOG_BASE_URL` | `catalog` |
+| 449 | booking's `HEALTHCONNECT_PAYOUT_BASE_URL` | `payout` |
+| 579 | payout's `HEALTHCONNECT_BOOKING_BASE_URL` | **`booking`** |
+
+**`booking` alone is four of the nine.** This table said "five" at review, while its own prose
+enumerated seven and omitted 447 and 449 — and the reviewer's correction of it said "three". So the
+number has now been wrong three times in a section whose entire subject is a count asserted rather
+than measured, which is the house rule stated against itself: **trust the list and not the number.**
+The list above is the artefact; if you need the number, derive it from the list.
 
 So the quality compose file is **mixed**, and `booking` by short name is very much in use. What
 actually costs nothing is something else, and it is two accidents deep:
@@ -10889,9 +10909,12 @@ Mutation 9 is the one this family keeps getting wrong: absent the stripper, `awk
 every text assertion reads an empty file, and a check with no subject reports green. It is guarded at
 the top, and the guard was watched firing rather than assumed.
 
-**Verified by running**: the check green at **32** under `bash -e`; all nine mutations red on the
-assertions that name them; `bash -n` on all 23 shell scripts the CI step names, including the two new
-files; `extract-seed.mjs` regenerating identically and leaving the tree clean;
+**Verified by running** — as this section stood before review, and superseded by §12's counts:
+the check green at **32** under `bash -e`; all nine mutations red on the
+assertions that name them; `bash -n` on all 23 shell scripts the CI step names, which includes the
+new check and **not** `strip-sh-comments.awk` — an awk file is not one of that glob's subjects, which
+is part of why it needed a test of its own (§12);
+`extract-seed.mjs` regenerating identically and leaving the tree clean;
 `sync-appendices.sh --check` green — `verify-outbox-recovery.sh` is not an appendix, and this confirms
 neither appendix moved. **No Java changed, so no Maven gate was run**; saying so rather than running
 one for show. **`deploy/verify-outbox-recovery.sh` was never executed against the live quality stack** —
@@ -10936,3 +10959,111 @@ history does not reach back that far (measured — 0 network events at `--since 
 same-tag re-run will not do it. This package deliberately did not do the repair: it is a roll-time act,
 and the residue costs what §3 measured, which is nothing. From the next run onward the script reports
 the condition instead of quietly adding to it.
+
+### §10 The roll, in the order it has to happen — for whoever releases this
+
+Three facts, and their order is the whole of it.
+
+1. **Repairing the live container needs a RECREATE**, per §9: `./quality/startup.sh --local --clean`
+   then a fresh `up`, or any roll to a **new `TAG`**, which recreates as a side effect. A same-tag
+   re-run of `startup.sh` reports `Running` and repairs nothing.
+2. **The fix only closes the loop if the sweep that runs afterwards is the FIXED script.** A
+   `verify-outbox-recovery.sh` from a pre-D68 checkout severs and bare-reconnects in the same run,
+   so a roll followed by a sweep from an old tree ends exactly where it started — and looks like the
+   fix not working rather than the wrong file being run.
+3. So: **merge, roll to a new tag, and run every subsequent sweep from the merged tree.** In that
+   order. Nothing else about the roll changes, and no runbook step is added beyond "roll to a new
+   tag", which a roll does anyway.
+
+Worth stating because the two halves are in different places: the repair is a *deployment* act and
+the guarantee is a *checkout* property, and neither one is visible from the other.
+
+### §11 Review, first finding: the check had a fail-open of its own, and it was the argument it made
+
+`§2`'s comment said *"two call sites written out twice is how one of them gets fixed and the other
+does not"* and applied `count == 1` to the connect and **not** to the capture. Reproduced by the
+reviewer and again here: adding a **second** capture after the disconnect — the shape of a
+well-meant *"refresh it before reconnecting"* edit — passed everything.
+
+```
+captures now: 2   parses: yes   check: 32 passed, 0 failed
+```
+
+At run time the second capture overwrites the array with the now-empty set, `reconnect` restores
+nothing, and the script's own `chk "…carrying the same aliases"` compares `""` against `""` and
+prints `ok`. **The defect fully back, both suites green** — which is the same class of thing D68
+exists to fix, one level up: a guard that measures the shape it happens to have rather than the
+property it needs.
+
+Two independent guards now, not one and a restatement:
+
+- **`count == 1` on `^mapfile -t BOOKING_ALIASES`** — catches a second capture wherever it is put.
+- **`ln_of` takes `tail -1`, not `head -1`** — so the ordering relation reads the *last* capture and
+  catches it being in the wrong place even if somebody merges the two back into one.
+
+And the four ordering anchors are asserted to appear **exactly once** rather than merely to be
+present, because `tail -1` on a doubled anchor silently compares one occurrence and says nothing
+about the other. "Present at all" was the weaker half of the property the arithmetic needs; the
+count subsumes it.
+
+### §12 Review, remaining findings
+
+**The capture could not tell "empty" from "docker could not be asked".** `mapfile < <(aliases_on_net)`
+discards the process substitution's status entirely, so an unaskable docker produced an empty
+capture, fired §4's note **with the wrong diagnosis** — *"that is what a pre-D68 run leaves
+behind"* — and then severed and bare-reconnected, recreating this defect with the run green. **This
+is not §4's question**: that argues what to do with an *empty answer*; this is a *failed probe*, and
+D65 and D67 both landed the same rule one docker object along — non-zero from a probe means the
+question went **unanswered**, never that the answer is nothing. Status-checked assignment now, then
+the array is filled from the captured string; a failed probe refuses **before anything is cut**.
+Probability is low — `check_estate` has just exec'd docker three times — and it sits at the one
+decision point this package added, which is where low probability stops being a defence.
+
+That also makes `pipefail` load-bearing here rather than idle, which the reviewer flagged: this
+script sets `-uo pipefail` with no `-e`, so the old comment's *"a grep that matches nothing exits 1"*
+described a breakage that could not occur. It can now — the function's **exit status** is read, and
+`pipefail` is what carries docker's failure past `sed`'s success. With `grep -v` there, an estate
+whose container genuinely has no aliases would report failure and be refused. The comment says so.
+
+**The count correcting a false count was itself wrong, four times.** The measured answer is **nine**
+short-name addresses in `quality/compose.yml`, with `booking` on **four** lines. §3 said five while
+its own prose enumerated seven and omitted 447 and 449; the backlog said five; `CLAUDE.md` said five;
+the check's header said "five places" for a host that appears four times — and the reviewer's
+correction of all that said "three". Six statements of one number, four of them wrong, in the section
+whose entire subject is *a count asserted rather than measured*. All four sites now carry the
+**enumeration by line** and say to derive the number from it. **Trust the list and not the number** —
+the rule this repository already had, applied to the document that was busy citing it.
+
+**`strip-sh-comments.awk` had no test of its own.** Its caller's three inline controls do cover
+outputs-nothing, strips-nothing and real-code-survives *against the real subject*, and that is
+genuine. What they do not cover is the **survival** properties the awk's header documents —
+`${#arr[@]}`, `$#`, `${x#pfx}` — and `verify-outbox-recovery.sh` depends on the first of those on a
+line no assertion greps. "Documented in three places, enforced nowhere" is this repository's named
+failure mode, and it is what the sibling stripper spent eight fail-opens establishing.
+`strip-sh-comments-test.sh` mirrors `strip-comments-test.sh` deliberately, so the two read side by
+side, and its case 8 **reproduces why there are two files**: the Java stripper leaves a shell comment
+intact *and exits 0 while doing so*. Case 9 pins both of the awk's stated limits — the quoted `#`
+that truncates (fail-**closed**, the deliberate direction) and `;#` that is not seen
+(fail-**open**, named and tolerated: widening the rule to catch it would truncate punctuation-adjacent
+expansions nobody has written yet, trading a limit nothing can exploit for one that fires on correct
+code).
+
+**The `peer` container was created one line before its cleanup knew its name.** An abort in that
+window leaked a container. All three throwaway names are known to the `EXIT` trap before anything is
+created now — naming a container that does not exist yet costs nothing, since `docker rm -f` on an
+absent name is what the `|| true` is for.
+
+**Verified after review, by running**: `outbox-alias-restore-test.sh` green at **46** under `bash -e`
+(32 before review), `strip-sh-comments-test.sh` green at **11** — both counts read off the run rather
+than written from memory, which is the correction §12 is largely about; **nineteen** mutations red on the assertions that name
+them — the original nine plus the second capture, the capture below the cut with only one of them, the
+status check removed two ways, a refusal downgraded to a warning, and four mutations of the awk
+(column-1 branch, space/tab guard, outputs-nothing, deletes-lines) — each asserted to have applied
+(original gone, mutant present, parses) with every file byte-identical afterwards, and both strippers
+deleted in turn to watch each caller exit 1 naming the cause. The refusal block is **executed** rather
+than grepped for, lifted by line range from the shipped file, with a succeeding probe beside it as the
+control so it cannot pass by refusing everything. `bash -n` on all 24 shell scripts the CI step names;
+`extract-seed.mjs` regenerating identically; `sync-appendices.sh --check` green. No Java changed, so
+no Maven gate. **The recovery script was still never executed against the live quality stack**, whose
+ten containers were re-counted healthy with booking's three alias sets unchanged. Throwaways removed
+and the host swept.

@@ -12,13 +12,24 @@
 #   `${#arr[@]}`, `$#`, `${x#pfx}`      SURVIVE, because that `#` follows `{` or `$`.
 #   `echo "issue #4"`                   is TRUNCATED, because that one follows a space, and nothing
 #                                       here knows it is inside a quote.
+#   `true;# a comment`                  is NOT SEEN, because that `#` follows `;`. Fail-OPEN, and
+#                                       tolerated rather than fixed: see below.
 #
-# That second case is the deliberate direction. Removing too much makes a check go RED on correct
+# The truncation is the deliberate direction. Removing too much makes a check go RED on correct
 # code, which sends somebody to look; removing too little lets a comment satisfy the check it is
 # supposed to be guarded against, which is the failure this whole family exists to close. The caller
 # asserts both halves — that a comment naming a guarded string is removed, and that real code
 # survives — because every other assertion in a stripper's test is satisfied by one that prints
 # nothing.
+#
+# `;#` IS THE ONE FAIL-OPEN HERE AND IT IS NAMED RATHER THAN CLOSED, because widening the rule to
+# "any `#` not preceded by `{` or `$`" would truncate `${x#pfx}` written as `${x#pfx}` after a
+# semicolon and every other punctuation-adjacent expansion nobody has written yet — trading a limit
+# nothing can exploit for one that fires on correct code. Nothing can exploit it today because the
+# caller's guarded strings are matched on lines of their own (`^mapfile …`, `^reconnect$`,
+# `^docker network disconnect`) or counted across the file where a `;#` comment would have to
+# contain the string to matter. `strip-sh-comments-test.sh` §9 pins both limits so that a change to
+# either is a decision, and it passes either way on this one while telling you which you have.
 #
 # LINE NUMBERING IS PRESERVED: exactly one output line per input line, blanked rather than deleted.
 # The caller compares line numbers of a capture against a disconnect, so a dropped line would move

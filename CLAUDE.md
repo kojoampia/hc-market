@@ -477,13 +477,17 @@ its CLI and maps them, so `--services catalog` is unchanged.
 
 **That was written here as "both compose files" and it is only true of one of them** (D68 §3, backlog
 NEW-26 — which repeated the same generalisation from the same single line). Measured:
-`docker-compose.dev.yml` carries **no** short-name address; `quality/compose.yml` carries **five** —
-`http://booking:8080` twice in the gateway's routes, `http://catalog:8080`, `http://messaging:8080`,
-`http://payout:8080`, and `HEALTHCONNECT_BOOKING_BASE_URL` in catalog and in payout — beside the
+`docker-compose.dev.yml` carries **no** short-name address; `quality/compose.yml` carries **nine** —
+five gateway routes (`catalog`, `booking`, `messaging`, `payout`, and `booking` again on the webhook
+route) and four cross-service base URLs (catalog→booking, booking→catalog, booking→payout,
+payout→booking), so **`booking` alone is four of them** — beside the
 `http://hc-market-quality-messaging:8080` both documents quoted as if it were the rule. It is safe
-because those five are asked by containers on the **project** network, which is nearer than `hcnet` in
+because all nine are asked by containers on the **project** network, which is nearer than `hcnet` in
 their resolver order, so the collision is never reached. Safe by membership, not by naming, and the
 distinction is the whole of NEW-26.
+**Trust the enumeration and not the number** — D68 §3 lists all nine by line, and that count was
+written wrong three times running in the very section whose subject is a count asserted rather than
+measured. Re-derive it before quoting it.
 
 The databases stay **off** `hcnet` for the same reason, in reverse: never reachable from another
 product, and free to keep the short names `catalog-db`, `gateway-db`. They stay off `qualitynet`
@@ -972,6 +976,16 @@ looks like would then be one missing `case` from silently stripping neither. And
 shell one is load-bearing rather than decorative is measured: the `docker network connect` count in
 `verify-outbox-recovery.sh` reads **3 raw and 1 stripped**, because the header explains the defect in
 prose, so an unstripped check would be asserting the length of a paragraph.
+
+**It has its own test, and adding one was a review finding rather than a courtesy.**
+`strip-sh-comments-test.sh` mirrors `strip-comments-test.sh` so the two read side by side. Its
+caller's three inline controls already covered outputs-nothing and strips-nothing *against the real
+subject*; what nothing covered was the **survival** half its header documents — `${#arr[@]}`, `$#`,
+`${x#pfx}` — while `verify-outbox-recovery.sh` depends on the first of those on a line no assertion
+greps. Its case 8 **reproduces** why two files exist (the Java stripper leaves a shell comment intact
+*and exits 0*), and case 9 pins both stated limits: a quoted `#` truncates the line (fail-**closed**,
+the deliberate direction) and `;#` is not seen (fail-**open**, named and tolerated — widening the rule
+would truncate punctuation-adjacent expansions nobody has written yet).
 
 **Each caller guards that the file EXISTS, and that guard is measured rather than decorative.** One
 file four checks trust is a single point of failure, and absent it the two whose subject is a silent
@@ -1576,11 +1590,27 @@ time.**
   the script prints a note naming the container, the network and the remedy — a compose recreate —
   rather than inventing an alias set from the compose service label, which is a claim about compose's
   intent it cannot check, or refusing a read-only measurement over a residue that costs nothing.
+  **A non-zero answer from `docker inspect` means the question went UNANSWERED, and the capture is
+  status-checked before anything is cut** — D65 and D67's rule, one docker object along, and a
+  different question from the empty-set one above. `mapfile < <(aliases_on_net)` discards the status
+  entirely, so an unaskable docker read as "it has no aliases": the note fired with the wrong
+  diagnosis and the script severed and bare-reconnected anyway, green. That is also what makes
+  `pipefail` load-bearing in `aliases_on_net` — this script sets no `-e`, so what `pipefail` buys is
+  docker's status surviving past `sed`'s success, and `grep -v '^$'` there would refuse every estate
+  whose container genuinely has none.
   The ordering is the half no behavioural test can see and is asserted by line position:
   **declare < trap < capture < disconnect**. The array is declared above the trap because
   `check_estate` exits on four paths below it; the capture is above the disconnect because a
   disconnected container has no alias list left to read, and capturing after the cut restores an
   empty set with every assertion in the script still green.
+  **There must be exactly ONE capture, and the check reads the LAST one** — a review finding, and the
+  check's own argument turned on it (D68 §11). `count == 1` was applied to the `docker network
+  connect` and not to its opposite number, so a **second** capture added after the disconnect — the
+  shape of a well-meant "refresh it before reconnecting" edit — passed every assertion while the
+  defect was fully back: the array overwritten with the now-empty set, and the script's own
+  "the aliases came back" comparing `""` against `""`. Two independent guards now, and all four
+  ordering anchors are asserted to appear exactly once, because `tail -1` on a doubled anchor
+  compares one occurrence and says nothing about the other.
   **A plain `compose up` does NOT repair a container this already stripped**, which is the half that
   changes an instruction (D68 §9). Measured on a throwaway project with an external network: compose
   at create writes `[<container name>, <service name>]`; a bare connect leaves `[]`; `up -d` with

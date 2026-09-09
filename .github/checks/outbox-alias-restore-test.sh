@@ -13,7 +13,8 @@
 #  container's own name. So the script left the estate slightly smaller than it found it, every run.
 #
 #  It costs nothing TODAY, and the reason it costs nothing is not the reason the item gave — see
-#  D68 §3. `quality/compose.yml` addresses `booking` by short name in five places; they resolve over
+#  D68 §3. `quality/compose.yml` addresses `booking` by short name in FOUR places — two gateway
+#  routes, catalog's base URL and payout's, out of nine short-name addresses in all; they resolve over
 #  the PROJECT network, and since D64 anything outside gets an answer over `qualitynet` instead. The
 #  name never went missing, it moved planes. That is a fact about today's membership, which is
 #  exactly the kind of fact that stops being true without anybody editing this script.
@@ -98,6 +99,29 @@ check "…and it is inside reconnect()" \
   "$(sed -n '/^reconnect() {/,/^}/p' "$STRIPPED" | grep -c 'docker network connect' || true)" "1"
 check "…which builds its flags from the captured set" \
   "$(sed -n '/^reconnect() {/,/^}/p' "$STRIPPED" | grep -c 'BOOKING_ALIASES' || true)" "1"
+# THE SAME DEMAND ON THE CAPTURE, and its absence was a fail-open in the first version of this file
+# (D68 §11, reproduced by the reviewer). `count == 1` was applied to the connect and not to its
+# opposite number, and the argument two lines up is the same argument: a **second** capture — the
+# shape of a well-meant "refresh it before reconnecting" edit — overwrites the array with the
+# now-empty set after the cut, the reconnect restores nothing, and the script's own
+# `chk "…carrying the same aliases"` compares "" against "" and passes. Measured green with the
+# defect fully back, which is why the count is here and why `ln_of` below takes the LAST match.
+check "there is exactly one capture of the alias set" \
+  "$(grep -c '^mapfile -t BOOKING_ALIASES' "$STRIPPED" || true)" "1"
+
+# 2b. AND THE PROBE'S STATUS IS CHECKED. `mapfile < <(aliases_on_net)` discards it, so an unaskable
+#     docker read as "it has no aliases": the empty-set note fired with the wrong diagnosis and the
+#     script went on to sever and bare-reconnect, which is this defect restored with the run green.
+#     D65 and D67 both settled this one object along — non-zero from a probe means the question went
+#     UNANSWERED, never that the answer is nothing — and D68 §4's argument is about an EMPTY answer,
+#     which is a different thing. Both halves asserted, because either alone is satisfiable: the
+#     status-checked assignment must be there AND the mapfile must not call the probe again.
+check "the probe's exit status is checked before anything is cut" \
+  "$(grep -c 'if ! captured_aliases="\$(aliases_on_net)"; then' "$STRIPPED" || true)" "1"
+check "…and the capture does not re-run the probe, discarding it" \
+  "$(grep -c '^mapfile.*aliases_on_net' "$STRIPPED" || true)" "0"
+check "…and a failed probe refuses rather than proceeding" \
+  "$(sed -n '/^if ! captured_aliases=/,/^fi$/p' "$STRIPPED" | grep -c 'exit 1' || true)" "1"
 check "the EXIT trap reconnects through it rather than calling docker itself" \
   "$(grep -c "^trap .*reconnect; fi' EXIT" "$STRIPPED" || true)" "1"
 check "…and so does the normal path" \
@@ -115,13 +139,25 @@ check "…and so does the normal path" \
 #
 #    Never assert a position without asserting what it is positioned against — D67 §11, which found
 #    exactly this missing and watched the whole preflight block move above the router to satisfy it.
-ln_of() { grep -n "$1" "$STRIPPED" | head -1 | cut -d: -f1 || true; }
-decl_ln="$(ln_of '^BOOKING_ALIASES=()$')"
-trap_ln="$(ln_of "^trap .* EXIT$")"
-cap_ln="$(ln_of '^mapfile -t BOOKING_ALIASES')"
-disc_ln="$(ln_of '^docker network disconnect')"
-for n in decl:"$decl_ln" trap:"$trap_ln" capture:"$cap_ln" disconnect:"$disc_ln"; do
-  check "the ${n%%:*} line is present at all" "$([[ -n "${n#*:}" ]] && echo yes || echo no)" "yes"
+#
+#    `tail -1`, NOT `head -1`, and that is the other half of the count above. `head` reports the
+#    FIRST match, so a second capture added after the disconnect left this relation reading the
+#    still-correct first one and every assertion here green. Taking the last match makes the
+#    ordering relation itself see the defect, so the two guards are independent rather than one
+#    guard and a restatement: the count catches a second capture wherever it is, and this catches
+#    the last capture being in the wrong place even if somebody merges them back into one.
+#    And each of the four anchors is asserted to appear EXACTLY ONCE, which is what makes the
+#    arithmetic below well defined at all: `tail -1` on a doubled anchor silently compares one
+#    occurrence and says nothing about the other, so "present at all" — what this asserted at
+#    review — is the weaker half of the property the relations need. It subsumes presence.
+ln_of() { grep -n "$1" "$STRIPPED" | tail -1 | cut -d: -f1 || true; }
+n_of() { grep -c "$1" "$STRIPPED" || true; }
+decl_re='^BOOKING_ALIASES=()$'; trap_re='^trap .* EXIT$'
+cap_re='^mapfile -t BOOKING_ALIASES'; disc_re='^docker network disconnect'
+decl_ln="$(ln_of "$decl_re")"; trap_ln="$(ln_of "$trap_re")"
+cap_ln="$(ln_of "$cap_re")";   disc_ln="$(ln_of "$disc_re")"
+for n in decl:"$decl_re" trap:"$trap_re" capture:"$cap_re" disconnect:"$disc_re"; do
+  check "the ${n%%:*} line appears exactly once" "$(n_of "${n#*:}")" "1"
 done
 check "the array is declared before the trap that reads it" \
   "$([[ -n "$decl_ln" && -n "$trap_ln" ]] && (( decl_ln < trap_ln )) && echo yes || echo no)" "yes"
@@ -134,6 +170,41 @@ check "…and BEFORE the disconnect, or there is nothing left to read" \
 #    right thing tells nobody it is still doing it.
 check "the run compares the alias set it got back against the one it captured" \
   "$(grep -c 'chk .*aliases it had before.*BOOKING_ALIASES' "$STRIPPED" || true)" "1"
+
+# 4b. AND THE REFUSAL IS RUN, not merely grepped for. §2b asserts the status-checked assignment is
+#     in the file; this executes the shipped block with the probe made to fail, which is the only way
+#     to know it refuses rather than, say, warning and carrying on. The block is lifted by line range
+#     from `if ! captured_aliases=` to its `fi`, so it is the shipped bytes and not a copy — and it
+#     is guarded, because an empty extraction would make the subshell exit 0 and read as a pass.
+#     Needs no daemon: `aliases_on_net` is stubbed to fail, which is the case under test.
+refusal="$(sed -n '/^if ! captured_aliases=/,/^fi$/p' "$STRIPPED")"
+check "the refusal block could be extracted at all" \
+  "$([[ -n "$refusal" ]] && echo yes || echo no)" "yes"
+refuse_out=""; refuse_rc=0
+refuse_out="$( ( set -uo pipefail
+                 BOOKING_CTR=probe-ctr; NET=probe-net
+                 aliases_on_net() { return 1; }
+                 eval "$refusal"
+                 echo "REACHED-THE-CODE-AFTER" ) 2>&1 )" || refuse_rc=$?
+check "a failed probe exits non-zero" \
+  "$([[ "$refuse_rc" != 0 ]] && echo nonzero || echo zero)" "nonzero"
+case "$refuse_out" in *REACHED-THE-CODE-AFTER*) r=continued ;; *) r=stopped ;; esac
+check "…and stops rather than carrying on to the disconnect" "$r" "stopped"
+case "$refuse_out" in *"could not ask docker"*) r=says ;; *) r="$refuse_out" ;; esac
+check "…and says the question went unanswered" "$r" "says"
+case "$refuse_out" in *"Nothing has been disconnected"*) r=says ;; *) r="$refuse_out" ;; esac
+check "…and that nothing has been cut" "$r" "says"
+# The positive control: a probe that SUCCEEDS must fall through, or this refuses every run. The stub
+# prints the two aliases the docker section uses, so the comparison is against a real-looking answer.
+pass_out=""; pass_rc=0
+pass_out="$( ( set -uo pipefail
+               BOOKING_CTR=probe-ctr; NET=probe-net
+               aliases_on_net() { printf 'alpha\nbravo\n'; }
+               eval "$refusal"
+               echo "REACHED-THE-CODE-AFTER" ) 2>&1 )" || pass_rc=$?
+check "a probe that answers falls through" "$pass_rc" "0"
+case "$pass_out" in *REACHED-THE-CODE-AFTER*) r=continued ;; *) r="$pass_out" ;; esac
+check "…and reaches the code after it" "$r" "continued"
 
 # 5. AND NOW ASK DOCKER. Everything above is text; this runs the shipped functions against a real
 #    daemon, on a throwaway container and network of its own. It never looks at, and never touches,
@@ -156,9 +227,15 @@ fi
 
 net="hc-market-d68probe-$$"
 ctr="hc-market-d68ctr-$$"
-# On an EXIT trap, not at the end: an assertion aborting here would otherwise leave a container and a
+peer="hc-market-d68peer-$$"
+# On an EXIT trap, not at the end: an assertion aborting here would otherwise leave containers and a
 # network behind. It removes only the names it created.
-cleanup() { docker rm -f "$ctr" >/dev/null 2>&1 || true
+#
+# ALL THREE NAMES ARE KNOWN TO IT BEFORE ANYTHING IS CREATED, which is the point rather than tidiness
+# — `peer` used to be named on the line before the trap learned about it, so an abort in that one-line
+# window leaked a container (D68 §12, the reviewer's fourth optional). Naming a container the run has
+# not created yet costs nothing: `docker rm -f` on an absent name is the `|| true` below.
+cleanup() { docker rm -f "$ctr" "$peer" >/dev/null 2>&1 || true
             docker network rm "$net" >/dev/null 2>&1 || true
             rm -f "$STRIPPED"; }
 trap cleanup EXIT
@@ -190,14 +267,25 @@ aliases_now() { local s; s="$(harness 'aliases_on_net' | tr '\n' ' ')"; printf '
 before="$(aliases_now)"
 check "the shipped reader sees the alias set docker holds" "$before" "alpha bravo"
 
+# THE PROBE MUST BE ABLE TO SAY "I COULD NOT ASK", or §2b's status check has nothing to check. Two
+# ways docker fails, both measured rather than reasoned: no such container, and no daemon at all.
+# `pipefail` is what carries docker's status past `sed`'s success — without it both of these are 0
+# and the refusal in the script is unreachable.
+rc=0; harness 'BOOKING_CTR=hc-market-d68-no-such-container-'"$$"'; aliases_on_net' >/dev/null 2>&1 || rc=$?
+check "the reader fails when the container does not exist" \
+  "$([[ "$rc" != 0 ]] && echo nonzero || echo zero)" "nonzero"
+rc=0; DOCKER_HOST=unix:///nonexistent-hc-d68.sock harness 'aliases_on_net' >/dev/null 2>&1 || rc=$?
+check "…and when the daemon is unreachable" \
+  "$([[ "$rc" != 0 ]] && echo nonzero || echo zero)" "nonzero"
+# The positive control for the two above: a reader that ALWAYS failed would satisfy both and refuse
+# every run. It succeeds on the container that does exist, which `before` already read from.
+rc=0; harness 'aliases_on_net' >/dev/null 2>&1 || rc=$?
+check "…and succeeds on a container that is there" "$rc" "0"
+
 # THE POSITIVE CONTROL, and it comes first deliberately. `getent hosts alpha` answering is only
 # evidence that the fix works if it can be made to STOP answering — every reading in this section is
 # of a thing expected to be present, and a probe that cannot show the absent case has proved nothing.
-peer="hc-market-d68peer-$$"
 docker run -d --name "$peer" --network "$net" "$img" sleep 300 >/dev/null
-cleanup() { docker rm -f "$ctr" "$peer" >/dev/null 2>&1 || true
-            docker network rm "$net" >/dev/null 2>&1 || true
-            rm -f "$STRIPPED"; }
 resolves() { docker exec "$peer" getent hosts "$1" >/dev/null 2>&1 && echo yes || echo no; }
 check "'alpha' resolves on the network to start with" "$(resolves alpha)" "yes"
 

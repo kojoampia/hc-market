@@ -98,6 +98,12 @@ on_net() { docker inspect -f "{{if index .NetworkSettings.Networks \"$NET\"}}tru
 # by an empty element — caught by the test beside this file, on a change that was otherwise correct.
 # `sed` and not `grep -v '^$'`: this script sets pipefail, and a grep that matches nothing exits 1,
 # which is precisely the case that must succeed here — a container with no aliases at all.
+#
+# That is not a hypothetical about `set -e` — this script does not set it. It is about this
+# function's own EXIT STATUS, which the capture below now checks: `pipefail` is what makes the
+# pipeline report docker's failure rather than sed's success, so "docker could not be asked" stays
+# distinguishable from "there are none". With `grep -v` there, an estate with no aliases would
+# report failure and be refused.
 aliases_on_net() { docker inspect -f "{{range (index .NetworkSettings.Networks \"$NET\").Aliases}}{{println .}}{{end}}" "$BOOKING_CTR" 2>/dev/null | sed '/^$/d'; }
 # Declared here, empty, ABOVE the trap: the trap can fire at any point after this line — check_estate
 # exits 1 on four of them — and a trap referring to an array that has not been declared yet is one
@@ -186,7 +192,24 @@ echo "  booking $REF created; customer notifications now $N0"
 echo "── cut booking off from the broker ──"
 # Before the cut, because the alias list goes with the endpoint. Nothing between here and the
 # disconnect may exit, or the trap reconnects with a set that was captured for a different reason.
-mapfile -t BOOKING_ALIASES < <(aliases_on_net)
+#
+# STATUS-CHECKED, and that is the rule D65 and D67 both landed on one docker object along: non-zero
+# from a probe means the question went UNANSWERED, never that the answer is nothing. `mapfile <
+# <(...)` discards the status of the process substitution entirely, so an unaskable docker produced
+# an empty capture, fired the note below with the wrong diagnosis, and then severed and
+# bare-reconnected — recreating the very defect this section fixes, with the run reporting green.
+# It is not the same question as D68 §4: that argues what to do with an EMPTY answer, this is a
+# FAILED probe, and the only safe thing to do before cutting a container off a network is not to.
+if ! captured_aliases="$(aliases_on_net)"; then
+  echo "  FAIL could not ask docker for $BOOKING_CTR's aliases on $NET."
+  echo "       Nothing has been disconnected. A non-zero answer means the question went unanswered,"
+  echo "       which is not the same as 'it has none' — and reconnecting on that guess is exactly"
+  echo "       the defect D68 fixed. Check the container is up and on $NET, then re-run."
+  echo ""; echo "OUTBOX RECOVERY FAILED — the alias set could not be read"; exit 1
+fi
+# `printf '%s'` rather than the function again: one probe, one answer, and an empty answer must give
+# an EMPTY array rather than a one-element array holding "" — which `<<< "$captured_aliases"` would.
+mapfile -t BOOKING_ALIASES < <(printf '%s' "$captured_aliases")
 if [ ${#BOOKING_ALIASES[@]} -eq 0 ]; then
   # RESTORE WHAT WAS FOUND, and say so. An empty set here is this script's own past work — a bare
   # reconnect from before D68 — and the temptation is to repair it, which would mean INVENTING an

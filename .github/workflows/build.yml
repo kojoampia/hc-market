@@ -1671,6 +1671,19 @@ jobs:
       - name: verify-outbox-recovery.sh must restore the aliases it severs
         run: ./.github/checks/outbox-alias-restore-test.sh
 
+      # The SHELL comment stripper's own test — the same argument as "The shared comment stripper must
+      # strip comments and nothing else", one language along. The check above is only as good as
+      # strip-sh-comments.awk, and the survival properties that awk's header documents
+      # (`${#arr[@]}`, `$#`, `${x#pfx}`) were enforced nowhere: verify-outbox-recovery.sh depends on
+      # the first of those on a line no assertion greps. "Documented in three places, enforced
+      # nowhere" is this repository's named failure mode.
+      #
+      # Case 8 reproduces WHY there are two strippers rather than five callers of one: the Java
+      # stripper leaves shell comments intact AND exits 0 while doing so. Case 9 pins both of the
+      # awk's stated limits, so changing either is a decision.
+      - name: …and that check's shell comment stripper must strip shell comments and nothing else
+        run: ./.github/checks/strip-sh-comments-test.sh
+
       # THE GATEWAY SEEDED `admin` WITH A PUBLISHED PASSWORD IN EVERY PROFILE, prod included —
       # decisions.md D61, backlog NEW-22. The generated Mongock changeunit had no profile condition
       # and `mongock.migration-scan-package` is in the BASE application.yml with no prod override, so
