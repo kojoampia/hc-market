@@ -9684,3 +9684,230 @@ fixed one; the four non-external cases of §3 measured on a throwaway project; a
 check re-run, including the ones that drive `quality/startup.sh` and read `quality/compose.yml`. No
 Java changed, so no Maven build was run, and there is no root prettier configuration covering
 `quality/` or `.github/`.
+
+---
+
+## D65 — "No file here" is not "no file anywhere", and the volumes are what knows
+
+Backlog **NEW-27**, opened by **D64** when it ran the quality stack from a git worktree and had to
+notice this before running anything. **`main` ends at D64, the backlog's highest item is NEW-27, and
+`gh pr list --state open` answers nothing** — all three re-checked at `1ce28fa` rather than taken
+from the brief, which is this document's rule for its own numbering.
+
+`quality/.jwt-secret` and `quality/.privacy-pepper` are gitignored, deliberately (**D35**): they are
+secrets even in quality. So a git worktree has neither, while the databases they belong to are the
+same containers and the same docker volumes. `resolve_secret`'s final `else` could not tell that
+apart from a new box — no file, no environment variable, so generate — and a fresh pepper against
+databases whose `erased_subject` aliases were derived from the old one is D35's silent orphaning,
+arrived at without anybody deciding anything.
+
+**The comment above that `else` is the record of the previous round of this same defect**, and its
+closing sentence is the one that does not survive the directory changing: *"delete `.privacy-pepper`
+only together with the stack's volumes"* is a rule about a **directory**, and the directory is
+exactly what a worktree changes.
+
+### §1 The defect, reproduced before it was fixed
+
+Not argued from the branch. `resolve_secret` was lifted out of this worktree's own `startup.sh` and
+run with `HERE` pointed at the worktree's `quality/`, which starts nothing:
+
+```
+volumes of compose project hc-market-quality, right now:
+  hc-market-quality_booking-data     hc-market-quality_catalog-data
+  hc-market-quality_gateway-data     hc-market-quality_messaging-data
+  hc-market-quality_payout-data
+pepper file in the worktree before: <absent>
+HC_PRIVACY_PEPPER in the environment: <unset>
+
+log: generated a new signing key at quality/.jwt-secret
+log: generated a new erasure pepper at quality/.privacy-pepper
+
+pepper file in the worktree after:  present (44 bytes)
+  and it DIFFERS from the pepper the running stack was started with  <-- the defect
+```
+
+Three of the brief's facts were re-derived rather than trusted, and all three hold: both files are
+gitignored (`quality/.gitignore` lines 1–2, confirmed with `git check-ignore -v`); this worktree has
+neither; and D64's worktree has both, **byte-identical to the main checkout's** and carrying the main
+checkout's mtimes rather than that worktree's creation date — which is what "copied across by hand"
+looks like from outside.
+
+### §2 The decision: ask docker, not the directory
+
+A compose project's **volumes** outlive its containers and its checkout. `startup.sh` knows its own
+project name, so it can ask.
+
+The argument that makes this tight, rather than merely plausible, is an ordering fact **inside this
+script**: `resolve_secret` runs in preflight and `compose up` is forty lines later, so the pepper
+file is always written *before* anything creates a volume. Within this script, therefore, "volumes
+exist **and** no pepper is on disk here **and** none in the environment" is a state a first run
+cannot reach. It is reached by somebody standing in a different copy of the repository — which is
+precisely the case that must stop rather than generate.
+
+So: that state is **fatal** for an `up`, with a message naming the situation, the volumes it found
+and the three ways out. Nothing is written before the refusal — see §6.
+
+### §3 What "the volumes already exist" means, exactly
+
+This is the sub-decision worth arguing, because getting it wrong in the strict direction breaks a
+genuine first run, and a stack that will not start on a new box is worse than the defect for the
+person standing one up.
+
+**Which volumes count: any of the project's, not all five and not the three peppered ones.** The
+question being asked is *"has this compose project ever run on this host"*, not *"does the pepper's
+data still survive"*. A stricter reading — insist on `booking`, `catalog` and `messaging`, the three
+services that hold aliases — would let a half-torn-down estate through, and a looser one — insist on
+all five — would let a partial teardown through. Neither shade matters much in practice, and the
+ordering fact in §2 is what makes the widest reading safe: this script cannot produce a partial state
+with no pepper file beside it.
+
+**How they are found: two filters, unioned, both measured rather than reasoned from the flag names.**
+Docker **ANDs** filters of different kinds, so passing both in one call is an intersection and not a
+union — measured, with a hand-made `hc-market-quality_handmade-decoy` and a labelled
+`probe-unnamed-decoy` present, the single two-filter call returns neither. Two calls, therefore:
+
+| Filter | Finds | Misses on its own |
+| --- | --- | --- |
+| `label=com.docker.compose.project=$PROJECT` | anything compose created for this project, whatever it is called | a volume restored or created **by hand** under the project's prefix, which carries no label and which compose would still adopt by name |
+| `name=^${PROJECT}_` | anything compose would look up when deciding whether to create one | a volume compose created under a `name:` override, which the label still claims |
+
+**Anchored, and that is not decoration**: docker's `name` filter is a substring match. Measured —
+unanchored, `hc-market-quality` also returns `hc-market-quality-decoy2_data`, a *different* project.
+Anchored, it returns exactly the five. And the names are established by asking docker rather than by
+reasoning: **`hc-market-quality_{gateway,catalog,booking,messaging,payout}-data`**, which is the
+project name and not any `container_name` — CLAUDE.md's *"Grepping docker for `market` hides the dev
+estate entirely"* is the same fact one estate along.
+
+**A fresh box has none of them**, which is the other half of the same question and is asserted by
+name in the check: a project nothing has ever used returns an empty list **and exits zero**. See §7,
+where getting that wrong was this package's own defect.
+
+### §4 The three shapes rejected
+
+- **Detect a worktree** (`git rev-parse --git-common-dir` differing from `--git-dir`). Rejected: it
+  answers a question next to the one being asked. A fresh `git clone`, a `cp -r`, a `scp` of the
+  repository to a second machine that shares nothing, and a `.privacy-pepper` somebody deleted all
+  reach the identical dangerous state and **none of them is a worktree**. It would also fire on a
+  worktree that is a genuine first run — a new box whose checkout happens to be one — refusing the
+  case that must work. The volumes are the thing the pepper actually belongs to; the directory is a
+  proxy for it, and a proxy is what produced this item.
+- **Prompt.** Rejected on two grounds. `startup.sh` is run non-interactively often enough that a read
+  from stdin is a hang rather than a question, and — the stronger one — the operator standing there
+  has no more information than the script does. "Which of these two peppers matches the aliases in
+  those volumes" is not answerable by looking at either; the answer is *fetch the right one*, which
+  is what the refusal tells them to do. This is the same argument the existing conflicting-value
+  branch already makes: choosing between two candidate peppers is not a decision a startup script can
+  take, and it is not one a prompt can delegate either.
+- **Copy the secret from the main checkout automatically.** Rejected, and it is the one worth stating
+  most plainly, because it is the shape that makes the symptom go away. A script that goes looking
+  for secrets in other directories is a worse answer than one that stops: it has to *guess* which
+  checkout is authoritative (`git rev-parse --git-common-dir` again, or a walk up the tree), it reads
+  a file the operator never pointed it at, and when it guesses wrong it does exactly the thing this
+  item exists to prevent while printing a line that says everything is fine. The refusal costs one
+  `cp` and states which file to copy. **`HC_PRIVACY_PEPPER` already exists** for the case where an
+  operator wants this automated, and it is persisted the first time it is seen.
+
+### §5 The signing key does not get the refusal, and that asymmetry is the point
+
+The comment block this package extends already argues the two halves are different, and they stay
+different. A new signing key invalidates every token anyone is holding; everybody signs in again;
+nothing on disk is orphaned and nothing is unrecoverable. A new pepper cannot be undone at all.
+Refusing for both would be the tidier code and the wrong rule, and it would blunt the pepper's
+message by making the refusal a thing this script does routinely.
+
+What the key **does** gain is a warning, conditioned on the same volume fact so a genuine first run
+is byte-identical to what it always printed. The case it exists for is real and was watched happen in
+this package: copy `quality/.privacy-pepper` across and not `quality/.jwt-secret`, and every
+previously minted token — including `/tmp/tok-pro.txt` and `/tmp/tok-cust.txt`, which the two verify
+scripts require — starts answering 401. That reads as a broken gateway.
+
+### §6 The second decision, which the item did not anticipate: a teardown must not write it down
+
+`down` and `clean` call `resolve_secret` too, and they must not be refused — dropping the volumes is
+the remedy the refusal recommends, and refusing here would refuse the remedy along with the mistake.
+That is the existing conflicting-value branch's own reasoning, applied one branch along.
+
+But letting a teardown through as it stood makes the guard bypassable in one documented command:
+`./startup.sh --local --down` in a worktree would **generate and persist** a pepper, and the next
+`up` in that directory would find a file, never ask docker, and start the stack on a pepper nobody
+chose. So on a teardown against existing volumes the invented value is used **in memory and not
+written down** — compose needs something to interpolate and nothing is going to start, which is all a
+teardown needs. It is conditioned on the same volume fact, so a first run's `down` behaves exactly as
+it always did.
+
+This changes behaviour beyond the sentence NEW-27 wrote, and it is named here rather than buried
+because of that. It was judged in scope: without it the fix is decorative, since the bypass is a flag
+the script's own `--help` prints. It is one `if` and reversible in one line if that judgement is
+wrong.
+
+**Ordering is the other half of it.** The volume question is asked **before either branch writes
+anything**, so a refusal leaves nothing behind. Written the obvious way — key block, then pepper
+block, then the guard — the signing-key branch generates and persists a key into a checkout the
+function is about to tell to stop, and the next run there silently adopts it. Asserted by name: *"and
+nothing was written before refusing"*.
+
+**Docker is consulted only when one of the two secrets is otherwise unknown**, so every other path
+through the function stays independent of the daemon; and when it *is* consulted and cannot answer,
+that is fatal rather than assumed empty. "Cannot tell" and "there is nothing there" are the two
+readings of an empty answer and only one of them is safe to generate a pepper on.
+
+### §7 The check, and the fail-open that was found by mutating it
+
+`.github/checks/quality-pepper-persistence-test.sh` already existed for D35's half of this and
+already lifts `resolve_secret` out of `quality/startup.sh` rather than restating it. It gains the new
+cases, and a second half.
+
+§1–§5 of it **stub the docker probe**, so they need no daemon and touch no volume: the stub is
+defined after the `eval`, so the later definition wins. Nothing about that is a hook in the shipped
+script — `resolve_secret` calls a function and a test is entitled to answer for it. **§6 asks the
+daemon itself**, against a throwaway compose project of its own with five volumes it creates and
+removes, because a stub agreeing with a stub establishes nothing about what `docker volume ls`
+returns. Its volumes go on an `EXIT` trap and not a line at the end — the first red run of this
+package aborted mid-section and left five behind, which the next run would have found and reported a
+stale pid as its subject.
+
+**Watched red, one mutation at a time**, each going red on the assertion that names it: the whole
+guard removed (4 red); the guard firing but treating an `up` as a teardown (6); the teardown
+persisting the pepper it invented (2); the probe asking for the label only (1); the probe dropping
+the name anchor (1); the probe forgetting the label half (1); a docker error swallowed as an empty
+answer (1). Against the **pre-fix** `startup.sh` the whole file is 10 red and 19 green — the ten new
+assertions and every pre-existing one, which is the control.
+
+**And one mutation that should have been red was green, which found a real defect in this package's
+own fix.** `project_volumes` first ended `| grep -v '^$' | sort -u`; `grep -v` exits **1** having
+matched nothing, `startup.sh` sets `pipefail`, and the function therefore returned 1 for **exactly
+the estate it must return an empty list for**. Measured directly against a project name nothing has
+ever used: `rc=1`, and the caller would have died with *"could not ask docker"* on a brand new box —
+the strict-direction failure this decision's §3 is about, shipped inside the fix for it. Invisible to
+§1–§5, because everything up there answers for docker with a stub. It is `sort -u | sed '/^$/d'` now,
+and the assertion that would have caught it is there by name: *"…and says so by succeeding, not by
+failing with an empty answer"*, re-run red against the `grep` spelling.
+
+### §8 What this does not reach
+
+- **It is about this compose project on this host.** A second host running the same stack against a
+  restored backup has volumes this daemon cannot see, and nothing here can know that.
+- **A pepper that is present and wrong is still not detectable**, and was not before. The guard fires
+  on absence against existing volumes; an operator who copies the *wrong* checkout's pepper across
+  gets exactly what D35 describes — something that looks right until something fails to match.
+- **The signing key is not guarded**, by decision (§5). A worktree run against a live stack will mint
+  a new one and say so, and that is the intended cost.
+- **The `dev` estate needs none of this, and that was checked rather than assumed.** `deploy-dev.sh`
+  takes both secrets from the environment or `deploy/.env` and **generates neither** — they are `:?`
+  requirements (`deploy-dev.sh:315` and `:323`), so a worktree there fails loudly on a variable that
+  is not set rather than inventing one. Different shape, no hole; nothing here was applied to it.
+
+**Verified in this round, by running**: the defect reproduced first, in this worktree, before any
+change (§1); `bash -n quality/startup.sh` and `bash -n` on the check; the check under **`bash -e`**,
+green at 35 assertions and red 10 ways against the pre-fix script, plus the seven single-mutation
+runs above; the probe exercised against a **real** daemon on its own throwaway project; and the real
+`./quality/startup.sh --local` run end to end **twice from this worktree**, behind a `docker` shim
+that answers reads and refuses `compose`, `run`, `pull` and every create — so nothing could start
+even if the guard had failed. The first run refused and wrote nothing; the second, with the live
+pepper copied in as D64 did by hand, passed the guard, warned about the signing key and was stopped
+by the shim at `compose pull`. Both copied files were removed and `git status --porcelain` confirmed
+clean before committing. `./deploy/sync-appendices.sh --check` green; `node
+deploy/demo/extract-seed.mjs` left the seed unchanged; `.github/checks/pepper-wiring.sh` and D64's
+two `quality/startup.sh` greps re-run green. **The quality stack was not restarted, no volume of any
+real project was created or removed, and nothing was published to the broker.** No Java changed, so
+no Maven build was run.

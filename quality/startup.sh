@@ -203,14 +203,100 @@ ensure_otel_network() {
 # pepper it is worse and quieter — it keys the HMAC behind an erased customer's alias (decisions.md
 # D35), nothing re-keys rows that already carry one, and a fresh pepper leaves messaging unable to
 # recognise its own erased subjects. Delete .privacy-pepper only together with the stack's volumes.
+#
+# --- "No file here" is not the same as "no file anywhere" ----------------------------------------
+#
+# decisions.md D65, backlog NEW-27. The sentence above — delete the pepper only together with the
+# volumes — is a rule about a DIRECTORY, and the directory is the thing that changes. Both files are
+# gitignored, so a git worktree, a fresh clone or a `cp -r` of this repository has neither of them
+# while the databases they belong to are the same containers and the same docker volumes. The
+# `else` at the bottom of each branch below could not tell that apart from a genuinely new box: no
+# file, no environment variable, so generate. For the signing key that is annoying. For the pepper
+# it is D35's silent orphaning, arrived at by nobody deciding anything.
+#
+# So ASK DOCKER instead of trusting the directory. A compose project's volumes outlive its
+# containers and its checkout, and this script writes the pepper file BEFORE anything creates a
+# volume — resolve_secret runs in preflight and `compose up` is forty lines later — so within this
+# script "volumes exist and no pepper is on disk here" cannot be reached by a first run. It is
+# reached by somebody standing in a different copy of the repository, which is exactly the case
+# that must stop rather than generate.
+#
+# Two filters, unioned, because they miss different things and docker ANDs filters of different
+# kinds rather than OR-ing them (measured: given a hand-made hc-market-quality_handmade-decoy and a
+# compose-labelled probe-unnamed-decoy, the two together return neither). The LABEL is what compose
+# stamps on a volume it created, whatever it is called; the anchored NAME is what compose looks up
+# when it decides whether to create one, so a volume restored by hand under the project's prefix
+# carries no label and would still be adopted. Anchored because docker's `name` filter is a
+# substring match — unanchored, `hc-market-quality` also matches `hc-market-quality-decoy2_data`.
+#
+# Non-zero means "docker could not be asked", NEVER "there is nothing there" — an empty list is the
+# whole answer for a first run and the caller refuses on a failure. Hence `sed` and not `grep` for
+# the blank-line drop, which is not a style choice: `grep -v` exits 1 when it matches nothing, this
+# script sets `pipefail`, and the first version of this function therefore returned 1 for exactly
+# the estate it must return an empty list for. Measured, on a project name nothing has ever used:
+# `rc=1`, and the caller would have died with "could not ask docker" on a brand new box. Six
+# mutations of this function went red in the check beside it and that one did not, because the
+# harness there answers for docker — which is the reason §6 of it asks the daemon itself.
+project_volumes() {
+  local by_label by_name
+  by_label="$(docker volume ls -q --filter "label=com.docker.compose.project=$PROJECT")" || return 2
+  by_name="$(docker volume ls -q --filter "name=^${PROJECT}_")" || return 2
+  printf '%s\n%s\n' "$by_label" "$by_name" | sort -u | sed '/^$/d'
+}
+
 resolve_secret() {
-  local f="$HERE/.jwt-secret"
+  local f="$HERE/.jwt-secret" p="$HERE/.privacy-pepper"
+  local on_disk=""
+  [[ -s "$p" ]] && on_disk="$(cat "$p")"
+
+  # Asked BEFORE either branch writes anything, so a refusal leaves nothing behind. Ordered the
+  # other way, the signing-key branch below would generate and persist a key into a checkout this
+  # function is about to tell to stop — and the next run there would silently adopt it.
+  #
+  # Docker is consulted only when one of the two secrets is otherwise unknown, so every other path
+  # through this function stays independent of the daemon. When it IS consulted and cannot answer,
+  # that is fatal rather than assumed empty: "cannot tell" and "there is nothing there" are the two
+  # readings of an empty answer and only one of them is safe to generate a pepper on.
+  local volumes="" key_unknown=0 pepper_unknown=0
+  [[ -n "${JWT_BASE64_SECRET:-}" || -s "$f" ]] || key_unknown=1
+  [[ -n "${HC_PRIVACY_PEPPER:-}" || -n "$on_disk" ]] || pepper_unknown=1
+  if (( key_unknown || pepper_unknown )); then
+    volumes="$(project_volumes)" \
+      || die "could not ask docker which volumes the '$PROJECT' compose project has, and that is the only question that tells a first run apart from another checkout of this same stack (decisions.md D65). Refusing rather than generating a pepper. Start docker and try again."
+  fi
+  if (( pepper_unknown )) && [[ -n "$volumes" ]]; then
+    # A teardown is allowed through for the same reason a conflicting environment value is, below:
+    # dropping the volumes is how an operator resolves this, and `down`/`clean` write no alias. What
+    # a teardown must NOT do is write the value it invented down — that would leave a pepper nobody
+    # chose sitting in this directory, and the next `up` here would find a file and never ask again.
+    [[ "$ACTION" == "down" || "$ACTION" == "clean" ]] \
+      || die "the '$PROJECT' volumes already exist and there is no erasure pepper in this directory: $(printf '%s' "$volumes" | tr '\n' ' ')
+    Generating one would hand a brand-new pepper to databases whose erased_subject aliases were derived from the old one. Nothing re-keys them and nothing goes red — messaging starts happily, because its guard detects an absent pepper and not a changed one (decisions.md D35, D65) — so every alias in the register is orphaned from that moment, permanently.
+    This is what a git worktree, a fresh clone or a copied directory looks like, because quality/.privacy-pepper is gitignored and does not travel. Do one of:
+      - run this from the checkout that started this stack, or copy its quality/.privacy-pepper here;
+      - export HC_PRIVACY_PEPPER with the value the stack was started with (it is written down the first time it is seen);
+      - if this really is a fresh start, drop the volumes and the pepper together: './startup.sh --local --clean', then run again."
+  fi
+
   if [[ -n "${JWT_BASE64_SECRET:-}" ]]; then :
   elif [[ -s "$f" ]]; then JWT_BASE64_SECRET="$(cat "$f")"
   else
     JWT_BASE64_SECRET="$(head -c 64 /dev/urandom | base64 -w0)"
     umask 077; printf '%s' "$JWT_BASE64_SECRET" > "$f"
-    log "generated a new signing key at quality/.jwt-secret"
+    # The signing key deliberately does NOT get the pepper's refusal, and the asymmetry is the same
+    # one the comment above rests on: a new key invalidates every token someone is holding, and
+    # everyone signs in again. Nothing on disk is orphaned and nothing is unrecoverable. But it is
+    # still worth saying out loud against existing volumes, because the case that reaches this line
+    # with a pepper already settled is somebody who copied quality/.privacy-pepper across and not
+    # quality/.jwt-secret — and the symptom of that is every previously-minted token going 401,
+    # which reads as a broken gateway.
+    if [[ -n "$volumes" ]]; then
+      warn "generated a NEW signing key at quality/.jwt-secret against a stack whose volumes already exist —"
+      warn "every token anyone is holding stops working, including /tmp/tok-*.txt for the verify scripts."
+      warn "If that was not intended, copy quality/.jwt-secret from the checkout that started this stack."
+    else
+      log "generated a new signing key at quality/.jwt-secret"
+    fi
   fi
   export JWT_BASE64_SECRET
 
@@ -230,9 +316,6 @@ resolve_secret() {
   # the rows in the volumes and the other does not, and this script cannot tell which. Deleting the
   # file is how the operator says which — deliberately, and together with the volumes, exactly as the
   # comment above says.
-  local p="$HERE/.privacy-pepper"
-  local on_disk=""
-  [[ -s "$p" ]] && on_disk="$(cat "$p")"
   if [[ -n "${HC_PRIVACY_PEPPER:-}" ]]; then
     if [[ -n "$on_disk" && "$on_disk" != "$HC_PRIVACY_PEPPER" ]]; then
       # A teardown writes no alias, and dropping the volumes is precisely how an operator resolves
@@ -253,8 +336,16 @@ resolve_secret() {
     HC_PRIVACY_PEPPER="$on_disk"
   else
     HC_PRIVACY_PEPPER="$(head -c 32 /dev/urandom | base64 -w0)"
-    umask 077; printf '%s' "$HC_PRIVACY_PEPPER" > "$p"
-    log "generated a new erasure pepper at quality/.privacy-pepper"
+    # Reaching here with volumes present means ACTION is a teardown — the branch above refused
+    # every other case. Compose needs something to interpolate and nothing is going to start, so a
+    # throwaway value is enough; writing it down is what must not happen. See D65.
+    if [[ -n "$volumes" ]]; then
+      warn "no erasure pepper here, so this teardown uses a throwaway one and does NOT write it down"
+      warn "(a file written now would be adopted, unquestioned, by the next 'up' in this directory)"
+    else
+      umask 077; printf '%s' "$HC_PRIVACY_PEPPER" > "$p"
+      log "generated a new erasure pepper at quality/.privacy-pepper"
+    fi
   fi
   export HC_PRIVACY_PEPPER
 }
