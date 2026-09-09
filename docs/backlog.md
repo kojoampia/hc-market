@@ -1,6 +1,6 @@
 # Backlog — hc-market
 
-Every open item in this repository, folded into work packages. Sources: `docs/decisions.md` D1–D66,
+Every open item in this repository, folded into work packages. Sources: `docs/decisions.md` D1–D67,
 the two code reviews of 2026-09-01, and the verification runs against the quality box.
 
 **This is a derived document.** `decisions.md` holds the reasoning and stays the record; this holds
@@ -2209,7 +2209,33 @@ the probe against a real daemon on a throwaway project of its own.
 
 ---
 
-## NEW-28 — the quality project's containers were built from two different checkouts · READY
+## NEW-28 — the quality project's containers were built from two different checkouts · PARTLY DONE
+
+**Closed as engineering by D67; the live repair is a roll-time step and is not done.** The
+recurrence is prevented — `quality/startup.sh` asks docker which checkout the project's containers
+were created from and refuses an `up` from anywhere else, with
+`.github/checks/quality-project-checkout-test.sh` green at 28 assertions and red ten ways. What
+remains is the half this item names below and no worktree may do: **recreating the five database
+containers from the main checkout**, which is `./quality/startup.sh --local --down` (keeps every
+volume) then a fresh `up`, from `main`, after merge. D67 §10 is the procedure, with what to check
+before and after. **From `main`, today, an `up` will refuse until that is done** — the guard reads
+the databases' stale label, which is the mechanism that forces the repair rather than a fault.
+
+The item's closing question is answered with evidence in D67 §6: **nothing else points somewhere
+temporary.** Every mount of all ten containers was enumerated from `docker inspect` — the only host
+path any of them binds is `SEED_DIR`, on the four seeded services, and all four name the main
+checkout today. The five databases have **no bind mounts at all**; their data is in project-prefixed
+named volumes, which is why the stale label on exactly those five has cost nothing.
+
+Two things the item assumed turned out otherwise, both measured on a throwaway project rather than
+argued. A bare `docker compose -p hc-market-quality ps` **and a bare `down`** both work at rc 0 even
+with one config path deleted — they read the labels, not the files — so the identity harm is smaller
+than written; only `config` fails. And `compose up` relabels **only what it recreates**, so an `up`
+from the wrong checkout *splits* the project rather than moving it and no later `up` from the right
+one puts it back. That second fact is why the answer is a refusal and not a warning.
+
+**The item as originally written follows unchanged**, because D67 contradicts two of its statements
+and the record of what was believed is worth keeping beside the correction.
 
 Found by **D65** while establishing what docker knows about the `hc-market-quality` project.
 Measured, not reasoned: `docker compose ls` names **two** config files for that one project, and the
@@ -2274,6 +2300,34 @@ so the day this item adds the membership line to `shared_plane` there is **nothi
 notice it being removed again**. Part 4 is already parameterised by `HC_STARTUP` and stubs docker, so
 the work is a second invocation and a function name, not a second check — but the function names
 differ, so the `awk` range that lifts it out has to be parameterised too.
+
+---
+
+## NEW-30 — after a `down`, nothing records which checkout the stack came from · READY
+
+Opened by **D67 §9**, which named it rather than widening its own fix into it.
+
+D67's guard reads `com.docker.compose.project.config_files` off the project's **containers**. A
+`down` removes the containers and keeps the volumes, so from that moment there is no record on this
+host of which checkout the stack belongs to, and an `up` from a worktree looks exactly like a first
+run. It is not unguarded — **D65's pepper refusal fires on precisely that state**: volumes present,
+no `quality/.privacy-pepper` in this directory, fatal. But the documented way past that refusal is
+to copy the pepper across, which is what D64 did and what the message itself suggests, and an
+operator who does that passes both guards. What they get is a running stack whose seed bind mount
+belongs to a directory that will be deleted — D67's harm, reached through the sequence
+`--down` in a worktree, copy the pepper, `up`.
+
+**It is narrow and it is real.** Narrow, because it needs a teardown *and* a copied pepper *and* a
+directory that later goes away; real, because that is three ordinary steps and two of them are
+printed by this repository's own error messages.
+
+Why D67 did not fix it: every candidate record that survives a teardown is **a file in a directory**,
+and a file in a directory is the proxy D65 rejected — a worktree does not carry it, so it reproduces
+the original defect one layer along. A docker **label on the volumes** is the only object with the
+right lifetime, and compose does not write one that names the checkout; setting one by hand means
+`docker volume create` before the first `up`, which a first run has no reason to do. Whoever takes it
+should start by asking whether the answer is a record at all, or whether it is D67 §4's fourth shape
+— stop binding a host path for the seed — which would make the question moot rather than answered.
 
 ---
 

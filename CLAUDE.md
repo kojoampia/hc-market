@@ -1008,6 +1008,42 @@ time.**
   this is a first run either. The throwaway arm re-checks the teardown itself rather than inheriting
   it from that guard: a comment asserting an invariant is not the invariant, and a weakened guard
   twenty lines up would otherwise start the stack on a pepper that is not even on disk to recover.
+- **And the same script REFUSES an `up` for a project another checkout created** (D67, NEW-28) —
+  D65's question one level up, answered from a different docker object. That one asks whether this
+  project's *data* exists and reads the **volumes**; this one asks which checkout its *containers*
+  were created from and reads their `com.docker.compose.project.config_files` **label**. The state
+  that prompted it was live: `docker compose ls` named **two** config files for the one
+  `hc-market-quality` project, the five application containers from the main checkout and the five
+  **databases** from a git worktree that has since been pruned.
+  **The label is the evidence; the bind mount is the damage.** `env_for_compose` sets
+  `SEED_DIR="$ROOT/deploy/demo"`, so an `up` from a worktree repoints four **live** containers at a
+  host directory that vanishes when it is pruned. Two packages in a row declined to restart the stack
+  for exactly this reason.
+  **A warning could not have worked, and that is measured rather than argued**: `compose up`
+  recreates — and relabels — only the services whose configuration *changed*, so an `up` from the
+  wrong place **splits** the project rather than moving it, and no later `up` from the right place
+  puts it back. Only a `down` (which keeps every volume) followed by an `up` relabels all ten. That
+  is also the remedy the refusal prints, and it is why `down`, `clean` and `verify` are exempt — they
+  exit at the router before preflight, the property D66's shared-plane check already relies on, so
+  the exemption is structural rather than a flag.
+  **That structure is pinned as THREE relations, not two** — `router < preflight < call` — and the
+  third was missing for one commit (D67 §11). Asserting only "the guard is after preflight" is
+  satisfied by moving the *whole* preflight block above the router, which parses, keeps CI green, and
+  makes `--down` reach the guard: on a split project the guard then refuses **the very remedy its own
+  message prints**. Never assert a position without asserting what it is positioned against.
+  **The EXACT set is required**, not "this checkout is among the ones docker names": today's split
+  satisfies the looser reading, which is to say the looser reading is satisfied by precisely the
+  state the guard exists to end. **No containers at all is a first run and proceeds** — the case a
+  strict fix breaks — and, as in D65, non-zero from the probe means *docker could not be asked* and
+  never *there is nothing there*, an empty `PROJECT` is refused rather than asked about, and the
+  blank-line drop is `sed` because `grep -v` exits 1 under `pipefail` for exactly the estate that
+  must answer empty.
+  **Nothing else in the project's labels points anywhere temporary**, established by enumerating
+  every mount of all ten containers rather than reading the compose file: `SEED_DIR` on the four
+  seeded services is the only host path bound anywhere, the gateway binds nothing, and the five
+  databases have **no bind mounts at all** — project-prefixed named volumes only, which is why the
+  stale label on exactly those five has cost nothing. What survives a teardown is **NEW-30**: the
+  labels go with the containers, so after a `down` nothing records the checkout at all.
 - **The gateway seeds the FIRST administrator, and production must supply its password** (`decisions.md`
   D61, backlog NEW-22). `HC_GATEWAY_ADMIN_PASSWORD` → the container's `GATEWAY_ADMIN_PASSWORD` →
   `gateway.admin-password`. It joins the signing key and the pepper as a `:?` variable in
