@@ -10290,3 +10290,276 @@ measured against the live daemon, the third against a throwaway `docker create`d
 removed; and the whole test re-run at **16** assertions with the three new false-positive controls.
 The function-name correction was checked against `deploy-dev.sh:216` rather than taken from the
 review.
+
+---
+
+## D67 — A compose project belongs to one checkout, and docker is the one that knows which
+
+Backlog **NEW-28**, opened by **D65** while establishing what docker knows about the
+`hc-market-quality` project. **`main` ends at D66, the backlog's highest item is NEW-29, and
+`gh pr list --state open` answers nothing** — all three re-checked at `6d401ec` rather than taken
+from the brief, which is this document's rule for its own numbering.
+
+This is **D65's question one level up**, and the two are worth holding apart because they are
+answered from different objects. D65 asks whether this compose project's **data** already exists and
+reads the **volumes**; this one asks which checkout its **containers** were created from and reads
+their **labels**. Neither asks git, and neither guesses.
+
+### §1 The defect, measured rather than reasoned
+
+```
+$ docker compose ls
+hc-market-quality  running(10)  /home/kojo/…/hc-market/quality/compose.yml,
+                                /home/kojo/…/hc-market/.claude/worktrees/agent-a3d048…/quality/compose.yml
+```
+
+One project, two config files. Per container, on 2026-09-09:
+
+| Containers | `com.docker.compose.project.config_files` |
+| --- | --- |
+| `…-{gateway,catalog,booking,messaging,payout}` | `…/hc-market/quality/compose.yml` |
+| `…-{gateway,catalog,booking,messaging,payout}-db` | `…/.claude/worktrees/agent-a3d048…/quality/compose.yml` |
+
+`com.docker.compose.project.working_dir` says the same thing one directory up. **That worktree has
+since been pruned**, so half the live quality stack records its provenance as a directory that does
+not exist — `ls` on it is `No such file or directory`. NEW-28 was written while it still did.
+
+### §2 Two harms, and the second is the one that matters
+
+**Identity.** A bare `docker compose -p hc-market-quality ps|down` resolves the project from those
+labels, and `docker compose ls` is what somebody looking for the stack reads first. Measured on a
+throwaway project reproducing the split, with one of the two directories then deleted: `ps` answers
+**rc 0** and lists all containers, and a bare `down` **worked**, removing every container and the
+network at rc 0. Only `config` fails, and it fails for a different reason (`no configuration file
+provided: not found`). So this harm is smaller than the item feared — what is actually broken is a
+human reading `docker compose ls` and being sent to a directory that is not there.
+
+**`SEED_DIR`, which is a live foot-gun, and is the reason this item exists as more than tidiness.**
+`env_for_compose` sets `SEED_DIR="$ROOT/deploy/demo"`, and `quality/compose.yml` binds it read-only
+into catalog, booking, messaging and payout. Run `up` from a worktree and those four **live**
+containers are recreated against a host directory that vanishes when the worktree is pruned. Two
+packages in a row — D64's successor and D66 — identified this and declined to restart the stack.
+
+### §3 What settled it: a warning could not have worked
+
+The single measurement this whole decision rests on, taken on a throwaway project rather than argued
+from compose's documentation. `compose up` recreates — and therefore relabels — **only the services
+whose configuration changed**:
+
+```
+== up again from the WORKTREE, SEED_DIR pointed inside it ==
+ Container …-db     Running
+ Container …-alpha  Recreate → Recreated → Started
+--- after:
+  …-alpha  cfg=…/tree/compose.yml     bind=…/tree/seed
+  …-db     cfg=…/main/compose.yml
+```
+
+So an `up` from the wrong place does not **move** the project, it **splits** it — and no later `up`
+from the right place puts it back, because from the right place the databases' configuration has not
+changed either. That is exactly how this state arose and exactly why it survived several `up`s from
+the main checkout. Only a `down` (which keeps the volumes) followed by an `up` relabels all ten;
+measured in the same run.
+
+A warning therefore prints beside a defect it cannot fix and that the next correct run will not fix
+either. **Refuse.**
+
+### §4 The four shapes, and why three lose
+
+- **Refuse — chosen.** Ask docker what the project's existing containers say their config file is,
+  compare against `$HERE/compose.yml`, stop with a message naming both. Fails closed, matches D65's
+  pattern in the same file, and would have prevented this exact state.
+- **Resolve to the canonical checkout** (`git rev-parse --git-common-dir`) and use its paths.
+  Rejected, and **D65 §4's argument transfers only in form, not in detail** — the questions genuinely
+  differ, so it was re-made rather than cited. D65's objection was that a worktree is one of four
+  ways to reach the dangerous state; here a worktree is likewise one of several, but the decisive
+  objection is different and stronger: it would run a **different checkout's** `compose.yml` and a
+  different checkout's seed than the one the operator is standing in, while printing nothing that
+  says so. `./startup.sh --local` from a branch would then deploy `main`'s file. It also does not
+  fix the labels — compose stamps whatever `-f` names — so the split would remain, silently. The
+  general rule survives both: **ask docker about the project, not git about the directory.**
+- **Warn and proceed.** Rejected on §3. The `up` still repoints four live containers, and the
+  operator learns about it after the fact.
+- **Make the paths not matter** — ship the seed inside the images, or hold it in a named volume, so
+  no host path is bound at all. Rejected as too large for this item, and named rather than dismissed:
+  it would need the seed baked into five images at build time (which couples a data change to a
+  release, and `deploy/demo/extract-seed.mjs` regenerates that file often), or a volume populated by
+  a sixth container plus a way to refresh it. It would also make `deploy-dev.sh` and
+  `docker-compose.prod.yml` diverge from quality, which all three currently do the same way. The
+  guard costs eight lines; that costs a release process.
+
+### §5 The two sub-questions, settled explicitly
+
+**Every action, or only `up`?** Only `up`, and structurally rather than by a flag. `down`, `clean`
+and `verify` exit at the router **before** `step "Preflight"` — the property D66's fatal shared-plane
+preflight already relies on — so placing the call in preflight is what makes them exempt. That is
+D65 §6's reasoning one guard along and it is not merely convenient: **`down` is the remedy this
+refusal recommends**, it creates nothing, binds nothing and relabels nothing, and refusing it would
+refuse the remedy along with the mistake. `verify` makes HTTP requests and never touches compose at
+all.
+
+**Is a first run distinguishable?** Yes, and unambiguously, which is the case a strict fix breaks. No
+containers carrying `com.docker.compose.project=$PROJECT` means nothing has ever been created for
+this project on this host, and the guard proceeds saying so. Unlike D65's volume question there is
+no ordering subtlety to establish — the labels are written by the very `compose up` this preflight
+runs forty lines before, so "containers exist" cannot be reached by the run that is asking.
+
+**The EXACT set is required, not "this checkout is among them"** — the sub-question nobody asked and
+the one that decides whether this is worth shipping. Today's state satisfies the looser reading: the
+main checkout **is** one of the two. The looser reading is therefore satisfied by precisely the state
+this guard exists to end, and it would let the split persist for ever while reading as a guard.
+
+**A consequence to state plainly rather than discover at roll time: from `main`, today, this refuses.**
+The five database containers name the pruned worktree, so `./quality/startup.sh --local` stops until
+they are recreated. That is intended — it is the mechanism that forces the repair the item describes
+— and the message prints the repair.
+
+### §6 What else points somewhere temporary — the item's own question, answered with evidence
+
+NEW-28 closes by asking *"whether anything else in the project's labels points somewhere temporary"*.
+Enumerated from `docker inspect`, all ten containers, rather than from the compose file:
+
+| What | Points at | Verdict |
+| --- | --- | --- |
+| `…-{catalog,booking,messaging,payout}` bind `/app/seed` | `…/hc-market/deploy/demo` | the **only** host path any of the ten binds. All four name the main checkout today, so nothing is currently wrong; this is the thing the guard protects |
+| `…-gateway` | no bind at all | it is not seeded |
+| five `…-db` | named volumes `hc-market-quality_*-data` only | **no bind mounts whatsoever.** Project-prefixed and path-independent, which is why the stale label on these five has cost nothing |
+| `…-gateway-db` second mount | an **anonymous** volume for mongo's `/data/configdb` | carries `com.docker.volume.anonymous` and no compose project label, so D65's `project_volumes` sees it under neither filter. It holds nothing this estate reads |
+| `project.config_files`, `project.working_dir` | the pruned worktree, on five containers | metadata; §2's first harm and the evidence for the second |
+
+So: **nothing else.** One class of host path exists in this project, it is `SEED_DIR`, and it is
+correct at this moment. Reported rather than widened into the fix.
+
+`quality/compose.yml`'s `${SEED_DIR:-./seed}` default is worth one sentence because it looks like a
+second exposure and is not: it exists so `docker compose -f quality/compose.yml config` renders for
+the six CI steps and one documented gate that call it, and `env_for_compose` always sets the variable
+on every action. Left alone.
+
+### §7 The implementation, and the one thing it does differently from D65
+
+`project_container_config_files` prints `<container><tab><config files>` for every container of the
+project; `check_project_checkout` compares the deduplicated second column against
+`$HERE/compose.yml`.
+
+**One probe, asked once — not two.** The refusal has to name *which* containers disagree, and the
+obvious shape is a second `docker ps` in the die branch. That would be a call the check beside it
+cannot answer for: every stubbed case would silently fall through to the real daemon and assert
+against whatever the host happens to be running. Two calls also make one refusal a statement about
+two different instants.
+
+Three things are inherited from D65 verbatim, each because getting them wrong there cost a package:
+
+- **Non-zero means "docker could not be asked", never "there is nothing there."** An empty list is
+  the whole answer for a first run.
+- **`sed '/^$/d'`, never `grep -v '^$'.`** `grep -v` exits 1 having matched nothing, the script sets
+  `pipefail`, and the function would return 1 for exactly the estate that must return an empty list.
+  Watched go red as a mutation here rather than assumed to still apply.
+- **An empty `$PROJECT` is refused rather than asked about**, and re-measured for *this* filter
+  rather than carried over from D65's volume one: `docker ps -a --filter
+  label=com.docker.compose.project=` returns nothing at rc 0, which reads as "first run, proceed".
+
+The refusal annotates a config file that **does not exist on this host**, because that changes the
+remedy — the first way out it offers is "run it from there", and there is no there. Annotated per
+row, not per message: a version that suffixed every row would satisfy a naive assertion while telling
+the operator the directory they are standing in is missing. That mutation is in the check.
+
+### §8 The check
+
+`.github/checks/quality-project-checkout-test.sh`, wired into `build.yml`'s `consistency` job beside
+`quality-pepper-persistence-test.sh` and following its shape exactly: the function is **lifted out of
+`quality/startup.sh`** rather than restated, because restating it would test the file against itself,
+and sourcing the whole script is not an option — it ends by deploying a stack.
+
+§1–§6 stub the probe and need no daemon. §7 asks the daemon, on **its own throwaway project**, and
+reproduces the two-config-files state from scratch — because a stub agreeing with a stub establishes
+nothing about whether compose writes that label at all. It uses `compose create` rather than `up`:
+the labels are written at create time (measured), so nothing starts. If `busybox` cannot be obtained
+it **skips loudly** rather than reporting a green section that created nothing.
+
+**Watched red, nine mutations, one at a time, each asserted to have applied — original gone, mutant
+present, `bash -n` clean — before its result was believed:**
+
+| Mutation | Red on |
+| --- | --- |
+| the guard call deleted | 2, incl. *"the guard is called at all"* |
+| the guard moved before the router, so a teardown is refused too | *"…after 'step Preflight', so only an up reaches it"* |
+| the looser reading (`grep -Fxq` for "among them") | 7, incl. *"a split project is fatal even though this checkout is one of the two"* |
+| no containers treated as fatal | 2 — the first-run case a strict fix breaks |
+| a docker error swallowed as an empty answer | *"an unreachable daemon is an error"* |
+| the missing-path annotation applied to every row | *"…and only on the row whose file is missing"* |
+| the probe returned to the `grep -v` spelling | *"…says so by succeeding, not by failing with an empty answer"* |
+| the empty-`PROJECT` guard removed | *"an empty project name is refused, not answered"* |
+| the refusal reduced to a count, naming no container | 4, incl. *"which container disagrees"* |
+
+**And the harness itself was wrong twice, which is this repository's own recurring shape and is why
+the mutations are reported with their instrument.** (1) The first deletion mutation reported
+`rc=1` with **no failures and no totals** — the check had aborted with no output, which reads as no
+failures. Cause: `grep -n '^check_project_checkout$'` exits 1 having matched nothing, under
+`pipefail`, so the assignment failed and `set -e` took the run. Both structural lookups end `|| x=""`
+now and the deletion mutation goes red at two named assertions. (2) The move mutation reported
+*"original still present"* twice, because an **insertion**'s mutant contains its original — the
+harness was refusing to believe two real mutants. It asserts "original gone" only where the mutant
+does not contain the original, plus "the file changed at all".
+
+### §9 What this does not reach
+
+- **It is about this compose project on this host.** A second machine running the same stack has
+  containers this daemon cannot see, exactly as D65 §9 says of volumes.
+- **Volumes present with no containers is not covered, and cannot be from docker.** After a `down`,
+  the labels are gone and the volumes remain; nothing then records which checkout the stack came
+  from, so an `up` from a worktree looks like a first run. It is not unguarded — **D65's pepper
+  refusal fires on precisely that state** (volumes exist, no `quality/.privacy-pepper` here) — but an
+  operator who has copied the pepper across, which is what D64 did and what D65's message tells you
+  to do, passes both. What they would get is a running stack whose seed bind mount belongs to a
+  directory that will be deleted. Opened as **NEW-30** rather than fixed here, because fixing it
+  needs a record of the checkout that survives a teardown, and every candidate for that is a file in
+  a directory — which is the proxy D65 rejected.
+- **It compares strings, not directories.** A bind-mounted checkout at a second path, a symlinked
+  one, or a `realpath`-different spelling of the same directory reads as a different checkout and is
+  refused. Fail-closed, and `down`+`up` resolves it.
+- **Nothing is fixed on the live box by this package**, deliberately. The five database containers
+  must be recreated from the main checkout, and that is a roll-time operation from `main` after
+  merge, not something a worktree does to a stack carrying several cycles of data, D57's founding row
+  and the erasure state NEW-27 is about. What the roll must do is in §10.
+
+### §10 What the roll must do
+
+From the **main checkout**, on `jacserver`, after this branch is merged:
+
+1. **Before:** `docker compose ls` should still show two config files for `hc-market-quality`, and
+   `docker ps -a --filter label=com.docker.compose.project=hc-market-quality --format
+   '{{.Names}} {{.Label "com.docker.compose.project.config_files"}}'` should still show the five
+   `-db` containers naming the pruned worktree. Record `docker volume ls | grep hc-market-quality`
+   — five volumes, and they must all survive.
+2. `./quality/startup.sh --local` will **refuse**, naming both paths. That is the guard working, not
+   a fault.
+3. `./quality/startup.sh --local --down` — **not** `--clean`. This stops and removes all ten
+   containers and keeps every database volume. It is not refused, by design (§5).
+4. `TAG=<sha> ./quality/startup.sh --local` — recreates all ten from the main checkout, and this time
+   the guard sees no containers, reports a first run and proceeds.
+5. **After:** `docker compose ls` must name **one** config file; all ten containers must carry it;
+   the five volumes must be the same five, with the same creation dates; and `./deploy/verify-cycle.sh`
+   against the quality box (the `HC_*_PORT`/`HC_*_DB_CTR` invocation in CLAUDE.md) must pass, which
+   is what proves the data came back rather than merely that containers started.
+
+`quality/.jwt-secret` and `quality/.privacy-pepper` must be the main checkout's own — untouched, not
+copied from anywhere. If they are missing there, **stop**: D65's guard will refuse the `up` in step 4
+and it is right to.
+
+**Verified in this round, by running**: the split state read off the live daemon per container, both
+labels, before anything changed; the pruned worktree confirmed absent; every mount of all ten
+containers enumerated (§6); a bare `ps`, `config` and `down` measured against a **throwaway** project
+reproducing the split with one directory deleted; the relabel-only-what-is-recreated fact measured on
+a second throwaway project, including that `down`+`up` restores both labels; `bash -n
+quality/startup.sh`; the new guard **lifted out and run against the live `hc-market-quality` project
+twice** — once with `HERE` in this worktree and once with `HERE` at the main checkout, both refusing
+and both starting nothing; the new check under **`bash -e`**, green at **27** and red nine ways;
+`.github/checks/quality-pepper-persistence-test.sh` green at 40 and
+`.github/checks/shared-plane-wiring-test.sh` green at 16, neither disturbed;
+`docker compose -f quality/compose.yml config` clean and `quality/compose.yml` **byte-identical to
+`6d401ec`**, so the unset render cannot have moved; `./deploy/sync-appendices.sh --check` green;
+`node deploy/demo/extract-seed.mjs` leaving the seed unchanged. **`./quality/startup.sh` was never run
+in any mode that starts, recreates or stops a container; neither gitignored secret was copied into
+this worktree; no volume of any real project was created, dropped or reseeded; no database container
+was touched; nothing was published to the broker.** The two throwaway compose projects were removed
+and their absence checked. No Java changed, so no Maven build was run.

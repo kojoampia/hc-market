@@ -256,6 +256,107 @@ ensure_otel_network() {
     || warn "otel-collector-quality is not running — nothing would collect telemetry even with HC_OTEL_JAVA_OPTS set"
 }
 
+# --- This project belongs to ONE checkout, and docker is the one that knows which ----------------
+#
+# decisions.md D67, backlog NEW-28. This is D65's question one level up: that one asks whether this
+# compose project's DATA already exists, and answers it from the volumes; this one asks which
+# checkout its CONTAINERS were created from, and answers it from their labels. Both refuse to guess,
+# and neither asks git — see D65 §4 and D67 §4 for why a worktree probe answers a question next to
+# the one being asked.
+#
+# WHAT WENT WRONG, measured rather than reasoned. On 2026-09-09 `docker compose ls` named TWO config
+# files for the single `hc-market-quality` project: the five application containers carried the main
+# checkout's path and the five DATABASES carried a git worktree's, because that is where they were
+# created — and that worktree has since been pruned, so half this stack records its provenance as a
+# directory that does not exist.
+#
+# It persisted through several `up`s from the main checkout, and the mechanism is the whole reason a
+# warning would not have been enough. `compose up` recreates only the services whose configuration
+# has CHANGED, and relabels only what it recreates. Measured on a throwaway project: `up` from a
+# second directory recreated the one service whose bind mount moved and reported the other as
+# `Running`, leaving it labelled with the first directory for ever. So an `up` from the wrong place
+# does not simply move the project — it SPLITS it, and no later `up` from the right place puts it
+# back. Only a `down` (which keeps the volumes) followed by an `up` relabels all ten.
+#
+# WHAT IS ACTUALLY AT RISK is not the label. env_for_compose sets SEED_DIR="$ROOT/deploy/demo" and
+# compose.yml binds it read-only into catalog, booking, messaging and payout. Run `up` from a
+# worktree and those four LIVE containers are recreated against a host directory that vanishes the
+# moment the worktree is pruned — which is how D64's worktree left, and two packages after it
+# declined to restart the stack for exactly this reason. The label is the evidence; the bind mount
+# is the damage.
+#
+# ONLY `up` REACHES THIS. down, clean and verify exit at the router before preflight (the same
+# property D66's fatal shared-plane preflight relies on), and that is deliberate rather than
+# incidental: `down` is the remedy this refusal recommends, it creates nothing and binds nothing,
+# and refusing it would refuse the remedy along with the mistake — D65 §6, one guard along.
+#
+# The EXACT set is required, not merely "this checkout is among them". Today's state satisfies the
+# looser reading — the main checkout is one of the two — which is to say the looser reading is
+# satisfied by precisely the state this exists to end.
+#
+# An EMPTY $PROJECT is refused rather than asked about, for D65's reason and re-measured for this
+# filter: `docker ps -a --filter label=com.docker.compose.project=` returns nothing at rc 0, which
+# reads as "no containers, first run, proceed". Non-zero here always means "docker could not be
+# asked" and never "there is nothing there" — hence `sed` and not `grep -v` for the blank-line drop,
+# which under `pipefail` returned 1 for exactly the estate that must return an empty list (D65 §7).
+#
+# ONE probe, asked once, printing `<container><tab><config files>` — not two. The refusal has to
+# name which containers disagree, and a second `docker ps` for the report would be a call the check
+# beside this cannot answer for: every stubbed case there would silently fall through to the real
+# daemon and assert against whatever this host happens to be running. Two calls also make the
+# refusal a statement about two different instants.
+project_container_config_files() {
+  [[ -n "${PROJECT:-}" ]] || return 2
+  docker ps -a --filter "label=com.docker.compose.project=$PROJECT" \
+      --format '{{.Names}}'$'\t''{{.Label "com.docker.compose.project.config_files"}}' \
+    | sort | sed '/^$/d' || return 2
+}
+
+check_project_checkout() {
+  local want="$HERE/compose.yml" rows found
+  rows="$(project_container_config_files)" \
+    || die "could not ask docker which compose files the '$PROJECT' project's containers were created from, and that is the only question that tells a first run apart from another checkout of this same stack (decisions.md D67). Start docker and try again."
+
+  if [[ -z "$rows" ]]; then
+    ok "no '$PROJECT' containers on this host — first run, nothing to have been created elsewhere"
+    return 0
+  fi
+  found="$(printf '%s\n' "$rows" | cut -f2- | sort -u)"
+  if [[ "$found" == "$want" ]]; then
+    ok "every '$PROJECT' container was created from this checkout"
+    return 0
+  fi
+
+  # One line per container rather than the deduplicated set, because "which half is wrong" is the
+  # first thing whoever reads this needs, and a path that no longer exists changes the remedy — you
+  # cannot go and run it from there.
+  local report="" name cfg one note
+  while IFS=$'\t' read -r name cfg; do
+    note=""
+    while IFS= read -r one; do
+      [[ -f "$one" ]] || note="   <- this path does not exist on this host"
+    done < <(printf '%s\n' "$cfg" | tr ',' '\n')
+    report+="      ${name}  ${cfg}${note}"$'\n'
+  done < <(printf '%s\n' "$rows")
+
+  die "the '$PROJECT' compose project's containers were not all created from this checkout.
+    this checkout: $want
+    docker says:
+$report
+    Starting from here recreates every service whose configuration differs — which includes the four
+    that bind the seed directory, since env_for_compose points SEED_DIR at $ROOT/deploy/demo. Those
+    live containers would then depend on a host path belonging to this copy of the repository, and a
+    git worktree or a temporary clone is deleted while the stack it repointed is still running. The
+    services whose configuration did NOT change are left labelled with the old checkout, so an 'up'
+    from the wrong place splits the project rather than moving it, and no later 'up' from the right
+    place puts it back (decisions.md D67).
+    Do one of:
+      - run this from the checkout docker names above, if it still exists;
+      - move the project here deliberately: './startup.sh --local --down' (not refused, keeps every
+        database volume), then run this again — that recreates all ten from here in one step;
+      - './startup.sh --local --clean' if you also mean to drop the data."
+}
+
 # --- The estate's shared secrets ----------------------------------------------------------------
 #
 # Two of them, both one value across all five services and both persisted beside this script:
@@ -653,7 +754,11 @@ esac
 
 step "Preflight"
 assert_not_production
+# Third, and before anything that creates or writes: check_project_checkout only reads docker, and
+# refusing here leaves no network created (ensure_otel_network) and no secret persisted
+# (resolve_secret) — D65 §6's ordering rule, which is about the same two lines below.
 check_ports
+check_project_checkout
 check_shared_plane
 ensure_otel_network
 resolve_secret

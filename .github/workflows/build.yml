@@ -1640,6 +1640,19 @@ jobs:
       - name: quality/startup.sh must not be able to mint a second pepper
         run: ./.github/checks/quality-pepper-persistence-test.sh
 
+      # THE QUALITY PROJECT'S CONTAINERS WERE BUILT FROM TWO DIFFERENT CHECKOUTS — decisions.md D67,
+      # backlog NEW-28. `docker compose ls` named two config files for the one `hc-market-quality`
+      # project: five application containers from the main checkout, five databases from a git
+      # worktree that has since been pruned.
+      #
+      # The label is the evidence; the bind mount is the damage. env_for_compose points SEED_DIR at
+      # $ROOT/deploy/demo, so an `up` from a worktree repoints four LIVE containers at a directory
+      # that vanishes when it is pruned. And a warning would not have been enough: `compose up`
+      # relabels only what it RECREATES, so a wrong-place `up` splits the project rather than moving
+      # it, and no later `up` from the right place puts it back. Measured on a throwaway project.
+      - name: quality/startup.sh must refuse to start a project another checkout created
+        run: ./.github/checks/quality-project-checkout-test.sh
+
       # THE GATEWAY SEEDED `admin` WITH A PUBLISHED PASSWORD IN EVERY PROFILE, prod included —
       # decisions.md D61, backlog NEW-22. The generated Mongock changeunit had no profile condition
       # and `mongock.migration-scan-package` is in the BASE application.yml with no prod override, so
