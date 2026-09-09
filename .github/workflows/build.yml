@@ -484,10 +484,11 @@ jobs:
           #
           # And both sides must read the SAME variable: a variable only the script reads changes
           # which network gets created and inspected while compose keeps joining the default, which
-          # is exactly the trap D46 and D50 found twice and which `HC_SHARED_NETWORK` still has in
-          # this very file (backlog NEW-25). `env_for_compose` exports it on every action so a
-          # `--down` cannot address a different network from the `up` that made the containers, and
-          # that property is worth nothing unless compose actually interpolates it.
+          # is exactly the trap D46 and D50 found twice and which HC_SHARED_NETWORK, HC_SHARED_CONSUL
+          # and HC_SHARED_KAFKA had in this very file until D66 closed backlog NEW-25 — the step
+          # below is theirs. `env_for_compose` exports it on every action so a `--down` cannot
+          # address a different network from the `up` that made the containers, and that property is
+          # worth nothing unless compose actually interpolates it.
           #
           # THE COMPOSE HALF IS RENDERED, NOT GREPPED, and that is a correction rather than a
           # preference. This sub-check originally matched `name: ${HC_OTEL_NETWORK:-…}` as text
@@ -522,6 +523,23 @@ jobs:
             fail=1
           fi
           exit $fail
+
+      # THE OTHER HALF OF THE STEP ABOVE, and the defect its comment points at — decisions.md D66,
+      # backlog NEW-25. HC_SHARED_NETWORK, HC_SHARED_CONSUL and HC_SHARED_KAFKA name the one broker
+      # and the one Consul four products borrow (D27). quality/startup.sh read all three and
+      # quality/compose.yml hardcoded all three, so an override moved which plane was CHECKED and not
+      # which plane was JOINED and ADDRESSED: preflight went green against the broker you named while
+      # the stack talked to the original one.
+      #
+      # A script rather than a `run:` block, because it has a test beside it that constructs each
+      # broken state — the compose half hardcoded again, a `name:` commented out, a default renamed,
+      # the export dropped, the membership refusal deleted — and requires this to go red through the
+      # door each one was aimed at. Twelve of them.
+      - name: The quality stack must address the shared plane it preflight-checks
+        run: ./.github/checks/shared-plane-wiring.sh
+
+      - name: …and that check must fail on each of the twelve states it exists to refuse
+        run: ./.github/checks/shared-plane-wiring-test.sh
 
       # "The agent must be verified as INSTRUMENTING, not merely loading" has been in CLAUDE.md
       # since D25 and was a paragraph of prose that had been run once, by hand. It is a script now

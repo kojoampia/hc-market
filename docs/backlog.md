@@ -1,6 +1,6 @@
 # Backlog — hc-market
 
-Every open item in this repository, folded into work packages. Sources: `docs/decisions.md` D1–D65,
+Every open item in this repository, folded into work packages. Sources: `docs/decisions.md` D1–D66,
 the two code reviews of 2026-09-01, and the verification runs against the quality box.
 
 **This is a derived document.** `decisions.md` holds the reasoning and stays the record; this holds
@@ -2108,28 +2108,39 @@ second obstacle, not the first. It opened **NEW-25**, **NEW-26** and **NEW-27**.
 
 ---
 
-## NEW-25 — `HC_SHARED_NETWORK`, `_CONSUL` and `_KAFKA` do nothing on the quality box · READY
+## NEW-25 — `HC_SHARED_NETWORK`, `_CONSUL` and `_KAFKA` do nothing on the quality box · DONE (D66)
 
 Found by **D64** while deciding how `HC_OTEL_NETWORK` should be wired, and it is the same defect one
 variable family along.
 
-`quality/startup.sh` reads all three and uses them in `check_shared_plane`, so overriding one changes
-which network and which containers the **preflight checks**. `quality/compose.yml` then hardcodes
+`quality/startup.sh` read all three and used them in `check_shared_plane`, so overriding one changed
+which network and which containers the **preflight checked**. `quality/compose.yml` then hardcoded
 every one of them — `name: hcnet`, `hc-shared-quality-consul:8500`, `hc-shared-quality-kafka:9092` —
-so the stack joins and addresses the default regardless. `CLAUDE.md` says *"Override which shared
+so the stack joined and addressed the default regardless. `CLAUDE.md` said *"Override which shared
 plane a stack uses with `HC_SHARED_CONSUL`, `HC_SHARED_KAFKA` and `HC_SHARED_NETWORK` — both
-`deploy-dev.sh` and `quality/startup.sh` read them"*, and for the quality half that is true of the
+`deploy-dev.sh` and `quality/startup.sh` read them"*, and for the quality half that was true of the
 reading and false of the effect.
 
-**`deploy-dev.sh` is the correct shape and is the model**: it exports all three and
+**`deploy-dev.sh` is the correct shape and was the model**: it exports all three and
 `docker-compose.dev.yml` interpolates them (`name: ${HC_SHARED_NETWORK:-hcnet}`). D64 wired
 `HC_OTEL_NETWORK` that way deliberately rather than copying the siblings, whose `OTEL_NETWORK` has
 exactly this defect.
 
-Costs nothing today — nobody has run the quality stack against a second shared plane, and there is
-only one. It is worth closing because a variable that half-works is worse than one that does not
-exist: preflight would pass against the plane you named and the stack would come up on the other one,
-which reads as the override not being implemented rather than as it being half-implemented.
+**Closed by D66.** `quality/compose.yml` interpolates all three, `env_for_compose` exports all three
+on every action including teardown, and `.github/checks/shared-plane-wiring.sh` — with its own test
+beside it — renders the file a second time with each variable set and asserts the value **moved**,
+rather than grepping for the spelling that would move it. The unset render is **byte-identical** to
+the committed baseline, and `docker compose up -d --dry-run` through the real `env_for_compose`
+reported `Running` for all ten containers, so nothing on the quality box changes for anybody who sets
+none of them.
+
+**It found a second defect on the way, and that one was not costless.** `check_shared_plane` asked
+whether the broker and Consul were *running* and never whether they were **on the network the stack
+joins** — measured, the whole function passed against a throwaway empty network and its success line
+printed `…on hc-market-d66-probe`, asserting a membership it had not looked for. Harmless while
+compose hardcoded `hcnet`; live the moment the override started moving the join, and what it would
+produce is D27's silence exactly: five healthy services publishing into nowhere. Refused now, fatally
+and fail-closed. See **D66 §4**.
 
 ---
 
@@ -2225,6 +2236,33 @@ NEW-27 is about. That is not a thing to do as a side effect of another package: 
 window, and it wants `verify-cycle.sh` run after it. It is also the general shape of NEW-27 one level
 up — **a stack whose identity is a directory, driven from directories that come and go** — so
 whoever takes it should ask whether anything else in the project's labels points somewhere temporary.
+
+---
+
+## NEW-29 — `deploy-dev.sh`'s preflight cannot tell "running" from "reachable" either · READY
+
+Found by **D66** while closing NEW-25 on the quality box, and it is the same blind spot in the dev
+script's own `check_shared_plane`.
+
+That function asks four things — the network exists, `$SHARED_CONSUL` and `$SHARED_KAFKA` are
+running, Consul has a leader, the broker answers — and **none of them is whether those two containers
+are on the network the dev stack joins**. Measured on the quality copy, which is the same four checks:
+against a throwaway empty network the whole function passed and printed `…on hc-market-d66-probe`,
+asserting a membership it had never looked for. The repair is the three lines D66 added to
+`quality/startup.sh` — ask the container which networks it is on, `grep -Fxq "$SHARED_NETWORK"`,
+refuse — plus `./deploy/sync-appendices.sh`, because `deploy-dev.sh` is Appendix A.
+
+**It is milder here than it was there, which is why it is an item rather than part of D66.**
+`docker-compose.dev.yml` has always interpolated all three, so the dev override is *honest* — set
+`HC_SHARED_NETWORK` and the stack really does join what preflight inspected — and the failure needs a
+network that exists, carries neither shared container, and was named deliberately. What is left is
+the case D27 exists for: a plane whose broker cannot be resolved, five healthy services, and
+`MessageDeliveryException` on a timer as the only signal.
+
+It was not fixed in D66 because the dev estate is **wedged** — the five un-killable containers D27
+left behind — so the change could not be exercised against a running dev stack in that package, and a
+guard nobody has watched refuse is a guard of nothing. Whoever takes it should run
+`deploy-dev.sh up --no-build --services catalog` after, which is what D27 used.
 
 ---
 

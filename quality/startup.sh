@@ -20,6 +20,13 @@
 # Preflight checks it and refuses to continue without it, because the failure it prevents is silent:
 # a service whose broker is unreachable starts, serves and reports healthy.
 #
+# Which plane is three variables, and since decisions.md D66 each of them moves what this script
+# checks AND what compose joins and addresses — they moved only the first until then (backlog
+# NEW-25). Set them together or not at all; unset is the estate hc-infra actually runs.
+#
+#     HC_SHARED_NETWORK=hcnet  HC_SHARED_CONSUL=hc-shared-quality-consul \
+#     HC_SHARED_KAFKA=hc-shared-quality-kafka  ./startup.sh --local
+#
 # --- Where this runs ---------------------------------------------------------------------------
 #
 # On jacserver — ssh alias `jacserver`, 192.168.1.2 on the LAN. Its config lives in
@@ -95,7 +102,9 @@ for arg in "$@"; do
     --clean)     ACTION="clean" ;;
     --host=*)    SSH_HOST="${arg#*=}" ;;
     --images=*)  IMAGES="${arg#*=}" ;;
-    -h|--help)   sed -n '2,63p' "$0"; exit 0 ;;
+    # 2..70 is the header comment block, ending at the line before `set -euo pipefail`. Adding a
+    # paragraph up there without moving this number truncates the help silently.
+    -h|--help)   sed -n '2,70p' "$0"; exit 0 ;;
     *)           die "unknown option: $arg (try --help)" ;;
   esac
 done
@@ -133,6 +142,23 @@ check_ports() {
 # names the network and stops there; the error for a broker that is simply not running is no error
 # at all, because a service with an unreachable broker starts, serves and reports healthy while
 # everything it publishes goes nowhere. Both are checked here, by name, with the fix printed.
+#
+# --- ALL THREE MOVE BOTH HALVES, AND UNTIL D66 THEY MOVED ONLY THIS ONE -------------------------
+#
+# decisions.md D66, backlog NEW-25, found by D64 while wiring HC_OTEL_NETWORK the correct way. These
+# three were read here and hardcoded in compose.yml, so an override changed which plane was CHECKED
+# and not which plane was JOINED and ADDRESSED. That is worse than a variable that does nothing:
+# somebody pointing quality at a second broker got a green preflight against that broker and a stack
+# talking to the original one, which reads as the override not being implemented rather than as it
+# being half-implemented. compose.yml interpolates all three now, exactly as docker-compose.dev.yml
+# always has, and CI asserts each default here matches the one rendered there.
+#
+# THE TWO CONTAINER NAMES ARE CONTAINER NAMES, not merely addresses, because of the two `docker
+# exec`s below. That costs nothing — compose publishes a container's own name as a DNS alias on
+# every network it joins, so a container name is always an address — and the converse is the trap:
+# `shared-kafka` and `shared-consul`, hc-infra's compose SERVICE names, resolve perfectly from
+# inside a container here and are not names `docker exec` can find. Such a value is refused below,
+# before compose renders anything.
 SHARED_NETWORK="${HC_SHARED_NETWORK:-hcnet}"
 SHARED_CONSUL="${HC_SHARED_CONSUL:-hc-shared-quality-consul}"
 SHARED_KAFKA="${HC_SHARED_KAFKA:-hc-shared-quality-kafka}"
@@ -144,6 +170,22 @@ check_shared_plane() {
   for c in "$SHARED_CONSUL" "$SHARED_KAFKA"; do
     [[ "$(docker inspect -f '{{.State.Running}}' "$c" 2>/dev/null)" == "true" ]] \
       || die "$c is not running — $fix"
+    # ON THE NETWORK THIS STACK IS ABOUT TO JOIN, which is a different question from "running" and
+    # was asked by nothing until D66. Every check around it was satisfiable by a container that this
+    # stack could never reach: measured against a throwaway empty network, the whole function passed
+    # and its success line below printed "…on hc-market-d66-probe", asserting a membership it had
+    # not looked for. Unreachable while compose hardcoded `hcnet` — and reachable the moment the
+    # override above started moving the join, which is why it belongs in this change rather than a
+    # later one. What it prevents is D27's silence: a service whose broker does not resolve starts,
+    # serves and reports healthy.
+    #
+    # The container is asked rather than the network, so this reads the same object the two lines
+    # around it read. `pipefail` is on, so a Go template that stops matching yields nothing, the
+    # grep finds nothing, and this refuses — the direction a check about a silent failure has to
+    # fail in.
+    docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{println $k}}{{end}}' "$c" 2>/dev/null \
+      | grep -Fxq "$SHARED_NETWORK" \
+      || die "$c is running but is not on '$SHARED_NETWORK', which is the network this stack joins — so its name would not resolve from any of these five containers, and every one of them would come up healthy and publish into nowhere (decisions.md D27, D66). $fix"
   done
   # A leader, not merely an answering agent: Consul serves /v1/status/leader before it has elected
   # one, and every KV read fails with "No cluster leader" until it does.
@@ -388,6 +430,14 @@ env_for_compose() {
   # ensure_otel_network creates whatever it names. Exported on every action, teardown included, so
   # `--down` cannot address a different network from the `up` that created the containers.
   export HC_OTEL_NETWORK="$OTEL_NETWORK"
+  # The shared plane, for the same reason and on every action too — decisions.md D66. compose.yml
+  # reads all three: HC_SHARED_NETWORK as `hcnet`'s `name:`, the other two as the broker address and
+  # the Consul host inside every service. Exporting the DEFAULTED value rather than leaving compose
+  # to apply its own copy is what makes "the script and compose cannot address different planes"
+  # true here by construction; CI is what makes it true for somebody driving compose directly, by
+  # asserting each pair of defaults is the same string.
+  export HC_SHARED_NETWORK="$SHARED_NETWORK" HC_SHARED_CONSUL="$SHARED_CONSUL" \
+         HC_SHARED_KAFKA="$SHARED_KAFKA"
   export SEED_DIR="$ROOT/deploy/demo"
 }
 

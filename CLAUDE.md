@@ -88,12 +88,27 @@ export HC_GATEWAY_PORT=18200 HC_CATALOG_PORT=18201 HC_BOOKING_PORT=18202 \
 There is no `HC_CONSUL_PORT` and no `HC_KAFKA_PORT` any more: this repository publishes neither,
 because it runs neither. `hc-infra` publishes them once, on **18510** (Consul UI) and **19192**
 (broker, from the host). Override *which* shared plane a stack uses with `HC_SHARED_CONSUL`,
-`HC_SHARED_KAFKA` and `HC_SHARED_NETWORK` — **and that works in dev only** (backlog NEW-25, found by
-D64). `deploy-dev.sh` exports all three and `docker-compose.dev.yml` interpolates them.
-`quality/startup.sh` reads them for its **preflight check** and `quality/compose.yml` hardcodes all
-three, so on the quality box an override checks the plane you named and then joins the default one.
-`HC_OTEL_NETWORK` — the quality stack's `qualitynet`, D64 — is deliberately wired the other way, read
-by the script *and* by the compose file's `name:`, which is the shape all four should have.
+`HC_SHARED_KAFKA` and `HC_SHARED_NETWORK` — and **since D66 that works in dev and in quality alike**,
+which it did not until then (backlog NEW-25, found by D64). Each is read by the script *and* by the
+compose file, so it moves what preflight inspects **and** what the stack joins and addresses;
+`HC_OTEL_NETWORK` has the same shape, and all four are the shape to copy. Set them together or not at
+all — unset is the estate `hc-infra` actually runs, and the unset render is byte-identical to what it
+has always been.
+
+**The two hostnames must name a CONTAINER, not merely something that resolves** (D66 §2). Preflight
+`docker exec`s them — Consul for a leader, the broker for its api versions — and only a container
+name can be exec'd. That costs nothing, because compose publishes a container's own name as a DNS
+alias on every network it joins, so a container name is always an address. **The converse is false**:
+`shared-kafka` and `shared-consul`, hc-infra's compose *service* names, resolve perfectly from inside
+these containers (measured, `172.21.0.5`) and are refused by preflight. The **port** is not part of
+the value — compose appends `:9092` and `8500` — so a value carrying its own port is refused too.
+
+**Preflight also refuses a plane the broker is not ON, and did not until D66.** "Running" and "on the
+network this stack joins" are different questions, and `check_shared_plane` asked only the first:
+measured against a throwaway empty network the whole function passed and its own success line printed
+`…on hc-market-d66-probe`. Harmless while `quality/compose.yml` hardcoded `hcnet`, live the moment the
+override started moving the join, and what it would have produced is D27's silence — five healthy
+services publishing into nowhere. `deploy-dev.sh`'s copy still has it (backlog **NEW-29**).
 
 Only the host mapping moves. Inside the containers every service listens on **8080**, because the
 compose files set `SERVER_PORT: 8080` explicitly — overriding the per-service `serverPort` the JDL
@@ -684,6 +699,14 @@ declares either one. Dev and quality point at `hc-infra`'s shared plane
 production points at the host's own `infranet` infrastructure, as it always has. Four brokers was
 the same as no broker — four disjoint logs, every cross-product event path configured and never once
 exercised, every stack green while it was wrong.
+
+Those three names are **defaults**, not literals: dev and quality both interpolate
+`HC_SHARED_NETWORK`, `HC_SHARED_CONSUL` and `HC_SHARED_KAFKA` in their compose files and read the
+same three in their scripts (D66). The default is written **twice** for each — once in the script,
+once in the compose file — and CI asserts each pair is the same string, which is D64's answer for
+`HC_OTEL_NETWORK` and `deploy-dev.sh`'s for `HC_TOPIC_PREFIX`. Do not make the compose copies `:?`
+required to remove the duplication: six CI steps and one documented gate render `quality/compose.yml`
+by hand, and a file nobody can `config` is a file nobody reads.
 
 **The DATABASES are the opposite call, and that is not an exception to D27 but the other half of
 it** (`decisions.md` D49). There is no host-wide PostgreSQL for four products to share, so they are

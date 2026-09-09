@@ -9969,3 +9969,237 @@ deploy/demo/extract-seed.mjs` left the seed unchanged; `.github/checks/pepper-wi
 two `quality/startup.sh` greps re-run green. **The quality stack was not restarted, no volume of any
 real project was created or removed, and nothing was published to the broker.** No Java changed, so
 no Maven build was run.
+
+---
+
+## D66 — A stack must address the plane it preflight-checks, and "running" is not "reachable"
+
+Backlog **NEW-25**, opened by **D64** while it was deciding how `HC_OTEL_NETWORK` should be wired and
+declining to copy the siblings' half-wired `OTEL_NETWORK`. **`main` ends at D65, the backlog's highest
+item is NEW-28, and `gh pr list --state open` answers nothing** — all three re-checked at `91b088c`
+rather than taken from the brief, which is this document's rule for its own numbering.
+
+`HC_SHARED_NETWORK`, `HC_SHARED_CONSUL` and `HC_SHARED_KAFKA` name the one broker and the one Consul
+four products borrow (**D27**). `quality/startup.sh` read all three; `quality/compose.yml` hardcoded
+all three. So an override moved which plane was **checked** and not which plane was **joined and
+addressed**, and that is worse than a variable that does nothing: somebody pointing quality at a
+second broker got a green preflight against that broker and a stack talking to the original one,
+which reads as the override not being implemented rather than as it being half-implemented.
+
+The item named a shape to copy rather than a decision to take — `deploy-dev.sh` exports all three and
+`docker-compose.dev.yml` interpolates them — so the latitude here is narrow. What follows is the two
+decisions inside that shape, the one the item did not anticipate, and the evidence for each.
+
+### §1 What was established, and how
+
+Every row is a read off something running or a measurement. **No rival broker, Consul or estate was
+started**, the quality stack was not restarted, no volume was created or dropped, and nothing was
+published to the broker.
+
+| | |
+| --- | --- |
+| the three, set to probe values, rendered through `quality/compose.yml` **before** | **byte-identical** to the unset render — `cmp` on `config --format json` |
+| the same three through `docker-compose.dev.yml` | `hcnet` → `probe-net`, broker → `probe-kafka:9092`, Consul → `probe-consul` — the dev shape genuinely works |
+| what the five running containers carry | `SPRING_KAFKA_BOOTSTRAP_SERVERS` and `..._BINDER_BROKERS` both `hc-shared-quality-kafka:9092`, `SPRING_CLOUD_CONSUL_HOST` `hc-shared-quality-consul` |
+| their networks | `hc-market-quality`, `hcnet`, `qualitynet` — the five databases on the first alone |
+| `hc-shared-quality-{consul,kafka}` aliases on `hcnet` | **two each**: the container name *and* hc-infra's compose service name (`shared-consul`, `shared-kafka`) |
+| `docker inspect shared-consul` | `error: no such object` |
+| `getent hosts shared-kafka` from inside `hc-market-quality-catalog` | `172.21.0.5` — the same address `hc-shared-quality-kafka` answers |
+| `check_shared_plane` with `HC_SHARED_NETWORK` naming a throwaway **empty** network | **passed**, and printed `…on hc-market-d66-probe` |
+
+The last row is the finding the item did not anticipate, and the two before it are the constraint
+that decides how the variables are spelled.
+
+### §2 Decision one: all three get identical treatment, and the reason they can is measurable
+
+The brief asked whether the three are the same question, and structurally they are not.
+`HC_SHARED_NETWORK` names a **network** the stack joins, through a `networks:` block;
+`HC_SHARED_CONSUL` and `HC_SHARED_KAFKA` name **hosts the services address**, through service
+environment variables. Different mechanisms, different compose constructs.
+
+They still get identical treatment, because the *property* is the same in all three: the value the
+script resolves must be the value compose renders. What differs is the **constraint on the value**,
+and that had to be established rather than assumed:
+
+- The script `docker exec`s Consul (`consul operator raft list-peers`) and the broker
+  (`kafka-broker-api-versions.sh`), so for those two the value must be a **container name**.
+- The services address the same string over DNS, so it must also **resolve**.
+
+Those two demands are satisfiable by one string only because compose publishes a container's **own
+name** as a DNS alias on every network it joins — measured on our own containers, whose `hcnet`
+alias list is `[hc-market-quality-catalog, catalog]`, and on hc-infra's, whose is
+`[hc-shared-quality-kafka, shared-kafka]`. **A container name is always an address; the converse is
+false**, and the false direction is a live trap: `shared-kafka` resolves from inside our containers
+to `172.21.0.5` and is not something `docker inspect` can find. Preflight refuses such a value
+(measured), before compose renders anything — which is the direction it should fail in, and is why
+the constraint is written at both lines rather than left to be discovered.
+
+The **ports** stay out of the variables and there is still no `HC_KAFKA_PORT` or `HC_CONSUL_PORT`.
+Inside a container the broker is always 9092 and Consul always 8500; hc-infra alone publishes either
+to the host. `:9092` is therefore appended by compose, and a value carrying its own port
+(`other-kafka:9093`) is refused by preflight for the container-name reason above rather than rendered
+into `other-kafka:9093:9092`.
+
+Two alternatives lost:
+
+- **Give the two hostnames a different, richer form** — `host:port`, or a full bootstrap list. It
+  buys a case nobody has (D27 is that there is *one* broker), and it breaks the single property that
+  makes the variable checkable at all: that preflight can `exec` the thing it names.
+- **Move the `docker exec` checks to a network probe instead**, so the value could be any resolvable
+  name. Those two `exec`s are the only checks that ask whether Consul has a **leader** and whether
+  the broker **answers** — the two states D27 says are silent from inside the application — and a
+  probe from the host cannot ask either.
+
+### §3 Decision two: two defaults, asserted equal, rather than one
+
+Today the script has `${HC_SHARED_NETWORK:-hcnet}` and compose now has
+`name: ${HC_SHARED_NETWORK:-hcnet}`. That is two defaults for one value, which is precisely the drift
+D64's check earned a mutation case for. Three ways to have one source of truth were considered:
+
+- **Make compose's copies required (`:?`)**, leaving the script the only default. Rejected on
+  measurement rather than taste: `docker compose -f quality/compose.yml config` is a documented gate
+  in `CLAUDE.md`, and **six** existing CI steps render this file — the route check, the base-URL
+  check, the brokerage check, `pepper-wiring.sh`, D64's `qualitynet` check and the compose-validity
+  check. Every one of them would need three more variables, and a file that cannot be rendered by
+  hand is a file nobody reads with `config`.
+- **Drop the script's defaults and read compose's rendered value back.** Circular:
+  `check_shared_plane` runs in preflight precisely so that a plane can be refused *before* compose is
+  invoked, and this would make the preflight depend on the file it is protecting.
+- **Two defaults, and CI asserts they are the same string.** Taken. It is D64's own answer for
+  `HC_OTEL_NETWORK` and `deploy-dev.sh`'s for `HC_TOPIC_PREFIX`, so the house already has one shape
+  for this rather than three.
+
+Beside it, `env_for_compose` now **exports all three resolved values on every action, teardown
+included** — the same treatment `HC_OTEL_NETWORK` gets, and for the same reason: a `--down` must not
+be able to address a different plane from the `up` that made the containers. The export makes the two
+halves agree *by construction* for anybody going through `startup.sh`; the CI equality check is what
+makes them agree for anybody driving `docker compose` directly. Both, deliberately — and the export
+is the reason the equality check cannot be dropped as redundant, because the export would otherwise
+hide a disagreement from the one person best placed to notice it.
+
+### §4 The decision the item did not anticipate: "running" and "reachable" are different questions
+
+`check_shared_plane` asked four things — the network exists, both containers are running, Consul has
+a leader, the broker answers — and **not one of them was about whether those containers are on that
+network**. Measured, with the function lifted out of the file and run against the live daemon and a
+throwaway empty network:
+
+```
+network=hc-market-d66-probe consul=hc-shared-quality-consul kafka=hc-shared-quality-kafka
+  OK:  shared plane: hc-shared-quality-consul (leader elected), hc-shared-quality-kafka on hc-market-d66-probe
+RESULT: preflight PASSED
+```
+
+The success line asserts a membership the function never looked for. That was **harmless while
+compose hardcoded `hcnet`** — the stack joined the right plane whatever the variable said — and it
+becomes live the moment §2 starts moving the join, which is why it belongs in this change rather than
+a later one. What it would produce is D27's silence in its purest form: five services on a network
+where the broker's name does not resolve, every one of them healthy, everything they publish going
+nowhere, and `MessageDeliveryException` on a timer as the only signal.
+
+So the loop now also asks the container which networks it is on and refuses if `$SHARED_NETWORK` is
+not among them. **Fatal, not advisory**, which needed saying rather than assuming: every other arm of
+this function is already fatal, the refusal is one line before compose is invoked so nothing is
+half-started, and it fails **closed** — a Go template that stops matching yields nothing, the
+`grep -Fxq` finds nothing, and preflight refuses. Verified by mutating the template to a field that
+does not exist and watching the unset, correct case refuse.
+
+Membership rather than resolution, deliberately: the five containers that would do the resolving do
+not exist yet at preflight, so "is the broker on the network we are about to join" is the strongest
+question available before `up`. It is a proxy and is written down as one.
+
+### §5 The check, and what it reaches
+
+`.github/checks/shared-plane-wiring.sh`, with `shared-plane-wiring-test.sh` beside it — the house
+shape (`pepper-wiring`, `admin-seed-wiring`), chosen over an inline `run:` block because a check with
+twelve broken states to construct is a check that needs a test. Four parts:
+
+1. **Interpolation, rendered, never grepped.** `docker compose config` a second time with each
+   variable set, asserting the value **moved**. This is D64's review's lesson taken at the outset
+   rather than after: its check began as a grep for `name: ${HC_OTEL_NETWORK:-…}` and failed open the
+   moment the line was commented out. Asked of **both** pairs, quality and dev, because dev is the
+   shape quality was fixed to copy and a regression there takes the model with it. Both broker
+   property names are asserted, not one — the compose file warns at that line that moving one leaves
+   the other pointing at the old broker, and a check asking about one of them would be the same
+   omission one layer up.
+2. **The two defaults are one string.** The script side is a **`^`-anchored assignment**, so a `#`
+   comment cannot match it and no stripper is needed; the compose side is part 1's *render*, never a
+   second grep of the same file.
+3. **`env_for_compose` exports all three**, asked behaviourally by lifting the function out of the
+   file and reading the environment it leaves.
+4. **Preflight refuses a plane the broker is not on**, asked behaviourally with `docker` stubbed —
+   *including the positive control*, because a refusal that fires on the correct state is not a check.
+
+**Reach, stated rather than implied.** Part 4's stub answers with a network list, so it catches the
+refusal being deleted or weakened and **does not** catch the Go template being wrong; that direction
+was measured by hand instead, and `check_shared_plane` meets the real daemon on every
+`startup.sh --local`. Part 1 is keyed on the compose key `hcnet`, which is enumerated rather than
+derived — sound only because renaming it is **refused** rather than skipped, which is a case in the
+test. An empty or disagreeing subject is refused everywhere: no service carrying an address, more
+than one distinct address across services, and a compose file that does not render are each their own
+error, because six checks in this repository have reported `ok` having read nothing.
+
+Watched green on a clean tree and red **twelve** ways — trust the list rather than the number. Every
+mutation asserts the original text is gone and the new text present before its result is believed,
+scripts are `bash -n`'d, **and each case asserts the error message it was aimed at**, because "red" is
+not the assertion:
+
+1. the network name hardcoded again — NEW-25's exact shape;
+2. the broker address hardcoded;
+3. **only the binder property** hardcoded — the half-move;
+4. the Consul host hardcoded;
+5. a default renamed in the script;
+6. the default assignment commented out with a literal beside it;
+7. compose's `name:` commented out — D64's review's fail-open, asked of this check;
+8. `env_for_compose` stops exporting;
+9. the membership refusal deleted;
+10. the network key renamed — refused, not skipped;
+11. one service given its own Consul — two planes in one estate, reported as a count;
+12. the compose file absent.
+
+**The error-fragment assertion found two things in the check on its first run, and one of them was a
+fail-open of the worst kind here.** Case 6 was red — but through the wrong door: `s_default`'s
+`grep` matched nothing, `set -Eeuo pipefail` carried the exit 1 out of the command substitution, and
+the check **aborted at that line with no `::error::` printed and every part below it skipped**. Exit
+1, so CI would have been red; a maintainer reading the log would have seen three `ok` lines and
+nothing else. That is the shape the brief warned about and the thirteenth instance of this
+repository's most repeated defect class. Case 10 was the milder one: renaming the network key makes
+the file fail to render at all, so it never reached the branch it was aimed at.
+
+### §6 What this deliberately does not do
+
+- **`deploy-dev.sh`'s `check_shared_plane` has the same membership blindness** and is not fixed here.
+  Its compose file already interpolates, so its override is *honest* rather than half-wired, and the
+  dev estate is wedged (D27's five un-killable containers) so the fix could not be exercised against
+  it in this package. Recorded as **NEW-29**, three lines and a re-embed.
+- **The quality stack was not restarted**, and that is a decision rather than a shortcut.
+  `env_for_compose` sets `SEED_DIR="$ROOT/deploy/demo"`, so an `up` driven from this worktree would
+  repoint all five live containers' seed bind mount at a directory that is about to be deleted —
+  **NEW-28**, verified as the state the running containers are in (`Source:
+  /home/kojo/work/health-connect/workspace/hc-market/deploy/demo`). What stands in for it is stronger
+  than a restart for the question actually being asked: `docker compose up -d --dry-run` through the
+  **real** `env_for_compose`, with `ROOT` set to the main checkout, reported **`Running`** for all ten
+  containers with the three variables unset — nothing would be recreated — and the same command with
+  `HC_SHARED_KAFKA` set reported **`Recreate`** for the five app services and `Running` for the five
+  databases, which is the instrument's own control. `./quality/startup.sh --local --verify` was then
+  run through the modified script and was green on all nine assertions, including the two through
+  `http://market.healthconnect.local`.
+
+**Verified in this round, by running**: the defect reproduced first, at `91b088c`, by rendering
+`quality/compose.yml` with all three set and `cmp`-ing it against the unset render — byte-identical;
+`bash -n quality/startup.sh`; `docker compose -f quality/compose.yml config`; the unset render after
+the change **byte-identical to the committed baseline**, which is the claim this package is judged on;
+the three single-variable renders each moving exactly their own value and nothing else, with the
+broker one asserted across all five app services; `check_shared_plane` lifted out of the file and run
+against the live daemon in four states, and the harness's own `die` corrected after its first version
+returned instead of exiting and reported PASS for a run that had already refused twice; the new check
+under **`bash -e`**, green and red twelve ways; `.github/checks/shared-plane-wiring-test.sh` green at
+13 assertions; `quality-pepper-persistence-test.sh` green at 40; `pepper-wiring.sh`,
+`observability-claims.sh`, `signing-key-severance.sh`, and the extracted `qualitynet`,
+compose-validity, shell-parse, vhost-port, gateway-route, base-URL and brokerage steps all re-run
+green under `bash -e`; `./deploy/sync-appendices.sh --check`; `node deploy/demo/extract-seed.mjs`
+leaving the seed unchanged; and `./quality/startup.sh --local --verify` green. The two gitignored
+secret files were copied in for the `--verify` run and the dry run, removed afterwards, and
+`git status --porcelain` confirmed clean before committing. **No rival broker or Consul was started,
+the quality stack was not restarted, no volume was created or dropped, nothing was published to the
+broker, and the throwaway probe network was removed.** No Java changed, so no Maven build was run.
