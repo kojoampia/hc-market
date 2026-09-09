@@ -541,6 +541,41 @@ Verified on 2.30.0 with Temurin/Oracle 25: Tomcat `SERVER` spans with `http.rout
 with `db.operation`. hc-patient records that the 2.9.0 older fleet images pin loads, logs its
 banner, exports JVM metrics and rewrites **nothing**, in silence, on a modern JDK.
 
+**That recipe is a script now — `./deploy/verify-otel-agent.sh`** (D63). It had been run once, by
+hand, in August 2026, and a recipe nobody can re-run is a claim rather than a check. It needs no
+estate, no database, no container and no network: a JDK, the agent jar (from any
+`*/target/otel/`, or `docker cp` it out of a running container at `/app/otel-javaagent.jar`), and
+one loopback request against an embedded `com.sun.net.httpserver`. It reports **loading and
+instrumenting separately**, because that distinction is the whole point — watched going red with
+the agent loading fine and `OTEL_INSTRUMENTATION_JAVA_HTTP_SERVER_ENABLED=false`, which is
+hc-patient's 2.9.0 failure reproduced on demand. Note the CLIENT spans still appear in that run, so
+a check merely grepping for "a span" would have passed it.
+**What it does not cover**: the probe is instrumented by the agent's `java-http-server` module, not
+by `tomcat` or `reactor-netty`, so a regression confined to those would pass. `--describe` prints
+its live constants and CI compares them against this section, which is what stops the two drifting.
+
+**The agent is in every image and attached in no environment that has ever run** (D63, backlog
+NEW-23). `deploy/docker/docker-compose.prod.yml` attaches it and production has never been
+deployed; `quality/compose.yml` and `docker-compose.dev.yml` do not, deliberately since D63 and by
+omission before it. Both now assemble `JAVA_OPTS` from the same two variables production uses, so
+**`HC_OTEL_JAVA_OPTS` sets the flag** and unset renders a byte-identical JVM command line to the one
+each has always had.
+
+**It is one variable plus one NETWORK on the quality box, and the variable alone is not enough
+there** (backlog NEW-24). hc-market's quality stack is the only one on this host not joined to
+`qualitynet` — hc-admin, hc-patient and hc-professional all are, and that is what makes
+`otel-collector` resolve. The collector publishes on `127.0.0.1:4327`, which is the *host's*
+loopback and not a container's, so with the flag set and the network absent all five services
+attach the agent and export into nothing. Say "one variable" only about dev, or about a stack that
+already has a route to a collector.
+
+Off by measurement rather than by taste: against a collector that is down — which
+`monitoring-quality` on this host has been for days — the agent writes **35 ERROR lines with stack
+traces every 150 seconds** at its own default intervals, and all five quality services carry
+**zero** ERROR lines across their entire life. `deploy/observability/hc-market-rules.yaml` says so
+at the top and carries a `NOT-YET-ATTACHED` marker that CI holds against what the compose files
+render, in both directions.
+
 ### Jib images have no `curl` and no `wget`
 
 They do have `bash`. A compose `healthcheck` written as `['CMD','curl','-f',...]` fails with

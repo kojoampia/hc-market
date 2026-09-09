@@ -94,7 +94,52 @@ x-service: &service
     HC_RETENTION_OPERATIONAL_DAYS: ${HC_RETENTION_OPERATIONAL_DAYS:-365}
     HC_RETENTION_CARE_SUMMARY_DAYS: ${HC_RETENTION_CARE_SUMMARY_DAYS:-90}
     HC_DPC_REGISTRATION: ${HC_DPC_REGISTRATION:-}
-    JAVA_OPTS: -Xmx512m -Xms256m
+    # --- OpenTelemetry: the agent is IN the image and is NOT attached here ----------------------
+    #
+    # decisions.md D63, backlog NEW-23. `/app/otel-javaagent.jar` is present in all five images at
+    # 24,665,598 bytes — the Jib `combine.self="override"` wiring works and CI guards it by name —
+    # and until D63 the line below read a hardcoded `-Xmx512m -Xms256m`, so no JVM in this estate
+    # had ever been started with `-javaagent`. Not attaching it is now a decision rather than an
+    # omission, and reversing it is one variable.
+    #
+    # WHY IT IS OFF, measured rather than assumed. This host DOES have a collector — the
+    # `monitoring-quality` compose project in ~/work/infra, with otel-collector/grafana/mimir/loki/
+    # tempo/alloy — and every container in it has been EXITED for days. Attached against a dead
+    # OTLP endpoint the agent is loud, permanently: 35 ERROR lines with full stack traces in 150
+    # seconds at the agent's OWN default intervals (18 logs, 13 spans, 3 metrics; nothing forced),
+    # from io.opentelemetry.exporter.otlp.internal.HttpExporter. All five services on this box
+    # currently carry ZERO ERROR lines across their entire life — a few hundred to a few thousand
+    # log lines each, and the ZERO is the load-bearing half; the counts move with uptime and were
+    # 271-2,821 when this was written. So attaching it unconditionally would replace the estate's
+    # one free signal with about 840 ERROR lines an hour per service, for ever, and bury a real
+    # one inside known noise.
+    #
+    # The siblings agree, and it is worth knowing they do: no hc-admin, hc-patient or
+    # hc-professional QUALITY JVM carries `-javaagent` either, nor does either hc-vendor one —
+    # eight sibling containers, read off /proc/1/cmdline.
+    #
+    # TO TURN IT ON: start the monitoring stack first, then
+    #
+    #   HC_OTEL_JAVA_OPTS='-javaagent:/app/otel-javaagent.jar -Dotel.exporter.otlp.endpoint=http://otel-collector:4317' \
+    #     ./quality/startup.sh --local
+    #
+    # and note the collector only resolves once these containers are on `qualitynet`, which every
+    # OTHER quality stack on this host joins and this one does not — backlog NEW-24. Until that is
+    # closed, turning telemetry on here is one variable plus one network, not one variable.
+    #
+    # TWO variables, not one, copied from docker-compose.prod.yml deliberately. Folding the agent
+    # flag into HC_JAVA_OPTS's default would mean an operator raising the heap silently detaches
+    # the agent, and that failure is invisible: the service starts, serves, reports healthy and
+    # goes quiet on the dashboards.
+    JAVA_OPTS: ${HC_JAVA_OPTS:--Xmx512m -Xms256m} ${HC_OTEL_JAVA_OPTS:-}
+    # Inert while no agent is attached — nothing in these services reads an OTEL_* variable. They
+    # are set anyway because they are the only part of the switch that CANNOT go into one shared
+    # variable, and without them a reversal reports five services as `unknown_service:java`.
+    # `deployment.environment` is what keeps this estate separable from production's if they ever
+    # reach one tenant; the service names match production's, exactly as this stack's Consul
+    # service names already do.
+    OTEL_RESOURCE_ATTRIBUTES: deployment.environment=quality
+    OTEL_EXPORTER_OTLP_PROTOCOL: grpc
   # The images are built by Jib and contain NO curl and NO wget — a CMD-based HTTP healthcheck fails
   # with "executable file not found" on every attempt and the container never leaves `starting`.
   # They do contain bash, so this speaks HTTP over bash's /dev/tcp with no external tools at all.
@@ -205,6 +250,7 @@ services:
       SPRING_CLOUD_CONSUL_DISCOVERY_HOSTNAME: hc-market-quality-gateway
       SPRING_CLOUD_CONSUL_DISCOVERY_INSTANCE_ID: hc-market-quality-gateway
       SPRING_CLOUD_CONSUL_DISCOVERY_SERVICE_NAME: hc-market-gateway
+      OTEL_SERVICE_NAME: hc-market-gateway
       # An explicit consumer group. Without one an anonymous group is generated per
       # instance: no committed offsets, so a restart resumes at the end of the log and
       # everything published in between is gone. Worse, two applications landing in the
@@ -290,6 +336,7 @@ services:
       SPRING_CLOUD_CONSUL_DISCOVERY_HOSTNAME: hc-market-quality-catalog
       SPRING_CLOUD_CONSUL_DISCOVERY_INSTANCE_ID: hc-market-quality-catalog
       SPRING_CLOUD_CONSUL_DISCOVERY_SERVICE_NAME: hc-market-catalog
+      OTEL_SERVICE_NAME: hc-market-catalog
       # An explicit consumer group. Without one an anonymous group is generated per
       # instance: no committed offsets, so a restart resumes at the end of the log and
       # everything published in between is gone. Worse, two applications landing in the
@@ -335,6 +382,7 @@ services:
       SPRING_CLOUD_CONSUL_DISCOVERY_HOSTNAME: hc-market-quality-booking
       SPRING_CLOUD_CONSUL_DISCOVERY_INSTANCE_ID: hc-market-quality-booking
       SPRING_CLOUD_CONSUL_DISCOVERY_SERVICE_NAME: hc-market-booking
+      OTEL_SERVICE_NAME: hc-market-booking
       # An explicit consumer group. Without one an anonymous group is generated per
       # instance: no committed offsets, so a restart resumes at the end of the log and
       # everything published in between is gone. Worse, two applications landing in the
@@ -431,6 +479,7 @@ services:
       SPRING_CLOUD_CONSUL_DISCOVERY_HOSTNAME: hc-market-quality-messaging
       SPRING_CLOUD_CONSUL_DISCOVERY_INSTANCE_ID: hc-market-quality-messaging
       SPRING_CLOUD_CONSUL_DISCOVERY_SERVICE_NAME: hc-market-messaging
+      OTEL_SERVICE_NAME: hc-market-messaging
       # An explicit consumer group. Without one an anonymous group is generated per
       # instance: no committed offsets, so a restart resumes at the end of the log and
       # everything published in between is gone. Worse, two applications landing in the
@@ -469,6 +518,7 @@ services:
       SPRING_CLOUD_CONSUL_DISCOVERY_HOSTNAME: hc-market-quality-payout
       SPRING_CLOUD_CONSUL_DISCOVERY_INSTANCE_ID: hc-market-quality-payout
       SPRING_CLOUD_CONSUL_DISCOVERY_SERVICE_NAME: hc-market-payout
+      OTEL_SERVICE_NAME: hc-market-payout
       # An explicit consumer group. Without one an anonymous group is generated per
       # instance: no committed offsets, so a restart resumes at the end of the log and
       # everything published in between is gone. Worse, two applications landing in the

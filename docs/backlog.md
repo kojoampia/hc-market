@@ -1956,7 +1956,7 @@ different product. `hc-professional` is a milder variant of the same family.
 
 ---
 
-## NEW-23 — The OpenTelemetry agent is in every image and attached in no environment · READY
+## NEW-23 — The OpenTelemetry agent is in every image and attached in no environment · DONE (D63)
 
 Opened by **D62**, which found it while reading the running quality containers for an unrelated
 reason. It is deliberately **not fixed there**: it changes what the quality box runs, and the box was
@@ -2010,6 +2010,74 @@ group names are unique; nothing checks that anything answers its queries.
 
 **Not in scope for whoever takes this**: the Jib `extraDirectories` wiring, which is correct and
 proven by the jar being in all five images.
+
+**Closed by D63, and the body above is left as written including the part of it that is wrong.**
+*"`jacserver` has no `otel-collector` on it"* is false: this host runs the `monitoring-quality`
+compose project — otel-collector, grafana, mimir, loki, tempo, alloy — from a different repository,
+and every container in it has been exited for days. So the first thing to measure was not "is there
+a collector" but "what happens when the agent is attached and the collector is down", and the answer
+is 35 ERROR lines with stack traces every 150 seconds at the agent's own default intervals, against
+an estate whose five services currently carry zero. All three questions were answered: quality and
+dev attach nothing and gain a one-variable opt-in; the instrumentation check is
+`deploy/verify-otel-agent.sh` rather than a paragraph; the rules file says in its own header that
+nothing answers its queries, held there by CI in both directions. It opened **NEW-24**.
+
+---
+
+## NEW-24 — hc-market's quality stack is the only one not on `qualitynet`, so it cannot reach a collector · READY
+
+Opened by **D63**, which found it while establishing what turning the agent on in quality would
+actually do. Deliberately not fixed there: it is a change to the network topology of the last gate
+before production, and the only way to exercise it is to restart that stack — which D63 was
+instructed not to do, and which would have proved nothing while the collector is down anyway.
+
+**The monitoring stack's own compose says how an application joins it**, and hc-market never did:
+
+> `qualitynet` is what makes the whole stack work, in both directions: Alloy needs to reach
+> hc-*-quality containers to scrape /actuator/prometheus, and the apps need to resolve
+> `otel-collector` to export OTLP. […] Each application compose file therefore also joins
+> qualitynet.
+
+| | |
+| --- | --- |
+| `hc-admin/quality/compose.yml`, `hc-patient`, `hc-professional` | `networks: [quality, qualitynet, hcnet]` — **all three** |
+| containers on `qualitynet` right now | **six**, two from each sibling, **none of ours** |
+| `hc-market/quality/compose.yml` | `networks: [quality, hcnet]` |
+| the collector's published ports | `127.0.0.1:4327` / `4328` — the **host's** loopback, unreachable from inside a container |
+
+So D63's `HC_OTEL_JAVA_OPTS` switch turns the agent on and, on this box, it then exports into
+nothing. That is stated in the compose comment rather than glossed — **one variable plus one
+network** — but it is the one thing standing between hc-market and the quality box being able to
+demonstrate its own observability story.
+
+**The shape to copy is the siblings'.** Each declares `qualitynet` as external and its `startup.sh`
+creates it if absent, which is what stops the stack becoming unstartable on a host where the
+monitoring project has been fully `down`ed. Doing it here is three lines in `quality/compose.yml`
+and one in `quality/startup.sh` — and then a real `--local` restart, because an unexercised change
+to that stack's networking is exactly the class of change this repository measures rather than
+reasons about.
+
+**Two things to establish before or during**, neither of which D63 could:
+
+1. Whether joining `qualitynet` changes anything about name resolution for the five services. They
+   are already on `hcnet` with three sibling products, and CLAUDE.md's "compose publishes a service
+   NAME as a DNS alias on every network it joins" trap is exactly about a third network arriving.
+   The container names here are all `hc-market-quality-*`, so the risk looks low and *looks low* is
+   not the standard this repository uses.
+2. Whether the agent, once it can reach a running collector, is quiet. D63 measured it loud against
+   a **dead** endpoint; nobody has measured it against a live one here, and the whole argument for
+   leaving it off rests on that first number.
+
+**Not in scope for whoever takes this**: starting, fixing or configuring the `monitoring-quality`
+stack. It is another repository's, and the sibling stacks tolerate its being down while joined to
+its network, which is the evidence that joining is safe independently of its state.
+
+**A finding for the parent workspace, not for this repository.** That same Alloy config declares
+*"NO APPLICATION SCRAPE TARGETS, and that is correct for this host […] the quality applications do
+not expose Micrometer to be scraped — they PUSH OpenTelemetry to the collector"* — and no sibling
+quality JVM carries `-javaagent` either, on eight readings of `/proc/1/cmdline`. The quality box
+therefore collects container logs and docker stats for the whole estate and **no application metrics
+from any product**. Four products wide, and hc-market is the only one that has written it down.
 
 ---
 

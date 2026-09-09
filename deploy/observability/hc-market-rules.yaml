@@ -10,6 +10,47 @@
 # Group names share ONE namespace across every file in the tenant directory, so all of them carry
 # the hc-market- prefix.
 #
+# =============================================================================================
+# NOTHING ANSWERS THESE QUERIES TODAY, AND NOTHING EVER HAS. DO NOT INSTALL THIS FILE YET.
+#
+# decisions.md D63, backlog NEW-23. Every alert below is a query over `jvm_thread_count` or
+# `http_server_request_duration_seconds*`, and both series come from the OpenTelemetry Java agent
+# and from nothing else. The agent is baked into all five images — verified present at 24,665,598
+# bytes in every one — and NO ENVIRONMENT ATTACHES IT:
+#
+#   production   attaches it (docker-compose.prod.yml) and HAS NEVER BEEN DEPLOYED (D49). Read
+#                deploy/prod-server/README.md; it says so before it says anything else.
+#   quality      does not, by decision and measurably: the collector on that host has been down
+#                for days, and against a dead endpoint the agent writes 35 ERROR lines with stack
+#                traces every 150 seconds, permanently. One variable reverses it — see
+#                quality/compose.yml.
+#   development  does not. A developer machine has no collector.
+#
+# So installing this file as it stands would not give hc-market alerting. It would give the fleet
+# TWO alerts firing continuously and for ever — HcMarketGatewayDown and HcMarketServiceDown are
+# `absent()` queries, and a series that has never existed is absent — plus three that can never
+# fire at all. That is worse than no rules: an alert nobody can act on is the thing that teaches
+# people to ignore the ones they can.
+#
+# The file stays here, complete and correct, rather than being deleted or moved. It is right about
+# what to alert on and right about the label schema; what was missing was any statement about
+# whether the signal exists. WHAT MUST BE TRUE BEFORE IT IS INSTALLED:
+#
+#   1. the estate whose alerts these are runs JVMs started with -javaagent:/app/otel-javaagent.jar;
+#   2. that agent is confirmed to INSTRUMENT rather than merely load — ./deploy/verify-otel-agent.sh,
+#      because `jvm_thread_count` comes off JMX MBeans and arrives whether or not a single
+#      application class is rewritten, so these two `absent()` rules cannot tell the difference;
+#   3. its collector accepts and Mimir retains the two metric families named above, checked by
+#      querying for them rather than by reasoning from this file.
+#
+# CI holds this notice against the compose files rather than trusting it: the marker line below is
+# required while dev and quality attach no agent, and REFUSED once either does — so the day the
+# signal arrives, this paragraph goes red rather than quietly becoming a lie in the other
+# direction.
+#
+# NOT-YET-ATTACHED: no environment in this repository starts a JVM with -javaagent (decisions.md D63).
+# =============================================================================================
+#
 # ---------------------------------------------------------------------------------------------
 # THIS FILE IS NOT INSTALLED BY THIS REPOSITORY.
 #
@@ -46,8 +87,13 @@
 #     "0 professionals" is a deploy-time check, not a runtime alert. deploy-prod.sh verifies it.
 #   * Browser/RUM signals. hc-market is API-only. There is no front end, so no page-load or JS-error
 #     series exists.
-#   * Payout settlement failures. No payment provider is wired (decisions.md D15 defers it), so
-#     Payout.status never reaches FAILED by any code path that exists today.
+#   * Payout settlement failures. The conclusion still holds and the REASON given for it has gone
+#     stale, which is its own defect (D63): this said "no payment provider is wired (D15 defers
+#     it)", and D45/D50 wired one — Paystack is a real adapter now. What makes the rule impossible
+#     is one level down and unchanged. `Payout` has no writer outside the seeder at all, so
+#     `Payout.status` never moves by any path; and PaymentProvider deliberately has NO method that
+#     pays a professional, so there is no settlement call to fail. Both are decisions rather than
+#     gaps — see D50 and the delete-table row for PayoutResource.
 
 groups:
   - name: hc-market-availability
@@ -65,11 +111,14 @@ groups:
         annotations:
           summary: 'hc-market gateway is not reporting'
           description: >-
-            No telemetry from hc-market-gateway for five minutes. Note this fires on ABSENCE, which
-            also covers "the agent stopped being attached" — check JAVA_OPTS carries
-            -javaagent:/app/otel-javaagent.jar before concluding the service is down. HC_JAVA_OPTS
-            and HC_OTEL_JAVA_OPTS are separate variables precisely so raising the heap cannot
-            detach the agent, but an operator can still override both.
+            No telemetry from hc-market-gateway for five minutes. Note this fires on ABSENCE, so
+            "the agent was never attached" and "the gateway is down" are the SAME alert — check
+            JAVA_OPTS carries -javaagent:/app/otel-javaagent.jar before concluding anything about
+            the service. Until decisions.md D63 that check was the more likely answer everywhere:
+            no environment attached it at all, which is why this file must not be installed while
+            the NOT-YET-ATTACHED marker at the top of it is still true. HC_JAVA_OPTS and
+            HC_OTEL_JAVA_OPTS are separate variables precisely so raising the heap cannot detach
+            the agent, but an operator can still override both.
 
       - alert: HcMarketServiceDown
         expr: |
