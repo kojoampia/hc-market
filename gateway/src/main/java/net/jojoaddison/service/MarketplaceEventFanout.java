@@ -38,9 +38,22 @@ import reactor.core.publisher.Sinks;
  *   <li>it binds to {@code sse-topic}, which nothing in hc-market publishes to.
  * </ul>
  *
- * <p>Both are left in place because they are generated and regeneration would put them back anyway;
- * this is a new file beside them. Anything reading {@code /consume} should be treated as reading a
- * sample, not a feature.
+ * <p><strong>{@code /consume} is deleted</strong> — backlog NEW-17, {@code decisions.md} D59. It was
+ * left in place for months on the argument that it is generated and a regeneration puts it back
+ * anyway, which is true of the file and not of the door: it sat under
+ * {@code .pathMatchers("/api/**").authenticated()} with no {@code @PreAuthorize}, beside a
+ * {@code POST /publish} that put a caller's arbitrary string on the broker four products borrow. The
+ * last bullet above is now a measurement rather than a reading — {@code sse-topic}'s end offset on
+ * that broker is <strong>0</strong>, so in the estate's whole life the endpoint has never carried a
+ * byte, and the only thing it could ever have carried is somebody else's event.
+ *
+ * <p>{@code broker.KafkaConsumer} itself <strong>stays</strong>. It is named by
+ * {@code spring.cloud.function.definition} in a generated config file, and with no resource injecting
+ * it, it maps no URL — an orphaned generated class rather than an open door, which is D54's rule.
+ * Nothing subscribes to its sink now, so it buffers if anything ever publishes to {@code sse-topic};
+ * that was equally true while {@code /consume} existed and had no caller, and it is backlog NEW-21
+ * rather than a change here. {@code KafkaSampleIsNotAnApiIT} is what goes red if the resource comes
+ * back.
  *
  * <h2>directBestEffort, deliberately</h2>
  *

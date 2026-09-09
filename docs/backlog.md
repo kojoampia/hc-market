@@ -52,10 +52,11 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **NEW-14** | A professional's own calendar opens on Accra's day, not theirs | CLOSED by decision | D55 — spec §13 #8 ratified 2026-09-07. A window *start* is a question about the page being read, so `MARKET_ZONE` is now **chosen** there rather than merely unchallenged. **No code change**: the two `ProWorkspaceResource` defaults were already right |
 | **NEW-15** | Any authenticated user can change the brokerage's commission rate — **and eight other things** | DONE | D54 — the scope was **nine, not one**: `BrokerageConfig`, `Ledger`, `Payout`, `Credential`, `AvailabilitySlot`, `ServiceOffering`, `Highlight`, `Message` and `Conversation`, each with four write mappings and zero authorization. Measured in-process at 200/200/201/200 apiece before deletion — 36 assertions, 36 red. All nine deleted with their generated ITs, argued individually; three `GeneratedCrudIsNotAnApiIT` guards, each door mutated **separately**. **The root cause was the control**: one CI check now derives the expected set from `jdl/*.jdl` and demands, per entity, a delete-table row or real authorization. Eight mutations watched. Opened a tenth family as NEW-17 |
 | **NEW-16** | The receipt strikes its split to the day and the ledger to the instant | DONE | D56 — `at` (an `Instant`) beside `on`, **both sent**, `at` preferred, and neither present is a **400** rather than `Instant.now()`. `on` stays because a new booking calling an old payout would otherwise fall through to that service's own clock — NEW-13 rebuilt one service over. The two selectors are merged into `BrokerageTerms` with an explicit tie-break (newest `id`), closing a non-determinism neither copy could see. First tests for an endpoint that had none: 10 ITs through the real binder, **7 red first**; one CI check, all five assertions watched firing — and running it found the check itself was banning a correct `Instant.now()` |
-| **NEW-17** | The five generated Kafka sample resources are unauthenticated write endpoints | READY | D54 — `POST /api/healthconnect-<service>-kafka/publish` in all four services **and the gateway**, generated, no `@PreAuthorize`, gateway-routed. What it actually does on a running estate is **unestablished**: the binding and `auto-create-topics` live in `application-kafka.yml` and the `kafka` profile is active nowhere, so it is a `StreamBridge` dynamic destination against an unconfigured binding. Closing it also deletes **five ITs that currently assert the hole works** (`producesMessages`, expecting 200). NEW-15's CI check is entity-derived and **cannot** reach this family; a second `web/rest`-derived check is the answer |
+| **NEW-17** | The five generated Kafka sample resources are unauthenticated write endpoints | DONE | D59 — all five **deleted**, gateway included, with the five ITs that asserted the hole worked. **What `/publish` did is established, and both of D54's readings of it were wrong**: `application.yml` puts `kafka` in `spring.profiles.group.dev` *and* `.prod`, so the profile is active in every environment — read off the running quality container — and the sibling bindings from the same file have auto-created their topics on the shared broker. The write was real. The gateway's `/consume` was the decision rather than the deletion, and it is answered by a measurement: `sse-topic`'s end offset is **0**, so it never carried a byte. `broker.KafkaConsumer` and `KafkaProducer` **stay** as orphaned generated classes with no HTTP door. Second CI check, derived from `baseName` + `messageBroker` rather than from entities, with a `find` sweep closing its own rename fail-open; **14 mutations watched**, and the first harness run reverted the very rows the check depends on. Five guards, each service mutated separately. Opened **NEW-21** |
 | **NEW-18** | Nothing can create a `BrokerageConfig`, and payout cannot price a booking without one | DONE | D57 — **shape (2), the seeded-once row**, argued against a Liquibase changeset (a rate is not schema, and a changeset cannot read the environment, so it *forces* a code constant) and against the append-only `ROLE_BROKERAGE` resource (**it bootstraps nothing** — a fresh estate still waits on a person, and the deploy check would then fail a healthy stack). `BrokerageBootstrap` writes one row into an **empty** table on every environment including `prod`, at `SmartLifecycle` phase `MIN_VALUE` so the consumer's container cannot start first. The founding values are code constants the environment **may** override — so nothing can be got wrong by omission, and a malformed one refuses startup. `effectiveFrom` is `Instant.EPOCH` and is deliberately *not* an input: it is the one field where a well-formed wrong value brings the defect back. The seed no longer writes or deletes the row at all. Preflight shipped with the remedy, never before it — and its first version was **wrong**, found by an actual `prod` boot: reading the aggregate `/management/health` would have rolled back a healthy stack whenever the Kafka binder was down. It reads `brokerage.termsInForce` from `/management/info` instead. 24 unit tests plus 4 IT cases, every guarded thing mutated separately; one CI check, watched firing six ways including on a comment |
 | **NEW-19** | Two sites convert an appointment with `ZoneOffset.UTC` and ignore `Booking.zoneId` | DONE | D58 — both read `booking.getZoneId()` now, and the **two sites are one derivation**: `cancellationPreview` already called `isLate` while computing the same instant a second time, so the resource asks `BookingWorkflow.scheduledAt` for it. The decision the item reserved is **answered by construction, re-established rather than inherited**: `zone_id` is `NOT NULL` with **no column default** (the item and D55 both say otherwise), written at exactly one live site and never recomputed, so no in-flight booking's quoted boundary moves and nothing needed migrating. A zone tzdb cannot read falls back to `MARKET_ZONE` with a WARN rather than making a booking impossible to cancel. 9 tests east and west of UTC, both sites **mutated separately** — the resource alone is red at the endpoint while every unit test stays green. One CI check, watched firing three ways, for the third site no test can cover. Reviewed 2026-09-09, three non-blocking findings, all applied — the sharpest being a **pre-existing** test whose fixture set no zone and so began routing ten assertions through the new fallback. Opened **NEW-20** for the write side |
 | **NEW-20** | A booking stores whatever zone the catalogue hands it, and nothing parses it | READY | D58 — `CustomerBookingResource.zoneOf:546` passes `offering.zoneId()` through verbatim and defaults only null/blank, so a garbage zone is **stored** and afterwards read as Accra for ever, WARN-only, on the late-cancellation boundary. D58's read-side fallback keeps that from being an outage; validating at **capture** is what would make it dead code, and it is a change to what `POST /api/bookings` accepts — D22's territory, its own decision (parse-or-default, or refuse). Not reachable today: catalog has no write path for `Professional.zoneId` either, so every zone in the estate comes from a seeder |
+| **NEW-21** | The generated Kafka sample writes to the shared broker with no caller at all, and has written 5.6 million times | READY | D59 — found while establishing NEW-17, and **larger than the door NEW-17 closed**. `broker.KafkaProducer` is a generated `Supplier<String>` bound to `kafkaProducer-out-0` and polled on Spring Cloud Stream's default one-second schedule, in **all five** services. Measured on the shared broker: end offset **5,603,896**, rising at **6/s** over a timed 60 s window. Nothing consumes it and nothing asked for it. The gateway's `broker.KafkaConsumer` sink is the other half — `unicast().onBackpressureBuffer()` with no subscriber since NEW-17. Not fixed there because the remedy is an edit to the generated `application-kafka.yml` (a `spring.cloud.function.definition` naming a bean that no longer exists refuses to bind), which is a regeneration-hazard row and a decision of its own |
 
 ---
 
@@ -1484,7 +1485,41 @@ stopping the merge: both are in payout's **same Maven module**, and `TechnicalSt
 `web → service`, so one selector in `service` is reachable from both. Decide the tie-break explicitly
 while merging — newest `id` wins is the obvious answer and any answer beats an arbitrary one.
 
-## NEW-17 — The generated Kafka sample resources publish to the shared broker, unauthenticated · READY
+## NEW-17 — The generated Kafka sample resources publish to the shared broker, unauthenticated · DONE (D59)
+
+**Closed by D59.** All five are deleted, gateway included, with the five ITs that asserted the hole
+worked; `KafkaSampleIsNotAnApiIT` is in all five services and a second, differently-derived CI check
+demands a delete-table row or real authorization for the class each `messageBroker kafka` application
+generates.
+
+**The thing this item asked to be established is established, and the answer overturns the paragraph
+below.** It says the `kafka` profile is active nowhere, so `/publish` was a `StreamBridge` dynamic
+destination against an unconfigured binding. **That is wrong.** `application.yml` lists `kafka` in
+`spring.profiles.group.dev` **and** `spring.profiles.group.prod` in all five services, and a profile
+group member never appears in `SPRING_PROFILES_ACTIVE` — the running quality container reports
+`activeProfiles: ["secret-samples","kafka","api-docs","dev","test"]` for a stack asked for two. The
+binder is pointed at the shared broker by all three compose files, `auto-create-topics` is true, and
+the sibling bindings in the same file have **auto-created `sse-topic` and `kafkaProducer-out-0` on
+that broker**, with the consumer groups `healthconnect-{gateway,catalog,booking,messaging,payout}`
+registered against them. So the original claim was right and the correction was the wrong half. None
+of it was established by POSTing anywhere: the topic list, the offsets and the consumer groups are
+reads.
+
+**The gateway's asymmetry is answered by a measurement rather than an argument.** `GET /consume`
+drains `sse-topic`, whose end offset on the shared broker is **0** — the endpoint has never carried a
+byte in the estate's life, and the only thing it could carry is somebody else's event, unfiltered.
+`broker.KafkaConsumer` and `broker.KafkaProducer` are **kept**: named by
+`spring.cloud.function.definition` in a generated file, mapping no URL once the resource is gone,
+which is D54's rule for an orphaned generated class.
+
+**One thing this item did not anticipate, opened as NEW-21**: the supplier beside the consumer has
+written **5.6 million** messages to the shared broker with no caller at all, and is still doing it at
+6/s. That is bigger than the door this item closed, and it is a different defect.
+
+Everything below is the item as it stood, kept because it is the record of what was known before —
+including the paragraph the establishment overturned.
+
+---
 
 Opened by D54, which found them while re-deriving NEW-15's inventory and deliberately did not fix them.
 
@@ -1719,6 +1754,54 @@ day.
 Whoever takes it should put the same question to `catalog` in the same pass: a zone written there is
 what a booking copies, so validating only the copy leaves the source wrong and the profile screen
 rendering it.
+
+---
+
+## NEW-21 — The generated Kafka sample writes to the shared broker with no caller at all · READY
+
+Opened by **D59**, which found it while establishing what NEW-17's `/publish` actually did. It is the
+same generated sample and the same shared broker, and it is **larger than the door NEW-17 closed** —
+but it is not a door, so it was not ridden in on that package.
+
+`broker.KafkaProducer` is a generated `@Component implements Supplier<String>` returning the constant
+`"kafka_producer"`. `application-kafka.yml` names it in `spring.cloud.function.definition` and binds
+it to `kafkaProducer-out-0`, and Spring Cloud Stream polls a supplier on a **one-second** default
+schedule. All five services carry it, and the `kafka` profile is active in every environment through
+`spring.profiles.group` (see D59), so all five have been doing this since they first started.
+
+**Measured on the shared broker, by reading it:**
+
+| | |
+| --- | --- |
+| `kafkaProducer-out-0` end offset | **5,603,896** |
+| rate over a timed 60 s window | **366 messages, 6/s** |
+| consumers | none — no group is registered against it |
+| `sse-topic` end offset | **0** (the consumer half has never received anything) |
+
+Six per second rather than five because hc-market's five are not the only JHipster applications on
+`hc-shared-quality-kafka`; the broker is `hc-infra`'s and four products borrow it (D27). Attribution
+of the *whole* 5.6 M to hc-market is therefore **not** established — what is established is that five
+of the six services publishing are ours, and that nothing anywhere consumes the topic.
+
+**The other half is the consumer.** Since NEW-17 the gateway's `broker.KafkaConsumer` sink —
+`Sinks.many().unicast().onBackpressureBuffer()` — has no subscriber at all, so anything arriving on
+`sse-topic` buffers without bound. That is not a regression from D59: `/consume` had no caller either,
+and the topic has never carried a message. It is worth closing in the same pass.
+
+**Why it needs a package.** The remedy is not deleting two classes. `spring.cloud.function.definition:
+kafkaConsumer;kafkaProducer` lives in generated `application-kafka.yml`, so a definition naming a bean
+that no longer exists refuses to bind and the service will not start — which means editing a generated
+file, which means a new **regeneration-hazard row** in CLAUDE.md's Liquibase-and-config table for each
+of five services. Three shapes are worth weighing: delete the supplier and its binding; keep the beans
+and empty the `definition`; or leave both and set the poller's interval to something that is not one
+second. The first is cleanest and costs the most rows. `producesPooledMessages` — deleted with the
+sample ITs by D59, precisely because carrying it forward would be CI asserting this defect works — is
+the test that would have to come back in some form to pin whichever is chosen.
+
+**One thing to establish before choosing.** hc-admin, hc-patient and hc-professional are JHipster
+estates on the same broker and the sixth publisher is probably one of them; if so, this is a
+workspace-wide finding rather than an hc-market one, and the parent `CLAUDE.md` is where it belongs.
+That was not checked — D59 was not authorised to touch another product's repositories.
 
 ---
 

@@ -7828,3 +7828,315 @@ scanned.
   `deploy/prod-server/` was run.
 - **Not exercised: a live cancellation through the quality gateway.** `verify-cycle.sh` writes, and
   the box was left alone; the endpoint is covered by the IT against a real PostgreSQL instead.
+
+## D59 — The Kafka sample nobody called, the profile everybody missed, and a supplier that has published 5.6 million times
+
+Backlog **NEW-17**, opened by D54's review, which found the family and deliberately left it. Five
+resources — `Healthconnect{Booking,Catalog,Messaging,Payout,Gateway}KafkaResource` — each carrying
+`@PostMapping("/publish")` and no `@PreAuthorize`, under each service's blanket
+`.requestMatchers("/api/**").authenticated()`, each gateway-routed.
+
+**Rank them honestly. These are the same shape as D54's nine, not an open door.** They answer 401 to
+an anonymous caller and are reachable by any token this estate accepts — measured on the quality box
+before anything was touched, and only with a `GET`: 401 anonymous, **405** to a plain `ROLE_USER`, the
+405 being the proof, since a POST-only mapping returning "method not allowed" means the token was
+accepted and the handler lookup was reached. Nothing was POSTed anywhere.
+
+### §1 What `/publish` actually did, which nobody had established and which two documents got wrong
+
+D54 asserted the binder is pointed at the shared broker with `auto-create-topics: true`. D54's own
+review withdrew that, on the grounds that both settings live in `application-kafka.yml` and the
+`kafka` profile is active in no environment — dev runs `test,dev`, quality `dev,test`, production
+`prod`. **Both readings were wrong, and the withdrawal was the wrong half.**
+
+`application.yml`, in all five services:
+
+```yaml
+  profiles:
+    group:
+      dev:  [secret-samples, kafka, api-docs]
+      prod: [kafka]
+```
+
+A profile group member is active without ever appearing in `SPRING_PROFILES_ACTIVE`. So the `kafka`
+profile is active in **every environment this estate has**, and `application-kafka.yml` is loaded in
+all of them. Not inferred — read off the running quality container at `ffd0da4`:
+
+```
+GET /management/info  →  "activeProfiles":["secret-samples","kafka","api-docs","dev","test"]
+startup log           →  The following 5 profiles are active: "secret-samples", "kafka", "api-docs", "dev", "test"
+```
+
+for a stack whose compose asks for two. From there the chain closes on evidence rather than reading:
+
+- all three compose files set `SPRING_CLOUD_STREAM_KAFKA_BINDER_BROKERS` at the shared broker (D27) —
+  and an environment variable binds the property directly, so that half never depended on the profile
+  at all;
+- `auto-create-topics: true` is in the loaded file, and is the binder's default besides;
+- **`sse-topic` and `kafkaProducer-out-0` exist on `hc-shared-quality-kafka`**, and no script in this
+  repository creates either — `deploy-dev.sh` and `hc-infra` create the `healthconnect.*` set and
+  nothing else. They were auto-created by these bindings;
+- the consumer groups registered on that broker include `healthconnect-gateway`,
+  `healthconnect-catalog`, `healthconnect-booking`, `healthconnect-messaging` and
+  `healthconnect-payout` — the exact `group:` values in `application-kafka.yml`, one per service;
+- `binding-out-0` is **absent** from the topic list, which is what "nobody has ever called `/publish`"
+  looks like from the broker's side.
+
+So: `POST /publish?message=…` put a caller's arbitrary string onto infrastructure four products share,
+on `binding-out-0` — the destination defaults to the binding name — created on demand. **The original
+claim was right for a reason nobody had stated, and the correction removed a true statement.**
+
+**Every one of those facts is a read.** Nothing was published, no container was restarted, rebuilt,
+reseeded or cleaned, and no POST was made to any of these endpoints on any estate. A local throwaway
+run was prepared and turned out not to be needed: the topic list, the offsets and the consumer groups
+answer the question more directly than a reproduction would, because they are the *actual* estate.
+
+**The general rule, and it is D53's one level up.** *Reading a mechanism out of a config file without
+establishing which environment loads it is not a statement about the running system* — and
+`spring.profiles.group` means the **file name does not tell you either**. `application-kafka.yml` is
+as misleading a name as this repository could offer. Ask a running container. It is now a trap section
+in CLAUDE.md, because the same wrong reading is available for `secret-samples` and `api-docs`.
+
+### §2 The other half of the sample, which is a disclosure rather than a write
+
+`GET /register` hands the caller an `SseEmitter` that `broker.KafkaConsumer.accept` writes to — and
+`accept` iterates **every** registered emitter and sends each of them everything it receives. No key,
+no per-user filter, no scoping of any kind. It binds to `sse-topic`, which nothing in hc-market
+publishes to (end offset **0**, measured), but the broker carries three other products and the door
+does not know that.
+
+`GET /unregister` completes somebody's emitter — the third mapping, and the least of them.
+
+### §3 Delete or gate, per resource
+
+**All five deleted.** Nothing in the repository called any of the fifteen paths: checked against the
+prototype, `deploy/verify-cycle.sh`, `verify-outbox-recovery.sh`, `verify-prototype-live.mjs`, both
+deploy scripts, `quality/startup.sh` and the other four services. The only hits for those path strings
+were each resource's own `@RequestMapping`, its own generated IT, and three sentences of prose.
+
+- **booking, catalog, messaging, payout** — one argument, four times. There is no hand-written
+  replacement because there was never a use: the estate's real event path is `OutboxRecorder` →
+  `outbox_event` → `OutboxPublisher` → a `@KafkaListener` in `service`, and the durable per-user
+  record is messaging's notification table. A `/publish` any account can reach is not a seam anything
+  here needs, and the sample's own topic has no consumer in this estate or any other.
+- **gateway** — the one that needed a decision. Its second mapping is `GET /consume`, which CLAUDE.md
+  and D25/D29 have described for months as precisely what `MarketplaceStreamResource` is *not*, in
+  four ways. The argument for deleting rather than leaving it beside the real one is now a
+  **measurement**: `sse-topic`'s end offset is 0, so in the estate's whole life `/consume` has never
+  carried a byte, and the only thing it could ever carry is somebody else's event. What was being
+  preserved was the *possibility* of an unfiltered fan-out, not a working feature.
+
+**Rejected: gate them behind `ROLE_ADMIN`.** It authorises an operation nobody performs — D54's
+argument for `CredentialResource` and `HighlightResource`, and the stronger version of it here,
+because gating leaves "an administrator of this estate may publish arbitrary strings onto four
+products' shared broker" as a thing the platform offers. Nobody wants that capability, at any
+authority level. The check written below **accepts** a class-level gate, deliberately: the branch is
+real and was mutated to prove it, because a check that only ever accepts deletion cannot be used by
+whoever legitimately needs one of these back.
+
+**Rejected: keep the resource and narrow the destination.** Buys nothing and costs an edit to a
+generated `application-kafka.yml`, which is a regeneration-hazard row per service.
+
+### §4 What becomes of `broker.KafkaConsumer` — the decision the item reserved
+
+**Both `broker.KafkaConsumer` and `broker.KafkaProducer` stay, and their doors go.** Three reasons,
+and one cost stated rather than glossed.
+
+1. They are named by `spring.cloud.function.definition: kafkaConsumer;kafkaProducer` in generated
+   `application-kafka.yml`. Deleting the beans without editing that file leaves a function definition
+   pointing at nothing, and editing it is a **new regeneration-hazard row in five services** — bought
+   for a class that maps no URL.
+2. D54's precedent, applied rather than re-argued: eight orphaned generated *service* classes were
+   kept there on the reasoning that "an orphan here is dead code rather than an open door", and the
+   delete table's subject is what is reachable, not what is unused. With the resource gone these two
+   are exactly that.
+3. `TechnicalStructureTest` forbids `broker` from reaching `domain` or `service`, which is why the
+   consumer is a sink with no logic in the first place. It cannot quietly grow a purpose.
+
+**The cost.** The gateway's sink is `Sinks.many().unicast().onBackpressureBuffer()` and now has no
+subscriber at all, so anything arriving on `sse-topic` buffers without bound. That is **not a
+regression from this package** — `/consume` had no caller either, and the topic has never carried a
+message — but it is a live property and it is written down as **NEW-21** rather than left implicit.
+
+**And the discovery that came with establishing §1, which is bigger than the door and is not this
+package.** `broker.KafkaProducer` is a generated `Supplier<String>` bound to `kafkaProducer-out-0`,
+and Spring Cloud Stream polls a supplier every second by default. On the shared broker:
+
+| | |
+| --- | --- |
+| `kafkaProducer-out-0` end offset | **5,603,896** |
+| rate, timed 60 s window | **366 messages — 6/s** |
+| consumers | none; no group registered against it |
+
+Six rather than five because hc-market's are not the only JHipster applications on that broker, so
+attributing the whole 5.6 M here is **not** established — five of the publishers are ours and nothing
+anywhere consumes the topic, which is what is. It gets its own item (**NEW-21**) on D51's rule and on
+D54's: it is a *supplier*, not an unauthenticated door, its remedy is an edit to a generated config
+file, and riding it in here would widen a scoped package into a different one.
+
+**One test was deliberately not carried forward, and that is the same argument in miniature.** Each
+deleted IT held a `producesPooledMessages` asserting the supplier reaches `kafkaProducer-out-0`.
+Keeping it would be CI asserting NEW-21 works — which is exactly the failure this item was opened
+about, one defect later.
+
+### §5 The five ITs, and what replaces them
+
+The five `Healthconnect<Svc>KafkaResourceIT` go with their resources: a generated `...ResourceIT` for
+a deleted resource compiles and fails at runtime against a 404. Each held three cases —
+`producesMessages` (POST `/publish` under `@WithMockUser`, expecting **200**), `consumesMessages`
+(needs `/register`) and `producesPooledMessages` (above).
+
+**`producesMessages` is the part worth naming.** CI asserted the hole worked. The endpoint had a green
+test in every run of the matrix, so it read as intended behaviour — which is part of why nobody looked
+at it. That is the third distinct way this repository has found a control pointing the wrong way:
+after the delete table that named eight of seventeen, and after four text-matching checks that fell to
+prose.
+
+**Replaced by `KafkaSampleIsNotAnApiIT`, in all five services**, following `AuditTrailIsNotAnApiIT`
+and `GeneratedCrudIsNotAnApiIT`. New files, so a regeneration leaves them in place while it puts the
+resources back, which is the point of them. Each is parameterised over the sample's own mappings, and
+**every assertion quotes the path it was asked about** — a battery that fires as one number cannot
+tell you which door opened. The refusal set is `401/403/404/405` rather than a bare 404, because
+deletion gives 404 today and a legitimate future gate would give 403; pinning 404 would make the guard
+go red on the correct fix.
+
+Three details that are the difference between a guard and a formality:
+
+- **A positive control per service**, because every other assertion is a negative one.
+  `/api/bookings/mine`, `/api/professionals`, `/api/threads`, `/api/pro/earnings`, and on the gateway
+  `/api/authenticate`, which answers **204** for an authenticated caller — a status only the handler
+  can produce, so a refusal from the security chain could not counterfeit it. A 404 for the wrong
+  reason reads exactly like a 404 for the right one; D54's review found that by pointing a door at
+  `/api/payoutz`.
+- **`message` is supplied on the POST.** Without it a restored resource answers 400 on a missing
+  required request parameter and the guard passes against a live publish endpoint — the same reasoning
+  that makes `GeneratedCrudIsNotAnApiIT` forge a complete valid DTO rather than an empty body.
+- **The gateway's `/consume` cannot be asked with a plain status assertion.** A restored resource
+  returns a `Flux` from a sink that never completes, and `WebTestClient` here is bound to the
+  application context rather than to a port, so `exchange()` times out instead of returning a status —
+  the guard would report a harness fault rather than the door. `statusOf` catches any
+  `RuntimeException` and raises an `AssertionError` naming the path, because a hang means the same
+  thing a 200 does: something answered there. Observed doing exactly that in the mutation below.
+
+### §6 The CI check, and why it is a second one rather than a wider first one
+
+D54's check iterates **entities** and asks a question about each. The Kafka sample has no entity
+behind it — it is generated because the `application` block says `messageBroker kafka`, one class per
+application. No widening of an entity loop reaches something that lives one level up from entities,
+which is why NEW-17 exists as an item at all.
+
+So: *"Every generated Kafka sample resource must be deleted or authorized"*, deriving from
+**`baseName` and `messageBroker`** in `jdl/*.jdl` — the model of record, and the same files a
+regeneration reads. For each application declaring `messageBroker kafka`, the class is
+`upperFirst(baseName) + "KafkaResource"` in that service's `web/rest`, and it must either not exist
+**with a delete-table row naming it in the Delete column and the service in the From column**, or
+exist carrying real authorization. Nothing is enumerated: five paths in a workflow file would have
+been the eighth fail-open in this family.
+
+**Fail-closed in six places.** `strip-comments.awk` must exist (absent, every resource strips to
+nothing and the gate branch passes on a file with no annotation at all — measured on this check's
+siblings in D56's review); `jdl/*.jdl` must match something; the delete table must extract as a
+non-empty range; every application declaring a broker must have a `baseName` this check can read and a
+directory that exists; and at least one application must be scanned.
+
+**The seventh, which is this check's own fail-open and is closed by a second half.** Everything above
+trusts that JHipster spells the class `upperFirst(baseName) + "KafkaResource"`. If the generator ever
+spells it otherwise, every verdict becomes *"deleted, and the table says so"* about a filename that
+never existed, while the real resource sits in `web/rest` answering. So after the loop a `find` sweeps
+every service's `web/rest` for `*KafkaResource.java` and refuses anything the derivation did not name.
+That mutation is as much what the check is bought for as any other.
+
+**Gated means annotated, not mentioned**, and the shared `strip-comments.awk` is what makes that true
+— the same rule, the same stripper and the same reasons as the entity check beside it. Not a fifth
+private stripper: D56's review found three of those and two of them fell to a multi-line comment.
+
+**Fourteen mutations, each watched separately, each printing evidence that it landed before its
+verdict was believed** (D54's review: two mutations that never landed read as broken checks):
+
+| | Mutation | Want | Got |
+| --- | --- | --- | --- |
+| baseline | as committed | PASS | PASS |
+| M1 | catalog's resource restored, ungated | FAIL | FAIL, naming that file, 0 `@PreAuthorize` for 3 mappings |
+| M2 | the same resource gated at **class level** | **PASS** | PASS — *"kept, gated at class level"*. The gate branch is real |
+| M3 | gated on one mapping of three | FAIL | FAIL, *"1 `@PreAuthorize` for 3 mappings"* |
+| M3b | `@PreAuthorize` only inside a multi-line block comment | FAIL | FAIL, counted as 0 — the stripper doing its job |
+| M4 | the gateway's delete-table row renamed away | FAIL | FAIL, naming gateway; the other four stayed ok |
+| M4b | that row's From column changed to another service | FAIL | FAIL — the row must name **this** service |
+| M5 | the delete-table heading moved | FAIL | FAIL, at the extractor, before any verdict |
+| M6 | no application declares `messageBroker kafka` | FAIL | FAIL, *"scanned nothing"* |
+| M6b | `messageBroker kafka` indented differently | **PASS** | PASS — D54's review's column-zero anchor, not repeated |
+| M7 | `gateway.jdl` loses its `baseName` | FAIL | FAIL, naming that JDL |
+| M8 | a JDL naming a service directory that is gone | FAIL | FAIL, naming that directory |
+| M9 | `jdl/*.jdl` matches nothing | FAIL | FAIL |
+| M10 | `strip-comments.awk` missing | FAIL | FAIL |
+| M11 | the generator spells the class differently | FAIL | FAIL, at the `find` sweep — the second half firing |
+
+**The harness's own defect, recorded because it is D54's lesson repeating.** The first run restored
+CLAUDE.md and `jdl/` with `git checkout --`, which reverted the **uncommitted delete-table rows the
+check under test depends on**. Five mutations after that point failed for the wrong reason and the
+final baseline failed too — and the run *looked* like eleven successes, because eleven FAILs were
+wanted. It restores from a copy now, and the closing baseline is what caught it. A mutation harness
+that restores a file must restore it the same way it removed it; here it must not use git at all.
+
+### §7 The guards, mutated one service at a time
+
+**Five resources is five mutations, not one.** Each was restored from `ffd0da4` on its own, only that
+service's guard was run, and the resource was removed the same way it was written:
+
+| Service | Result |
+| --- | --- |
+| catalog | 4 run, 3 red — `POST …/publish`, `GET …/register`, `GET …/unregister`, each naming its own path; positive control green |
+| booking | 4 run, 3 red, same three paths named |
+| messaging | 4 run, 3 red, same |
+| payout | 4 run, 3 red, same |
+| gateway | 3 run, 2 red — `POST …/publish` on the status assertion, and `GET …/consume` on `statusOf`'s hang path with its own message; positive control green |
+
+The `/publish` case on the four microservices comes back as a **timeout with the AssertionError
+suppressed** rather than a plain failure: `StreamBridge.send` blocks looking for a broker the test
+context does not have. Red either way and named either way, and worth knowing before somebody reads
+that timeout as flake.
+
+**Counts**, all five `clean verify` on `jdk-25.0.2-oracle-x64`, `TechnicalStructureTest` green in
+each, 0 checkstyle and 0 modernizer violations:
+
+| Service | unit | IT | note |
+| --- | --- | --- | --- |
+| catalog | 108 | **73** (from 72) | −3 in the deleted sample IT, +4 guard |
+| booking | 205 | **119** (from 118) | same |
+| messaging | 62 | **65** (from 64) | same |
+| payout | 138 | **57** (from 56) | same |
+| gateway | 30 | **110** (from 110) | −3 sample, +3 guard; the gateway's sample had two mappings, so its guard has two cases plus the positive control |
+
+**+1 net per microservice is the honest number.** Three generated cases go and four guard cases
+arrive; what changes is not the count but what they assert — three that the sample works, four that it
+does not answer and that the service is nonetheless serving.
+
+### §8 Verified / assumed / not exercised
+
+- **Verified by reading the running quality estate** (`ffd0da4`, no writes): the five active profiles
+  including `kafka`; the topic list on `hc-shared-quality-kafka`; `sse-topic` at offset 0;
+  `kafkaProducer-out-0` at 5,603,896 and 366 more over a timed 60 s; the consumer groups; the absence
+  of `binding-out-0`; and the 401-anonymous / 405-`ROLE_USER` shape the item reports.
+- **Verified by running**: all fourteen CI-check mutations, red and green, each with landing evidence;
+  all five guards red first with their resources restored one at a time; `clean verify` in all five
+  services; `sync-appendices.sh --check`; the seed regenerating byte-identically; the workflow parsing
+  and the new step extracting as runnable bash.
+- **Verified by grep, and stated as such**: that nothing called any of the fifteen paths.
+- **Assumed**: that the destination of `binding-out-0` is the binding name. It is Spring Cloud
+  Stream's documented default and the deleted ITs asserted it through the test binder
+  (`output.receive(1000, "binding-out-0")`), which is why the topic name is stated with confidence —
+  but it was never observed on a real broker, because observing it would have meant publishing.
+- **Assumed**: that production behaves as quality does here. The profile group is in the same
+  generated `application.yml` and `prod` lists `kafka` explicitly, so the reading is direct; there is
+  no production estate to ask.
+- **Not established**: how much of the 5.6 M is hc-market's. Six services publish and five of them are
+  ours; the sixth is probably a sibling JHipster product on the same borrowed broker, and checking
+  that means reading another product's repositories, which this package did not do.
+- **Not exercised: what a caller now sees end to end.** The gateway routes
+  `/services/<service>/api/**`, so the five paths still *match* at the edge and the origin answers 404
+  where it answered 401/405. Not observed through nginx and the gateway — the quality box was left
+  untouched, and the images it runs are `ffd0da4`'s.
+- **Not exercised: a POST to `/publish` anywhere.** Deliberately. The whole §1 chain is reads, and
+  publishing junk onto a broker four products share to prove that publishing junk onto it is possible
+  is not a trade worth making — D54's reasoning about repricing a live estate, one door over.
+- **Not exercised: production.** Nothing here has ever been deployed there.

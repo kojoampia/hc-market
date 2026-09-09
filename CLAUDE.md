@@ -201,6 +201,11 @@ against the hand-written resource that replaced it:
 | `BrokerageConfigResource` | payout `web/rest/` | **nothing on the wire — `BrokerageBootstrap` off it** (D57). A terms-change screen would need an **append-only** resource behind `ROLE_BROKERAGE`, not this: D53 prices every completed booking against the config in force at the booking's own instant, so `POST` of a backdated row reprices history, and `PUT`/`DELETE` on the config a ledger row was priced under destroys the only record of what that rate was. Generated CRUD would let **any authenticated user set this platform's commission rate**. D54 said deleting it cost nothing and was wrong: it was the estate's last writer of a `BrokerageConfig`, and an empty table means the consumer retries every completed booking for ever while every receipt answers 503 (NEW-18). The founding row is written at startup now, by a class with no HTTP door at all |
 | `LedgerResource` | payout `web/rest/` | `ProEarningsResource`, scoped to the caller's own login. Generated CRUD returns **every professional's earnings in the estate to any `ROLE_USER`** — gross, commission and net per booking, with `professionalLogin` on every row — and lets the same token **write an earning nobody worked for, or delete a commission**, in the table that is this platform's money record |
 | `PayoutResource` | payout `web/rest/` | `ProEarningsResource.payouts`, scoped to the caller — **and that reads a table nothing writes.** `grep -rn "new Payout()" payout/src/main` finds nothing outside the seeder: the deleted resource was the estate's only writer, so on an unseeded estate `/api/pro/payouts` returns `[]` and always will. Not a regression — the CRUD was never how a payout should be created — but do not read this row as "the replacement covers the use". Generated CRUD disclosed **every professional's settlement history** and let any token **record a payment that never happened, or mark an unpaid batch `PAID`** |
+| `HealthconnectBookingKafkaResource` | booking `web/rest/` | **nothing, deliberately** (D59). Not an entity resource — `messageBroker kafka` in the JDL generates one of these per application, which is why the entity-derived check above could never see it. `POST /publish` took a `message` request parameter and put it on **the broker four products borrow** (D27), on `binding-out-0`, a topic auto-created on demand; `GET /register` attached the caller to `broker.KafkaConsumer`, whose `accept` fans every message it receives to **every** registered emitter with no per-user filter at all. The estate's real event path is `OutboxPublisher` → a `@KafkaListener` in `service`, and the durable per-user record is messaging's notification table |
+| `HealthconnectCatalogKafkaResource` | catalog `web/rest/` | **nothing, deliberately** (D59). Same three mappings, same argument |
+| `HealthconnectMessagingKafkaResource` | messaging `web/rest/` | **nothing, deliberately** (D59). Same three mappings, same argument |
+| `HealthconnectPayoutKafkaResource` | payout `web/rest/` | **nothing, deliberately** (D59). Same three mappings, same argument |
+| `HealthconnectGatewayKafkaResource` | gateway `web/rest/` | **`MarketplaceStreamResource` for the read half, nothing for the write half** (D59). The one of the five that needed a decision rather than a deletion, because its second mapping is `GET /consume` — the endpoint D25/D29 describe as precisely what `/api/stream` is **not**: a `unicast()` sink so the second client errors, no `text/event-stream`, no per-user filter. It has never carried a byte: it drains `sse-topic`, whose end offset on the shared broker is **0**. `broker.KafkaConsumer` and `broker.KafkaProducer` are **kept** — named by `spring.cloud.function.definition` in a generated file, and with the resource gone they map no URL, which is D54's rule for an orphaned generated class. What the *supplier* does to that broker with no caller at all is backlog NEW-21 |
 
 **And their tests.** A generated `...ResourceIT` for a resource you just deleted compiles fine and
 fails at run time against a 404. Delete `CategoryResourceIT`, `ReviewResourceIT`,
@@ -210,12 +215,24 @@ fails at run time against a 404. Delete `CategoryResourceIT`, `ReviewResourceIT`
 `CredentialResourceIT`, `HighlightResourceIT`, `MessageResourceIT`, `ConversationResourceIT`,
 `BrokerageConfigResourceIT`, `LedgerResourceIT`, `PayoutResourceIT`.
 
-**Ten of these rows now have a test that fails if you miss them, and one CI check that fails if you
-miss the row itself.** `AuditTrailIsNotAnApiIT` in booking was the first and is still the pattern;
+**The five Kafka sample ITs go too, and they are the only ones on this list that asserted the hole
+worked.** Delete `HealthconnectBookingKafkaResourceIT`, `HealthconnectCatalogKafkaResourceIT`,
+`HealthconnectMessagingKafkaResourceIT`, `HealthconnectPayoutKafkaResourceIT` and
+`HealthconnectGatewayKafkaResourceIT`. Each held a `producesMessages` that POSTed to `/publish` under
+`@WithMockUser` and expected **200** — so the endpoint had a passing test and read as intended
+behaviour, which is part of why nobody looked. Two other cases went with them and their loss is
+deliberate rather than incidental: `consumesMessages` needs `/register`, and `producesPooledMessages`
+asserts — through the test binder — that `broker.KafkaProducer` reaches `kafkaProducer-out-0`, which
+against a real estate is NEW-21, so carrying it forward would be CI asserting the *next* defect works.
+See `decisions.md` D59.
+
+**Fifteen of these rows now have a test that fails if you miss them, and two CI checks that fail if
+you miss the row itself.** `AuditTrailIsNotAnApiIT` in booking was the first and is still the pattern;
 `GeneratedCrudIsNotAnApiIT` in catalog, messaging and payout is the same idea walking a list, one
-entry per door, and every assertion names the path it was asked about — a battery that fires as one
-number cannot tell you which door opened. All four are new files, so a regeneration leaves them in
-place while it puts the resources back, which is the point of them.
+entry per door; `KafkaSampleIsNotAnApiIT` is in **all five**, gateway included, and is the same shape
+again over the sample's mappings. Every assertion names the path it was asked about — a battery that
+fires as one number cannot tell you which door opened. All nine are new files, so a regeneration
+leaves them in place while it puts the resources back, which is the point of them.
 
 **The table itself is now checked, which is the thing that actually failed here.** `build.yml`'s
 *"Every entity JHipster generates CRUD for must be deleted or authorized"* reads `jdl/*.jdl` — the
@@ -225,6 +242,17 @@ authorization. The expected set is derived, never listed in the workflow, so add
 JDL demands an answer for it in the same pull request. That check exists because the table did not
 fail: nine generated resources were live on `main` and had simply never been written down. See
 backlog NEW-15 and `decisions.md` D54.
+
+**There is a second check beside it, and it is differently derived because no widening of the first
+could ever reach its subject.** *"Every generated Kafka sample resource must be deleted or
+authorized"* is the same demand one level up the JDL: the first iterates **entities**, and the Kafka
+sample has no entity behind it — it exists because the `application` block says `messageBroker kafka`,
+and its class name is `upperFirst(baseName) + "KafkaResource"`. So it is derived from `baseName` and
+`messageBroker` rather than from `entity`, and it is **not** a list of five in a workflow file; every
+enumerated list in this repository's CI has gone stale or failed open. It closes a rename with a
+second half: a `find` sweep over every service's `web/rest` refuses any `*KafkaResource.java` the
+derivation did not name, so a generator that spells the class differently is caught rather than
+reported as deleted. See backlog NEW-17 and `decisions.md` D59.
 
 **Restore the two fixtures**, which regeneration replaces with real test classes:
 `BookingResourceIT` (0 tests → 139) and `ProfessionalResourceIT` (0 tests → 120). Both carry
@@ -293,6 +321,29 @@ autoconfigured `KafkaTemplate` and sending a `String` fails at *publish* time wi
 of class java.lang.String`. `OutboxKafkaConfiguration` defines a named string-serialising template
 and the publisher injects it by qualifier. Note `spring-boot-starter-kafka` is **not** on the
 classpath, so `KafkaProperties` does not exist — read the brokers from configuration directly.
+
+### The `kafka` profile is active in every environment, and nothing names it
+
+`SPRING_PROFILES_ACTIVE` is `test,dev` in dev, `dev,test` in quality and `prod` in production, so
+`application-kafka.yml` looks like a file no environment loads. It loads in all three.
+`application.yml` lists `kafka` in **`spring.profiles.group.dev` and `spring.profiles.group.prod`**,
+in all five services, and a profile group member is active without ever appearing in
+`SPRING_PROFILES_ACTIVE`. Read off the running quality container rather than inferred:
+`GET /management/info` reports `activeProfiles: ["secret-samples","kafka","api-docs","dev","test"]`,
+and the startup line says *"The following 5 profiles are active"* for two that were asked for.
+
+So `spring.cloud.stream`, `auto-create-topics: true` and the `binding-out-0` / `sse-topic` /
+`kafkaProducer-out-0` bindings are **live**, on the broker four products borrow. The evidence is on
+the broker: `sse-topic` and `kafkaProducer-out-0` exist there and no script in this repository creates
+them, and the consumer groups `healthconnect-{gateway,catalog,booking,messaging,payout}` — the exact
+`group:` values in that file — are registered against them.
+
+This has been got wrong in both directions in one document: `decisions.md` D54 asserted the mechanism
+from the file without checking the profile, its review then withdrew the claim on the grounds that the
+profile is active nowhere, and **the withdrawal was the wrong half**. The general rule is D53's, one
+level down: reading a mechanism out of a config file without establishing which environment loads it
+is not a statement about the running system — and `spring.profiles.group` means the *file name* does
+not tell you either. Ask a running container. See `decisions.md` D59.
 
 ### A one-row aggregate comes back wrapped
 
@@ -863,9 +914,15 @@ time.**
   instance to see every event, and a shared group would give two instances half the partitions each
   while half the connected users are silently never told anything. Lossy on purpose — the durable
   copy is messaging's notification table.
-  The generated `broker.KafkaConsumer` and `/api/healthconnect-gateway-kafka/consume` are a **sample**,
-  not this: `unicast()` sink (the second client errors), not SSE, no per-user filter, bound to a topic
-  nothing publishes to.
+  The generated `broker.KafkaConsumer` and `/api/healthconnect-gateway-kafka/consume` were a
+  **sample**, not this: `unicast()` sink (the second client errors), not SSE, no per-user filter,
+  bound to a topic nothing publishes to. **`/consume` is deleted** (D59, backlog NEW-17) along with
+  the `POST /publish` beside it and the four microservices' copies — it never carried a byte, and
+  `sse-topic`'s end offset on the shared broker is 0. `broker.KafkaConsumer` is **kept**: it is named
+  by `spring.cloud.function.definition` in a generated file, and with no resource injecting it, it
+  maps no URL. Its sink now has no subscriber at all, which is a buffer that grows if anything ever
+  publishes to `sse-topic` — no truer than it was when `/consume` had no caller, and named as NEW-21
+  rather than fixed here.
   **Never put a `JsonNode` in an SSE payload.** Jackson serialises it by bean properties — clients
   received `{"array":false,"nodeType":"OBJECT",…}` instead of the event, for as long as the endpoint
   existed, with every test green because the only client reads the `event:` name and not the data.
