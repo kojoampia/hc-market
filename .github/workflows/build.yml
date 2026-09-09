@@ -460,9 +460,16 @@ jobs:
             fi
           fi
 
-          # 2. External, and named `qualitynet` by default. Non-external would have compose build
-          # `hc-market-quality_qualitynet` — a second network with a similar name that the collector
-          # is not on, and every export would go nowhere while the file read as though connected.
+          # 2. External, and named `qualitynet` by default.
+          #
+          # Without `external:`, ownership of the collector's network becomes a function of start
+          # order — measured, and narrower than D64 first claimed. With `name:` kept, as it is here,
+          # a non-external declaration ADOPTS a network that already exists and writes no label, so
+          # `down` leaves it alone; but on a host where the monitoring project has been downed and
+          # the network is absent, compose CREATES it carrying this project's labels, and `down`
+          # then removes it — refused while a sibling endpoint is attached, and succeeding the
+          # moment the siblings are stopped too, which is what a reboot looks like. `external: true`
+          # is what makes the answer the same on every host.
           ext=$(printf '%s' "$rendered" | jq -r '.networks.qualitynet.external // false')
           name=$(printf '%s' "$rendered" | jq -r '.networks.qualitynet.name // ""')
           echo "qualitynet external=$ext name=$name"
@@ -473,22 +480,45 @@ jobs:
 
           # 3. startup.sh creates it, or the stack is unstartable whenever somebody has downed a
           # monitoring project in another repository — measured: `up` exits 1 on a missing external
-          # network, while `config` and `down` exit 0. Both sides must read the same variable and
-          # default to the same name: a variable only the script reads changes nothing about which
-          # network compose joins, which is exactly the trap D46 and D50 found twice.
+          # network, while `config` and `down` exit 0.
+          #
+          # And both sides must read the SAME variable: a variable only the script reads changes
+          # which network gets created and inspected while compose keeps joining the default, which
+          # is exactly the trap D46 and D50 found twice and which `HC_SHARED_NETWORK` still has in
+          # this very file (backlog NEW-25). `env_for_compose` exports it on every action so a
+          # `--down` cannot address a different network from the `up` that made the containers, and
+          # that property is worth nothing unless compose actually interpolates it.
+          #
+          # THE COMPOSE HALF IS RENDERED, NOT GREPPED, and that is a correction rather than a
+          # preference. This sub-check originally matched `name: ${HC_OTEL_NETWORK:-…}` as text
+          # while the two around it read `docker compose config`, and the departure was the defect:
+          # commenting the line out left the grep matching the commented text, while an external
+          # network with no `name:` renders under its own key — so part 2 stayed green on
+          # `name=qualitynet`, both `ok` lines printed, and the step exited 0 with the variable
+          # reaching nothing. Reproduced before it was fixed. A second render with the variable SET
+          # tests the interpolation instead of its spelling, and no comment can satisfy it.
+          #
+          # The default is compared against part 2's RENDERED name for the same reason — that is
+          # what an operator who sets nothing gets, and it is the name the monitoring stack is on.
           created=$(grep -vE '^[[:space:]]*#' quality/startup.sh \
                      | grep -cE 'docker network create +"\$OTEL_NETWORK"' || true)
           script_default=$(grep -oE '^OTEL_NETWORK="\$\{HC_OTEL_NETWORK:-[a-z0-9_.-]+\}"' quality/startup.sh \
                      | sed -E 's/.*HC_OTEL_NETWORK:-([a-z0-9_.-]+)\}"/\1/')
-          compose_default=$(grep -oE 'name: \$\{HC_OTEL_NETWORK:-[a-z0-9_.-]+\}' quality/compose.yml \
-                     | sed -E 's/.*HC_OTEL_NETWORK:-([a-z0-9_.-]+)\}/\1/')
-          echo "creates=$created script_default='$script_default' compose_default='$compose_default'"
+          probed=$(HC_OTEL_NETWORK=ci-probe JWT_BASE64_SECRET=ci-placeholder \
+                     HC_PRIVACY_PEPPER=ci-placeholder TAG=ci \
+                     docker compose -f quality/compose.yml config --format json \
+                   | jq -r '.networks.qualitynet.name // ""')
+          echo "creates=$created script_default='$script_default' HC_OTEL_NETWORK=ci-probe renders name='$probed'"
           if [ "$created" -eq 0 ]; then
             echo "::error file=quality/startup.sh::nothing creates \$OTEL_NETWORK. compose declares it external, so 'up' refuses outright when the monitoring project has been downed. See decisions.md D64."
             fail=1
           fi
-          if [ -z "$script_default" ] || [ "$script_default" != "$compose_default" ]; then
-            echo "::error::quality/startup.sh defaults HC_OTEL_NETWORK to '$script_default' and quality/compose.yml to '$compose_default'. They must be the same name, or the script creates one network and compose joins another. See decisions.md D64."
+          if [ "$probed" != "ci-probe" ]; then
+            echo "::error file=quality/compose.yml::with HC_OTEL_NETWORK=ci-probe the qualitynet network still renders as '$probed'. compose must interpolate the same variable startup.sh creates, or the script creates one network and compose joins another — and '--down' then addresses a third. See decisions.md D64 §4."
+            fail=1
+          fi
+          if [ -z "$script_default" ] || [ "$script_default" != "$name" ]; then
+            echo "::error::quality/startup.sh defaults HC_OTEL_NETWORK to '$script_default' and quality/compose.yml renders '$name' with it unset. They must be the same name. See decisions.md D64."
             fail=1
           fi
           exit $fail

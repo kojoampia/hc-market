@@ -9472,14 +9472,26 @@ here.
 ### §3 Decision one: external, and created by `startup.sh` — which are two decisions pulling apart
 
 **External**, because several application stacks join it and none owns it. The alternative the brief
-asked to have argued rather than asserted is declaring it non-external and letting compose create it,
-and it is wrong for a reason that is invisible from the file: compose would build
-**`hc-market-quality_qualitynet`**, a *different* network with a similar name that the collector is
-not on. Every export would go nowhere while `quality/compose.yml` read as though it were connected,
-and `docker network ls` would show a plausible entry. It also inverts ownership — a network compose
-owns is a network compose **deletes**, so `--down` here would take three other products' telemetry
-path with it. Measured in passing: `--down` on the real file removed `hc-market-quality` and left
-both `qualitynet` and the throwaway standing, which is the property `external` exists for.
+asked to have argued rather than asserted is declaring it non-external and letting compose create it.
+It stays rejected, and **the reason first written here was not the one doing the work** — corrected in
+§8 below after the reviewer measured it, which is this repository's own rule applied to its own
+argument. What is actually true, measured on a throwaway project against a pre-existing unlabeled
+network exactly like the real `qualitynet`:
+
+- **With `name:` kept, as the committed file keeps it, a non-external declaration ADOPTS an existing
+  network.** No error, **no label written**, and `down` leaves it standing. The decoy
+  `hc-market-quality_qualitynet` appears only if `name:` is dropped **as well** — a mutation this
+  file does not admit, and the one D64 originally described.
+- **The branch that bites is monitoring downed and the network absent.** Non-external compose then
+  *creates* `qualitynet` carrying **this project's** `com.docker.compose.project` label, and `down`
+  removes it: refused with `Resource is still in use` while a sibling endpoint is attached, and
+  succeeding the moment the siblings are stopped too. A reboot or a full estate restart is exactly
+  that state, and it is the state this decision exists for.
+
+So without `external:` the ownership of another repository's network becomes **a function of start
+order**, invisibly, with the file reading identically either way. `external: true` gives the same
+answer on every host. Measured in passing on the real file: `--down` removed `hc-market-quality` and
+left both `qualitynet` and the throwaway standing, which is the property `external` exists for.
 
 **Created rather than merely required**, which is the opposite call to `hcnet` in the same file, and
 the difference is what absence *means*:
@@ -9590,18 +9602,85 @@ is on"* asserts four things, each with its own message:
 
 It reads what `docker compose config` **renders**, never the file's text, so the long prose above the
 `networks:` line — which names `qualitynet` a dozen times — cannot satisfy it; that is
-`observability-claims.sh`'s own argument for needing no stripper. The one textual half is the
-`startup.sh` create, and it is anchored past `#` comment lines: watched green on a clean tree and red
-**seven** ways, each with a distinct message — the anchor dropping the network, a database joining
-it, the declaration losing `external`, the create deleted, the create **commented out**, the two
-defaults disagreeing, and every `JAVA_OPTS` removed so the subject is empty. That last one is D63's
-review's lesson, which this repository has now had ten times: *a check must refuse an empty subject
-before it refuses a wrong one*.
+`observability-claims.sh`'s own argument for needing no stripper. The only textual matches left are
+in `quality/startup.sh`: the `docker network create`, filtered past `#` comment lines, and the
+`OTEL_NETWORK=` default, anchored to the start of a line. Everything about `quality/compose.yml` is
+rendered, including the interpolation.
+
+Watched green on a clean tree and red **nine** ways — trust the list rather than the number, which
+this document has been wrong about before and was wrong about here at first draft. Each has its own
+message, and every mutation is asserted to have applied before its result is believed:
+
+1. the `x-service` anchor drops `qualitynet`;
+2. a database joins it;
+3. the declaration loses `external:`;
+4. the `docker network create` is deleted;
+5. the `docker network create` is **commented out**;
+6. the script's `HC_OTEL_NETWORK` default is renamed;
+7. compose's `name:` is **commented out** — the review's fail-open, §8;
+8. compose **hardcodes** `name: qualitynet`, which is NEW-25's exact shape and carries no comment at
+   all, so no stripper could ever have caught it and only a render can;
+9. every `JAVA_OPTS` is removed, so the subject is empty.
+
+That last one is D63's review's lesson, which this repository has now had ten times: *a check must
+refuse an empty subject before it refuses a wrong one*. Case 7 is the eleventh, and §8 is why it is a
+different lesson rather than the same one again.
+
+### §8 Review, and the two things it found
+
+Both were reproduced by the reviewer independently and then by this package before being changed.
+Everything else held on re-measurement: the join, all five databases still on `hc-market-quality`
+alone, the secret handling, the throwaway-name technique, the alias conclusion in both directions
+with matching subnets, `down` not deleting an external network, the six original red cases, and
+NEW-25/26/27 all real and correctly deferred.
+
+**Blocking: the check's third sub-check fell back to a text grep and failed open.** The three text
+matches in it got three different levels of protection — `created` filtered past `#`,
+`script_default` anchored to line start, and `compose_default` **neither**. Comment out
+`quality/compose.yml`'s `name: ${HC_OTEL_NETWORK:-qualitynet}` and the grep still matched the
+commented-out text, while an external network with no `name:` renders under its own key — so part 2
+stayed green on `name=qualitynet`, both `ok` lines printed, and the step **exited 0** with the
+variable reaching nothing. Reproduced here, mutating by line number and asserting the mutation
+applied first:
+
+```
+line 625 →  # name: ${HC_OTEL_NETWORK:-qualitynet}
+rendered  →  name=qualitynet external=true
+rendered with HC_OTEL_NETWORK=ci-probe →  name=qualitynet      <- the variable reaches nothing
+step      →  exit=0   compose_default='qualitynet'             <- read from a comment
+```
+
+In that state `HC_OTEL_NETWORK` moves what the script creates and inspects and **not** what compose
+joins — §4's whole subject, the property `env_for_compose` relies on for `--down`, and D64's own
+documented test procedure would then have attached all five services to the *real* `qualitynet` while
+creating an orphan probe network, green throughout.
+
+**Fixed behaviourally rather than by filtering, and that is the point of the fix.** The rest of the
+check reads what compose renders, and the header argues on exactly that ground that it needs no
+stripper; the grep was the one place it departed. It renders a **second** time with
+`HC_OTEL_NETWORK=ci-probe` and asserts `.networks.qualitynet.name == "ci-probe"` — the interpolation
+rather than its spelling — and compares the script's default against part 2's **rendered** unset name
+rather than against a second grep of the same file. A commented-out `name:` is now red for the right
+reason. The eleventh instance of this repository's most repeated defect class, and the first to be
+found in a check whose commit message argued it needed no stripper *and was right about two thirds of
+itself*.
+
+**Should-fix: the non-external argument named a mutation the file does not admit.** §3 as first
+written claimed a non-external declaration "would build `hc-market-quality_qualitynet`" and that
+`--down` "would take three other products' telemetry path with it". Measured, both are wrong for the
+committed file, and the corrected argument is in §3 above. The decision does not change; the reason
+does, and this is the same rule the package applied to `SERVER`, to `pricedAt` and to D53 — *a reason
+that is true but is not the one doing the work is a reason that will be deleted by somebody who
+checks it*.
 
 **Verified in this round, by running**: `bash -n quality/startup.sh`; `docker compose -f
 quality/compose.yml config` rendering five app services on three networks and five databases on one;
 `./deploy/sync-appendices.sh --check`; `node deploy/demo/extract-seed.mjs` leaving the seed
 unchanged; the new CI step extracted from `build.yml` and executed under **`bash -e`**, green once
-and red seven ways; `./quality/startup.sh --local` twice and `--local --verify` once, all green; and
-the before/after `docker inspect` and `getent hosts` transcripts quoted in §2. No Java changed, so no
-Maven build was run, and there is no root prettier configuration covering `quality/` or `.github/`.
+and red **nine** ways; `./quality/startup.sh --local` twice and `--local --verify` once, all green;
+and the before/after `docker inspect` and `getent hosts` transcripts quoted in §2. **At review**: the
+commented-out `name:` reproduced against the committed step as a fail-open and re-run red against the
+fixed one; the four non-external cases of §3 measured on a throwaway project; and every neighbouring
+check re-run, including the ones that drive `quality/startup.sh` and read `quality/compose.yml`. No
+Java changed, so no Maven build was run, and there is no root prettier configuration covering
+`quality/` or `.github/`.

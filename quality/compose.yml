@@ -606,10 +606,17 @@ networks:
   # EXTERNAL, and created by startup.sh when it is missing. Both halves are deliberate and they pull
   # opposite ways, which is why they are written down (D64 §3):
   #
-  #   external, because several application stacks join it and none of them owns it. A network
-  #   compose owns is a network compose DELETES, so a non-external declaration here would build
-  #   `hc-market-quality_qualitynet` — a second network with a similar name that the collector is not
-  #   on — and every export would go nowhere while the file read as though it were connected.
+  #   external, because several application stacks join it and none of them owns it. Without it,
+  #   ownership of the collector's network becomes a function of START ORDER — measured on a
+  #   throwaway project, and narrower than D64 first claimed. With `name:` kept, as it is below, a
+  #   non-external declaration ADOPTS a network that already exists: no error, no label written, and
+  #   `down` leaves it standing. (The decoy `hc-market-quality_qualitynet` appears only if `name:` is
+  #   dropped as well, which is a mutation this file does not admit.) The branch that bites is the
+  #   one this whole decision is about: monitoring downed and the network ABSENT, where compose
+  #   creates `qualitynet` carrying THIS project's `com.docker.compose.project` label, and `down`
+  #   then tries to remove it — refused with "Resource is still in use" while a sibling endpoint is
+  #   attached, and succeeding the moment the siblings are stopped too, which is what a reboot or a
+  #   full estate restart looks like. `external: true` gives the same answer on every host.
   #
   #   created rather than merely required, because `docker compose up` refuses outright on a missing
   #   external network (measured: exit 1, "declared as external, but could not be found"), and that

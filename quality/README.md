@@ -64,7 +64,14 @@ nothing.
 Unlike `hcnet`, `startup.sh` **creates** it when it is missing rather than refusing — a downed
 monitoring project in another repository must not make this stack unstartable, and `docker compose
 up` does refuse outright on a missing external network. Override the name with `HC_OTEL_NETWORK`,
-which both this script and `compose.yml` read.
+which both this script and `compose.yml` read, and which CI asserts they both read.
+
+**The siblings spell it `OTEL_NETWORK`, unprefixed.** `hc-admin/quality/startup.sh` and
+`hc-professional/quality/startup.sh` both do, so an operator carrying the habit here would set a
+variable nothing reads. `HC_` is this repository's prefix for everything overridable — and in the
+siblings that variable is read by the script alone while their compose hardcodes the name, which is
+the half of the shape deliberately not copied (see `docs/decisions.md` D64 §4, and NEW-25 for the
+same defect still live in this file's `HC_SHARED_*`).
 
 The databases stay off it, exactly as they stay off `hcnet`, and CI refuses any service without a
 `JAVA_OPTS` on it. Joining changed no name resolution: every application container on `qualitynet` is
