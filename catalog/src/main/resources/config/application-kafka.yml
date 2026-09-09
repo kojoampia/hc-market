@@ -1,7 +1,16 @@
 spring:
   cloud:
     function:
-      definition: kafkaConsumer;kafkaProducer
+      # GENERATED AS `kafkaConsumer;kafkaProducer`. The supplier is deliberately not named — backlog
+      # NEW-21, decisions.md D62. `broker.KafkaProducer` is a generated `Supplier<String>` returning
+      # the constant "kafka_producer", and Spring Cloud Stream polls a bound supplier every second
+      # (`spring.integration.poller.fixed-delay`, defaulted to 1s by the framework and configured
+      # nowhere here). With no caller, no consumer and no purpose, all five services had been putting
+      # one message a second each onto the broker four products borrow (D27) since they first started.
+      # Unnaming it is what stops the poller; the bean stays, per D54's rule for an orphan.
+      # `kafkaConsumer` MUST stay named: an explicit definition is what stops Spring Cloud Function
+      # falling back to auto-discovering the single function bean, which would bind the supplier again.
+      definition: kafkaConsumer
     stream:
       kafka:
         binder:
@@ -16,6 +25,12 @@ spring:
           destination: sse-topic
           content-type: text/plain
           group: healthconnect-catalog
+        # Left exactly as generated, and now orphaned like `binding-out-0` above it: a binding whose
+        # function is not in `definition` is never bound, so nothing polls it and no destination is
+        # provisioned. `binding-out-0` is the evidence — configured here in all five services for the
+        # estate's whole life, and absent from the shared broker's topic list to this day (D59 §1).
+        # Deleting the block would buy nothing and make restoring this file after a regeneration two
+        # edits instead of one. See decisions.md D62.
         kafkaProducer-out-0:
           content-type: text/plain
           group: healthconnect-catalog

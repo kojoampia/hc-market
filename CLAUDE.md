@@ -180,6 +180,7 @@ regeneration.
 | The `healthconnect.payments` block | booking `config/application.yml` | **silent, and only on an estate that had a provider.** Every `enabled` flag binds to false, so the three adapters vanish from the registry: a booking naming one is refused 409 as an unknown provider, and every callback addressed to it is 401 — which reads as the provider having changed something. On today's estate, where all three are off anyway, losing it changes nothing at all, so nothing here will tell you |
 | The `healthconnect.privacy` block with its `${HC_RETENTION_*}` placeholders | booking `config/application.yml` | **silent.** The periods bind to `null`, the desk reports `null` for all three, and the estate's answer to "what is your retention policy" becomes "none" — with every test still green, because the test config carries its own copy |
 | The `healthconnect.brokerage.founding` block | payout `config/application.yml` | **silent, and the only row here that is HARMLESS by design** (D57). The five `${HC_BROKERAGE_*}` placeholders are the only way an estate can name its own founding terms; without them `FoundingTerms`' Java defaults — the prototype's 12% and 3-day lag — still found the estate correctly, so nothing breaks and nothing goes red. What is lost is the *overridability*, silently: `HC_BROKERAGE_COMMISSION_RATE=0.15` in `secrets.env` would bind to nothing and the estate would price at 12% while its operator believed otherwise. The defaults being in Java rather than in this file is deliberate for exactly this reason, and CI checks the placeholders by name |
+| `definition: kafkaConsumer` (not `kafkaConsumer;kafkaProducer`) | **all five** `config/application-kafka.yml` | **silent, and what comes back is 432,000 messages a day onto somebody else's infrastructure** (D62, NEW-21). `--force` restores `kafkaProducer` in the `spring.cloud.function.definition` of every service, which binds the generated `broker.KafkaProducer` — a `Supplier<String>` returning the constant `"kafka_producer"` — and Spring Cloud Stream polls a bound supplier on `spring.integration.poller.fixed-delay`, **defaulted to 1s** by the framework and configured nowhere here. So each service resumes putting one message a second onto the broker four products borrow (D27), on `kafkaProducer-out-0`, which **no consumer group on that broker is registered against**. Measured before the fix: 5.9/s across six such publishers, five of them ours, past an end offset of **5.78 million**. Nothing about it is visible from inside: no log line at any level either service runs at, no health indicator, no test, and the only symptom is a broker filling up in a repository nobody working here would open. `kafkaConsumer` **must stay named** — an explicit definition is the only thing stopping Spring Cloud Function auto-discovering a lone function bean and binding the supplier again. The orphaned `kafkaProducer-out-0` binding block below it is left exactly as generated and is deliberately *not* part of this row: a binding whose function is not in `definition` is never bound and provisions nothing, which `binding-out-0` has demonstrated on that broker for the estate's whole life. **CI catches this one** — *"No service may bind the generated Kafka sample supplier"*, derived from `messageBroker kafka` in `jdl/*.jdl` — and so does `KafkaSampleSupplierIsNotPolledIT`, which is a new file and therefore survives the regeneration that undoes the config |
 | The **whole of** `InitialSetupMigration` | gateway `config/dbmigrations/` | **the worst row in this table, because what comes back is a working credential** (D61, NEW-22). This is the only entry here that is a Java class rather than config, and it is here because the generated version is not a stub to fill in — it is the defect. `--force` restores `@ChangeUnit(id = "users-initialization")` with **no `@Profile`**, creating `admin` with a committed bcrypt hash of the string `admin`, activated, carrying `ROLE_ADMIN`. `mongock.migration-scan-package` is in the **base** `application.yml`, so it runs in `prod` too, and a first production deploy creates exactly the empty database it seeds. **Completely silent**: the estate comes up, every test passes, and `admin`/`admin` works against the gateway that issues tokens all five services accept. What is lost is the `ApplicationRunner` rewrite — the not-production gate on the demo accounts, the configured `gateway.admin-password`, the refusal to create an administrator without one, and `saveUserIfMissing`'s idempotency, which is what stops a restart resetting a rotated password. **CI catches this one**, and deliberately by sweeping for the *hash* rather than for the logic (`.github/checks/admin-seed-wiring.sh`), because a check reasoning about the new logic would be matching a file that no longer contains any of it |
 
 **Per app — generated classes to delete.** Each would otherwise win or tie an ambiguous mapping
@@ -206,7 +207,7 @@ against the hand-written resource that replaced it:
 | `HealthconnectCatalogKafkaResource` | catalog `web/rest/` | **nothing, deliberately** (D59). Same three mappings, same argument |
 | `HealthconnectMessagingKafkaResource` | messaging `web/rest/` | **nothing, deliberately** (D59). Same three mappings, same argument |
 | `HealthconnectPayoutKafkaResource` | payout `web/rest/` | **nothing, deliberately** (D59). Same three mappings, same argument |
-| `HealthconnectGatewayKafkaResource` | gateway `web/rest/` | **`MarketplaceStreamResource` for the read half, nothing for the write half** (D59). The one of the five that needed a decision rather than a deletion, because its second mapping is `GET /consume` — the endpoint D25/D29 describe as precisely what `/api/stream` is **not**: a `unicast()` sink so the second client errors, no `text/event-stream`, no per-user filter. It has never carried a byte: it drains `sse-topic`, whose end offset on the shared broker is **0**. `broker.KafkaConsumer` and `broker.KafkaProducer` are **kept** — named by `spring.cloud.function.definition` in a generated file, and with the resource gone they map no URL, which is D54's rule for an orphaned generated class. What the *supplier* does to that broker with no caller at all is backlog NEW-21 |
+| `HealthconnectGatewayKafkaResource` | gateway `web/rest/` | **`MarketplaceStreamResource` for the read half, nothing for the write half** (D59). The one of the five that needed a decision rather than a deletion, because its second mapping is `GET /consume` — the endpoint D25/D29 describe as precisely what `/api/stream` is **not**: a `unicast()` sink so the second client errors, no `text/event-stream`, no per-user filter. It has never carried a byte: it drains `sse-topic`, whose end offset on the shared broker is **0**. `broker.KafkaConsumer` and `broker.KafkaProducer` are **kept** — with the resource gone they map no URL, which is D54's rule for an orphaned generated class. D59 also gave "named by `spring.cloud.function.definition` in a generated file" as a reason to keep them, and for the **supplier** that was the reason to unname it: being named is what made it publish. **D62 took `kafkaProducer` out of that definition in all five services** (NEW-21) — the bean is still kept, and now it is genuinely orphaned rather than merely doorless. `kafkaConsumer` stays named |
 
 **And their tests.** A generated `...ResourceIT` for a resource you just deleted compiles fine and
 fails at run time against a 404. Delete `CategoryResourceIT`, `ReviewResourceIT`,
@@ -226,6 +227,13 @@ deliberate rather than incidental: `consumesMessages` needs `/register`, and `pr
 asserts — through the test binder — that `broker.KafkaProducer` reaches `kafkaProducer-out-0`, which
 against a real estate is NEW-21, so carrying it forward would be CI asserting the *next* defect works.
 See `decisions.md` D59.
+
+**That last case is back, asking the opposite question** (D62). `KafkaSampleSupplierIsNotPolledIT`, in
+all five services and byte-identical in each, asserts through the same test binder that
+`kafkaProducer-out-0` carries **nothing** — with the consumer half as its positive control, because an
+unbound binder would satisfy a negative assertion for the wrong reason. It is a new file, so a
+regeneration leaves it in place while it puts `kafkaProducer` back in the definition, and it is then the
+only thing in the estate that goes red.
 
 **Fifteen of these rows now have a test that fails if you miss them, and two CI checks that fail if
 you miss the row itself.** `AuditTrailIsNotAnApiIT` in booking was the first and is still the pattern;
@@ -357,6 +365,17 @@ So `spring.cloud.stream`, `auto-create-topics: true` and the `binding-out-0` / `
 the broker: `sse-topic` and `kafkaProducer-out-0` exist there and no script in this repository creates
 them, and the consumer groups `healthconnect-{gateway,catalog,booking,messaging,payout}` — the exact
 `group:` values in that file — are registered against them.
+
+**`kafkaProducer-out-0` is no longer one of them, and the distinction is the whole of D62.** A binding
+is live because a *function* is bound to it, not because a block exists under `bindings:`.
+`binding-out-0` is configured in all five services and is **absent** from that broker's topic list to
+this day, because no function was ever bound to it; `kafkaProducer-out-0` was there because
+`spring.cloud.function.definition` named the supplier, and since D62 does not, it is not.
+**Measured on a throwaway broker rather than argued**: with the name present, one service alone creates
+the topic on startup and adds 61 messages in 62 seconds; with it removed, that topic is **never created
+at all**, while `sse-topic` still is — so `kafkaConsumer` is bound and the service is doing its Kafka
+work. Both stacks, servlet and reactive, measured separately and identical. The topic still exists on
+the shared broker and always will; what stops is anything being written to it.
 
 This has been got wrong in both directions in one document: `decisions.md` D54 asserted the mechanism
 from the file without checking the profile, its review then withdrew the claim on the grounds that the
@@ -962,7 +981,15 @@ time.**
   by `spring.cloud.function.definition` in a generated file, and with no resource injecting it, it
   maps no URL. Its sink now has no subscriber at all, which is a buffer that grows if anything ever
   publishes to `sse-topic` — no truer than it was when `/consume` had no caller, and named as NEW-21
-  rather than fixed here.
+  rather than fixed there.
+  **NEW-21 is closed by D62 and it settled the consumer half deliberately rather than by omission**:
+  `kafkaConsumer` **stays named**, and its unbounded sink stays with it. It is the one of the two the
+  estate cannot simply unname — an explicit `spring.cloud.function.definition` is what stops Spring
+  Cloud Function auto-discovering a lone function bean, so unnaming the consumer would leave the
+  *supplier* the only function bean in the service and bind it again, which is the defect through its
+  own fix. The buffer is a bound that has never been approached: `sse-topic`'s end offset on the shared
+  broker is still **0** after the estate's whole life, and unlike the supplier it needs somebody else to
+  publish before it grows at all. The **supplier** is the one that was unnamed, in all five services.
   **Never put a `JsonNode` in an SSE payload.** Jackson serialises it by bean properties — clients
   received `{"array":false,"nodeType":"OBJECT",…}` instead of the event, for as long as the endpoint
   existed, with every test green because the only client reads the `event:` name and not the data.

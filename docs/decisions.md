@@ -8702,3 +8702,280 @@ value and passed. Probed against a three-line fixture: the old expression saw 2 
   `@Profile`, and its `mongock.migration-scan-package` is likewise in the base `application.yml`.
   **hc-professional is a milder variant** of the same thing: its administrator falls back to a password
   derivable from a public rule, and nothing in that repository sets the variable that would prevent it.
+
+## D62 — The supplier nobody called, and the difference between a binding and a bound one
+
+Backlog **NEW-21**, opened by **D59** while it was establishing what NEW-17's `/publish` actually did.
+**`main` ended at D61 when this began, the backlog's highest item was NEW-22, and `gh pr list --state
+open` answered nothing** — all three re-checked rather than taken from the brief.
+
+D59 closed the sample's five **doors**. This is the thing behind them, which never needed a door:
+`broker.KafkaProducer`, a generated `@Component implements Supplier<String>` returning the constant
+`"kafka_producer"`, named in `spring.cloud.function.definition` in generated `application-kafka.yml`
+and bound to `kafkaProducer-out-0`. Spring Cloud Stream polls a **bound** supplier on a timer. All
+five services carry it, the `kafka` profile is active in every environment through
+`spring.profiles.group` (D59 §1), and they have all been doing this since they first started.
+
+### §1 What was established, and how — every number is a read
+
+Nothing was produced to the shared broker and no endpoint was POSTed to anywhere. Topic lists, end
+offsets and consumer groups are reads, and they answer the question more directly than a reproduction
+would because they *are* the estate.
+
+| | |
+| --- | --- |
+| `kafkaProducer-out-0` end offset, 13:24:06Z | **5,779,754** |
+| the same, 13:26:03Z → 13:27:05Z | 5,780,459 → 5,780,826 — **367 in 62 s, 5.92/s** |
+| the same, 14:12:53Z, at the end of this package | **5,797,306** — 17,552 higher, and still climbing |
+| `sse-topic` end offset | **0**, still, after the estate's whole life |
+| consumer groups subscribed to `kafkaProducer-out-0` | **none** — every group on that broker was described, and not one names it |
+| application containers on `hcnet` | **eleven**; five of them are hc-market's |
+
+D59 measured 5,603,896 and 6/s. Two weeks later the offset is 176,000 higher and the rate is the same
+to within a rounding, which is what a fixed-interval poller with no caller looks like.
+
+**The poll interval is a framework default, not a setting.** `grep -rn poller` over every `*.yml`,
+`*.java` and `*.properties` in this repository finds four hits and all four are comments about the
+outbox. The value comes from `PollerConfigEnvironmentPostProcessor` in `spring-cloud-stream-5.0.1`,
+read out of the bytecode: absent `spring.integration.poller.{cron,fixed-rate,fixed-delay}` it sets
+`fixed-delay` to **`1s`** and `max-messages-per-poll` to `1`. One bound supplier is therefore one
+message per second, exactly.
+
+**Attribution, re-derived rather than taken on trust.** 5.92/s against a 1/s poll is six publishers,
+of which five are ours — so **hc-market contributes ~5/s, about 432,000 messages a day**, and the
+sixth is a sibling. That last part is no longer only an inference from the arithmetic:
+**`hc-admin-service` is registered as a consumer group on `sse-topic`**, which is the *other* half of
+this same generated sample, bound to the destination `application-kafka.yml` gives
+`kafkaConsumer-in-0`. A sibling running the consumer half of the sample is running the supplier half
+too, because one generated file declares both. That was established without opening another product's
+repository, which is what D59 could not do. It is a workspace-wide finding and belongs in the parent
+`CLAUDE.md`; **this package did not write it there**, because that file is outside this repository.
+
+**Nothing anywhere consumes it.** Every consumer group on the broker was described and its topics
+listed: the `healthconnect-*` five are on `sse-topic` and the domain topics, the twenty-odd
+`healthconnect-gateway-sse-<uuid>` are D25/D29's per-instance fan-out groups, and the siblings' are on
+`patient-events`, `hc.professional.*` and `sse-topic`. `kafkaProducer-out-0` appears in no group's
+subscription. It is 5.78 million messages written to a log nobody reads, on somebody else's disk.
+
+### §2 The choice, its falsification condition, and what the measurement said
+
+D59 weighed three shapes: delete the supplier and its binding; keep the beans and take the name out of
+the `definition`; or leave both and lengthen the poll interval. The architect settled on the **second**
+— and settled it with a condition attached, which is the right way to hand down a decision about a
+mechanism nobody had exercised: *if removing the name does not stop the publishing, deletion is the
+only shape that works, so prove it rather than assume it.*
+
+**It was proved, and the recommended shape holds.** The harness is a throwaway Kafka on a host port,
+on no docker network, with a throwaway Postgres and Mongo beside it — never the shared broker, which
+is only ever read. `catalog` for the servlet stack and `gateway` for the reactive one, each run alone
+from its own jar:
+
+| | `kafkaProducer-out-0` on the throwaway broker |
+| --- | --- |
+| catalog, as generated | topic **auto-created at startup**; 33 → 94, **61 in 62 s** |
+| nothing running (control) | 105 → 105 over 32 s — **frozen**, so the measurement is of the service and not of the broker |
+| gateway, as generated | 116 → 177, **61 in 62 s** — the reactive stack is **identical**, which was worth asking rather than assuming |
+| catalog, name removed, **fresh broker** | **topic never created**, over 91 s |
+| gateway, name removed, **fresh broker** | **topic never created**, over 91 s |
+
+The last two rows are a stronger result than "the offset stopped moving": on a broker that has never
+seen this estate, the destination is **never provisioned at all**. And `sse-topic` *is* provisioned in
+both of those runs, which is the control that matters — the service is still bound to the broker and
+still doing its Kafka work; it is the supplier that is gone.
+
+**So no departure was needed.** Had the topic still appeared, this document would say deletion was
+taken instead and would carry the four extra delete-table rows; it does not, because it did not.
+
+### §3 Why the binding block below it is left exactly as generated
+
+Only the `definition` changed. `kafkaProducer-out-0` is still declared under
+`spring.cloud.stream.bindings` in all five services, and that is deliberate rather than an oversight.
+
+**A binding is not a bound binding.** The block is configuration *for* a binding that Spring Cloud
+Stream creates when a function is bound to it; with the function unnamed, nothing is created and
+nothing is provisioned. The evidence for that predates this package by the estate's whole life:
+**`binding-out-0` is configured in all five services and is absent from the shared broker's topic
+list**, because `/publish`'s `StreamBridge` was the only thing that would ever have bound it and
+nobody ever called it (D59 §1). The measurement in §2 confirms it directly — the topic is not created.
+
+Deleting the block would buy tidiness and cost the one thing that matters after a regeneration: the
+diff between the generated file and the correct one would be **two** edits instead of one. A person
+restoring this file at 2 a.m. should have one thing to do.
+
+### §4 What becomes of `kafkaConsumer`, which is a decision and not an omission
+
+**It stays named, and it has to.** The documented reason is D54's rule and D59's application of it: an
+orphaned generated class that maps no URL is dead code rather than an open door, and the consumer's
+sink has no subscriber since D59 removed `/consume`.
+
+The mechanical reason is sharper and is why "unname both" was rejected. **Spring Cloud Function
+auto-discovers a lone function bean when there is no explicit `definition`.** That is not read off the
+documentation — it fell out of this package's own build. `HibernateTimeZoneIT` in booking runs under
+`test,testdev`, so the `kafka` profile is not active and `application-kafka.yml` is not loaded, and the
+context logs:
+
+```
+Multiple functional beans were found [kafkaProducer, kafkaConsumer], thus can't determine default
+function definition. Please use 'spring.cloud.function.definition' property to explicitly define it.
+```
+
+Two beans is why it declines. **One bean is why it would not.** So an estate that unnamed both
+functions, or deleted `KafkaConsumer` as the obviously-dead one of the pair, would leave
+`KafkaProducer` as the only function bean in the service and Spring would bind it without being asked
+— this defect restored by the tidying-up that was meant to finish removing it. Keeping `kafkaConsumer`
+named is what makes the definition explicit, and explicit is what stops the fallback.
+
+The cost is stated rather than glossed, exactly as D59 stated it: the consumer's sink is still a buffer
+with no subscriber. It is a bound that has never been approached — `sse-topic`'s end offset is **0** —
+and unlike the supplier it requires somebody else to publish before it grows at all. It is not fixed
+here and it is not a new item; it is the same live property D59 wrote down, now with the reason it
+cannot simply be unnamed.
+
+### §5 The regeneration hazard, which this shape does not avoid and D59 hoped it would
+
+D59 declined deletion partly to avoid a regeneration-hazard row per service. **That saving is not
+available to any of the three shapes**, because all three edit the same generated file: the
+`definition` line, the bindings block, or a poller property would each have to be re-applied after
+`jhipster jdl ... --force`. The row exists either way, so it should be a good one.
+
+There is **one** row rather than five, in the style the table already uses for an estate-wide config
+change (`contexts: dev`, `application.liquibase.async-start`), and it names *"**all five**
+`config/application-kafka.yml`"* so nothing is left to inference.
+
+**What is lost, and how it fails: silently, and the broker starts filling again.** Not one thing inside
+the estate changes. The service starts, is healthy, serves, passes every test in every suite, and logs
+nothing at any level either stack runs at — verified: `grep -ic kafkaproducer` over the full startup
+log of a running catalog is **0** with the supplier bound and **0** with it unbound. There is no health
+indicator, no metric anyone looks at, and no failing request. The only symptom is a topic growing at
+five a second on infrastructure that lives in `~/webroot/01-healthconnect/hc-infra`, in a repository
+nobody working on hc-market would open, and it would take another two weeks and another 5 million
+messages before anyone had reason to look.
+
+### §6 What guards it, and the limits of each
+
+**The runtime half — `KafkaSampleSupplierIsNotPolledIT`, in all five services, byte-identical.** It is
+the inverse of `producesPooledMessages`, the case D59 deliberately did *not* carry forward from the
+deleted sample ITs precisely because keeping it would have been CI asserting this defect works. Same
+test binder, same destination, opposite question: `output.receive(2500, "kafkaProducer-out-0")` must be
+`null`. It asks **Spring Cloud Stream itself** what is bound, rather than asking a config file what it
+says, so it survives the supplier being renamed, re-bound under a different binding name, or
+reintroduced by a fresh `definition` — none of which a grep of that file could see.
+
+**Its positive control is the consumer half**, because every other assertion in it is a negative one
+and an unbound binder would satisfy the negative for the wrong reason — D54's review, finding 3, and
+`KafkaSampleIsNotAnApiIT`'s pattern beside it. The control is `InputDestination.send(message)`
+**unnamed**: the test binder registers channels by *destination*, and `kafkaConsumer-in-0`'s
+destination is `sse-topic`, so naming the binding throws an NPE from inside the binder. That was found
+by writing the control the obvious way and watching it fail — the first run of this test had one
+failure and it was the control, not the subject.
+
+**Red first, and red for the right reason.** With catalog's `definition` mutated back to the generated
+`kafkaConsumer;kafkaProducer`, the run is `Tests run: 2, Failures: 1` naming
+`theSampleSupplierIsNotBound` and printing the message it was written to print; the control stayed
+green. Restored from a **copy**, not from git — D59's review found a harness that used
+`git checkout --` reverting the uncommitted subject of the check it was testing.
+
+**The static half — *"No service may bind the generated Kafka sample supplier"* in `build.yml`.**
+Derived, never enumerated: for every `jdl/*.jdl` declaring `messageBroker kafka`, the service's
+`config/application-kafka.yml` must exist, must carry exactly **one** `definition:` line, that line
+must name `kafkaConsumer` and must not name `kafkaProducer`, and the guard IT must exist beside it.
+Five names in a `for` would have been the next entry in this repository's long list of CI lists that
+went stale.
+
+**No comment stripper, and that is a decision rather than a lapse.** The house rule is that a check
+matching source text must use `.github/checks/strip-comments.awk`. That rule is about Java, where
+`//` and `/* … */` can sit at the end of a line of real code. YAML comments begin with `#`, and every
+expression here anchors at `^[[:space:]]*<key>:`, which a commented line cannot satisfy — **measured**,
+as M14 below, rather than argued from the regex.
+
+**Fifteen mutations, each landed with printed evidence before its verdict was believed, and the run
+closes on a repeated baseline** — which is the check that catches a harness restoring wrongly:
+
+| | Mutation | Want | Got |
+| --- | --- | --- | --- |
+| baseline | as committed | PASS | PASS, *"scanned 5 applications"* |
+| M1–M5 | `kafkaProducer` named again, **one service at a time** — five separate mutations | FAIL | FAIL each time, naming that service's file and no other; the other four still ok |
+| M6 | the `definition` emptied rather than narrowed | FAIL | FAIL — this is the auto-discovery door in §4, and it is closed |
+| M7 | a second `definition:` line added | FAIL | FAIL, *"has 2 'definition:' lines, not 1"* — the check reads one and says so rather than being blind to the rest |
+| M8 | `application-kafka.yml` deleted | FAIL | FAIL, naming the JDL that expected it |
+| M9 | the guard IT deleted | FAIL | FAIL — the config is generated and the IT is not, so losing the IT loses the whole runtime half |
+| M10 | a JDL loses `messageBroker kafka` while its config stays | FAIL | FAIL **at the sweep**, not the loop: the loop said *"declares no Kafka broker"* and the sweep refused the orphaned file |
+| M11 | a sixth service's config appears with no JDL behind it | FAIL | FAIL at the sweep |
+| M12 | no application declares `messageBroker kafka` | FAIL | FAIL, *"scanned nothing"* |
+| M13 | `jdl/*.jdl` matches nothing | FAIL | FAIL, before any verdict |
+| M14 | a **commented-out** `definition: kafkaConsumer;kafkaProducer` above the real line | **PASS** | PASS — prose does not satisfy this check, and prose does not break it either |
+| baseline | as committed, again | PASS | PASS |
+
+**Two limits, stated because a limit read off an expression is the move D59 was corrected for.**
+The `kafkaProducer` test is a substring match, so `kafkaProducerV2` is refused too — fail-closed, and
+fine. But the `kafkaConsumer` test is a substring match as well, so a `definition` naming
+`kafkaConsumerThatIsNotTheBean` would satisfy the static check; what refuses that is the guard IT's
+control, which is why the pair exists rather than either alone. And the check reads what is bound, not
+what a *renamed* supplier bean might be called: a `broker.KafkaProducer` renamed to `SampleEmitter`
+and bound as `sampleEmitter` escapes the grep entirely, and the guard IT catches it only because the
+binding name would have to change too, which changes the destination it asserts on. Neither is fixed
+here; both are written down.
+
+### §7 Counts
+
+All five `clean verify` on `jdk-25.0.2-oracle-x64`, `TechnicalStructureTest` green in each, 0
+checkstyle and 0 modernizer violations. The guard IT lives in `net.jojoaddison.broker` beside its
+subject, which the ArchUnit rule permits because `@AnalyzeClasses(importOptions =
+DoNotIncludeTests.class)` does not import test classes at all — the rule that forbids `broker` from
+reaching anything is about `src/main`.
+
+Every one of the five ran `Tests run: 2, Failures: 0` for the new IT — the assertion and its control —
+so the totals below are `+2` on failsafe and `+0` on surefire, in each. The prior totals are stated as
+`current − 2` rather than re-measured on `main`, which is arithmetic and is labelled as such.
+
+| Service | unit | IT | note |
+| --- | --- | --- | --- |
+| gateway | 38 | **112** (from 110) | +2, the guard and its control — and the reactive stack takes them unchanged |
+| catalog | 109 | **75** (from 73) | +2 |
+| booking | 231 | **126** (from 124) | +2 |
+| messaging | 62 | **67** (from 65) | +2 |
+| payout | 138 | **59** (from 57) | +2 |
+
+### §8 Verified / assumed / not exercised
+
+- **Verified by reading the shared broker** (read-only, on a quality estate running `85fba79`): the
+  topic list; `kafkaProducer-out-0` at 5,779,754 and 367 more over a timed 62 s; `sse-topic` at 0;
+  every consumer group on the broker described and none subscribed to `kafkaProducer-out-0`;
+  `hc-admin-service` subscribed to `sse-topic`; eleven application containers on `hcnet`, five ours.
+  **Nothing was published, no container was restarted, rebuilt, reseeded or cleaned, and nothing was
+  written to the quality box.**
+- **Verified by running, on a throwaway broker on no docker network**: that the generated config
+  auto-creates `kafkaProducer-out-0` and adds 61 messages in 62 s, in catalog and in the gateway
+  separately; that the offset freezes with nothing running; and that with the name removed the topic
+  is **never created**, in both, while `sse-topic` still is.
+- **Verified by reading library bytecode**: the 1s `fixed-delay` default in
+  `PollerConfigEnvironmentPostProcessor`, and that nothing in this repository configures any of the
+  three properties that would override it.
+- **Verified by running**: all fifteen CI-check mutations with landing evidence; the guard IT green in
+  all five services and **red** in catalog with the config mutated back, naming its own subject; all
+  five `clean verify`; `sync-appendices.sh --check`; the seed regenerating byte-identically; the
+  workflow parsing and the new step extracting as runnable bash.
+- **Verified by reading a running quality container**: that `/app/otel-javaagent.jar` is present at
+  24,665,598 bytes and the JVM's `/proc/1/cmdline` carries **no `-javaagent`** — backlog **NEW-23**,
+  opened here and deliberately not fixed.
+- **Assumed**: that the destination of `kafkaProducer-out-0` is the binding name. Spring Cloud
+  Stream's documented default, and now corroborated on a real broker, where a topic of exactly that
+  name is created by a service with the binding and not by one without it.
+- **Assumed**: that production behaves as dev and quality do. `prod` lists `kafka` in its profile
+  group in the same generated `application.yml`, so the reading is direct — but there is no production
+  estate to ask, and there never has been.
+- **Assumed, and it is the weaker half of the attribution**: that the sixth publisher is a sibling's
+  copy of this same generated supplier. The arithmetic (5.92/s ÷ 1/s = 6 publishers, 5 ours) and
+  `hc-admin-service`'s registration on `sse-topic` both point at it, but no sibling's
+  `application-kafka.yml` was read — that is another product's repository.
+- **Not exercised: the quality box after this change.** It runs `85fba79`'s published images and was
+  left untouched, so the shared broker's rate has **not** fallen and will not until this is deployed
+  there: `kafkaProducer-out-0` was 5,779,754 at the start of this package and **5,797,306** at the end,
+  17,552 higher over 49 minutes, which is the same ~6/s. That is the honest before-and-after on the
+  shared broker, and it is why the before-and-after that demonstrates the fix is on the throwaway one.
+  **Whoever deploys this should read that offset again five minutes after the stack is healthy**: the
+  rate should fall by ~5/s to whatever the sibling contributes, and that is the estate-level
+  confirmation this package could not make without writing to quality.
+- **Not exercised: production, in any form.**
+- **Out of scope and left alone**: WP-19, `deploy/prod-server/`, the OTel fix (opened as NEW-23 and
+  not fixed), `hc-patient`'s administrator defect, and the wedged `healthconnect-dev-*` containers.

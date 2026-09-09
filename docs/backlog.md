@@ -1794,7 +1794,52 @@ comment, with why it is acceptable (every failure mode that exists today exits 1
 
 ---
 
-## NEW-21 — The generated Kafka sample writes to the shared broker with no caller at all · READY
+## NEW-21 — The generated Kafka sample writes to the shared broker with no caller at all · DONE (D62)
+
+**Closed by D62.** `kafkaProducer` is out of `spring.cloud.function.definition` in all five services;
+the beans stay, per D54's rule for an orphan. The architect chose that shape over deletion **with a
+falsification condition attached** — *if unnaming it does not stop the publishing, delete instead* —
+and the condition was tested rather than assumed. It holds, so no departure was taken.
+
+**The proof is a throwaway broker on no docker network, never the shared one.** As generated, catalog
+alone auto-creates `kafkaProducer-out-0` at startup and writes **61 messages in 62 s**; the gateway,
+on the reactive stack, is **identical**; with nothing running the offset is frozen. With the name
+removed, on a *fresh* broker, that topic is **never created at all** — a stronger result than a
+stalled offset — while `sse-topic` still is, which is the control proving the service is still bound
+and still doing its Kafka work.
+
+**Three things this item asked to be established, established:**
+
+| | |
+| --- | --- |
+| the rate, re-measured | 5,779,754 → **367 in a timed 62 s, 5.92/s**; 176,000 higher than D59's reading two weeks earlier |
+| the poll interval | **1s**, a framework default from `PollerConfigEnvironmentPostProcessor`, read out of the bytecode; nothing here configures any of the three properties that override it |
+| the gateway | **no different.** Measured separately rather than reasoned from the stack |
+| anything consuming it | **nothing.** Every consumer group on the broker was described; not one names `kafkaProducer-out-0` |
+
+**And the sixth publisher, which this item flagged as the reason it might be a workspace-wide
+finding.** It is: 5.92/s ÷ 1/s is six publishers and five are ours, so hc-market's share is ~5/s or
+about **432,000 a day**. `hc-admin-service` is registered as a consumer group on **`sse-topic`** — the
+other half of this same generated sample — which places the same generated file in a sibling without
+opening a sibling's repository. **The parent `CLAUDE.md` is where that belongs and this package did
+not write it there**, because that file is outside this repository.
+
+**What guards it**: `KafkaSampleSupplierIsNotPolledIT` in all five services, byte-identical — the
+inverse of the `producesPooledMessages` D59 refused to carry forward, asking the test binder the
+opposite question, with the consumer half as its positive control. Watched red first in catalog with
+the config mutated back. Plus a derived CI check, *"No service may bind the generated Kafka sample
+supplier"*, watched firing **fifteen ways** including the five services mutated one at a time.
+
+**The consumer half is settled, not omitted.** `kafkaConsumer` stays named, and it has to: Spring
+Cloud Function auto-discovers a *lone* function bean when there is no explicit `definition`, which the
+build itself says out loud — `Multiple functional beans were found [kafkaProducer, kafkaConsumer],
+thus can't determine default function definition` — so unnaming the consumer would leave the supplier
+the only function bean and bind it again. Its unbounded sink stays with it, unchanged and still at
+`sse-topic` offset 0.
+
+Everything below is the item as it stood.
+
+---
 
 Opened by **D59**, which found it while establishing what NEW-17's `/publish` actually did. It is the
 same generated sample and the same shared broker, and it is **larger than the door NEW-17 closed** —
@@ -1895,6 +1940,63 @@ than pass having read nothing, and prose describing the gate must not satisfy th
 **Left for someone else, in another repository:** `hc-patient/gateway` has the **identical** defect —
 same untouched changeunit, same base-config scan package, no profile gate. Not touched; it is a
 different product. `hc-professional` is a milder variant of the same family.
+
+---
+
+## NEW-23 — The OpenTelemetry agent is in every image and attached in no environment · READY
+
+Opened by **D62**, which found it while reading the running quality containers for an unrelated
+reason. It is deliberately **not fixed there**: it changes what the quality box runs, and the box was
+under a no-writes instruction for that package.
+
+**Observability has never run in any environment, and no document records that.** CLAUDE.md has a
+whole trap section on the agent — the `combine.self="override"` that stops Jib silently dropping it,
+the check that it *instruments* rather than merely loads, the 2.30.0-vs-2.9.0 finding — and `build.yml`
+carries *"Every pom must still carry the OpenTelemetry wiring"*. All of that guards the **build** half
+of a runtime path that has executed nowhere.
+
+**Established by reading the running quality containers, all five** (`85fba79`, read-only):
+
+| | |
+| --- | --- |
+| `/app/otel-javaagent.jar` in the image | **present in all five**, 24,665,598 bytes — the Jib wiring works |
+| `-javaagent` on the JVM's `/proc/1/cmdline` | **absent in all five** |
+| `quality/compose.yml:97` | `JAVA_OPTS: -Xmx512m -Xms256m` — hardcoded, no agent, no `OTEL_*` anything |
+| `deploy/docker/docker-compose.dev.yml` | **no `JAVA_OPTS` at all**, and no `OTEL_*` variable anywhere in the file |
+| `deploy/docker/docker-compose.prod.yml:104` | `JAVA_OPTS: ${HC_JAVA_OPTS:-…} ${HC_OTEL_JAVA_OPTS:--javaagent:/app/otel-javaagent.jar}` — the only place it is attached |
+| production | **has never been deployed.** `deploy/prod-server/README.md` says so before it says anything else (D49) |
+
+So the one compose file that attaches the agent belongs to the one environment that has never run,
+and the two that have run do not attach it. The image is built correctly, shipped correctly, and the
+flag is never passed.
+
+**What follows from it, and is the reason this is a package rather than a one-line edit.**
+`deploy/observability/hc-market-rules.yaml` declares five alerts and **every one of them is a query
+over metrics only the agent emits** — `absent(jvm_thread_count{service_name="hc-market-gateway"})`,
+`rate(http_server_request_duration_seconds_count{…})`. They have never had a data source. Two of them
+alert on *absence*, so on a tenant where hc-market has never reported they would be **firing
+continuously** if the rules were ever loaded, and the `HcMarketGatewayDown` annotation already tells
+the reader to check `JAVA_OPTS` for the agent flag before concluding the service is down — advice
+written for the case that turns out to be the permanent state. CI checks that file parses and that its
+group names are unique; nothing checks that anything answers its queries.
+
+**Three things to decide, none of them obvious:**
+
+1. **Does quality attach the agent?** It is the argument for the quality box existing — it is where a
+   deploy-shaped defect is meant to surface, and this is one. Against: `jacserver` has no
+   `otel-collector` on it, so the exporter would fail on every export and the estate would grow a new
+   class of noise. Whether an unreachable OTLP endpoint is silent or loud on 2.30.0 is **unestablished**
+   and is the first thing to measure.
+2. **Does the agent get verified as instrumenting, not merely loading?** CLAUDE.md already names the
+   trap — `jvm_thread_count` comes from MBeans and is reported whether or not a single application
+   class is rewritten, so `service:up` being green is not evidence. The check that is: an
+   `OTEL_TRACES_EXPORTER=logging` run producing a `SERVER` span with an `http.route`.
+3. **Does the rules file stay as it is?** Five alerts over a signal nothing emits is not a monitoring
+   gap, it is a monitoring claim that is false. Either the signal arrives or the file says what it is
+   for.
+
+**Not in scope for whoever takes this**: the Jib `extraDirectories` wiring, which is correct and
+proven by the jar being in all five images.
 
 ---
 

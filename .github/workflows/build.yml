@@ -1705,6 +1705,103 @@ jobs:
           fi
           exit "$fail"
 
+      # The sibling of the check above, one layer down: D59 closed the sample's DOORS and left its
+      # SUPPLIER, which never needed a door. `broker.KafkaProducer` is a generated `Supplier<String>`
+      # and Spring Cloud Stream polls a BOUND supplier every second, so while generated
+      # `application-kafka.yml` named it in `spring.cloud.function.definition`, all five services put
+      # one message a second each onto the broker four products borrow (D27) — measured at 5.9/s and
+      # 5.78 million messages, with no consumer registered against the topic on any estate.
+      #
+      # This is the check the regeneration hazard needs. `application-kafka.yml` is a GENERATED file,
+      # so `jhipster jdl ... --force` puts `kafkaProducer` back in all five, and the loss is SILENT:
+      # every suite stays green, no log line changes, and the only symptom is a broker filling up
+      # somewhere else. See backlog NEW-21 and decisions.md D62.
+      - name: No service may bind the generated Kafka sample supplier
+        run: |
+          fail=0
+          # Derived from the same two JDL keys as the check above — `baseName` is not needed here
+          # because the config file's path follows the service directory, not the application name.
+          # No comment stripper: YAML comments start with `#`, and every expression below anchors at
+          # `^[[:space:]]*<key>:`, which a commented line cannot satisfy. The house rule about
+          # `.github/checks/strip-comments.awk` is about Java's `//` and `/* … */`, which can sit at
+          # the end of a line of real code; this one is measured in the mutation harness beside it.
+          jdls=$(ls jdl/*.jdl 2>/dev/null || true)
+          if [ -z "$jdls" ]; then
+            echo "::error::jdl/*.jdl matched nothing — this check would scan no application and pass. See decisions.md D62."
+            exit 1
+          fi
+          scanned=0
+          derived=""
+          for jdl in $jdls; do
+            svc=$(basename "$jdl" .jdl)
+            cfg="$svc/src/main/resources/config/application-kafka.yml"
+            guard="$svc/src/test/java/net/jojoaddison/broker/KafkaSampleSupplierIsNotPolledIT.java"
+            if ! grep -qE '^[[:space:]]*messageBroker[[:space:]]+kafka([[:space:]]|$)' "$jdl"; then
+              echo "ok   $jdl declares no Kafka broker, so it generates no sample supplier"
+              continue
+            fi
+            scanned=$((scanned + 1))
+            derived="$derived $cfg"
+            # A missing file is not "nothing to bind, so nothing to check". It is the one state in
+            # which this check would report ok having read nothing, and it is also a real regression:
+            # without the file there is no `definition` at all, and Spring Cloud Function falls back
+            # to auto-discovering a lone function bean — which is `KafkaProducer` the moment anything
+            # removes `KafkaConsumer`.
+            if [ ! -f "$cfg" ]; then
+              echo "::error file=$jdl::$cfg does not exist, but $jdl declares messageBroker kafka — this check cannot see what $svc binds. See decisions.md D62."
+              fail=1
+              continue
+            fi
+            defs=$(grep -cE '^[[:space:]]*definition:' "$cfg" || true)
+            if [ "$defs" -ne 1 ]; then
+              echo "::error file=$cfg::$cfg has $defs 'definition:' lines, not 1 — this check reads one and would be blind to the others. See decisions.md D62."
+              fail=1
+              continue
+            fi
+            value=$(grep -E '^[[:space:]]*definition:' "$cfg" | head -1 | cut -d: -f2-)
+            if printf '%s' "$value" | grep -q 'kafkaProducer'; then
+              echo "::error file=$cfg::$svc names kafkaProducer in spring.cloud.function.definition, so the generated Supplier is bound and this service is putting one message a second onto the broker four products borrow, with nothing consuming it. A regeneration puts this back and nothing else goes red. Take the name out; the bean stays. See backlog NEW-21 and decisions.md D62."
+              fail=1
+              continue
+            fi
+            # The definition must still NAME something, and naming kafkaConsumer is what it names.
+            # An empty or absent definition stops the poller too — and re-opens it by another door,
+            # because with one function bean left Spring Cloud Function binds it without being asked.
+            if ! printf '%s' "$value" | grep -q 'kafkaConsumer'; then
+              echo "::error file=$cfg::$svc does not name kafkaConsumer in spring.cloud.function.definition. An explicit definition is the only thing stopping Spring Cloud Function auto-discovering a lone function bean and binding the supplier again. See decisions.md D62."
+              fail=1
+              continue
+            fi
+            # The config is a generated file and the guard IT is not, so after a regeneration the IT
+            # is the only thing left that goes red. Losing it is losing the whole runtime half.
+            if [ ! -f "$guard" ]; then
+              echo "::error file=$jdl::$guard is missing — the config edit above is a regeneration hazard and this IT is the only thing that fails when it is undone. See decisions.md D62."
+              fail=1
+              continue
+            fi
+            echo "ok   $svc binds kafkaConsumer and not kafkaProducer, and carries the guard IT"
+          done
+          # THE DERIVATION'S FAIL-OPEN, CLOSED, exactly as the check above closes its own. Everything
+          # here is reached from a JDL that says `messageBroker kafka`. A service whose JDL loses that
+          # line, or one added without a JDL, keeps its config file and its bound supplier while every
+          # verdict above stays green about the services it did reach.
+          for found in $(find . -path '*/src/main/resources/config/application-kafka.yml' -not -path './*/target/*' | sed 's|^\./||' | sort); do
+            case " $derived " in
+              *" $found "*) ;;
+              *)
+                echo "::error file=$found::$found exists but no jdl/*.jdl declaring messageBroker kafka points at it, so nothing above checked what it binds. See decisions.md D62."
+                fail=1
+                ;;
+            esac
+          done
+          if [ "$scanned" -eq 0 ]; then
+            echo "::error::no application declaring messageBroker kafka was scanned — this check passed having looked at nothing. See decisions.md D62."
+            fail=1
+          else
+            echo "scanned $scanned applications declaring messageBroker kafka"
+          fi
+          exit "$fail"
+
       # An unparseable rules file is only discovered when Mimir silently declines to load it, and
       # the symptom is an alert that never fires — indistinguishable from a system that is fine.
       - name: The alert rules must parse and stay uniquely named
