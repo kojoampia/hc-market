@@ -1,6 +1,6 @@
 # Backlog — hc-market
 
-Every open item in this repository, folded into work packages. Sources: `docs/decisions.md` D1–D39,
+Every open item in this repository, folded into work packages. Sources: `docs/decisions.md` D1–D63,
 the two code reviews of 2026-09-01, and the verification runs against the quality box.
 
 **This is a derived document.** `decisions.md` holds the reasoning and stays the record; this holds
@@ -10,6 +10,15 @@ and where either disagrees with the code, the code wins.
 **Status vocabulary.** `DONE` — built, tested, and verified against a running estate. `IN PROGRESS` —
 being worked now. `READY` — specified, unblocked, nobody is holding it. `BLOCKED` — waiting on a named
 person, not on engineering. `WON'T` — considered and deliberately not done, with the reason.
+`PARTLY DONE` — some of it is built and verified while the rest is blocked on a named person, so it is
+neither `IN PROGRESS` (nobody is holding it) nor `BLOCKED` (part of it shipped); the row says which half
+is which. `CLOSED by decision (D<n>)` — the item asked a question rather than named work, and the answer
+is ratified; no code shipped, so it is not `DONE`.
+
+**Two of these were in use before they were declared here**, which is the same defect this repository
+keeps finding in its own checks and comments: a statement of what the vocabulary *is* that the file
+itself contradicts. Added rather than relabelled — `PARTLY DONE` and `CLOSED by decision` each carry a
+distinction the declared five cannot express, so the declaration was the wrong half.
 
 ---
 
@@ -219,7 +228,7 @@ booking's own `raisedAt` is exactly the comparison WP-08 needs.
 **Not done here:** no desk endpoint reads `erasure_run` back. Who may read an audit trail of erasures
 is a question of the same kind D38 answered for the fan-out authority, and it was not answered.
 
-## WP-07 — Erasure: orchestration · DONE (unmerged)
+## WP-07 — Erasure: orchestration · DONE
 
 D38. `POST /api/desk/customers/{login}/erase-everywhere` on booking erases here, then calls messaging's
 and catalog's existing desk endpoints, and returns one receipt naming each leg, its status and its
@@ -309,7 +318,7 @@ This is the defect D31 fixed in messaging's empty conversation, in a service nob
 lesson recorded against it is not about counting: a defect found in one of three copy-pasted services
 is a defect reported against all three until each has been looked at.
 
-## WP-08 — Erasure: the still-active account · DONE (unmerged)
+## WP-08 — Erasure: the still-active account · DONE
 
 D37, built as D40. Erasure does not touch the gateway's user store, so an erased person can log in and
 book again. Messaging pseudonymised the new booking's thread while booking and catalog stored the real
@@ -373,7 +382,7 @@ The two coded judgements D37 ratified — the **review body** is not erased (pub
 professional) and `Dispute.resolution` is kept (the brokerage's record of a financial decision,
 underpinning a compensating ledger entry) — are untouched and stay as they are.
 
-## WP-10 — Payments: the seam can complete a lifecycle · DONE (unmerged)
+## WP-10 — Payments: the seam can complete a lifecycle · DONE
 
 D15, and the sharpest finding of the payment review. `authorizePayment` used the outcome's state and
 reason and **discarded `providerReference`** — the handle `capture`, `refund` and `status` all require.
@@ -475,7 +484,7 @@ alone: the converter in this application's context is UTF-8 and JSON is special-
 checked rather than argued. D43 carries the detail, including the correction to its own "enforced
 twice" claim, which was true of the design and not of the estate while that CRUD endpoint was up.
 
-## WP-12 — Payments: the zero-amount booking · DONE (unmerged)
+## WP-12 — Payments: the zero-amount booking · DONE
 
 D44. Two seeded services are genuinely free, and "from ₵0" is correct rather than a bug.
 `authorizePayment` ran unconditionally, so a real provider was going to be asked to authorize 0
@@ -762,7 +771,7 @@ from a workstation. Largely defused — the production compose services were ren
 explicit container names, so a collision is impossible whatever else is on that network — but the
 question itself is still unanswered on the host.
 
-## NEW-3 — the receipt scrub is real, but its test cannot fail · DONE (unmerged)
+## NEW-3 — the receipt scrub is real, but its test cannot fail · DONE
 
 `ErasureFanout.record` replaces the login with the alias before storing the receipt, because a failed
 leg's message can name the URL it was thrown from — `/api/desk/customers/<login>/erase` — and that row
