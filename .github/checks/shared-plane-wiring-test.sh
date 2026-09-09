@@ -82,6 +82,26 @@ printf '\nControl: the committed files\n'
 d="$(fresh control)"
 if run_check "$d"; then note "green on an unmutated copy"; else bad "the check is red on the committed files"; cat "$d/out.txt" >&2; fi
 
+# THE CONTROL THAT MATTERS MOST, because it is a false positive rather than a false negative and it
+# was live: `render()` shells out with `env VAR=… docker compose`, which inherits the caller's
+# environment, so with any of the three already EXPORTED the "unset" baseline rendered the ambient
+# value and the check reported it as the compose file disagreeing with the script — red on a correct
+# tree, naming the wrong cause. Not hypothetical: CLAUDE.md tells people to export exactly these
+# three together, so whoever runs this locally is the likeliest person to have them set.
+#
+# All three, one at a time, and the network one separately from the two hostnames because they reach
+# the render through different compose constructs and could regress apart.
+printf '\nControl: an ambient HC_SHARED_* must not read as a disagreement\n'
+for amb in HC_SHARED_NETWORK=ambient-net HC_SHARED_CONSUL=ambient-consul HC_SHARED_KAFKA=ambient-kafka; do
+  d="$(fresh "ambient-${amb%%=*}")"
+  if ( export "${amb?}"; run_check "$d" ); then
+    note "green with $amb exported"
+  else
+    bad "the check is RED on a correct tree with $amb exported — it is describing its own environment as a defect"
+    grep '::error::' "$d/out.txt" >&2 || true
+  fi
+done
+
 printf '\nCompose: each half hardcoded again\n'
 d="$(fresh m1)"; sed -i 's|name: ${HC_SHARED_NETWORK:-hcnet}|name: hcnet|' "$d/compose.yml"
 expect_red "$d" "1  the network name hardcoded" 'name: hcnet' 'name: ${HC_SHARED_NETWORK' "$d/compose.yml" "still joins 'hcnet'"

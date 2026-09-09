@@ -10166,12 +10166,23 @@ nothing else. That is the shape the brief warned about and the thirteenth instan
 repository's most repeated defect class. Case 10 was the milder one: renaming the network key makes
 the file fail to render at all, so it never reached the branch it was aimed at.
 
+**Three more controls sit above the twelve, and they are false-POSITIVE controls** — added at review,
+where the second one was a live defect (§7). A check that is red on a correct tree is as useless as
+one that is green on a broken one, and worse when its message names the wrong cause. The check must
+be **green** with each of the three variables exported, one at a time; the network is asked separately
+from the two hostnames because they reach the render through different compose constructs and could
+regress apart.
+
 ### §6 What this deliberately does not do
 
-- **`deploy-dev.sh`'s `check_shared_plane` has the same membership blindness** and is not fixed here.
-  Its compose file already interpolates, so its override is *honest* rather than half-wired, and the
-  dev estate is wedged (D27's five un-killable containers) so the fix could not be exercised against
-  it in this package. Recorded as **NEW-29**, three lines and a re-embed.
+- **`deploy-dev.sh`'s `shared_plane` has the same membership blindness** and is not fixed here — and
+  the **name** matters, because the dev copy is `shared_plane` (`deploy/deploy-dev.sh:216`) while the
+  quality one is `check_shared_plane`, so a grep carried across from this decision finds nothing there
+  and reads as "already fixed". Its compose file already interpolates, so its override is *honest*
+  rather than half-wired, and the dev estate is wedged (D27's five un-killable containers) so the fix
+  could not be exercised against it in this package. Recorded as **NEW-29**, three lines and a
+  re-embed — plus a second invocation of parts 3 and 4 of the check below, which read `HC_STARTUP` and
+  default to quality alone, so without it the repaired dev copy ships with nothing guarding it.
 - **The quality stack was not restarted**, and that is a decision rather than a shortcut.
   `env_for_compose` sets `SEED_DIR="$ROOT/deploy/demo"`, so an `up` driven from this worktree would
   repoint all five live containers' seed bind mount at a directory that is about to be deleted —
@@ -10185,6 +10196,72 @@ the file fail to render at all, so it never reached the branch it was aimed at.
   run through the modified script and was green on all nine assertions, including the two through
   `http://market.healthconnect.local`.
 
+### §7 Review, and the two things it found
+
+No blocking findings. Everything the reviewer attacked held on re-measurement, and the fatal preflight
+was where the attack was aimed: `check_shared_plane` passes on the live estate; **alias differences
+cannot false-positive it**, because the template reads the `Networks` map's **keys**, which are
+network names rather than aliases, so a broker joined under any alias on `hcnet` still keys `hcnet`;
+and **a teardown cannot be wedged by it**, because `down`, `clean` and `verify` exit at the router
+before preflight — which is the property that makes fatal safe here and is the one worth worrying
+about. The fail-closed template direction, the `|| true` not moving the hole, the renamed-key refusal,
+both broker spellings, and the `--dry-run` stand-in for a restart all re-measured identically.
+
+**Should-fix, and it was a live FALSE POSITIVE: an exported `HC_SHARED_*` made the check red on a
+correct tree, blaming the wrong thing.** `render()` shells out with `env VAR=… docker compose config`,
+which **inherits the caller's environment** — so the "unset" baseline was rendering whatever the caller
+had exported, and the check reported that as the compose file disagreeing with the script:
+
+```
+clean env                          -> exit 0
+HC_SHARED_KAFKA=my-other-kafka     -> exit 1
+::error:: … quality/compose.yml renders 'my-other-kafka:9092' with it unset; they must agree
+```
+
+It was not unset, and both defaults did agree. This is not a corner: **CLAUDE.md tells people to
+export exactly these three together** — the sentence this very package made true — so the person most
+likely to run the check locally is the person most likely to trip it. It failed closed, so CI was
+never at risk; what it cost is the thing this repository keeps re-learning, an error naming a cause
+that is not the cause.
+
+Fixed with **two nested `env`s** — an outer one that unsets all three, an inner one carrying the
+caller's assignments — rather than `env -u X X=v` in one argv. POSIX says options are processed before
+assignments so the assignment does win, and it was measured winning; but it was measured on **one**
+`env` (uutils 0.8.0 here, GNU on the runner), and a check that has to be right about which coreutils
+is installed is a check resting on the wrong thing. Nesting makes the question not arise.
+
+**Watched both ways rather than reasoned.** The pre-fix check, reconstructed by deleting the outer
+`env` line and asserted to have applied: **exit 0 clean, exit 1 with `HC_SHARED_KAFKA` exported**, with
+the misleading message quoted above. The fixed check: green in both. And the genuine case is not
+blinded by the fix — the renamed-default mutant with an ambient value still set is red, and now
+correctly reports the compose file rendering `hc-shared-quality-kafka:9092` rather than the ambient
+value. Three permanent controls added to the test, one per variable.
+
+**Should-fix: both documents named a function `deploy-dev.sh` does not have.** NEW-29 and §6 said
+*"`deploy-dev.sh`'s `check_shared_plane`"*; the dev copy is **`shared_plane`** (`deploy-dev.sh:216`)
+and only the quality one carries the `check_` prefix. Every other mention in either document is about
+`quality/startup.sh` and was right. The cost is precise: the item's taker greps `deploy-dev.sh` for
+the name, finds nothing, and reads the item as stale or already fixed — and a pointer is the entire
+deliverable of a deferred item. Corrected in both, with the difference itself called out so the next
+reader does not repeat the grep.
+
+**Four optionals taken.** (1) The three probe renders are guarded like the baseline was: unguarded,
+`set -Eeuo pipefail` turns a daemon flake mid-run into an abort with three `ok` lines and no
+`::error::` — the same shape the harness caught at `s_default`, which is reason enough not to have it
+twice. (2) `one_of`'s zero-subject sentinel was `«0 values»` and routed to the *"renders more than
+one"* arm; it is `«none»` now and routes to the empty-subject message, which is the opposite fact.
+(3) **`check_shared_plane`'s refusal had three outcomes and one message.** `HC_SHARED_CONSUL=
+shared-consul` — hc-infra's own resolvable service name, the likeliest wrong value anybody will type —
+died with *"shared-consul is not running — start it with (cd hc-infra && ./startup.sh)"* while
+hc-infra was running perfectly, sending whoever read it to restart infrastructure with nothing wrong
+with it. Split into three, matching on `o such object` in docker's own message rather than on an exit
+status that is shared by "no such container" and "I could not answer". All three arms measured: the
+alias case now names the container-name rule, a throwaway `docker create`d container gives *"exists
+but is not running"*, and the unset control still passes. (4) NEW-29 says what it must extend, which
+is the real gap: parts 3 and 4 read `HC_STARTUP` and default to quality alone, deliberately and with
+the reason stated — so the day that item adds the membership line to `shared_plane`, **nothing in CI
+would notice it being removed again**.
+
 **Verified in this round, by running**: the defect reproduced first, at `91b088c`, by rendering
 `quality/compose.yml` with all three set and `cmp`-ing it against the unset render — byte-identical;
 `bash -n quality/startup.sh`; `docker compose -f quality/compose.yml config`; the unset render after
@@ -10194,7 +10271,7 @@ broker one asserted across all five app services; `check_shared_plane` lifted ou
 against the live daemon in four states, and the harness's own `die` corrected after its first version
 returned instead of exiting and reported PASS for a run that had already refused twice; the new check
 under **`bash -e`**, green and red twelve ways; `.github/checks/shared-plane-wiring-test.sh` green at
-13 assertions; `quality-pepper-persistence-test.sh` green at 40; `pepper-wiring.sh`,
+16 assertions; `quality-pepper-persistence-test.sh` green at 40; `pepper-wiring.sh`,
 `observability-claims.sh`, `signing-key-severance.sh`, and the extracted `qualitynet`,
 compose-validity, shell-parse, vhost-port, gateway-route, base-URL and brokerage steps all re-run
 green under `bash -e`; `./deploy/sync-appendices.sh --check`; `node deploy/demo/extract-seed.mjs`
@@ -10203,3 +10280,13 @@ secret files were copied in for the `--verify` run and the dry run, removed afte
 `git status --porcelain` confirmed clean before committing. **No rival broker or Consul was started,
 the quality stack was not restarted, no volume was created or dropped, nothing was published to the
 broker, and the throwaway probe network was removed.** No Java changed, so no Maven build was run.
+
+**At review**: the false positive reproduced against the committed check and re-run green against the
+fixed one, with the pre-fix check reconstructed by an asserted mutation and watched exit 0 clean and 1
+with the variable exported; the renamed-default mutant re-run **with** an ambient value to prove the
+fix blinds nothing; the zero-subject sentinel exercised by deleting every `SPRING_CLOUD_CONSUL_HOST`
+from a copy and watching the message change arm; all three refusal arms of `check_shared_plane`
+measured against the live daemon, the third against a throwaway `docker create`d container which was
+removed; and the whole test re-run at **16** assertions with the three new false-positive controls.
+The function-name correction was checked against `deploy-dev.sh:216` rather than taken from the
+review.

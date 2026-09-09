@@ -74,18 +74,32 @@ fail=0
 err() { printf '::error::%s\n' "$*"; fail=1; }
 ok()  { printf '  ok   %s\n' "$*"; }
 
+# TWO NESTED `env`s, AND THE OUTER ONE IS A BUG FIX RATHER THAN A FLOURISH. `env VAR=… docker
+# compose` inherits the caller's environment, so with any of the three already exported — which is
+# exactly what CLAUDE.md tells people to do, and what the header above documents — the "unset"
+# baseline below was rendering the ambient value and the check reported it as the compose file
+# disagreeing with the script. Red on a correct tree, with the error naming the wrong cause.
+# Reproduced with `HC_SHARED_KAFKA=my-other-kafka`.
+#
+# Nested rather than `env -u X X=v` in one argv: POSIX says options are processed before
+# assignments, so the assignment does win — measured, and measured on **one** `env` (uutils 0.8.0
+# here, GNU on the runner). A check that has to be right about that is a check resting on which
+# coreutils is installed. The inner `env` never sees a name the outer one unset.
 render() { # render <compose-file> [VAR=VAL ...]
   local f="$1"; shift
-  env "$@" JWT_BASE64_SECRET=ci-placeholder HC_PRIVACY_PEPPER=ci-placeholder TAG=ci \
-    docker compose -f "$f" config --format json
+  env -u HC_SHARED_NETWORK -u HC_SHARED_CONSUL -u HC_SHARED_KAFKA \
+    env "$@" JWT_BASE64_SECRET=ci-placeholder HC_PRIVACY_PEPPER=ci-placeholder TAG=ci \
+      docker compose -f "$f" config --format json
 }
 
 # The one distinct value of an environment key across every service that carries it. Zero services
-# and two disagreeing values are both refused, and they print differently: an empty subject is how
-# six earlier checks in this repository reported "clean" having read nothing.
+# and two disagreeing values are both refused, and they print DIFFERENTLY — an empty subject is how
+# six earlier checks in this repository reported "clean" having read nothing, and reporting it as
+# "more than one value" would describe the opposite of what happened.
 one_of() { # one_of <json> <ENV_KEY>
   printf '%s' "$1" | jq -r --arg k "$2" \
-    '[.services[].environment[$k] // empty] | unique | if length == 1 then .[0] else "«\(length) values»" end'
+    '[.services[].environment[$k] // empty] | unique
+     | if length == 1 then .[0] elif length == 0 then "«none»" else "«\(length) values»" end'
 }
 
 for pair in $PAIRS; do
@@ -107,18 +121,26 @@ for pair in $PAIRS; do
   fi
   for v in "$r_kafka" "$r_binder" "$r_consul"; do
     case "$v" in
-      "") err "$compose renders no service carrying one of the shared-plane addresses, so this check read nothing. See decisions.md D66." ;;
+      "«none»"|"") err "$compose renders no service carrying one of the shared-plane addresses, so this check read nothing about it. An empty subject is not a clean one. See decisions.md D66." ;;
       "«"*) err "$compose renders more than one shared-plane address across its services ($v). One broker, one Consul (decisions.md D27) — a per-service override is how half an estate ends up on a plane nobody chose." ;;
     esac
   done
 
   # --- 1. Each variable must move its own half, and nothing else's --------------------------------
-  m_net="$(render "$compose" "HC_SHARED_NETWORK=$P_NET" | jq -r --arg k "$NET_KEY" '.networks[$k].name // ""')"
+  #
+  # Every probe render is guarded the way the baseline above is. `set -Eeuo pipefail` is on, so an
+  # unguarded `render … | jq` in a command substitution turns a daemon flake mid-run into an ABORT —
+  # three `ok` lines, no `::error::`, and every part below silently skipped. That is the same shape
+  # this check's own test caught at `s_default`, and it is worth the four lines to not have it twice.
+  set_net="$(render "$compose" "HC_SHARED_NETWORK=$P_NET")" \
+    || { err "$compose does not render with HC_SHARED_NETWORK set, so the interpolation was not checked."; continue; }
+  m_net="$(printf '%s' "$set_net" | jq -r --arg k "$NET_KEY" '.networks[$k].name // ""')"
   [[ "$m_net" == "$P_NET" ]] \
     && ok "HC_SHARED_NETWORK moves the network $compose joins" \
     || err "with HC_SHARED_NETWORK=$P_NET, $compose still joins '$m_net'. The script inspects the network the variable names and the stack would join another, so preflight passes against a plane nothing uses. See decisions.md D66 and backlog NEW-25."
 
-  set_kafka="$(render "$compose" "HC_SHARED_KAFKA=$P_KAFKA")"
+  set_kafka="$(render "$compose" "HC_SHARED_KAFKA=$P_KAFKA")" \
+    || { err "$compose does not render with HC_SHARED_KAFKA set, so the interpolation was not checked."; continue; }
   m_kafka="$(one_of "$set_kafka" SPRING_KAFKA_BOOTSTRAP_SERVERS)"
   m_binder="$(one_of "$set_kafka" SPRING_CLOUD_STREAM_KAFKA_BINDER_BROKERS)"
   # BOTH property names, because hc-market reads the first and its binder reads the second, and
@@ -130,7 +152,9 @@ for pair in $PAIRS; do
     err "with HC_SHARED_KAFKA=$P_KAFKA, $compose renders SPRING_KAFKA_BOOTSTRAP_SERVERS='$m_kafka' and SPRING_CLOUD_STREAM_KAFKA_BINDER_BROKERS='$m_binder'; both must be '$P_KAFKA:9092'. See decisions.md D66."
   fi
 
-  m_consul="$(render "$compose" "HC_SHARED_CONSUL=$P_CONSUL" | jq -r '[.services[].environment.SPRING_CLOUD_CONSUL_HOST // empty] | unique | join(",")')"
+  set_consul="$(render "$compose" "HC_SHARED_CONSUL=$P_CONSUL")" \
+    || { err "$compose does not render with HC_SHARED_CONSUL set, so the interpolation was not checked."; continue; }
+  m_consul="$(printf '%s' "$set_consul" | jq -r '[.services[].environment.SPRING_CLOUD_CONSUL_HOST // empty] | unique | join(",")')"
   [[ "$m_consul" == "$P_CONSUL" ]] \
     && ok "HC_SHARED_CONSUL moves the Consul host in $compose" \
     || err "with HC_SHARED_CONSUL=$P_CONSUL, $compose renders SPRING_CLOUD_CONSUL_HOST='$m_consul'. See decisions.md D66."

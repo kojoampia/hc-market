@@ -168,8 +168,27 @@ check_shared_plane() {
   docker network inspect "$SHARED_NETWORK" >/dev/null 2>&1 \
     || die "the shared network '$SHARED_NETWORK' does not exist — $fix"
   for c in "$SHARED_CONSUL" "$SHARED_KAFKA"; do
-    [[ "$(docker inspect -f '{{.State.Running}}' "$c" 2>/dev/null)" == "true" ]] \
-      || die "$c is not running — $fix"
+    # THREE OUTCOMES, NOT TWO. This was one line saying "$c is not running" for all of them, and the
+    # case it misdescribed is the likeliest wrong value somebody will type: hc-infra's own compose
+    # SERVICE names, `shared-consul` and `shared-kafka`, which resolve perfectly from inside these
+    # containers and are not names `docker inspect` can find. That answered "shared-consul is not
+    # running — start it with (cd hc-infra && ./startup.sh)" while hc-infra was running fine, which
+    # sends whoever reads it to restart infrastructure that has nothing wrong with it.
+    #
+    # `2>&1` and the message, rather than the exit status, because docker uses the same status for
+    # "no such container" and "I could not answer". Matched on `o such object` so the leading N is
+    # not a case assumption about somebody else's error string.
+    local probe rc=0
+    probe="$(docker inspect -f '{{.State.Running}}' "$c" 2>&1)" || rc=$?
+    if (( rc != 0 )); then
+      case "$probe" in
+        *"o such object"*)
+          die "docker knows no container called '$c'. This value must be a CONTAINER name, because preflight execs it — a DNS alias is not enough, and hc-infra publishes its compose service names ('shared-consul', 'shared-kafka') as aliases beside the container names, so those resolve from inside a container and fail here (decisions.md D66 §2). The container names are the defaults: hc-shared-quality-consul and hc-shared-quality-kafka." ;;
+        *)
+          die "docker could not be asked about '$c': $probe" ;;
+      esac
+    fi
+    [[ "$probe" == "true" ]] || die "$c exists but is not running — $fix"
     # ON THE NETWORK THIS STACK IS ABOUT TO JOIN, which is a different question from "running" and
     # was asked by nothing until D66. Every check around it was satisfiable by a container that this
     # stack could never reach: measured against a throwaway empty network, the whole function passed

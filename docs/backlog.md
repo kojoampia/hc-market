@@ -2242,7 +2242,9 @@ whoever takes it should ask whether anything else in the project's labels points
 ## NEW-29 — `deploy-dev.sh`'s preflight cannot tell "running" from "reachable" either · READY
 
 Found by **D66** while closing NEW-25 on the quality box, and it is the same blind spot in the dev
-script's own `check_shared_plane`.
+script's own **`shared_plane`** — `deploy/deploy-dev.sh:216`, and note the name: the quality copy is
+`check_shared_plane` and this one is not, so a grep carried across from D66 finds nothing here and
+reads as "already fixed".
 
 That function asks four things — the network exists, `$SHARED_CONSUL` and `$SHARED_KAFKA` are
 running, Consul has a leader, the broker answers — and **none of them is whether those two containers
@@ -2263,6 +2265,15 @@ It was not fixed in D66 because the dev estate is **wedged** — the five un-kil
 left behind — so the change could not be exercised against a running dev stack in that package, and a
 guard nobody has watched refuse is a guard of nothing. Whoever takes it should run
 `deploy-dev.sh up --no-build --services catalog` after, which is what D27 used.
+
+**Extend `.github/checks/shared-plane-wiring.sh` in the same commit, or the dev copy ships
+unguarded.** Its parts 1 and 2 walk both pairs, but parts 3 and 4 — the export and the membership
+refusal — read `HC_STARTUP`, which defaults to `quality/startup.sh` and nothing else. That was
+deliberate and is stated in the check's own header (deploy-dev.sh has no `env_for_compose` to run),
+so the day this item adds the membership line to `shared_plane` there is **nothing in CI that would
+notice it being removed again**. Part 4 is already parameterised by `HC_STARTUP` and stubs docker, so
+the work is a second invocation and a function name, not a second check — but the function names
+differ, so the `awk` range that lifts it out has to be parameterised too.
 
 ---
 
