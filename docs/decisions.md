@@ -9782,6 +9782,13 @@ estate entirely"* is the same fact one estate along.
 name in the check: a project nothing has ever used returns an empty list **and exits zero**. See §7,
 where getting that wrong was this package's own defect.
 
+**And an EMPTY `$PROJECT` is refused rather than asked about** (added at review). Measured against the
+real daemon: `label=com.docker.compose.project=` and `name=^_` each return nothing at rc 0, so an
+empty project name reads as *first run, generate* — the defect, reached through the guard for it. It
+is unreachable today only because line 70 sets `PROJECT` unconditionally, and every published port
+above it is spelled `${X:-default}`, so the tidy-up that gives this one the same treatment is an
+ordinary edit rather than a contrivance. One line in the probe, asserted against the real daemon.
+
 ### §4 The three shapes rejected
 
 - **Detect a worktree** (`git rev-parse --git-common-dir` differing from `--git-dir`). Rejected: it
@@ -9849,7 +9856,10 @@ nothing was written before refusing"*.
 **Docker is consulted only when one of the two secrets is otherwise unknown**, so every other path
 through the function stays independent of the daemon; and when it *is* consulted and cannot answer,
 that is fatal rather than assumed empty. "Cannot tell" and "there is nothing there" are the two
-readings of an empty answer and only one of them is safe to generate a pepper on.
+readings of an empty answer and only one of them is safe to generate a pepper on. That refusal names
+**what is actually about to be invented** (corrected at review): the branch is reached with only the
+*signing key* missing too, and a message saying "rather than generating a pepper" while the pepper is
+settled sends whoever reads it hunting a pepper problem that is not there.
 
 ### §7 The check, and the fail-open that was found by mutating it
 
@@ -9866,12 +9876,14 @@ returns. Its volumes go on an `EXIT` trap and not a line at the end — the firs
 package aborted mid-section and left five behind, which the next run would have found and reported a
 stale pid as its subject.
 
-**Watched red, one mutation at a time**, each going red on the assertion that names it: the whole
-guard removed (4 red); the guard firing but treating an `up` as a teardown (6); the teardown
-persisting the pepper it invented (2); the probe asking for the label only (1); the probe dropping
-the name anchor (1); the probe forgetting the label half (1); a docker error swallowed as an empty
-answer (1). Against the **pre-fix** `startup.sh` the whole file is 10 red and 19 green — the ten new
-assertions and every pre-existing one, which is the control.
+**Watched red, one mutation at a time**, each going red on the assertion that names it, and each
+re-run against the reviewed script: the whole guard removed (5 red); the guard firing but treating an
+`up` as a teardown (6); the teardown persisting the pepper it invented (2); the probe asking for the
+label only (1); the probe dropping the name anchor (1); the probe forgetting the label half (1); a
+docker error swallowed as an empty answer (1); the probe returned to the `grep` spelling (1); the
+volume test counting instead of testing (2); the throwaway arm's invariant deleted (1); the
+empty-`PROJECT` guard removed (1). Against the **pre-fix** `startup.sh` the whole file is 10 red and
+19 green — the ten original assertions and every pre-existing one, which is the control.
 
 **And one mutation that should have been red was green, which found a real defect in this package's
 own fix.** `project_volumes` first ended `| grep -v '^$' | sort -u`; `grep -v` exits **1** having
@@ -9883,7 +9895,51 @@ the strict-direction failure this decision's §3 is about, shipped inside the fi
 and the assertion that would have caught it is there by name: *"…and says so by succeeding, not by
 failing with an empty answer"*, re-run red against the `grep` spelling.
 
-### §8 What this does not reach
+### §8 An invariant a comment asserts and no code enforces (added at review)
+
+The throwaway-pepper arm carried this sentence: *"Reaching here with volumes present means `ACTION`
+is a teardown — the branch above refused every other case."* True when written, and **a comment**.
+The condition it depends on is twenty lines up, so every way of weakening that guard — an off-by-one,
+an extra action spelled into the allow-list, a `warn` where the `die` was — converts silently into
+*starting the stack on a throwaway pepper against live `erased_subject` rows*. That is worse than the
+defect this package fixed, because the pepper is not even on disk afterwards to recover from.
+
+It is checked now, and the mutation that motivated it is real rather than imagined. The review
+reproduced a **counting** regression — `[[ -n "$volumes" ]]` rewritten as `(( … >= 2 ))`, which is the
+shape an off-by-one takes — and the whole check stayed green at 35 assertions, because §5 fed the
+fatal case exactly two volumes and every other single-volume case in the file is either a teardown or
+has a settled pepper. Both halves are fixed: a **one-volume** fatal case, and the arm's own refusal.
+
+**Measured, both layers separately**, which is the only way to know which one is doing the work:
+
+| | outcome |
+| --- | --- |
+| counting regression alone | the primary refusal is skipped, a signing key **is** written, and the arm's own `die` stops it: *"internal: about to use a throwaway erasure pepper for action 'up'"*. No pepper on disk, no stack started. Two assertions red |
+| counting regression **and** the arm's `die` deleted | `NO REFUSAL — resolve_secret returned 0`, a throwaway pepper in hand, the stack would have started against live rows. **Four** assertions red, including *"ONE volume is as fatal as five"* |
+
+So the single-volume case is what catches the regression and the invariant is what contains it, and
+neither substitutes for the other. The general shape is worth naming beside this repository's eleven
+fail-opens, because it is their close relative: **a comment asserting an invariant is not the
+invariant**, and the further the condition is from the line that relies on it, the shorter the comment's
+half-life. Where the two are in different branches of the same function, check it in both.
+
+**Its assertion is structural, and deliberately so.** The line is unreachable while the guard above
+works — that is the entire point of it — so reaching it behaviourally would mean defeating the guard
+first, and a check that defeats the thing it is checking asserts nothing. It matches the guard's own
+refusal on the line after the teardown test, comments stripped by the same `grep -vE '^[[:space:]]*#'`
+`build.yml` already uses on this file. **Not a count**: `resolve_secret` legitimately tests for a
+teardown three times — to let one past the refusal, to tolerate a conflicting environment value during
+one, and this — so a number would be opaque and would go red for two of the three reasons wrongly.
+Watched red by deleting the guard, having first asserted the deletion applied.
+
+**A harness note that is the same lesson one level up.** The first attempt at that mutation used an
+over-greedy expression, removed **both** teardown tests, orphaned a `|| die`, and produced a script
+that does not parse — so the check aborted with no output at all, which reads as *no failures*. The
+mutation harness now asserts the original is gone, the mutant is present **and `bash -n` passes**
+before believing any result. Two of this package's mutation runs reported green while having applied
+nothing; assert the mutation, not just its outcome.
+
+### §9 What this does not reach
 
 - **It is about this compose project on this host.** A second host running the same stack against a
   restored backup has volumes this daemon cannot see, and nothing here can know that.
@@ -9899,8 +9955,10 @@ failing with an empty answer"*, re-run red against the `grep` spelling.
 
 **Verified in this round, by running**: the defect reproduced first, in this worktree, before any
 change (§1); `bash -n quality/startup.sh` and `bash -n` on the check; the check under **`bash -e`**,
-green at 35 assertions and red 10 ways against the pre-fix script, plus the seven single-mutation
-runs above; the probe exercised against a **real** daemon on its own throwaway project; and the real
+green at **40** assertions and red 10 ways against the pre-fix script, plus the **eleven**
+single-mutation runs above and the two-mutation run of §8 — every one of them asserted to have
+applied, and to parse, before its result was believed; the probe exercised against a **real** daemon
+on its own throwaway project; and the real
 `./quality/startup.sh --local` run end to end **twice from this worktree**, behind a `docker` shim
 that answers reads and refuses `compose`, `run`, `pull` and every create — so nothing could start
 even if the guard had failed. The first run refused and wrote nothing; the second, with the live

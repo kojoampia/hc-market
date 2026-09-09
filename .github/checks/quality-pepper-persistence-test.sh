@@ -141,6 +141,22 @@ case "$err" in *"--clean"*) r=says ;; *) r="$err" ;; esac
 check "…and tells the operator what to do about it" "$r" "says"
 rm -rf "$s"
 
+#    ONE volume is the same answer as five, and the case exists because the assertion above could
+#    not tell. Fed two volumes and only two, a COUNTING regression passes: `[[ -n "$volumes" ]]`
+#    rewritten as `(( $(… | grep -c .) >= 2 ))` keeps every other assertion in this file green.
+#    What that costs is an `up` in a worktree against a PARTIALLY torn-down estate — one surviving
+#    volume — falling through to the generate arm, where the volumes check suppresses the *write*
+#    and not the *use*: the stack starts on a throwaway pepper against live erased_subject rows,
+#    and the pepper is not even on disk afterwards to recover from. Every other single-volume case
+#    in this file is a teardown or has a settled pepper, so none of them sees it.
+s="$(sandbox)"
+rc=0; err="$(VOLUMES="hc-market-quality_booking-data" harness "$s" 2>&1 >/dev/null)" || rc=$?
+check "ONE volume is as fatal as five" "$rc" "3"
+case "$err" in *"volumes already exist"*) r=names ;; *) r="$err" ;; esac
+check "…and refuses for the same stated reason" "$r" "names"
+check "…having written nothing" "$(ls -A "$s")" ""
+rm -rf "$s"
+
 #    A teardown is still allowed through — dropping the volumes is the remedy, and `down`/`clean`
 #    write no alias. What it must not do is write the pepper it invented down: a file here would be
 #    adopted by the next `up` in this same directory without ever asking docker again.
@@ -153,6 +169,22 @@ for a in down clean; do
   check "…and writes no pepper file" "$(ls -A "$s" | grep -c privacy-pepper || true)" "0"
   rm -rf "$s"
 done
+
+#    The generate arm re-checks the teardown itself, and THAT assertion is structural because the
+#    line is unreachable while the guard above works — which is the whole reason it is there.
+#    Reaching it behaviourally would mean defeating the guard first, and a check that defeats the
+#    thing it is checking asserts nothing.
+#
+#    It is not a count. resolve_secret legitimately tests for a teardown three times — to let one
+#    past the refusal, to tolerate a conflicting environment value during one, and this — so a
+#    number here would be opaque, and would go red for two of the three reasons wrongly. It matches
+#    the guard's OWN refusal instead, on the line after the test, with comments stripped by the same
+#    `grep -vE '^[[:space:]]*#'` build.yml already uses on this file. Deleting the guard deletes the
+#    message; rewording the message is a false red, which is the safe direction.
+guarded="$(sed -n '/^resolve_secret() {/,/^}/p' "$STARTUP" | grep -vE '^[[:space:]]*#' \
+           | grep -A1 '"\$ACTION" == "down"' | grep -c 'internal: about to use a throwaway' || true)"
+check "the throwaway-pepper arm re-checks the teardown rather than trusting the guard above" \
+  "$guarded" "1"
 
 #    An operator who has said which pepper is correct is not guessing, so the volumes are beside
 #    the point and the environment value is persisted exactly as in case 1.
@@ -245,6 +277,14 @@ else
   rc=0; DOCKER_HOST=unix:///nonexistent-hc-pepper.sock probe "$tp" >/dev/null 2>&1 || rc=$?
   check "and an unreachable daemon is an error, not an empty answer" \
     "$([[ "$rc" != 0 ]] && echo nonzero || echo "zero")" "nonzero"
+
+  #    An EMPTY project name is refused rather than asked about. Asked, the daemon answers *nothing
+  #    here* to both filters at rc 0 — measured, and the reason this is a real case rather than
+  #    defensive noise: it is indistinguishable from a first run, so an empty PROJECT would generate
+  #    a pepper against whatever is running. Unreachable while line 70 sets PROJECT unconditionally.
+  rc=0; out="$(probe "" 2>/dev/null)" || rc=$?
+  check "an empty project name is refused, not answered" \
+    "$([[ "$rc" != 0 ]] && echo nonzero || echo "zero, returned [$out]")" "nonzero"
 
   cleanup_probe_volumes; trap - EXIT
   echo "  (removed the ${tp} throwaway volumes)"

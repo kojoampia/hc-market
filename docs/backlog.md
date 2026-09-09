@@ -2187,8 +2187,13 @@ starting anything — and then had `resolve_secret` ask docker.
 - **A teardown is not refused, and no longer writes down the pepper it invented** (D65 §6) — the
   second decision, which this item did not anticipate: without it `--down` was a one-flag bypass of
   the refusal.
+- **The throwaway arm re-checks the teardown rather than inheriting it** (D65 §8, added at review).
+  Its comment asserted the invariant and nothing enforced it, so a *counting* regression in the guard
+  twenty lines up — measured, and green across all 35 assertions at the time — fell through to
+  starting the stack on a pepper that is not even written down. The refusal is one volume now, not
+  two, and the arm refuses anything that is not a teardown.
 
-`.github/checks/quality-pepper-persistence-test.sh` grew from 10 assertions to 35 and now exercises
+`.github/checks/quality-pepper-persistence-test.sh` grew from 10 assertions to 40 and now exercises
 the probe against a real daemon on a throwaway project of its own.
 
 ---

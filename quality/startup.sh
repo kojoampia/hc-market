@@ -237,7 +237,15 @@ ensure_otel_network() {
 # `rc=1`, and the caller would have died with "could not ask docker" on a brand new box. Six
 # mutations of this function went red in the check beside it and that one did not, because the
 # harness there answers for docker — which is the reason §6 of it asks the daemon itself.
+#
+# An EMPTY $PROJECT is refused rather than asked about, because both filters answer *everything is
+# fine* to it: measured against the real daemon, `label=com.docker.compose.project=` and `name=^_`
+# each return nothing at rc 0, which this function would report as "no volumes, first run, generate"
+# — the defect, reached through the guard for it. Unreachable today only because line 70 sets
+# PROJECT unconditionally; every port above it is spelled `${X:-default}`, so the tidy-up that gives
+# this one the same treatment is a plausible edit and this costs a line.
 project_volumes() {
+  [[ -n "${PROJECT:-}" ]] || return 2
   local by_label by_name
   by_label="$(docker volume ls -q --filter "label=com.docker.compose.project=$PROJECT")" || return 2
   by_name="$(docker volume ls -q --filter "name=^${PROJECT}_")" || return 2
@@ -261,8 +269,13 @@ resolve_secret() {
   [[ -n "${JWT_BASE64_SECRET:-}" || -s "$f" ]] || key_unknown=1
   [[ -n "${HC_PRIVACY_PEPPER:-}" || -n "$on_disk" ]] || pepper_unknown=1
   if (( key_unknown || pepper_unknown )); then
+    # Named for what is actually about to be invented, because this branch is reached with only the
+    # signing key missing too — and a refusal that says "rather than generating a pepper" while the
+    # pepper is settled sends whoever reads it looking for a pepper problem that is not there.
+    local subject="a signing key"
+    if (( pepper_unknown )); then subject="an erasure pepper"; fi
     volumes="$(project_volumes)" \
-      || die "could not ask docker which volumes the '$PROJECT' compose project has, and that is the only question that tells a first run apart from another checkout of this same stack (decisions.md D65). Refusing rather than generating a pepper. Start docker and try again."
+      || die "could not ask docker which volumes the '$PROJECT' compose project has, and that is the only question that tells a first run apart from another checkout of this same stack (decisions.md D65). Refusing rather than generating $subject without knowing which this is. Start docker and try again."
   fi
   if (( pepper_unknown )) && [[ -n "$volumes" ]]; then
     # A teardown is allowed through for the same reason a conflicting environment value is, below:
@@ -336,10 +349,17 @@ resolve_secret() {
     HC_PRIVACY_PEPPER="$on_disk"
   else
     HC_PRIVACY_PEPPER="$(head -c 32 /dev/urandom | base64 -w0)"
-    # Reaching here with volumes present means ACTION is a teardown — the branch above refused
-    # every other case. Compose needs something to interpolate and nothing is going to start, so a
-    # throwaway value is enough; writing it down is what must not happen. See D65.
+    # Reaching here with volumes present means ACTION is a teardown — the branch above refused every
+    # other case. That sentence was a COMMENT and nothing checked it, which is this repository's own
+    # recurring shape: an invariant a comment asserts and no code enforces (D65 §8). It is inherited
+    # from a condition twenty lines up, so any future edit there — an off-by-one, an extra action
+    # spelled into the allow-list, a `warn` where the `die` was — converts silently into *starting
+    # the stack on a throwaway pepper against live erased_subject rows*, which is worse than the
+    # defect this package fixed because the pepper is not even on disk to recover afterwards.
+    # Checked here, so that edit is a loud stop instead.
     if [[ -n "$volumes" ]]; then
+      [[ "$ACTION" == "down" || "$ACTION" == "clean" ]] \
+        || die "internal: about to use a throwaway erasure pepper for action '$ACTION' against the existing '$PROJECT' volumes. Only a teardown may reach this line — the refusal above is supposed to have stopped every other action — so the guard in resolve_secret has been weakened or bypassed. This is a defect in quality/startup.sh, not something you have done wrong; see decisions.md D65."
       warn "no erasure pepper here, so this teardown uses a throwaway one and does NOT write it down"
       warn "(a file written now would be adopted, unquestioned, by the next 'up' in this directory)"
     else
