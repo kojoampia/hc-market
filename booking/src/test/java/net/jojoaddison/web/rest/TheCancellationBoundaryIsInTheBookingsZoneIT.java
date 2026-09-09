@@ -41,10 +41,12 @@ import org.springframework.transaction.annotation.Transactional;
  * MarketCalendar} is a copied-and-diffed file (D51) and giving this one resource a clock is a change
  * to a different question. So the appointments are anchored to the top of the current UTC hour and
  * placed <strong>hours away from the 24-hour boundary</strong> in both spellings, and each case
- * asserts a verdict the UTC spelling gets backwards. No margin here is under six hours.
+ * asserts a verdict the UTC spelling gets backwards. <strong>No margin here is under four hours</strong>
+ * — the narrowest is {@code westOfUtcIsFree}'s, at four hours one side and six the other — against a
+ * worst-case drift of the sub-hour truncation plus one request's latency.
  *
- * <p>{@code Pacific/Kiritimati} (+14) and {@code Pacific/Honolulu} (-10) are 24 hours apart, observe
- * no daylight saving, and are neither of them {@code Africa/Accra} — which is GMT with no offset, so
+ * <p>{@code Pacific/Kiritimati} (+14) and {@code Pacific/Honolulu} (-10) are 24 hours apart, keep a
+ * fixed offset today, and are neither of them {@code Africa/Accra} — which is GMT with no offset, so
  * a booking in the estate's own zone cannot distinguish either implementation.
  */
 @IntegrationTest

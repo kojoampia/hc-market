@@ -955,7 +955,7 @@ time.**
   wrong for the one case the ratification exists for, which is the trap this family spent five
   packages avoiding, and `MARKET_ZONE` appears on this path in exactly one place: the fallback for a
   `zone_id` tzdb cannot read, which without it would make a booking impossible to **cancel** as well
-  as to preview. Nothing moved for any existing booking — `zone_id` is not-null with **no column
+  as to preview — a read-side stand-in, not a licence to store an unparsed zone, which is **NEW-20**. Nothing moved for any existing booking — `zone_id` is not-null with **no column
   default** (D55 and the backlog both said otherwise), written once from the offering and never
   recomputed, and all 298 rows on quality say `Africa/Accra`. A CI check bans `ZoneOffset` **and
   `MARKET_ZONE`** on any line reading `getScheduledTime()` in any service, because the tests cover the

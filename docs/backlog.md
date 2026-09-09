@@ -54,7 +54,8 @@ person, not on engineering. `WON'T` — considered and deliberately not done, wi
 | **NEW-16** | The receipt strikes its split to the day and the ledger to the instant | DONE | D56 — `at` (an `Instant`) beside `on`, **both sent**, `at` preferred, and neither present is a **400** rather than `Instant.now()`. `on` stays because a new booking calling an old payout would otherwise fall through to that service's own clock — NEW-13 rebuilt one service over. The two selectors are merged into `BrokerageTerms` with an explicit tie-break (newest `id`), closing a non-determinism neither copy could see. First tests for an endpoint that had none: 10 ITs through the real binder, **7 red first**; one CI check, all five assertions watched firing — and running it found the check itself was banning a correct `Instant.now()` |
 | **NEW-17** | The five generated Kafka sample resources are unauthenticated write endpoints | READY | D54 — `POST /api/healthconnect-<service>-kafka/publish` in all four services **and the gateway**, generated, no `@PreAuthorize`, gateway-routed. What it actually does on a running estate is **unestablished**: the binding and `auto-create-topics` live in `application-kafka.yml` and the `kafka` profile is active nowhere, so it is a `StreamBridge` dynamic destination against an unconfigured binding. Closing it also deletes **five ITs that currently assert the hole works** (`producesMessages`, expecting 200). NEW-15's CI check is entity-derived and **cannot** reach this family; a second `web/rest`-derived check is the answer |
 | **NEW-18** | Nothing can create a `BrokerageConfig`, and payout cannot price a booking without one | DONE | D57 — **shape (2), the seeded-once row**, argued against a Liquibase changeset (a rate is not schema, and a changeset cannot read the environment, so it *forces* a code constant) and against the append-only `ROLE_BROKERAGE` resource (**it bootstraps nothing** — a fresh estate still waits on a person, and the deploy check would then fail a healthy stack). `BrokerageBootstrap` writes one row into an **empty** table on every environment including `prod`, at `SmartLifecycle` phase `MIN_VALUE` so the consumer's container cannot start first. The founding values are code constants the environment **may** override — so nothing can be got wrong by omission, and a malformed one refuses startup. `effectiveFrom` is `Instant.EPOCH` and is deliberately *not* an input: it is the one field where a well-formed wrong value brings the defect back. The seed no longer writes or deletes the row at all. Preflight shipped with the remedy, never before it — and its first version was **wrong**, found by an actual `prod` boot: reading the aggregate `/management/health` would have rolled back a healthy stack whenever the Kafka binder was down. It reads `brokerage.termsInForce` from `/management/info` instead. 24 unit tests plus 4 IT cases, every guarded thing mutated separately; one CI check, watched firing six ways including on a comment |
-| **NEW-19** | Two sites convert an appointment with `ZoneOffset.UTC` and ignore `Booking.zoneId` | DONE | D58 — both read `booking.getZoneId()` now, and the **two sites are one derivation**: `cancellationPreview` already called `isLate` while computing the same instant a second time, so the resource asks `BookingWorkflow.scheduledAt` for it. The decision the item reserved is **answered by construction, re-established rather than inherited**: `zone_id` is `NOT NULL` with **no column default** (the item and D55 both say otherwise), written at exactly one live site and never recomputed, so no in-flight booking's quoted boundary moves and nothing needed migrating. A zone tzdb cannot read falls back to `MARKET_ZONE` with a WARN rather than making a booking impossible to cancel. 9 tests east and west of UTC, both sites **mutated separately** — the resource alone is red at the endpoint while every unit test stays green. One CI check, watched firing three ways, for the third site no test can cover |
+| **NEW-19** | Two sites convert an appointment with `ZoneOffset.UTC` and ignore `Booking.zoneId` | DONE | D58 — both read `booking.getZoneId()` now, and the **two sites are one derivation**: `cancellationPreview` already called `isLate` while computing the same instant a second time, so the resource asks `BookingWorkflow.scheduledAt` for it. The decision the item reserved is **answered by construction, re-established rather than inherited**: `zone_id` is `NOT NULL` with **no column default** (the item and D55 both say otherwise), written at exactly one live site and never recomputed, so no in-flight booking's quoted boundary moves and nothing needed migrating. A zone tzdb cannot read falls back to `MARKET_ZONE` with a WARN rather than making a booking impossible to cancel. 9 tests east and west of UTC, both sites **mutated separately** — the resource alone is red at the endpoint while every unit test stays green. One CI check, watched firing three ways, for the third site no test can cover. Reviewed 2026-09-09, three non-blocking findings, all applied — the sharpest being a **pre-existing** test whose fixture set no zone and so began routing ten assertions through the new fallback. Opened **NEW-20** for the write side |
+| **NEW-20** | A booking stores whatever zone the catalogue hands it, and nothing parses it | READY | D58 — `CustomerBookingResource.zoneOf:546` passes `offering.zoneId()` through verbatim and defaults only null/blank, so a garbage zone is **stored** and afterwards read as Accra for ever, WARN-only, on the late-cancellation boundary. D58's read-side fallback keeps that from being an outage; validating at **capture** is what would make it dead code, and it is a change to what `POST /api/bookings` accepts — D22's territory, its own decision (parse-or-default, or refuse). Not reachable today: catalog has no write path for `Professional.zoneId` either, so every zone in the estate comes from a seeder |
 
 ---
 
@@ -1684,6 +1685,40 @@ produce a different instant. It becomes real with the first professional onboard
 that point it is a wrong late-cancellation boundary on a live booking rather than a rendering slip. Same
 argument D51 made for `ledger.earned_on`: the cheapest moment to fix a zone defect is while every zone
 is the same.
+
+---
+
+## NEW-20 — A booking stores whatever zone the catalogue hands it, and nothing parses it · READY
+
+Opened by **D58**'s review, and deliberately not fixed there. `CustomerBookingResource.zoneOf:546`
+returns `offering.zoneId()` unchanged whenever it is neither null nor blank, so whatever string
+catalog puts in a professional's `zoneId` is written into `booking.zone_id` — a `varchar(64)` with no
+parse, no check constraint and no enum behind it.
+
+**What that costs, precisely.** D58 made `BookingWorkflow.scheduledAt` read that column, with a
+fallback to `MARKET_ZONE` for a value tzdb cannot read. The fallback is the right read-side answer —
+the alternative is a 500 on `/cancellation-preview` *and* on `POST /cancel`, so a booking nobody can
+cancel — but it means an unreadable zone is **stored once and mis-read for ever afterwards**, at WARN,
+on the boundary that decides a 50% late-cancellation fee. Correcting the value at capture is loud,
+costs nobody a committed booking, and would make the read-side fallback genuinely dead code rather
+than a live path nothing can reach on purpose.
+
+**Why it is its own package.** It changes what `POST /api/bookings` accepts, which is D22's
+territory: the choice is parse-or-default (quiet, and the zone silently becomes Accra for a
+professional who is not in Accra) or refuse (loud, and a catalogue row nobody has validated can then
+block a booking). That is a decision with a customer-facing failure mode either way, and D58
+deliberately did not take it while fixing a read.
+
+**Not reachable today, and that is why it is cheap.** Catalog has no write path for
+`Professional.zoneId` — the deleted `ProfessionalResource` was the only one, and `CatalogSeeder` is
+the sole writer — so every zone in every estate is the seeder's `Africa/Accra`, all 298 booking rows
+on quality included. It becomes reachable the day catalog grows professional onboarding, which is
+also the day a professional outside GMT becomes possible, so this and D58's own trigger are the same
+day.
+
+Whoever takes it should put the same question to `catalog` in the same pass: a zone written there is
+what a booking copies, so validating only the copy leaves the source wrong and the profile screen
+rendering it.
 
 ---
 

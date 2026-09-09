@@ -7739,8 +7739,10 @@ Neither branch is reachable from anything this estate has written — catalog ha
 endpoint. Both use `Pacific/Kiritimati` (+14) and `Pacific/Honolulu` (-10): a fixture in
 `Africa/Accra` cannot distinguish an implementation that reads the booking's zone from one that
 inherits UTC, and **one** zone cannot either, because at some hours an eastward zone agrees with
-UTC's verdict by accident. Both zones are DST-free and always have been, so the asserted instants
-cannot move under a tzdb update. The unit test's instants are anchored in 2026 against a fixed
+UTC's verdict by accident. Both have kept a fixed offset for decades and observe no daylight saving
+in 2026, so no asserted instant depends on a transition rule — *not* that their histories are empty,
+which is false of Honolulu (1933, and war time 1942–45) and was the first spelling here. The unit
+test's instants are anchored in 2026 against a fixed
 `now` no real clock will be at; the IT cannot anchor — `cancellationPreview` reads `Instant.now()`
 and there is no seam, since `MarketCalendar` is a copied-and-diffed file and giving one resource a
 clock is a different question — so it places every appointment at least four hours from the 24-hour
@@ -7753,10 +7755,24 @@ guarded" from "one site guarded":
 | --- | --- | --- |
 | `scheduledAt` back to `.toInstant(ZoneOffset.UTC)` | **4 of 6 red** — the Accra and unreadable-zone cases stay green, correctly: Accra *is* UTC | **3 of 3 red** |
 | the resource given back its own local UTC conversion, workflow left correct | 6 of 6 green | **3 of 3 red** |
+| the `zoneOf` fallback removed, both call sites correct | **1 of 6 red** — `anUnreadableZoneFallsBack` alone; `BookingWorkflowLateCancellationTest` stays 7 of 7 | not run |
 | neither (as shipped) | 6 green | 3 green |
+
+**The first row is two invocations, not one**, and a reader reproducing it needs to know: `verify`
+halts at surefire, so the IT column was obtained from a second run with the surefire selection muted
+(`-Dtest=SecurityUtilsUnitTest -Dit.test=…`). Nothing in the table is a single command's exit status,
+which is the point of it.
 
 The second row is the one that matters: it is the state the estate was in for the whole of D55's
 window, and it is red at the endpoint while every unit test agrees the derivation is right.
+
+**The third row is a coverage change this package introduced and then closed** (the review's finding).
+`BookingWorkflowLateCancellationTest.at()` set no `zoneId`, so once `scheduledAt` read one, **ten** of
+that class's assertions were reaching the right answer through the fallback and a WARN — a class whose
+subject is the *window* silently exercising the *stand-in*, correct only because Accra is UTC. The
+fixture now says `Africa/Accra`: 7 of 7 green with **zero** WARNs, measured before and after. That is
+what makes the third row meaningful, and it was measured after the fixture was fixed — with the
+fallback removed, the only red case in the estate is the one whose subject it is.
 
 ### The CI check, and what it is for
 
@@ -7784,13 +7800,26 @@ scanned.
   `Africa/Accra`.
 - **Verified at source**: two `Booking` constructors in `booking/src/main`, one `setZoneId` on the
   entity and no caller outside the builder, no caller of the generated `BookingService` anywhere.
-- **Verified by running**: `./mvnw clean verify` in booking on JDK 25 — 118 ITs and the full unit
-  suite green, checkstyle 0, modernizer silent. Both new classes appear in the reports of that clean
-  run rather than only of a targeted one.
-- **Verified by running**: all three mutation rows above, each observed red and green.
+- **Verified by running**: `./mvnw clean verify` in booking on JDK 25 — **205 unit + 118 IT**, zero
+  failures, checkstyle 0, modernizer silent. Both new classes appear in the reports of that clean run
+  rather than only of a targeted one.
+  **Two runs of that gate failed on this workstation and neither was this change**: the generated
+  `CucumberTest` could not load its context because Testcontainers' `postgres:18.4` exceeded its
+  60-second `database system is ready to accept connections` wait, twice, at load average ~15 with 44
+  containers up. Run alone the same class passed — in 330 seconds, having logged one timeout and
+  retried. No `src/main` file differed between the red and the green runs. Worth knowing before
+  reading a red booking gate here as a regression.
+- **Verified by running**: all four mutation rows above, each observed red and green, plus the
+  fixture's before/after — 10 fallback WARNs from `BookingWorkflowLateCancellationTest` before, 0
+  after, 7 of 7 green either way.
 - **Assumed**: that no estate holds a booking with a zone outside tzdb. Argued from there being no
   write path rather than measured beyond the 298 quality rows; the fallback exists precisely because
   the argument is about today's writers and the column outlives them.
+  **The write side is where that assumption should stop being needed, and it is NEW-20** rather than
+  a line in this package: `CustomerBookingResource.zoneOf` passes catalog's `offering.zoneId()`
+  through verbatim, defaulting only null and blank, so a garbage zone would be **stored** and then
+  read as Accra for ever afterwards on a money boundary. Validating at capture is a change to what
+  `POST /api/bookings` accepts, which is D22's territory and its own decision to take.
 - **Not exercised: the case this is for.** No professional has been onboarded outside GMT, no estate
   holds a non-Accra booking, and this change is therefore unobservable on every running box — which
   is the same reason it was cheap to make. What can be observed is that nothing moved: the seeded

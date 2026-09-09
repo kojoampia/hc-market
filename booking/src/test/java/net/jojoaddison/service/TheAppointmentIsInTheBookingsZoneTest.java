@@ -25,9 +25,10 @@ import org.junit.jupiter.api.Test;
  * verdict by accident. So the fixtures sit on both sides, and each asserts a verdict that the UTC
  * spelling gets <em>backwards</em> rather than merely a different instant.
  *
- * <p>{@code Pacific/Kiritimati} (+14) and {@code Pacific/Honolulu} (-10) observe no daylight saving
- * and never have, so the instants asserted below cannot move under a tzdb update — which a zone with
- * DST rules could do without anything here being wrong.
+ * <p>{@code Pacific/Kiritimati} (+14) and {@code Pacific/Honolulu} (-10) have kept a fixed offset for
+ * decades and observe no daylight saving in 2026, so the instants asserted below do not depend on a
+ * transition rule — which a zone with live DST could move under a tzdb update without anything here
+ * being wrong. Neither claim is that their history is empty: Honolulu's is not.
  *
  * <p>The clock is a fixed {@code Instant} in 2026 passed to {@code isLate}, never a real one, and the
  * appointments are anchored dates rather than offsets from now: nothing here can agree with a wrong
