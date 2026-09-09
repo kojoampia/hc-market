@@ -1055,6 +1055,126 @@ jobs:
           [ "$fail" -eq 0 ] && echo "ok   $scanned files scanned — every appointment is read in its own booking's zone"
           exit "$fail"
 
+      # …and the other half of the same column: a zone may not be STORED without being parsed —
+      # decisions.md D60, backlog NEW-20.
+      #
+      # The check above says an appointment is read in the booking's own zone. That is only worth
+      # having if the column can be read at all: `zone_id` is a varchar(64) with no parse, no check
+      # constraint and no enum behind it, and until D60 CustomerBookingResource put whatever string
+      # catalog's card carried straight into it. BookingWorkflow.scheduledAt then reads it as
+      # Africa/Accra for ever, at WARN, on the boundary that decides a 50% late-cancellation fee.
+      #
+      # WHAT THIS CATCHES THAT THE TESTS DO NOT. TheZoneACatalogueOffersIsParsedAtCaptureTest and
+      # …IT go red if the derivation or the one live capture site regresses, each mutated separately.
+      # Neither can see a SECOND writer — and this item exists because the day catalog grows
+      # professional onboarding is the day a `.setZoneId(request.zoneId())` appears in a service that
+      # has never had one, with no test anywhere yet written to be red about it. NEW-20 names that
+      # day as its own trigger, so the check scans CATALOG as well as booking, and all five while it
+      # is there: adding a clean service is free, and not scanning one is how catalog's four implicit
+      # zones got in (D52).
+      #
+      # A WRITE, NOT A READ. The pattern is `.zoneId(` with an argument, or `.setZoneId(`. The bare
+      # no-argument accessor is how CatalogClient reads the professional's card and is none of this
+      # check's business — matching it would make the fix "stop reading the field", which is absurd
+      # in a way that gets checks disabled.
+      #
+      # …AND `.zoneId(` AT END OF LINE, which is the TENTH fail-open in this family and was found by
+      # D60's review rather than by writing it. `\.zoneId\([^)]` needs a non-`)` character on the SAME
+      # LINE, so a wrapped fluent write is invisible — measured, both spellings:
+      #
+      #   .zoneId(raw);         matches = 1
+      #   .zoneId(\n  raw);     matches = 0        <- planted in catalog, check stayed GREEN at
+      #                                              "530 files scanned, 5 zone writes", not even
+      #                                              counting the planted write
+      #
+      # `.setZoneId(` was already immune (no `[^)]` in that half), so this was specific to the builder
+      # form — and PRETTIER FORMATS JAVA HERE, so a long argument expression is wrapped into exactly
+      # that shape with no intent to evade whatsoever. The third alternation closes it. A legitimately
+      # wrapped `.zoneId(\n  CapturedZone.of(...))` is now RED, which is fail-closed and deliberate:
+      # keep the write on one line, which every write in the tree already is (the shipped capture site
+      # is 82 characters against prettier's printWidth of 140, so nothing here is near wrapping).
+      #
+      # THE SERVICE LIST IS ENUMERATED, NOT DERIVED, and that is worth saying plainly because the
+      # habit in this file is the opposite and a reader will assume it. `for svc in booking catalog
+      # messaging payout gateway` is a hardcoded five, so a SIXTH service would be silently unscanned.
+      # Accepted rather than fixed: there is no cheap source to derive it from (no aggregator pom, no
+      # reactor — the five are standalone Maven projects), and every failure mode that exists TODAY is
+      # loud. A missing directory errors per service; `scanned=0` exits 1; `writes=0` exits 1; a
+      # missing stripper or a missing CapturedZone.java exits 1. So it cannot pass having scanned
+      # nothing — only fail to scan a service that does not exist yet, which is the same bound its
+      # siblings here accept.
+      #
+      # THREE ALLOWANCES, each argued rather than convenient, and each a token that must appear on
+      # the SAME line (comments stripped first, so prose naming CapturedZone cannot satisfy it —
+      # measured):
+      #   CapturedZone     the parse. The only route by which a value off a wire may reach a column.
+      #   DEFAULT_ZONE_ID  a seeder's compile-time constant. TheSeededZoneIsAZoneUnitTest, in booking
+      #                    AND in catalog, asserts each is a zone tzdb can read — which is what makes
+      #                    this an allowance rather than a hole.
+      #   this.setZoneId(  the generated entity's own builder delegating to its own setter.
+      #
+      # AND TWO FAIL-OPENS CLOSED BY HAND, because this family's checks fail by finding nothing:
+      # CapturedZone.java must exist (renamed, every error message points at nothing and the
+      # allowance quietly stops matching), and the sweep must find at least one write in the whole
+      # estate (rename the field and five clean services is indistinguishable from five correct
+      # ones). Watched firing six ways: the resource swept back to the raw string, that same line
+      # with a comment naming CapturedZone beside it, a new writer planted in catalog, the stripper
+      # removed, CapturedZone renamed away, and the accessor renamed across all five files.
+      - name: A zone may not be stored without being parsed
+        run: |
+          fail=0
+          # The shared stripper must EXIST, for the reason every other caller here states: absent,
+          # `awk -f` errors, nothing is matched, and this reports ok having read nothing (D56's review).
+          [ -f .github/checks/strip-comments.awk ] || { echo "::error::.github/checks/strip-comments.awk is missing — this check would strip nothing, match nothing and pass. See decisions.md D56."; exit 1; }
+          # The capture parser must exist. This check's whole remedy is "go through it", so a rename
+          # would leave every error message pointing at nothing while the allowance silently stopped
+          # matching.
+          capture=booking/src/main/java/net/jojoaddison/service/CapturedZone.java
+          [ -f "$capture" ] || { echo "::error::$capture is gone or renamed — nothing parses a zone at capture any more, and this check keys on that name. See decisions.md D60."; exit 1; }
+          # …and the one live capture site must still go through it. The sweep below cannot see this:
+          # a resource that resolved the zone into a local variable first would satisfy every
+          # allowance while storing whatever the catalogue sent.
+          resource=booking/src/main/java/net/jojoaddison/web/rest/CustomerBookingResource.java
+          if ! awk -f .github/checks/strip-comments.awk "$resource" | grep -qF 'CapturedZone.of('; then
+            echo "::error file=$resource::POST /api/bookings no longer parses the professional's calendar at capture — a zone tzdb cannot read would be stored and misread on the late-cancellation boundary for ever. See decisions.md D60."
+            fail=1
+          fi
+          scanned=0
+          writes=0
+          for svc in booking catalog messaging payout gateway; do
+            dir="$svc/src/main/java/net/jojoaddison"
+            [ -d "$dir" ] || { echo "::error::$dir does not exist — this check would scan nothing and pass. See decisions.md D60."; fail=1; continue; }
+            while IFS= read -r f; do
+              # An empty find yields one EMPTY line through a here-string, not none.
+              [ -z "$f" ] && continue
+              scanned=$((scanned + 1))
+              hits=$(awk -f .github/checks/strip-comments.awk "$f" | grep -nE '\.zoneId\([^)]|\.zoneId\([[:space:]]*$|\.setZoneId\(' | cut -d: -f1)
+              for n in $hits; do
+                writes=$((writes + 1))
+                line=$(awk -f .github/checks/strip-comments.awk "$f" | sed -n "${n}p")
+                case "$line" in
+                  *CapturedZone*|*DEFAULT_ZONE_ID*|*this.setZoneId\(*) continue ;;
+                esac
+                # The original line, not the stripped one — quote what is written.
+                echo "  $f:$n:$(sed -n "${n}p" "$f")"
+                echo "::error file=$f::a zone is written here without being parsed — a varchar(64) that tzdb cannot read is stored once and misread for ever on the late-cancellation boundary. Go through CapturedZone (booking) or a constant a test asserts. See decisions.md D60, backlog NEW-20."
+                fail=1
+              done
+            done <<< "$(find "$dir" -name '*.java' -type f | sort)"
+          done
+          if [ "$scanned" -eq 0 ]; then
+            echo "::error::no Java file was scanned — this check is now blind. See decisions.md D60."
+            exit 1
+          fi
+          # And the sweep itself must still match something. Renaming the field would leave every
+          # service clean by finding nothing at all, which is this family's recurring fail-open.
+          if [ "$writes" -eq 0 ]; then
+            echo "::error::no zone write was found in any service — the accessor has been renamed and this check is scanning for a name nothing uses. See decisions.md D60."
+            exit 1
+          fi
+          [ "$fail" -eq 0 ] && echo "ok   $scanned files scanned, $writes zone writes — every one of them parses or is a checked constant"
+          exit "$fail"
+
       # The moment a rate is struck at travels on the event, so both ends must spell it the same way —
       # decisions.md D53, backlog NEW-13.
       #

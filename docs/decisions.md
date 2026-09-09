@@ -8193,3 +8193,291 @@ does not answer and that the service is nonetheless serving.
   publishing junk onto a broker four products share to prove that publishing junk onto it is possible
   is not a trade worth making — D54's reasoning about repricing a live estate, one door over.
 - **Not exercised: production.** Nothing here has ever been deployed there.
+
+## D60 — A calendar is parsed before it is stored, and an absent one is not the same fault as a wrong one
+
+Backlog **NEW-20**, opened by D58's review and deliberately not fixed there. **`main` ended at D59
+when this began and there were no open pull requests** — `gh pr list --state open` answered nothing
+and `git log -1` on `main` answered `5c26275`, checked rather than assumed, for the reason D58 states:
+taking a number held on an unmerged branch is what cost the WP-19/Paystack pair a renumber.
+**This is D60.**
+
+### The defect, as it stood
+
+`CustomerBookingResource.zoneOf` returned `offering.zoneId()` unchanged whenever it was neither null
+nor blank, so whatever string catalog put on a professional's card was written into `booking.zone_id`
+— a `varchar(64)` with **no parse, no check constraint and no enum behind it**.
+
+D58 then made `BookingWorkflow.scheduledAt` read that column, with a fallback to `MARKET_ZONE` for a
+value tzdb cannot read. That fallback is the right read-side answer and is untouched here: without it
+an unreadable zone is a 500 on `/cancellation-preview` **and** on `POST /cancel`, so a booking nobody
+can cancel. But it means an unreadable zone was **stored once and mis-read for ever afterwards**, at
+WARN, on the boundary that decides a 50% late-cancellation fee.
+
+### The decision: refuse the unreadable, keep defaulting the absent
+
+The item framed the choice as parse-or-default *or* refuse, and said either has a customer-facing
+failure mode. **Both are true, and they are true of different inputs — which is the decision.**
+
+| What the catalogue sends | Answer | Why |
+| --- | --- | --- |
+| nothing at all (`null`) | `Africa/Accra`, 201, unchanged | a catalogue one release behind sends no `zoneId` field. Booking and catalog roll independently, which is the deployment D56 keeps payout's `on` parameter for. Refusing here fails **every booking in the estate** over an empty field, and Ghana is UTC+0 all year so nothing is wrong today |
+| blank or whitespace | `Africa/Accra`, 201 | the same fault wearing a different type — an empty column, a trimmed default |
+| a readable zone | stored, in its own canonical spelling | this is what `Booking.zoneId` exists for (D21, ratified D55). A capture that "corrected" a real professional's calendar would be a worse defect than the one being closed |
+| a non-blank value tzdb cannot read | **502, and no booking** | not skew: **no release of catalog produces it.** It can only be a row somebody wrote wrong |
+
+**Absent is a state; unreadable is an error.** That distinction is not invented here — D50 makes
+exactly it for a payment secret, where an *absent* one leaves the provider offered and a *mis-prefixed*
+one is refused at both doors. This is the same call one service along.
+
+**Refusing the unreadable is this estate's precedent and the item said so.** D45 refuses a provider
+name it does not offer, D50 a currency and a `pk_` secret, D57 a commission rate written as `12`
+rather than `0.12` — all rather than guessing, all on values that decide money. So does D22, which is
+this endpoint's own rule: a request that disagrees with the catalogue is 409, an unreachable catalogue
+is 503, never a guess. `zone_id` is the last free text on this path that ends up deciding money, and
+it was the one field getting latitude.
+
+**And the argument for the other shape, on its own terms.** Parse-or-default is quiet, and quiet is
+what recommends it: nobody is ever turned away, and on today's estate — where Ghana is UTC+0 and every
+zone in every database is `Africa/Accra` — it is indistinguishable from refusing. Its cost is that it
+is indistinguishable *for ever*: a professional in Lagos whose row says `africa/accra` gets bookings
+silently recorded in the marketplace's calendar, their late-cancellation boundary is out by an hour,
+the estate holds no record of what their calendar actually was, and **nothing anywhere disagrees with
+anything**. That is the same shape as D22's mispriced booking and D28's misdelivered one, and both
+were closed the same way. A refusal is loud, is attributable to one professional's row, blocks nobody
+else, and is corrected by an `UPDATE`.
+
+The real risk in refusing is the one the item names: a catalogue row nobody has validated blocking a
+booking outright. It is bounded here in a way worth writing down — the refusal is per *professional*,
+not per estate, because the value is read per professional; the absent case, which is the one a bad
+deploy produces wholesale, does not refuse at all; and it is **unreachable today**, so this cannot
+break a booking that works.
+
+### The two shapes the item did not name, and why neither is the answer
+
+**Validate at catalog's write side, so a bad value never reaches booking.** Rejected as *the* answer,
+and the reason is a fact rather than a preference: **catalog has no write path for
+`Professional.zoneId` at all.** `ProfessionalResource` is deleted (CLAUDE.md's delete table), the
+generated `ProfessionalService` has no caller anywhere in the service, and `CatalogSeeder:169` is the
+sole writer. A validating boundary there would be a guard on a door that does not exist — untested by
+construction, and drifting from whatever door is eventually built. It is also the wrong dependency:
+D22's rule is that booking establishes for itself anything it will trust with money, and the
+late-cancellation boundary is read from *booking's* column. Catalog validating its own writes would be
+welcome and would not remove one line of this.
+
+What catalog got instead is proportionate to what catalog actually has: **`TheSeededZoneIsAZoneUnitTest`
+asserts its sole writer's constant is a zone tzdb can read** (booking has the twin, for `BookingSeeder`),
+and — the part that matters more — **the CI check scans catalog too**, so the day catalog grows
+professional onboarding, the `setZoneId` that comes with it is red and points at this decision. NEW-20
+names that day as its own trigger.
+
+**Catalog refusing to *serve* an unreadable zone.** Rejected: it turns a public profile screen into a
+500 over a field that screen does not spend money on — the loud failure mode with none of the benefit
+— and booking refuses at capture regardless.
+
+**Parse-or-default with a loud signal at capture.** The closest rejected option, and worth stating
+because it is the one a reviewer would propose. It keeps the booking and logs an ERROR. But the log is
+the only place the fact exists: the row is already wrong, the customer has already been quoted a
+boundary derived from a calendar that is not their professional's, and nobody reading that log can tell
+what the zone *should* have been. A signal that arrives after the irreversible write is a receipt, not
+a control. **Where this estate wants both, it already has both** — the refusal here *is* accompanied by
+an ERROR naming the professional and the value, because the row still has to be corrected.
+
+### What happens to the read-side fallback — answered, not left to inference
+
+**It stays, unchanged, and it is neither dead code nor defence-in-depth theatre. It is a live path for
+rows this service did not write.** Stated explicitly on `BookingWorkflow.zoneOf` as well as here,
+because a branch nothing seems to reach is exactly what a future reader deletes or misreads:
+
+- **Every booking that already exists.** 302 rows on the quality box the day this was taken, all
+  `Africa/Accra`. Nothing migrates them and nothing needs to — but they were written by a capture that
+  did not parse, and that is a fact about the rows, not about the code.
+- **Anything that writes the column without going through capture** — a restore, a hand-applied
+  correction, a data fix. A parse at one door is not a check constraint, and D60 deliberately did not
+  add one (a Liquibase check constraint on a `varchar(64)` would have to encode tzdb, which changes
+  twice a year).
+
+What it must never become is the *write* side's answer as well. The whole of this decision is that a
+fallback which is right for a row already in the table is wrong for a value still on the wire.
+
+### What is stored is canonical, and that was measured rather than assumed
+
+`CapturedZone.of` returns `ZoneId.of(offered).getId()`, not the string it was handed, so "parsed at
+capture" is a property of the **row** and not only of the moment. Measured on JDK 25 over every id
+`ZoneId.getAvailableZoneIds()` offers: **all 604 region names are their own `getId()`**, so no real
+professional's calendar is ever rewritten — and the offset spellings *do* move (`GMT+0` → `GMT`,
+`UTC+0` → `UTC`, `UT+1` → `UT+01:00`), which is one zone written two ways in a column compared as text.
+It has its own test case for that reason; without one, dropping `.getId()` is an unguarded mutation.
+
+The same measurement is why **no length check was written**: the longest region id is **32**
+characters against a `varchar(64)`, so a check there could never fire, and an unreachable guard nobody
+removes is the shape this decision spent its argument on.
+
+### No fourth zone constant, and one fewer string
+
+`CustomerBookingResource.DEFAULT_ZONE_ID` is **gone**; the default is `MarketCalendar.MARKET_ZONE`.
+The three named zone constants stay three (D47/D51/D52's rule), and D58's read-side argument — that an
+unreadable row is read "in the same calendar it would have been written in" — becomes **structural**
+rather than two spellings of `Africa/Accra` that happen to agree. It is right on its own terms too:
+when the professional's calendar is unknown, the one being recorded is the marketplace's, which is the
+half of D55's split `MARKET_ZONE` exists for.
+
+`CapturedZone` follows `SlotTime` exactly — the other string on the same builder chain that must
+become a time before it is stored, parsed in `service`, refused with a status. It is a new file, so a
+regeneration leaves it alone, and it is named after nothing the JDL generates.
+
+### What the caller sees
+
+**502, naming neither the value nor the reference.** 502 rather than the resource's other three
+refusals, and the distinction is the one `CatalogClient` already draws: 503 is "the catalogue could not
+be asked", 404 is "it answered, and there is no such thing", 409 is "it answered, and it disagrees with
+what you sent". This is none of them — it answered, and the answer is unusable — which is what 502
+means. **503 would be a lie about the remedy**: a retry changes nothing until somebody edits the row.
+
+The body is `the professional's calendar could not be read, so this booking was not made`. It carries
+no zone, because that is free text off another service's wire and D44's rule that no provider's words
+reach a response body is the same rule one wire along — `ExceptionTranslator` renders a
+`ResponseStatusException`'s reason as the ProblemDetail's `detail`, and `getCustomizedErrorDetails`
+redacts package names and `DataAccessException` only, only under `prod`. It carries no
+`professionalRef` either: D45's refusal never echoes what was asked for, and the caller already holds
+what it sent. **Both are in the ERROR log**, which is where the person who can edit the row is looking,
+and it is ERROR rather than the read side's WARN because this one turned a customer away and keeps
+turning them away.
+
+### The tests, and the mutations that prove they see each thing separately
+
+`TheZoneACatalogueOffersIsParsedAtCaptureTest` (25 cases after the review, surefire) pins the derivation;
+`TheZoneACatalogueOffersIsParsedAtCaptureIT` (5 cases, failsafe, through MockMvc against a real
+PostgreSQL) pins the door. The fixtures are **not** Accra — `Pacific/Kiritimati` and
+`Pacific/Honolulu`, D58's pair, because in Accra a captured string and a captured zone are the same
+five characters. The unreadable fixtures are deliberately plausible rather than garbage: `africa/accra`
+(right name, wrong case), `Africa/Accra ` (trailing space), `Africa/Kumasi` and `Europe/Accra` (regions
+that do not exist). None of them is something a reviewer notices in a database.
+
+| Mutation | Unit | IT |
+| --- | --- | --- |
+| `CapturedZone` stops parsing (the pre-D60 pass-through) | **7 of 24 red** — the six unreadable cases and the refusal's wording | not run |
+| the resource writes the offering's raw string, `CapturedZone` left correct | 24 of 24 **green** | **2 of 5 red** |
+| `.getId()` dropped, the parse kept | **1 of 24 red** — `anOffsetZoneIsStoredInItsCanonicalSpelling` alone | not run |
+| the absent-zone default removed, so blank refuses too | **7 of 24 red** — the four absent cases and three round-trip cases | not run |
+| none (as shipped) | 24 green | 5 green |
+
+**The unit column is out of 24 because that is what the class held when each row was measured**; the
+review's log-delimiting case makes it 25, and it is guarded by its own red-first run rather than by
+any row here.
+
+**The second row is the one that matters**: it is the state the estate was in until this package, and
+every unit test agrees the derivation is right while only the endpoint is red. The fourth row is the
+half of the decision that is a *default* rather than a refusal, and it is guarded separately for the
+same reason — "it parses" and "it still tolerates a catalogue one release behind" are two claims.
+
+### The CI check, and what it is for
+
+*"A zone may not be stored without being parsed"* sweeps every `.java` in all five services for a
+**write** — `.zoneId(` with an argument, or `.setZoneId(` — and demands each name `CapturedZone`, a
+seeder's `DEFAULT_ZONE_ID`, or be the entity's own `this.setZoneId(`. Comments stripped with the shared
+awk, and that was measured: the same bad line with `/* was CapturedZone.of(...) */` beside it is red.
+
+**It exists because the tests cannot see a second writer.** They cover the derivation and the one
+capture site that exists; the day catalog grows professional onboarding is the day a
+`setZoneId(request.zoneId())` appears in a service that has never had one, and there is no test yet
+written to be red about it. That is why the scan includes **catalog**, and all five while it is there —
+adding a clean service is free, and not scanning one is how catalog's four implicit zones got in (D52).
+
+Three allowances, each argued rather than convenient. `DEFAULT_ZONE_ID` is an allowance rather than a
+hole **because `TheSeededZoneIsAZoneUnitTest` asserts it in both services that have one**; a seeder
+writes a compile-time constant, not a value off a wire, and routing it through a 502-throwing parser
+would express nothing except that the constant is still spelled right.
+
+Two fail-opens closed by hand, both of the kind this family keeps producing: `CapturedZone.java` must
+**exist** (renamed, every error message points at nothing while the allowance silently stops matching),
+and the sweep must find **at least one write in the whole estate** (rename the accessor and five clean
+services is indistinguishable from five correct ones).
+
+Watched firing **seven** ways, each observed red and then green, and all seven re-run after the
+review's change so the fix is shown not to have broken the six that preceded it: the resource swept
+back to the raw string; that same line with a comment naming `CapturedZone` beside it; a new writer
+planted in catalog's `ProWorkspaceResource`; **the same writer in the wrapped builder form**; the
+stripper removed; `CapturedZone` renamed away; and the accessor renamed across all five files that
+write it. Green as shipped, before and after — 530 files scanned, 5 zone writes.
+
+**The service list is enumerated, not derived, and this says so because the habit in that file is the
+opposite.** `for svc in booking catalog messaging payout gateway` is a hardcoded five, so a *sixth*
+service would be silently unscanned. Accepted rather than fixed: there is no cheap source to derive
+it from — five standalone Maven projects, no aggregator pom and no reactor — and every failure mode
+that exists today is loud (a missing directory errors per service; `scanned=0`, `writes=0`, a missing
+stripper and a missing `CapturedZone.java` each exit 1). So it cannot pass having scanned nothing,
+only fail to scan a service that does not exist yet, which is the bound its siblings here accept.
+Said plainly because the brief that commissioned the review called it "derived" and it is not.
+
+### The review of `9208e81`, and the two things it found
+
+Both were reproduced here before being fixed, and both are the same species as everything else in
+this family — a check or a message that is right about the case in front of it and silent about the
+one beside it.
+
+**The sweep was line-based, so a wrapped builder write evaded it entirely.** `\.zoneId\([^)]` needs a
+non-`)` character on the **same line**, measured both ways: `.zoneId(raw);` matches, `.zoneId(\n
+raw);` does not — and with that planted in catalog the check printed *"ok 530 files scanned, 5 zone
+writes"*, not even counting the planted write. `.setZoneId(` was already immune, so this was specific
+to the fluent form. It matters more than a formatting curiosity because **prettier formats Java in
+this repository**: a long argument expression is wrapped into precisely that shape with no intent to
+evade, and the sweep's whole stated purpose is the *future* second writer no test is yet red about.
+The one live site was never exposed — the `CapturedZone.of(` grep and the IT both pin it — so this was
+a hole in the part of the check that has no other cover. Closed with a third alternation,
+`\.zoneId\([[:space:]]*$`. A legitimately wrapped `.zoneId(\n  CapturedZone.of(...))` is now **red**,
+which is fail-closed and deliberate, and verified by wrapping the shipped capture site: keep the write
+on one line, which every write in the tree already is (82 characters against printWidth 140).
+
+**The ERROR log did not delimit the value, and hid the fixture the tests call most realistic.** The
+refusal deliberately puts the value nowhere but this line, and undelimited `"Africa/Accra "` renders
+as *carries a zoneId Africa/Accra that is not a readable zone* — indistinguishable from the zone that
+*is* readable, in the one place the operator was sent to look, for exactly the trailing-space fixture
+this package chose because it is what a hand-typed row looks like. Now `zoneId '{}'`, and **pinned by
+a test rather than left to a reading**: `theLogDelimitsTheValueSoWhitespaceIsVisible` asserts on the
+*formatted* message (a pattern with quotes and an already-trimmed argument would satisfy a check on
+the pattern) and asserts the readable spelling is **not** present, using the `ListAppender` shape
+`PaymentConfigurationUnitTest` established. Watched red against the undelimited line — 1 of 25, that
+case alone — and green after.
+
+**What the review could not reproduce, and what that means for the table above.** Mutation rows 1 and
+4, and the fifth and sixth CI firings, were reasoned about from the test structure rather than re-run;
+nothing was found false and the arithmetic checks out. They were measured **here**, once each, and the
+table is a record of those runs rather than of two independent observations. Rows 2 and 3 and four of
+the firings were independently reproduced, as were every measured tzdb claim (604 / 32 / the three
+normalising spellings, plus `Etc/GMT-3` unchanged) and the quality-box figures.
+
+### Verified, assumed, not exercised
+
+- **Verified at source**: catalog's sole writer of `Professional.zoneId` is `CatalogSeeder:169`
+  (`ProfessionalService` has no caller; `ProfessionalResource` is deleted), and booking's two writers
+  of `booking.zone_id` are `CustomerBookingResource.create` and `BookingSeeder:144`. The seed file
+  carries **no** `zoneId` at all — both seeders write a hard-coded constant.
+- **Verified, read-only, against the quality box** (running `5c26275`; not restarted, rebuilt,
+  reseeded, cleaned or written to): `professional.zone_id` is 18 rows, one distinct value,
+  `Africa/Accra`, `NOT NULL`, no column default, `varchar(64)`; `booking.zone_id` is **302** rows, one
+  distinct value, `Africa/Accra`. **No estate holds a zone tzdb cannot read.**
+- **Verified by running**: `./mvnw clean verify` on JDK 25 in **booking** (230 unit + 124 IT, zero
+  failures, checkstyle 0, modernizer silent) and in **catalog** (109 unit + 73 IT, same), both clean
+  rather than incremental, with all four new test classes appearing in the reports of those runs
+  rather than only of a targeted one. Every mutation row above was observed red and then green.
+- **Verified by running**: all six CI-check mutations, red and green; the workflow parsing and the new
+  step extracting as runnable bash; `./deploy/sync-appendices.sh --check`; the seed regenerating
+  byte-identically.
+- **Verified by measurement, not by reasoning from the API docs**: the 604 region ids, the 32-character
+  longest, and the three offset spellings that normalise.
+- **Assumed**: that the dev estate holds no unreadable zone either. Its five containers have been
+  wedged in `Restarting` since 2026-08-30 (compose project `healthconnect-dev`) and were deliberately
+  not touched, so this is argued from there being no writer rather than measured. It is the weaker
+  half of the same argument D58 made, and it is why the read-side fallback stays.
+- **Not exercised: the case this is for.** No professional has been onboarded outside GMT and no
+  catalogue row has ever held an unreadable zone, so this change is unobservable on every running box —
+  which is exactly why it was cheap to make today and would not have been later. What is observable is
+  that nothing moved: every existing booking still stores `Africa/Accra` and the seeded
+  late-cancellation verdicts are unchanged.
+- **Not exercised: a live create through the quality gateway.** `verify-cycle.sh` writes, and the box
+  was left alone; the endpoint is covered by the IT against a real PostgreSQL instead.
+- **Not exercised: production.** Nothing here has ever been deployed there, and nothing in
+  `deploy/prod-server/` was run.
+- **Out of scope, and left as it was**: the read-side fallback's *behaviour* (D58 argued it and it is
+  load-bearing for rows written before this change — only its javadoc changed), NEW-21, and WP-19.

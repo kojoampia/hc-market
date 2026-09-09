@@ -259,11 +259,35 @@ public class BookingWorkflow {
      * because of a string.
      *
      * <p>{@link MarketCalendar#MARKET_ZONE} rather than {@code ZoneOffset.UTC} for the stand-in, and
-     * this is the <strong>only</strong> place on this path where that constant belongs: it is what
-     * the write side already defaults a blank offering zone to ({@code CustomerBookingResource
-     * .zoneOf}), so a row we cannot read is read in the same calendar it would have been written in.
-     * UTC would be the same instant and would say a calendar was never chosen. The WARN names the
-     * booking and the value because the row, not the reader, is what needs correcting.
+     * this is the <strong>only</strong> place on this path where that constant belongs: it is
+     * literally what the write side defaults an absent offering zone to ({@link CapturedZone}, which
+     * returns this same constant), so a row we cannot read is read in the same calendar it would
+     * have been written in. UTC would be the same instant and would say a calendar was never chosen.
+     * The WARN names the booking and the value because the row, not the reader, is what needs
+     * correcting.
+     *
+     * <h2>What this is, now that capture parses — {@code decisions.md} D60</h2>
+     *
+     * <p>Neither branch is reachable from {@code POST /api/bookings} any more: {@link CapturedZone}
+     * defaults the absent case and refuses the unreadable one with a 502, so nothing this service
+     * writes today can produce a row that lands here. <strong>It is not dead code and it is not
+     * decoration either.</strong> It is a live path for rows this service did not write and cannot
+     * unwrite:
+     *
+     * <ul>
+     *   <li><strong>Every booking that already exists</strong> — 302 on the quality box when D60 was
+     *       taken, all of them {@code Africa/Accra}. Nothing migrates them and nothing needs to, but
+     *       they were written by a capture that did not parse, and that is a fact about the rows
+     *       rather than about the code.
+     *   <li><strong>Anything that writes the column without going through capture</strong> — a
+     *       restore, a correction applied by hand, a data fix. {@code zone_id} is a
+     *       {@code varchar(64)} of free text; a parse at one door is not a check constraint.
+     * </ul>
+     *
+     * <p>So it stays, unchanged, and the reason it stays is written here rather than left for a
+     * reader to infer from a branch nothing seems to reach. What it must never become is the write
+     * side's answer as well: the whole of D60 is that a fallback which is right for a row already
+     * in the table is wrong for a value still on the wire.
      */
     private static ZoneId zoneOf(Booking booking) {
         String zone = booking.getZoneId();
