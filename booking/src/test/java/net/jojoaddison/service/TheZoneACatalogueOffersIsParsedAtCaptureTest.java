@@ -5,11 +5,17 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import java.time.ZoneId;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -115,6 +121,59 @@ class TheZoneACatalogueOffersIsParsedAtCaptureTest {
         assertThat(CapturedZone.of("GMT+0", REF)).isEqualTo("GMT");
         assertThat(CapturedZone.of("UTC+0", REF)).isEqualTo("UTC");
         assertThat(CapturedZone.of("UT+1", REF)).isEqualTo("UT+01:00");
+    }
+
+    /**
+     * The ERROR log is the <strong>only</strong> place the offending value exists, so it has to be
+     * legible there — D60's review.
+     *
+     * <p>Undelimited, {@code "Africa/Accra "} renders as <em>carries a zoneId Africa/Accra that is
+     * not a readable zone</em>: identical to the zone that *is* readable, in the one place the
+     * operator was sent to look, for the fixture this class's own javadoc calls the most realistic
+     * of them. The quotes are what make a trailing space, a leading space or a tab visible.
+     *
+     * <p>Asserted on the <em>formatted</em> message rather than on the pattern, because a pattern
+     * with quotes and an argument that has already been trimmed somewhere would pass a check on the
+     * pattern alone.
+     */
+    @Test
+    void theLogDelimitsTheValueSoWhitespaceIsVisible() {
+        String trailingSpace = "Africa/Accra ";
+
+        List<ILoggingEvent> heard = whileListening(() -> {
+            try {
+                CapturedZone.of(trailingSpace, REF);
+            } catch (ResponseStatusException expected) {
+                // The refusal is this test's precondition, not its subject.
+            }
+        });
+
+        assertThat(heard).singleElement().satisfies(event -> {
+            assertThat(event.getLevel()).isEqualTo(Level.ERROR);
+            assertThat(event.getFormattedMessage()).contains("'" + trailingSpace + "'").contains(REF);
+            // The whole point: the readable spelling must not be a prefix-match of what is logged.
+            assertThat(event.getFormattedMessage()).doesNotContain("'Africa/Accra'");
+        });
+    }
+
+    /**
+     * Collects what {@link CapturedZone} logs while the given work runs — the shape
+     * {@code PaymentConfigurationUnitTest} established. The appender is attached to that one logger
+     * and detached in a {@code finally}, so a failure inside the block cannot leave it attached for
+     * the rest of the suite.
+     */
+    private static List<ILoggingEvent> whileListening(Runnable work) {
+        Logger logger = (Logger) LoggerFactory.getLogger(CapturedZone.class);
+        ListAppender<ILoggingEvent> heard = new ListAppender<>();
+        heard.start();
+        logger.addAppender(heard);
+        try {
+            work.run();
+        } finally {
+            logger.detachAppender(heard);
+            heard.stop();
+        }
+        return List.copyOf(heard.list);
     }
 
     /**

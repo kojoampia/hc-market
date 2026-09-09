@@ -8346,7 +8346,7 @@ turning them away.
 
 ### The tests, and the mutations that prove they see each thing separately
 
-`TheZoneACatalogueOffersIsParsedAtCaptureTest` (24 cases, surefire) pins the derivation;
+`TheZoneACatalogueOffersIsParsedAtCaptureTest` (25 cases after the review, surefire) pins the derivation;
 `TheZoneACatalogueOffersIsParsedAtCaptureIT` (5 cases, failsafe, through MockMvc against a real
 PostgreSQL) pins the door. The fixtures are **not** Accra — `Pacific/Kiritimati` and
 `Pacific/Honolulu`, D58's pair, because in Accra a captured string and a captured zone are the same
@@ -8361,6 +8361,10 @@ that do not exist). None of them is something a reviewer notices in a database.
 | `.getId()` dropped, the parse kept | **1 of 24 red** — `anOffsetZoneIsStoredInItsCanonicalSpelling` alone | not run |
 | the absent-zone default removed, so blank refuses too | **7 of 24 red** — the four absent cases and three round-trip cases | not run |
 | none (as shipped) | 24 green | 5 green |
+
+**The unit column is out of 24 because that is what the class held when each row was measured**; the
+review's log-delimiting case makes it 25, and it is guarded by its own red-first run rather than by
+any row here.
 
 **The second row is the one that matters**: it is the state the estate was in until this package, and
 every unit test agrees the derivation is right while only the endpoint is red. The fourth row is the
@@ -8390,10 +8394,58 @@ Two fail-opens closed by hand, both of the kind this family keeps producing: `Ca
 and the sweep must find **at least one write in the whole estate** (rename the accessor and five clean
 services is indistinguishable from five correct ones).
 
-Watched firing **six** ways, each observed red and then green: the resource swept back to the raw
-string; that same line with a comment naming `CapturedZone` beside it; a new writer planted in
-catalog's `ProWorkspaceResource`; the stripper removed; `CapturedZone` renamed away; and the accessor
-renamed across all five files that write it. Green as shipped — 530 files scanned, 5 zone writes.
+Watched firing **seven** ways, each observed red and then green, and all seven re-run after the
+review's change so the fix is shown not to have broken the six that preceded it: the resource swept
+back to the raw string; that same line with a comment naming `CapturedZone` beside it; a new writer
+planted in catalog's `ProWorkspaceResource`; **the same writer in the wrapped builder form**; the
+stripper removed; `CapturedZone` renamed away; and the accessor renamed across all five files that
+write it. Green as shipped, before and after — 530 files scanned, 5 zone writes.
+
+**The service list is enumerated, not derived, and this says so because the habit in that file is the
+opposite.** `for svc in booking catalog messaging payout gateway` is a hardcoded five, so a *sixth*
+service would be silently unscanned. Accepted rather than fixed: there is no cheap source to derive
+it from — five standalone Maven projects, no aggregator pom and no reactor — and every failure mode
+that exists today is loud (a missing directory errors per service; `scanned=0`, `writes=0`, a missing
+stripper and a missing `CapturedZone.java` each exit 1). So it cannot pass having scanned nothing,
+only fail to scan a service that does not exist yet, which is the bound its siblings here accept.
+Said plainly because the brief that commissioned the review called it "derived" and it is not.
+
+### The review of `9208e81`, and the two things it found
+
+Both were reproduced here before being fixed, and both are the same species as everything else in
+this family — a check or a message that is right about the case in front of it and silent about the
+one beside it.
+
+**The sweep was line-based, so a wrapped builder write evaded it entirely.** `\.zoneId\([^)]` needs a
+non-`)` character on the **same line**, measured both ways: `.zoneId(raw);` matches, `.zoneId(\n
+raw);` does not — and with that planted in catalog the check printed *"ok 530 files scanned, 5 zone
+writes"*, not even counting the planted write. `.setZoneId(` was already immune, so this was specific
+to the fluent form. It matters more than a formatting curiosity because **prettier formats Java in
+this repository**: a long argument expression is wrapped into precisely that shape with no intent to
+evade, and the sweep's whole stated purpose is the *future* second writer no test is yet red about.
+The one live site was never exposed — the `CapturedZone.of(` grep and the IT both pin it — so this was
+a hole in the part of the check that has no other cover. Closed with a third alternation,
+`\.zoneId\([[:space:]]*$`. A legitimately wrapped `.zoneId(\n  CapturedZone.of(...))` is now **red**,
+which is fail-closed and deliberate, and verified by wrapping the shipped capture site: keep the write
+on one line, which every write in the tree already is (82 characters against printWidth 140).
+
+**The ERROR log did not delimit the value, and hid the fixture the tests call most realistic.** The
+refusal deliberately puts the value nowhere but this line, and undelimited `"Africa/Accra "` renders
+as *carries a zoneId Africa/Accra that is not a readable zone* — indistinguishable from the zone that
+*is* readable, in the one place the operator was sent to look, for exactly the trailing-space fixture
+this package chose because it is what a hand-typed row looks like. Now `zoneId '{}'`, and **pinned by
+a test rather than left to a reading**: `theLogDelimitsTheValueSoWhitespaceIsVisible` asserts on the
+*formatted* message (a pattern with quotes and an already-trimmed argument would satisfy a check on
+the pattern) and asserts the readable spelling is **not** present, using the `ListAppender` shape
+`PaymentConfigurationUnitTest` established. Watched red against the undelimited line — 1 of 25, that
+case alone — and green after.
+
+**What the review could not reproduce, and what that means for the table above.** Mutation rows 1 and
+4, and the fifth and sixth CI firings, were reasoned about from the test structure rather than re-run;
+nothing was found false and the arithmetic checks out. They were measured **here**, once each, and the
+table is a record of those runs rather than of two independent observations. Rows 2 and 3 and four of
+the firings were independently reproduced, as were every measured tzdb claim (604 / 32 / the three
+normalising spellings, plus `Etc/GMT-3` unchanged) and the quality-box figures.
 
 ### Verified, assumed, not exercised
 

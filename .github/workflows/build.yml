@@ -1078,6 +1078,32 @@ jobs:
       # check's business — matching it would make the fix "stop reading the field", which is absurd
       # in a way that gets checks disabled.
       #
+      # …AND `.zoneId(` AT END OF LINE, which is the TENTH fail-open in this family and was found by
+      # D60's review rather than by writing it. `\.zoneId\([^)]` needs a non-`)` character on the SAME
+      # LINE, so a wrapped fluent write is invisible — measured, both spellings:
+      #
+      #   .zoneId(raw);         matches = 1
+      #   .zoneId(\n  raw);     matches = 0        <- planted in catalog, check stayed GREEN at
+      #                                              "530 files scanned, 5 zone writes", not even
+      #                                              counting the planted write
+      #
+      # `.setZoneId(` was already immune (no `[^)]` in that half), so this was specific to the builder
+      # form — and PRETTIER FORMATS JAVA HERE, so a long argument expression is wrapped into exactly
+      # that shape with no intent to evade whatsoever. The third alternation closes it. A legitimately
+      # wrapped `.zoneId(\n  CapturedZone.of(...))` is now RED, which is fail-closed and deliberate:
+      # keep the write on one line, which every write in the tree already is (the shipped capture site
+      # is 82 characters against prettier's printWidth of 140, so nothing here is near wrapping).
+      #
+      # THE SERVICE LIST IS ENUMERATED, NOT DERIVED, and that is worth saying plainly because the
+      # habit in this file is the opposite and a reader will assume it. `for svc in booking catalog
+      # messaging payout gateway` is a hardcoded five, so a SIXTH service would be silently unscanned.
+      # Accepted rather than fixed: there is no cheap source to derive it from (no aggregator pom, no
+      # reactor — the five are standalone Maven projects), and every failure mode that exists TODAY is
+      # loud. A missing directory errors per service; `scanned=0` exits 1; `writes=0` exits 1; a
+      # missing stripper or a missing CapturedZone.java exits 1. So it cannot pass having scanned
+      # nothing — only fail to scan a service that does not exist yet, which is the same bound its
+      # siblings here accept.
+      #
       # THREE ALLOWANCES, each argued rather than convenient, and each a token that must appear on
       # the SAME line (comments stripped first, so prose naming CapturedZone cannot satisfy it —
       # measured):
@@ -1122,7 +1148,7 @@ jobs:
               # An empty find yields one EMPTY line through a here-string, not none.
               [ -z "$f" ] && continue
               scanned=$((scanned + 1))
-              hits=$(awk -f .github/checks/strip-comments.awk "$f" | grep -nE '\.zoneId\([^)]|\.setZoneId\(' | cut -d: -f1)
+              hits=$(awk -f .github/checks/strip-comments.awk "$f" | grep -nE '\.zoneId\([^)]|\.zoneId\([[:space:]]*$|\.setZoneId\(' | cut -d: -f1)
               for n in $hits; do
                 writes=$((writes + 1))
                 line=$(awk -f .github/checks/strip-comments.awk "$f" | sed -n "${n}p")

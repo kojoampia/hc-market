@@ -116,7 +116,18 @@ public final class CapturedZone {
         } catch (DateTimeException notAZone) {
             // ERROR rather than the read side's WARN: this one turned a customer away, and it stays
             // broken for every customer of that professional until somebody edits the row.
-            LOG.error("professional {} carries a zoneId {} that is not a readable zone; no booking was made", professionalRef, offered);
+            //
+            // THE VALUE IS QUOTED, and that is not decoration (D60's review). The refusal deliberately
+            // puts it nowhere else, so this line is the whole of what an operator gets — and the
+            // fixture the unit test calls the most realistic of them, "Africa/Accra " with a trailing
+            // space, renders undelimited as `carries a zoneId Africa/Accra that is not readable`:
+            // indistinguishable from the zone that IS readable, in the one place they were sent to
+            // look. Same for a leading space, a tab, or anything else whitespace-shaped.
+            LOG.error(
+                "professional {} carries a zoneId '{}' that is not a readable zone; no booking was made",
+                professionalRef,
+                offered
+            );
             throw new ResponseStatusException(
                 HttpStatus.BAD_GATEWAY,
                 "the professional's calendar could not be read, so this booking was not made"

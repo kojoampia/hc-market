@@ -1061,8 +1061,16 @@ time.**
   seeder's `DEFAULT_ZONE_ID` (which a unit test asserts is a readable zone, in booking and in catalog)
   or be the entity's own `this.setZoneId(`. It scans **catalog** deliberately: the day catalog grows
   professional onboarding is the day a second writer appears in a service that has never had one, and
-  no test is yet written to be red about it. Watched firing six ways, including the accessor renamed
+  no test is yet written to be red about it. Watched firing seven ways, including the accessor renamed
   across all five files — which would otherwise leave every service clean by matching nothing.
+  **It matches a WRAPPED write too, and that alternation is load-bearing rather than tidy**: the first
+  spelling needed a non-`)` character on the same line, so `.zoneId(\n  raw)` was invisible — and
+  **prettier formats Java in this repository**, so a long argument arrives in exactly that shape with
+  no intent to evade. A legitimately wrapped `.zoneId(\n  CapturedZone.of(...))` is red as well, which
+  is fail-closed and deliberate: keep a zone write on one line. **Its service list is enumerated, not
+  derived** — five names in a `for`, unlike the copy-diff and CRUD checks beside it — which is
+  acceptable only because every failure mode that exists today exits 1 loudly, so it cannot pass having
+  scanned nothing.
   There was a third until D53 — `BookingEventConsumer.configInForce`'s
   `Instant.now()`, correct as an instant and wrong as a *moment* — and it is gone rather than moved:
   that path reads no clock at all now (NEW-13, below). **And a fourth of the same kind until D56**:
