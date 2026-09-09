@@ -964,6 +964,27 @@ time.**
   indistinguishable from a removal as far as those rows are concerned. Absent, the three services
   start and the erasure desk answers 503 — except messaging, which refuses to start if it has already
   erased somebody, because unpeppered it cannot recognise its own erased subjects.
+  **`quality/startup.sh` REFUSES to invent one against volumes that already exist** (D65, NEW-27), and
+  that is the first thing a worktree hits. The two files are gitignored, so a worktree, a clone or a
+  `cp -r` has neither of them while the databases they belong to are the same volumes — and "no file,
+  no variable, so generate" is D35's silent orphaning arrived at by nobody deciding anything. The
+  script asks **docker**, not the directory: `project_volumes` unions a `label=com.docker.compose
+  .project=` query with an **anchored** `name=^hc-market-quality_` one, because docker ANDs filters of
+  different kinds and each spelling misses a case the other sees. Volumes present and no pepper here is
+  fatal, before anything is written; **no volumes is a genuine first run and still generates**, which
+  is the case a strict fix breaks and the reason the probe must return an empty list by *succeeding*.
+  Fix it by copying `quality/.privacy-pepper` across, or by exporting `HC_PRIVACY_PEPPER` — never by
+  teaching the script to go looking in another directory. **The signing key deliberately does not get
+  the same treatment**: a new one costs everybody a fresh sign-in and orphans nothing, so it generates
+  and warns. Copying the pepper and not the key is the case that warning exists for, and the symptom
+  is every token in circulation — `/tmp/tok-*.txt` included — answering 401, which reads as a broken
+  gateway. A `--down`/`--clean` is **not refused by that guard** (dropping the volumes is the remedy)
+  and no longer writes down the pepper it invented for compose to interpolate, or the next `up` in
+  that directory would adopt it without ever asking again — though a teardown with no pepper anywhere
+  and an *unanswerable* docker still stops, one line earlier, because the probe cannot say whether
+  this is a first run either. The throwaway arm re-checks the teardown itself rather than inheriting
+  it from that guard: a comment asserting an invariant is not the invariant, and a weakened guard
+  twenty lines up would otherwise start the stack on a pepper that is not even on disk to recover.
 - **The gateway seeds the FIRST administrator, and production must supply its password** (`decisions.md`
   D61, backlog NEW-22). `HC_GATEWAY_ADMIN_PASSWORD` → the container's `GATEWAY_ADMIN_PASSWORD` →
   `gateway.admin-password`. It joins the signing key and the pepper as a `:?` variable in

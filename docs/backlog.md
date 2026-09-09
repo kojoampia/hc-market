@@ -1,6 +1,6 @@
 # Backlog — hc-market
 
-Every open item in this repository, folded into work packages. Sources: `docs/decisions.md` D1–D64,
+Every open item in this repository, folded into work packages. Sources: `docs/decisions.md` D1–D65,
 the two code reviews of 2026-09-01, and the verification runs against the quality box.
 
 **This is a derived document.** `decisions.md` holds the reasoning and stays the record; this holds
@@ -2154,27 +2154,77 @@ before disconnecting rather than hardcoding one name.
 
 ---
 
-## NEW-27 — `startup.sh` cannot tell a first run from a git worktree, and mints a new pepper · READY
+## NEW-27 — `startup.sh` cannot tell a first run from a git worktree, and mints a new pepper · DONE (D65)
 
 Found by **D64**, which ran the quality stack from a worktree and had to notice this before running
 anything.
 
 `quality/.jwt-secret` and `quality/.privacy-pepper` are gitignored, deliberately (D35): they are
 secrets even in quality. A **git worktree** therefore has neither, while the databases those secrets
-belong to are the same containers and the same volumes. `resolve_secret`'s `else` branch cannot tell
-the two situations apart — no file, no environment variable, so generate — and a fresh pepper against
-databases whose `erased_subject` rows were written under the old one is D35's orphaning, arrived at
-without anybody deciding anything. The signing key half is merely annoying; the pepper half is the
-one that cannot be undone.
+belong to are the same containers and the same volumes. `resolve_secret`'s `else` branch could not
+tell the two situations apart — no file, no environment variable, so generate — and a fresh pepper
+against databases whose `erased_subject` rows were written under the old one is D35's orphaning,
+arrived at without anybody deciding anything. The signing key half is merely annoying; the pepper
+half is the one that cannot be undone.
 
-D64 side-stepped it by copying both files across before its first run. What would close it: the
-script knows its compose project name and can ask docker whether that project's **volumes already
-exist**. Volumes present and no pepper on disk is not a first run, whatever the directory says, and
-is exactly the state that should refuse rather than generate — the same refusal `resolve_secret`
-already makes when the environment and the file disagree, extended to the case where the file is
-simply somewhere else.
+D64 side-stepped it by copying both files across before its first run. **Closed by D65**, which
+reproduced it first — in this repository's own worktree, against the live quality volumes, without
+starting anything — and then had `resolve_secret` ask docker.
 
-It is a worktree-only hazard today, and worktrees are how work is done here.
+- **The refusal.** No pepper on disk here, none in the environment, and this compose project's
+  volumes already exist: fatal, naming the volumes it found and the three ways out. Nothing is
+  written before it refuses, so a rejected run leaves the directory as it was.
+- **"The volumes exist" is two `docker volume ls` calls, unioned**, because docker ANDs filters of
+  different kinds — the compose **label** and the anchored **name** each miss a case the other sees,
+  measured on throwaway decoys. **Any** of the project's volumes counts, which is safe because this
+  script writes the pepper file before anything creates a volume.
+- **A genuine first run is untouched** and is asserted by name, including that the probe returns an
+  empty list by **succeeding**. That distinction was this package's own defect and is written up in
+  D65 §7: the first version returned non-zero on an empty list under `pipefail`, so it would have
+  refused the one estate it must let through.
+- **The signing key keeps the opposite treatment** (D65 §5) — a new one is recoverable, so it warns
+  loudly against existing volumes rather than refusing.
+- **A teardown is not refused, and no longer writes down the pepper it invented** (D65 §6) — the
+  second decision, which this item did not anticipate: without it `--down` was a one-flag bypass of
+  the refusal.
+- **The throwaway arm re-checks the teardown rather than inheriting it** (D65 §8, added at review).
+  Its comment asserted the invariant and nothing enforced it, so a *counting* regression in the guard
+  twenty lines up — measured, and green across all 35 assertions at the time — fell through to
+  starting the stack on a pepper that is not even written down. The refusal is one volume now, not
+  two, and the arm refuses anything that is not a teardown.
+
+`.github/checks/quality-pepper-persistence-test.sh` grew from 10 assertions to 40 and now exercises
+the probe against a real daemon on a throwaway project of its own.
+
+---
+
+## NEW-28 — the quality project's containers were built from two different checkouts · READY
+
+Found by **D65** while establishing what docker knows about the `hc-market-quality` project.
+Measured, not reasoned: `docker compose ls` names **two** config files for that one project, and the
+per-container labels say which is which.
+
+```
+hc-market-quality-{gateway,catalog,booking,messaging,payout}     …/hc-market/quality/compose.yml
+hc-market-quality-{gateway,catalog,booking,messaging,payout}-db  …/.claude/worktrees/agent-a3d048…/quality/compose.yml
+```
+
+The five application containers were last recreated from the main checkout; the five **databases**
+still carry the path of D64's worktree, which is where they were created. So half the live quality
+stack records its provenance as a directory that stops existing the moment that worktree is pruned.
+
+**It costs nothing today**, which is why it is an item rather than a fix. `quality/startup.sh` always
+passes `-f "$HERE/compose.yml"`, so every supported operation names the file explicitly and none of
+them reads the label. What breaks is the unsupported spelling — a bare `docker compose -p
+hc-market-quality ps` or `down`, which resolves the project from those labels — and `docker compose
+ls`'s output, which is what somebody looking for the stack reads first.
+
+Closing it means recreating the five database containers from the main checkout, which is a restart
+of the data tier of a box carrying several cycles of data, D57's founding row and the erasure state
+NEW-27 is about. That is not a thing to do as a side effect of another package: it wants its own
+window, and it wants `verify-cycle.sh` run after it. It is also the general shape of NEW-27 one level
+up — **a stack whose identity is a directory, driven from directories that come and go** — so
+whoever takes it should ask whether anything else in the project's labels points somewhere temporary.
 
 ---
 
