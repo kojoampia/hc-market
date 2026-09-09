@@ -65,8 +65,23 @@ x-service: &service
     #
     # Never `kafka`. These containers are on hcnet with every other stack; a short name resolves
     # across every network a container is on and answers with whichever docker picks.
-    SPRING_KAFKA_BOOTSTRAP_SERVERS: hc-shared-quality-kafka:9092
-    SPRING_CLOUD_STREAM_KAFKA_BINDER_BROKERS: hc-shared-quality-kafka:9092
+    #
+    # HC_SHARED_KAFKA IS READ HERE AND BY startup.sh, AND THAT PAIRING IS THE WHOLE OF D66. It was
+    # read by the script alone until then (backlog NEW-25): `check_shared_plane` inspected whatever
+    # the variable named while this line kept the literal, so an override preflight-checked one
+    # broker and addressed another — worse than a variable that does nothing, because the check went
+    # green against the plane you asked for. `docker-compose.dev.yml` has always had it this way and
+    # is the shape being copied; CI asserts the two defaults below are the same string and, by
+    # rendering this file a second time with the variable set, that the interpolation is real.
+    #
+    # THE VALUE NAMES A CONTAINER, not merely a resolvable name, because startup.sh `docker exec`s
+    # it to ask Consul for a leader and Kafka for its api versions. That costs nothing: compose
+    # publishes a container's OWN name as a DNS alias on every network it joins, so a container name
+    # is always an address. The converse is false and is the trap — `shared-kafka`, hc-infra's
+    # compose SERVICE name, resolves from inside these containers (measured: 172.21.0.5) and is not
+    # a container `docker exec` can find. Preflight refuses it before compose renders anything.
+    SPRING_KAFKA_BOOTSTRAP_SERVERS: ${HC_SHARED_KAFKA:-hc-shared-quality-kafka}:9092
+    SPRING_CLOUD_STREAM_KAFKA_BINDER_BROKERS: ${HC_SHARED_KAFKA:-hc-shared-quality-kafka}:9092
     # --- Shared Consul: REGISTERS, does not ROUTE ------------------------------------------------
     #
     # Two separate statements. These five services now register with hc-shared-quality-consul and
@@ -79,7 +94,14 @@ x-service: &service
     # name below. These containers are on two networks and so have two addresses; Spring picks one
     # and Consul health-checks whatever it was handed. Pick the wrong one and the service registers,
     # then flaps critical — and the registration reads as the broken thing rather than the address.
-    SPRING_CLOUD_CONSUL_HOST: hc-shared-quality-consul
+    #
+    # HC_SHARED_CONSUL, like the broker above, is read here AND by startup.sh (D66, backlog NEW-25),
+    # and the same container-name rule applies to it. The PORT is deliberately not overridable and
+    # never has been: inside the containers Consul is always 8500 and the broker always 9092, and
+    # hc-infra is the only thing that publishes either to the host. A value carrying its own port —
+    # `other-consul:8501` — is refused by preflight rather than rendered, because it is not a
+    # container name.
+    SPRING_CLOUD_CONSUL_HOST: ${HC_SHARED_CONSUL:-hc-shared-quality-consul}
     SPRING_CLOUD_CONSUL_PORT: "8500"
     SPRING_CLOUD_CONSUL_ENABLED: "true"
     SPRING_CLOUD_CONSUL_DISCOVERY_ENABLED: "true"
@@ -634,9 +656,21 @@ networks:
   # and every stack joins it — a network compose owns is a network compose deletes, and a
   # `docker compose down` here must not take the estate's event bus with it.
   # Created by hc-infra/startup.sh; this stack will not start without it.
+  #
+  # HC_SHARED_NETWORK is read here and by startup.sh, the third of D66's trio and the only one of
+  # them that names a network rather than a container. startup.sh exports it on every action,
+  # teardown included, so a `--down` cannot address a different plane from the `up` that made the
+  # containers — the same property `qualitynet` above relies on.
+  #
+  # NOTHING IS CREATED HERE, and that stays the opposite call to qualitynet. A missing hcnet means
+  # the estate's broker and Consul are down, and a stack that starts anyway publishes into nowhere
+  # in silence (D27), so preflight refuses and prints hc-infra's start command. It refuses on
+  # MEMBERSHIP too, since D66: an override naming a network that exists and does not carry the
+  # broker used to pass every check this file's start depends on, and the success line then claimed
+  # a plane it had never looked for.
   hcnet:
     external: true
-    name: hcnet
+    name: ${HC_SHARED_NETWORK:-hcnet}
 
 volumes:
   gateway-data:
