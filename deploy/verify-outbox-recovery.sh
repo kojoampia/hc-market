@@ -24,6 +24,21 @@
 #  Reconnecting is not optional — a failure part-way through leaves booking off the plane. Hence
 #  the trap below, which reconnects on any exit.
 #
+#  --- AND RECONNECTING MEANS THE ALIASES TOO -----------------------------------------------------
+#
+#  `docker network connect` with no --alias restores the CONNECTION and not the NAMES. Compose
+#  publishes a container's service name as a DNS alias on every network it joins; a manual reconnect
+#  publishes only the container's own name. So this script used to sever booking from hcnet and put
+#  back something slightly smaller than what it cut — measured on the quality box, where
+#  hc-market-quality-booking sat on hcnet with `Aliases: []` while every sibling carried
+#  [<container name>, <service name>]. See decisions.md D68, backlog NEW-26.
+#
+#  The set is read back off `docker inspect` before the disconnect rather than written here as
+#  `--alias booking`, because the alias set belongs to COMPOSE and not to this script: the two
+#  compose files in this repository happen to produce [container name, service name], and a
+#  `networks: <net>: aliases:` block would make it something else again. Naming them here would
+#  restore whatever was true the day this line was written.
+#
 #  --- WHICH ESTATE ------------------------------------------------------------------------------
 #
 #  The booking CONTAINER was already overridable; the ports and the two database containers were
@@ -73,7 +88,32 @@ MESSAGING_DB_CTR="${HC_MESSAGING_DB_CTR:-healthconnect-dev-messaging-db-1}"
 bq() { docker exec "$BOOKING_DB_CTR" psql -U healthconnectBooking -t -A -c "$1"; }
 mq() { docker exec "$MESSAGING_DB_CTR" psql -U healthconnectMessaging -t -A -c "$1"; }
 on_net() { docker inspect -f "{{if index .NetworkSettings.Networks \"$NET\"}}true{{else}}false{{end}}" "$BOOKING_CTR" 2>/dev/null; }
-trap 'if [ "$(on_net)" = false ]; then echo "reconnecting $BOOKING_CTR to $NET"; docker network connect "$NET" "$BOOKING_CTR" >/dev/null 2>&1; fi' EXIT
+# One alias per line, and NOTHING for a container with none. A container that is not on $NET has no
+# alias list to read: `index ... .Aliases` is a template error on a nil map entry, docker exits
+# non-zero and this prints nothing — which is why the capture below has to happen BEFORE the
+# disconnect and not inside the reconnect.
+#
+# The `sed` is not tidying. `docker inspect -f` appends a newline of its own after the template, so
+# the raw output is one blank line longer than the alias set and every comparison against it is off
+# by an empty element — caught by the test beside this file, on a change that was otherwise correct.
+# `sed` and not `grep -v '^$'`: this script sets pipefail, and a grep that matches nothing exits 1,
+# which is precisely the case that must succeed here — a container with no aliases at all.
+aliases_on_net() { docker inspect -f "{{range (index .NetworkSettings.Networks \"$NET\").Aliases}}{{println .}}{{end}}" "$BOOKING_CTR" 2>/dev/null | sed '/^$/d'; }
+# Declared here, empty, ABOVE the trap: the trap can fire at any point after this line — check_estate
+# exits 1 on four of them — and a trap referring to an array that has not been declared yet is one
+# bash release away from being an unbound-variable abort inside an exit handler. Measured on 5.3:
+# `"${undeclared[@]}"` expands to nothing under `set -u` rather than failing, which is luck, not a
+# guarantee. Filled immediately before the disconnect.
+BOOKING_ALIASES=()
+# The ONLY `docker network connect` in this file, so the two reconnect sites cannot drift apart.
+# Re-supplying the container's own name is measured to be accepted and to leave the set unchanged,
+# so nothing here has to reason about which entries docker adds by itself.
+reconnect() {
+  local a args=()
+  for a in "${BOOKING_ALIASES[@]}"; do args+=(--alias "$a"); done
+  docker network connect "${args[@]}" "$NET" "$BOOKING_CTR" >/dev/null 2>&1
+}
+trap 'if [ "$(on_net)" = false ]; then echo "reconnecting $BOOKING_CTR to $NET"; reconnect; fi' EXIT
 fail=0
 chk() { if [ "$2" = "$3" ]; then printf '  ok   %-46s %s\n' "$1" "$2"; else printf '  FAIL %-46s got %s want %s\n' "$1" "$2" "$3"; fail=1; fi; }
 
@@ -144,6 +184,25 @@ N0=$(mq "select count(*) from notification where recipient_login='kojo.ampia.add
 echo "  booking $REF created; customer notifications now $N0"
 
 echo "── cut booking off from the broker ──"
+# Before the cut, because the alias list goes with the endpoint. Nothing between here and the
+# disconnect may exit, or the trap reconnects with a set that was captured for a different reason.
+mapfile -t BOOKING_ALIASES < <(aliases_on_net)
+if [ ${#BOOKING_ALIASES[@]} -eq 0 ]; then
+  # RESTORE WHAT WAS FOUND, and say so. An empty set here is this script's own past work — a bare
+  # reconnect from before D68 — and the temptation is to repair it, which would mean INVENTING an
+  # alias set from the compose service label. That is a claim about compose's intent this script
+  # cannot check, and a measuring instrument that quietly improves the thing it measures is no
+  # longer measuring it. Refusing the run was the other option and is worse: the condition costs
+  # nothing, the remedy is a recreate somebody else has to schedule, and refusing would withhold the
+  # outbox proof until they did. So: restore exactly, and be the one that looked.
+  echo "  note   $BOOKING_CTR carries NO aliases on $NET, so there are none to put back."
+  echo "         That is what a pre-D68 run of this script leaves behind. Only a RECREATE restores"
+  echo "         them — a plain 'compose up' reports Running and leaves it (D68 §9), so it wants a"
+  echo "         'startup.sh --clean' then an up, or a roll to a new TAG. Not this script's to"
+  echo "         invent — see the header."
+else
+  echo "  aliases on $NET to restore: ${BOOKING_ALIASES[*]}"
+fi
 docker network disconnect "$NET" "$BOOKING_CTR" >/dev/null 2>&1
 chk "booking is off the shared plane" "$(on_net)" "false"
 
@@ -159,8 +218,14 @@ chk "no confirmation notification yet" \
   "$(mq "select count(*) from notification where recipient_login='kojo.ampia.addison' and deep_link='/bookings/$REF' and kind='Booking confirmed';")" "0"
 
 echo "── put booking back on the plane ──"
-docker network connect "$NET" "$BOOKING_CTR" >/dev/null 2>&1
+reconnect
 chk "booking is back on the shared plane" "$(on_net)" "true"
+# Asserted rather than assumed, and asserted ORDERED. Docker preserves the order it was given
+# (measured), so comparing the joined strings is stricter than comparing sets — and if a future
+# release ever reorders them, red is the right direction: it sends somebody to look rather than
+# letting a silent change pass. `${got% }` because aliases_on_net prints one per line.
+got_aliases="$(aliases_on_net | tr '\n' ' ')"
+chk "…carrying the same aliases it had before" "${got_aliases% }" "${BOOKING_ALIASES[*]}"
 # Docker's DNS for the reattached container settles within a second or two; the outbox publisher
 # runs on a timer regardless, so the drain below is what actually proves the connection came back.
 sleep 3

@@ -1653,6 +1653,24 @@ jobs:
       - name: quality/startup.sh must refuse to start a project another checkout created
         run: ./.github/checks/quality-project-checkout-test.sh
 
+      # verify-outbox-recovery.sh SEVERED booking from hcnet and put back less than it cut —
+      # decisions.md D68, backlog NEW-26. `docker network connect` with no --alias restores the
+      # connection and not the NAMES: compose publishes a container's service name as a DNS alias
+      # when it creates it, a manual reconnect publishes only the container's own name. Measured on
+      # the quality box: hc-market-quality-booking carried `Aliases: []` on hcnet while every
+      # sibling carried [<container name>, <service name>].
+      #
+      # It costs nothing today because two OTHER planes still answer the name — the project network
+      # for the stack's own five, and since D64 qualitynet for anything outside. Both are facts
+      # about today's membership, and neither is a reason for a script to leave an estate different
+      # from how it found it.
+      #
+      # The check asks docker rather than reasoning from the flag's documentation: a throwaway
+      # container with a known multi-alias set, severed and reconnected by the SHIPPED function,
+      # compared before and after, with a bare connect beside it as the positive control.
+      - name: verify-outbox-recovery.sh must restore the aliases it severs
+        run: ./.github/checks/outbox-alias-restore-test.sh
+
       # THE GATEWAY SEEDED `admin` WITH A PUBLISHED PASSWORD IN EVERY PROFILE, prod included —
       # decisions.md D61, backlog NEW-22. The generated Mongock changeunit had no profile condition
       # and `mongock.migration-scan-package` is in the BASE application.yml with no prod override, so

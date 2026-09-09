@@ -2144,7 +2144,7 @@ and fail-closed. See **D66 §4**.
 
 ---
 
-## NEW-26 — `verify-outbox-recovery.sh` reconnects booking without its alias · READY
+## NEW-26 — `verify-outbox-recovery.sh` reconnects booking without its alias · DONE (D68)
 
 Found by **D64**, by measuring name resolution before and after a restart for an unrelated reason.
 
@@ -2156,12 +2156,44 @@ quality box before this package's restart: `hc-market-quality-booking` carried `
 `hcnet`, and `getent hosts booking` from inside two sibling containers answered nothing. A restart
 fixes it, silently, so the state is invisible unless somebody looks between one.
 
-**It costs nothing today and that is why it is an item rather than a fix.** Nothing addresses booking
-by its short name over `hcnet`: `quality/compose.yml` uses `http://hc-market-quality-messaging:8080`
-for exactly this class of reason, and booking's own callers use `booking` over the *project* network,
-which is never severed. The repair is `--alias booking` on both reconnects — but the alias set
-belongs to compose, not to this script, so the honest version reads it back off `docker inspect`
-before disconnecting rather than hardcoding one name.
+**Closed by D68**, which reads the alias set back off `docker inspect` immediately before the
+disconnect and hands it to the one `docker network connect` left in the file — never `--alias
+booking`, because the set belongs to compose and `HC_BOOKING_CTR` exists so this script can be
+pointed at an estate whose names it does not know. The run now *asserts* the set came back, ordered,
+instead of merely performing the reconnect.
+
+**Two things this item said turned out to be wrong, and the second is the more useful.** It said
+nothing addresses booking by its short name over `hcnet`, quoting
+`http://hc-market-quality-messaging:8080` — true of that line, false of the file: `quality/compose.yml`
+carries **five** short-name addresses, `http://booking:8080` twice among them, and `CLAUDE.md`
+generalised the same way. And what actually makes the loss free is not that: `booking` is satisfied on
+the **project** network for the stack's own five and, since D64, on **`qualitynet`** for anything
+outside — measured, `hc-admin-quality-service` answers `172.24.0.9` for `booking` and `172.21.0.7` for
+`catalog`. This item's own "answered nothing" measurement predates D64's join and would not reproduce.
+The name never went missing; it moved planes, one of them added by the package that found the defect.
+See D68 §3.
+
+**An empty captured set restores nothing, deliberately** (D68 §4): the quality box is in that state
+today, and the script prints a `note` naming the container, the network and the remedy rather than
+inventing an alias set from the compose service label or refusing a run over a cosmetic residue.
+
+**"A restart fixes it, silently" — said above, and MEASURED FALSE for the restart people run** (D68
+§9). On a throwaway compose project with an external network: a plain `compose up -d` with nothing
+changed reports `Running` and leaves the alias set empty, because compose recreates only what changed
+— D67's rule, one docker object along — and `quality/startup.sh` runs exactly that, with no
+`--force-recreate`. What *does* repair it: a `down` then `up`, a `--force-recreate`, or any roll to a
+new `TAG`, which recreates as a side effect. The live endpoint's `IPAMConfig` is the CLI's empty
+struct rather than compose's `<nil>`, which is how that history was read off the box rather than
+guessed.
+
+**The live container was NOT repaired here** — that is a recreate, and therefore a roll-time act. The
+roll needs `--clean` then `up`, or a new `TAG`; a same-tag re-run will not do it.
+
+Guarded by `.github/checks/outbox-alias-restore-test.sh`, which extracts the shipped functions and
+asks a real daemon on its own throwaway network — with a bare reconnect beside it as the positive
+control, because an assertion that aliases came back is satisfied for the wrong reason by a probe that
+never lost them. It needed a **second** comment stripper: the shared one is a Java stripper and
+removes nothing from a shell script while reporting success.
 
 ---
 

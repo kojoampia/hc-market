@@ -471,9 +471,19 @@ quality's catalog.
 A second service of the same name does not error. Docker answers with whichever it likes, so the
 quality gateway would route a share of its traffic into the dev catalog, silently. That is why the
 dev compose services are named **`dev-<service>`** with an explicit `container_name:
-hc-market-dev-<service>`, and why every intra-stack address in both compose files is a **container
-name** rather than a short service name. `deploy-dev.sh` keeps the un-prefixed names on its CLI and
-maps them, so `--services catalog` is unchanged.
+hc-market-dev-<service>`, and why every intra-stack address in **the dev compose file** is a
+**container name** rather than a short service name. `deploy-dev.sh` keeps the un-prefixed names on
+its CLI and maps them, so `--services catalog` is unchanged.
+
+**That was written here as "both compose files" and it is only true of one of them** (D68 §3, backlog
+NEW-26 — which repeated the same generalisation from the same single line). Measured:
+`docker-compose.dev.yml` carries **no** short-name address; `quality/compose.yml` carries **five** —
+`http://booking:8080` twice in the gateway's routes, `http://catalog:8080`, `http://messaging:8080`,
+`http://payout:8080`, and `HEALTHCONNECT_BOOKING_BASE_URL` in catalog and in payout — beside the
+`http://hc-market-quality-messaging:8080` both documents quoted as if it were the rule. It is safe
+because those five are asked by containers on the **project** network, which is nearer than `hcnet` in
+their resolver order, so the collision is never reached. Safe by membership, not by naming, and the
+distinction is the whole of NEW-26.
 
 The databases stay **off** `hcnet` for the same reason, in reverse: never reachable from another
 product, and free to keep the short names `catalog-db`, `gateway-db`. They stay off `qualitynet`
@@ -950,6 +960,18 @@ comment naming a deleted call satisfied the check guarding it, verified on two o
 awk was the only correct copy and is now the shared file. It **preserves line numbering** — one blank
 line out per comment line in — because two callers quote the original line back by number. Adding a
 fifth text-matching check means calling it, not writing a fifth stripper.
+
+**There are TWO strippers since D68, and the second is not a private copy of the first.**
+`strip-comments.awk` is a **Java** stripper — `//` and `/* */` — and run over a **shell** script it
+removes nothing at all while exiting 0, which is this family's fail-open in its purest form. So a
+check whose subject is a shell script calls `strip-sh-comments.awk` beside it, which blanks from the
+first `#` that begins a word (`${#arr[@]}` and `$#` survive; a `#` inside a quoted string truncates
+the line, which fails **closed**) and preserves line numbering for the same reason. Do not teach
+either one to guess from the file extension: two languages that agree on nothing about what a comment
+looks like would then be one missing `case` from silently stripping neither. And the reason the
+shell one is load-bearing rather than decorative is measured: the `docker network connect` count in
+`verify-outbox-recovery.sh` reads **3 raw and 1 stripped**, because the header explains the defect in
+prose, so an unstripped check would be asserting the length of a paragraph.
 
 **Each caller guards that the file EXISTS, and that guard is measured rather than decorative.** One
 file four checks trust is a single point of failure, and absent it the two whose subject is a silent
@@ -1539,6 +1561,34 @@ time.**
   part-way through cannot leave booking off the plane. That is also why its estate check is
   load-bearing rather than tidy: naming the wrong estate's container severs somebody else's service,
   and the trap only restores the one it cut.
+  **And what it puts back must be what it cut, ALIASES INCLUDED** (D68, backlog NEW-26). A bare
+  `docker network connect` restores the connection and not the names — compose publishes a
+  container's service name as a DNS alias when it *creates* it, a manual reconnect publishes only the
+  container's own name — so every run left the estate slightly smaller than it found it, silently,
+  and only between recreates. Measured: `hc-market-quality-booking` sat on `hcnet` with `Aliases: []`
+  while every sibling carried `[<container name>, <service name>]`. The set is now read back off
+  `docker inspect` immediately **before** the disconnect and handed to the one `docker network
+  connect` left in the file, and the run asserts it came back, ordered. **Never `--alias booking`**:
+  the alias set belongs to compose, `HC_BOOKING_CTR` exists so this script can be pointed at an
+  estate whose names it does not know, and a `networks: <net>: aliases:` block would make the set
+  something else again.
+  **An empty captured set restores nothing, deliberately.** The quality box is in that state today;
+  the script prints a note naming the container, the network and the remedy — a compose recreate —
+  rather than inventing an alias set from the compose service label, which is a claim about compose's
+  intent it cannot check, or refusing a read-only measurement over a residue that costs nothing.
+  The ordering is the half no behavioural test can see and is asserted by line position:
+  **declare < trap < capture < disconnect**. The array is declared above the trap because
+  `check_estate` exits on four paths below it; the capture is above the disconnect because a
+  disconnected container has no alias list left to read, and capturing after the cut restores an
+  empty set with every assertion in the script still green.
+  **A plain `compose up` does NOT repair a container this already stripped**, which is the half that
+  changes an instruction (D68 §9). Measured on a throwaway project with an external network: compose
+  at create writes `[<container name>, <service name>]`; a bare connect leaves `[]`; `up -d` with
+  nothing changed says `Running` and **leaves it that way** — D67's "recreates only what changed",
+  one docker object along — while `--force-recreate`, a `down`/`up`, or a roll to a new `TAG` all put
+  it back. `quality/startup.sh` runs a plain `compose up -d`, so re-running it at the same tag is the
+  one repair that does not work. The endpoint says which made it: compose's `IPAMConfig` is `<nil>`,
+  the CLI's is `{invalid IP invalid IP []}`.
 - **`verify-cycle.sh` WRITES, and `quality/startup.sh --verify` knows it does** (D46). It leaves a
   booking, a ledger row and a **review**, and there is no endpoint to delete a review — so a
   successful cycle used to make the next `--verify` report `✗ reviews through the gateway got 64
