@@ -191,6 +191,33 @@ LIFT_GLOBALS="$(grep -E '^(HOST_SENTINEL|SSH_OPTS)=' "$SCRIPT" || true)"
 SENTINEL_VALUE="$(printf '%s\n' "$LIFT_GLOBALS" | sed -n 's|^HOST_SENTINEL=||p' | tr -d "\"'" | head -1)"
 [[ -n "$SENTINEL_VALUE" ]] \
   || err "$SCRIPT declares no non-empty HOST_SENTINEL at the top level. That value IS the mechanism that tells ssh's own failure apart from the remote command's — ssh exits 255 for both — so without it there is nothing here to check, and host_run refuses every probe while naming neither hop. See decisions.md D75."
+# AND THE SAME TREATMENT FOR SSH_OPTS, WHICH WAS LIFTED AND ASSERTED BY NOTHING — decisions.md D78 §9,
+# found at review. Three states were driven against the shipped check and all three exited **0**:
+# `SSH_OPTS=(-o BatchMode=yes)` with the timeout gone, `SSH_OPTS=()` empty, and the array RENAMED so
+# the grep above lifts only the sentinel line. The stub does not care how many options it is handed,
+# so part 6 stays green in every one of them — and the timeout is the half of NEW-36 taken beyond the
+# item: measured, an ssh with no ConnectTimeout spends 136s on a blackholed address against 8s with
+# one, which is the difference between a ~20-minute gate and a ~4.5-hour one.
+#
+# THE VALUE, NOT THE DECLARATION, exactly as the sentinel guard above. `ConnectTimeout` is the whole
+# reason the refusal arrives at all, and `BatchMode` is asserted here because the inline ban in part 5
+# assumes this array supplies it: without both, "SSH_OPTS is the one place BatchMode and the timeout
+# are set" — part 5's own success line — is a sentence about a variable that sets neither.
+SSH_OPTS_VALUE="$(printf '%s\n' "$LIFT_GLOBALS" | sed -n 's|^SSH_OPTS=||p' | head -1)"
+if [[ -z "$SSH_OPTS_VALUE" ]]; then
+  err "$SCRIPT declares no SSH_OPTS at the top level. Every ssh in the file expands it, so an absent or renamed array means every remote probe AND the health gate's 24 polls connect on the TCP default — measured at 136s per attempt against a blackholed address, which is a refusal nobody is still waiting for. See decisions.md D78 §7 and backlog NEW-36."
+else
+  case "$SSH_OPTS_VALUE" in
+    *ConnectTimeout*) : ;;
+    *) err "$SCRIPT's SSH_OPTS carries no ConnectTimeout: '$SSH_OPTS_VALUE'. An unbounded connect is a refusal that arrives minutes late or never — 136s per attempt on a blackholed address, measured, against 8s with the timeout — and the health gate makes 24 × one-per-service of them before it can say anything at all. See decisions.md D78 §7." ;;
+  esac
+  case "$SSH_OPTS_VALUE" in
+    *BatchMode*) : ;;
+    *) err "$SCRIPT's SSH_OPTS carries no BatchMode: '$SSH_OPTS_VALUE'. Part 5 bans an inline '-o BatchMode=yes' on the grounds that this array is where it is set, so dropping it here makes that ban a guard over nothing — and a deploy that stops halfway waiting for a passphrase is worse than one that does not start. See decisions.md D75 and D78 §9." ;;
+  esac
+  [[ "$SSH_OPTS_VALUE" == *ConnectTimeout* && "$SSH_OPTS_VALUE" == *BatchMode* ]] \
+    && ok "SSH_OPTS carries both BatchMode and a ConnectTimeout, so every ssh that expands it is bounded"
+fi
 if (( fail )); then printf '\nhost probe attribution: FAILED\n'; exit 1; fi
 
 # ---- the instrument ------------------------------------------------------------------------------

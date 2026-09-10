@@ -13885,13 +13885,31 @@ NEW-36 said to. D75 put `SSH_OPTS` on the six *preflight* probes only, and the h
 everything after it. All eleven deploy-phase invocations and the one `scp` now go through
 `"${SSH_OPTS[@]}"`: `mkdir -p`, the `.env.next` write, the `.env.previous` rotation, the remote
 `docker login`, `pull`, `up -d`, the health gate's own poll, both `/management/info` probes,
-`rollback`'s restore-and-roll, and `record_success`'s append. **Twelve `ssh` and one `scp`, counted on
-the stripped source** rather than from the prose — this entry's predecessor got that number wrong twice.
+`rollback`'s restore-and-roll, and `record_success`'s append.
+
+**THE NUMBER NEEDS ITS MEASURE, and this entry shipped one without it** (§13). Three measures of the
+same property, all measured over the comment-stripped, continuation-joined file, all correct:
+
+| measure | count | why it differs |
+| --- | --- | --- |
+| invocations in **command position** | **12 `ssh` + 1 `scp` = 13** | the honest total; one `ssh` is `host_run`'s, so **eleven** were this package's |
+| **lines carrying** `"${SSH_OPTS[@]}"` | **13** | equal to the first, which is how you know none was missed |
+| invocations **anchored at line start** (optionally after `run`) | **7 `ssh` + 1 `scp` = 8** | five are written inside `$( )`, after a pipe, or after `if` |
+
+Enumerated rather than counted, by line in the stripped file: **404** (`host_run`), **779** `mkdir`,
+**786** `scp`, **787** `.env.next`, **788** the rotation, **800** `docker login`, **803** `pull`,
+**807** `up -d`, **844** the health gate's poll, **1055** the brokerage probe, **1078** the version
+probe, **1121** `rollback`, **1128** `record_success`. A per-line control confirms every one of the
+thirteen carries the expansion. Re-derive before quoting; the first version of this section said
+"twelve `ssh` and one `scp`, counted on the stripped source" without naming which of the three
+measures that was, and review — measuring the anchored one — read it as wrong. CLAUDE.md's rule is
+*count the list, not the number*, and the list is above.
 
 It bounds the **connect** and not the remote command, so a long `pull` or a slow readiness probe is
 unaffected; `scp` accepts the same `-o` options (checked). The existing CI assertion that no site
 spells out its own `-o BatchMode=yes` is satisfied by construction, because the array is expanded
-rather than restated.
+rather than restated — **and that assertion was the whole of the guard until §13**, which is the
+review's blocking finding: the array's own value was asserted by nothing.
 
 ### §8 What §4.2 was asked to settle: `smoke_test`'s two probes still fold, and that is the decision
 
@@ -13914,7 +13932,7 @@ decision rather than an omission.
 
 ### §9 What CI can see
 
-`.github/checks/host-probe-attribution.sh` grows a **part 6** and now makes **44 assertions** (was 32).
+`.github/checks/host-probe-attribution.sh` grows a **part 6** and now makes **45 assertions** (was 32 — 44 at ratification, plus §13's `SSH_OPTS` guard).
 It drives the shipped `health_gate` and `gate_exhausted`, lifted as bytes, against the same stub that
 runs the wrapped remote script for real — so the sentinel and the compose status every reading rests on
 are produced by the code under test. `compose_name` and `REMOTE_COMPOSE` are lifted too rather than
@@ -13931,14 +13949,16 @@ Part 5's enumeration grows the two new sites (`{{.Health}}` and `logs --no-color
 comes **after** part 5 because the numbers are names: four parts' messages cite their own, and
 renumbering them to insert a driving part in the middle is churn for nothing.
 
-`host-probe-attribution-test.sh` grows eight mutations, **thirty** in all, each asserted applied —
-mutant present, original gone, `bash -n` — before its result is believed, and each required to go red
-through the door it was aimed at. It reports `31 ok, 0 failed`.
+`host-probe-attribution-test.sh` grows eight mutations at ratification and three more at review,
+**thirty-three** in all, each asserted applied — mutant present, original gone, `bash -n` — before its
+result is believed, and each required to go red through the door it was aimed at. It reports
+`34 ok, 0 failed`.
 
-**The harness's instrument was checked by removing what it tests.** With part 6 cut out of a copy of
-the check, the test reports exactly **25 ok, 6 failed** — cases 23-28, each *"the check PASSED on a
-broken tree"* — while 29 (whose door is the lift guard) and 30 (whose door is part 5) stay green. So
-those six mutations are covered by part 6 and by nothing else.
+**The harness's instrument was checked by removing what it tests, twice.** With part 6 cut out of a
+copy of the check, the test reports exactly **28 ok, 6 failed** — cases 23-28, each *"the check PASSED
+on a broken tree"* — while 29 (whose door is the lift guard) and 30 (whose door is part 5) stay green.
+With §13's `SSH_OPTS` guard cut out instead, it reports **31 ok, 3 failed**, exactly cases 31-33. So
+each group of mutations is covered by its own assertions and by nothing else.
 
 **Four harness defects were found by running it rather than by reading it**, and three are the same
 shape this family keeps producing:
@@ -14039,8 +14059,10 @@ bounded and unbounded. Bash's `set -e` suppression inside a condition-called fun
 ways, because `gate_exhausted` returning non-zero would otherwise reach the ERR trap and print
 *"failed at line N"* instead of the diagnosis.
 
-`host-probe-attribution.sh` green at **44** assertions; its test at **31 ok, 0 failed**; the harness
-control at **25 ok, 6 failed** with part 6 removed, each failure through its own door. `bash -n` on
+`host-probe-attribution.sh` green at **45** assertions (44 at ratification, +1 at review); its test at
+**34 ok, 0 failed** over thirty-three mutations; the two harness controls at **28 ok, 6 failed** with
+part 6 removed and **31 ok, 3 failed** with the SSH_OPTS guard removed, each failure through its own
+door. `bash -n` on
 every script `build.yml` parses, including the two touched here. The nine neighbouring checks that read
 these files re-run green (`shared-plane-wiring.sh` and its test, `strip-sh-comments-test.sh`,
 `strip-comments-test.sh`, `outbox-alias-restore-test.sh`, `pepper-wiring.sh`,
@@ -14060,3 +14082,80 @@ host. The quality stack was not touched — it is on `fabb959` with the agent at
 is evidence — the dev estate was left empty so its next `up` is still a first run somebody wants to
 observe, nothing was published to the broker, and both throwaway compose projects were removed with
 their containers.
+
+### §13 Review, and what it found — one blocking finding, taken as code
+
+**The behavioural surface held on independent re-derivation**: Appendix B clean, `bash -n` across every
+tracked script, the check at 44 and its test at 31 ok / 0 failed to the digit, and `gate_exhausted`'s
+six arms read line by line with §5's posture confirmed as structural rather than asserted — exactly one
+arm returns, every other outcome `die`s. Two subject mutations the reviewer wrote independently, neither
+of them in the thirty, went red correctly: the blip arm's `die` turned back into a `warn` and a return,
+and `{{.Health}}` dropped from the format string.
+
+**THE BLOCKING FINDING: `SSH_OPTS` was lifted and asserted by nothing.** Three states, each asserted
+applied and run separately against the shipped check, **all three exited 0**:
+
+```
+SSH_OPTS=(-o BatchMode=yes)                → CHECK_EXIT=0  GREEN   (no timeout)
+SSH_OPTS=()                                → CHECK_EXIT=0  GREEN   (no options at all)
+SSH_OPTS_RENAMED=(-o BatchMode=yes -o …)   → CHECK_EXIT=0  GREEN   (the grep lifts one line)
+```
+
+The mechanism is three lines of the check: `LIFT_GLOBALS` greps for `^(HOST_SENTINEL|SSH_OPTS)=` with a
+`|| true`, so an empty result is acceptable; the function-existence loop above it names `health_gate`,
+`gate_exhausted`, `compose_name` and `REMOTE_COMPOSE` and **not** `SSH_OPTS`; and the guard below reads
+`HOST_SENTINEL`'s value only. Under the stub an `ssh` handed no options behaves identically, so part 6
+stays green in all three states.
+
+**Why it is the finding rather than a nitpick, in this package specifically.** The timeout is the half of
+NEW-36 taken beyond the item, and its whole justification is a measurement — 136s per connect against
+8s, a ~4.5-hour gate against a ~20-minute one — so it is the half most worth guarding and the half that
+had nothing. Worse, part 5's success line already *claimed* it: *"SSH_OPTS is the one place BatchMode and
+the timeout are set"*, printed by an assertion that only bans the inline spelling. **A matcher whose
+reach falls short of its own name** is this repository's standing failure mode, recreated inside the
+package closing an instance of it.
+
+**Taken as code, on the precedent written immediately above it**: the value, not the declaration —
+`HOST_SENTINEL`'s guard says so in capitals and the argument transfers unchanged. The new guard requires
+a non-empty `SSH_OPTS=` line carrying **both** `ConnectTimeout` (the measurement's subject) and
+`BatchMode` (because part 5's inline ban rests on this array supplying it), with a separate refusal
+naming each, and it prints one `ok` when both are there — 45 assertions. Cases **31, 32 and 33** carry
+the reviewer's three states rather than leaving them in a shell history, and the second harness control
+confirms they are covered by the new guard and by nothing else: **31 ok, 3 failed** with it removed.
+
+**The count was right and its measure was missing** (§7, rewritten). The reviewer measured invocations
+anchored at the start of a line and got 7 `ssh` + 1 `scp`; this entry had measured command position and
+got 12 + 1; both are correct and the difference is the five written inside `$( )`, after a pipe and
+after `if`. §7 now carries all three measures, the thirteen line numbers, and a per-line control that
+every one of them expands the array — the enumeration is the record and the number is derived from it.
+
+**One item opened rather than fixed — NEW-41**, at the reviewer's instruction: the packages table lists
+NEW-21 as `READY` while its own section says `DONE (D62)`. The instruction was to check every row rather
+than fix the one that was seen, and **that is what changed the item**: this paragraph first said
+*"NEW-21 is the only disagreement"* and *"thirteen"*, both written before the sweep was run and both
+wrong. Measured — every table row extracted and compared against its section's heading, then each hit
+read by hand — there are **three** disagreements (NEW-21, WP-17, and WP-18, whose section body
+contradicts both of its own statuses), three false positives from the extractor's truncation, and
+**seventeen** sections with no table row at all: NEW-23 through NEW-39, unbroken. So the table is not a
+stale index but a **partial** one that stopped being maintained after NEW-22, which is a different
+defect from the one the reviewer saw and changes the fix — three shapes are costed in the item, and the
+cheapest to keep true deletes the `NEW-*` rows rather than completing them. The instrument's own false
+positives are named there too, so the next sweep does not re-find them.
+
+**That is this decision's subject arriving in its own review section**, for the third time in one
+package: a count asserted before it was measured, in the entry whose §7 had just been rewritten for
+exactly that. Both numbers are corrected in place rather than smoothed over, which is why the sentence
+still says what it said first.
+
+**What §13 did not change.** No arm of `gate_exhausted`, no message, no part of §5's posture, and no
+subject line of the shipped script beyond the two count paragraphs and one comment sentence. The
+reviewer's own note about `grep -F` eating a leading `--` in a mutation control is recorded rather than
+acted on: this file's `expect_red` compares with `grep -qF --` for exactly that reason, checked.
+
+**Verified at review, by running**: the check green at **45**; its test at **34 ok, 0 failed** with every
+mutation asserted applied; both controls (**28 ok, 6 failed**; **31 ok, 3 failed**), each failure through
+its own door; the three-measure count reconciled with a per-line control; `bash -n` on every script
+`build.yml` parses; the nine neighbouring checks and `build.yml`'s three inline matchers over this script
+re-run green; **Appendix B re-embedded** and `--check` clean; the seed unchanged. No Java changed. No
+host was contacted, nothing was deployed, and the quality stack, the empty dev estate and the parallel
+package's files were not touched.

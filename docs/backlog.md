@@ -2926,8 +2926,12 @@ blinked.
 own figures was wrong by two orders of magnitude in the process: a host that goes away costs "four
 minutes" only while ssh fails fast. Measured against a blackholed address, an unbounded ssh connect
 takes **136s** and `ConnectTimeout=8` takes **8s** — so 24 iterations × 5 services was **~4.5 hours**
-to a refusal naming the wrong cause. All twelve `ssh` and the one `scp` carry `SSH_OPTS` now, counted
-on the stripped source.
+to a refusal naming the wrong cause. Every invocation carries `SSH_OPTS` now — **12 `ssh` and 1 `scp`
+in command position** over the stripped, continuation-joined file, one of the ssh being `host_run`'s, so
+eleven were this package's. **Name that measure whenever quoting it**: anchored at the start of a line
+the same file answers 7 and 1, because five are written inside `$( )`, after a pipe or after `if`, and
+review read the first number as wrong against the second. Both are right; D78 §7 enumerates all thirteen
+by line with a per-line control, and D78 §13 is the correction.
 
 **`smoke_test`'s two probes are deliberately left folded** (D78 §8), which the item permitted and asked
 to have said rather than omitted. Its message already names both readings with a remedy covering both,
@@ -2935,12 +2939,23 @@ and the direction to fail is the **opposite** one: the condition it guards is D5
 an unestablished answer must not ship — which is what a rollback does. Both arguments are written at
 the site.
 
-CI sees it as **part 6** of `host-probe-attribution.sh` (**44** assertions, was 32), which drives the
+CI sees it as **part 6** of `host-probe-attribution.sh` (**45** assertions, was 32), which drives the
 shipped gate against the stub across ten states — including a **transient that must still PASS**,
 because the cheap reading of this item is a status check inside the loop and that makes a one-second
-flake a rolled-back deploy. Its test carries **thirty** mutations (`31 ok, 0 failed`), and the harness
-control with part 6 removed reports **25 ok, 6 failed**, each through its own door. `deploy-prod.sh` is
-Appendix B, so **Appendix B was re-embedded**. Opens **NEW-39**.
+flake a rolled-back deploy. Its test carries **thirty-three** mutations (`34 ok, 0 failed`), and the two
+harness controls report **28 ok, 6 failed** with part 6 removed and **31 ok, 3 failed** with the
+`SSH_OPTS` guard removed, each through its own door. `deploy-prod.sh` is Appendix B, so **Appendix B was
+re-embedded**. Opens **NEW-39**, and **NEW-41** at review.
+
+**Review found one blocking gap and it was the half taken beyond the item** (D78 §13): `SSH_OPTS` was
+lifted by the check and asserted by nothing, so emptying the array, dropping its `ConnectTimeout` or
+renaming it all exited **0** — measured, three ways, with the stub indifferent to how many options an
+`ssh` is handed. The timeout is what the 136s/8s measurement is *about*, and part 5's success line
+already claimed to cover it: *"SSH_OPTS is the one place BatchMode and the timeout are set"*, printed by
+an assertion that only bans the inline spelling. **A matcher whose reach falls short of its own name**,
+inside the package closing an instance of that. Fixed on the `HOST_SENTINEL` guard's own precedent —
+the value, not the declaration — with both options required separately, and the reviewer's three states
+carried as cases 31-33.
 
 ---
 
@@ -3058,6 +3073,55 @@ Two shapes, neither costed:
 Nothing is unsafe either way: since D78 the late refusal names the right cause and reverts nothing it
 cannot establish. What is left is an operator waiting twenty minutes for a message about a link that
 went down four minutes in.
+
+---
+
+## NEW-41 — the packages table disagrees with three of its own sections, and stopped indexing after NEW-22 · READY
+
+Opened at **D78's review**, which found one row and asked for the whole table to be checked rather than
+that row fixed. Doing so turned up two more disagreements and a bigger finding underneath them, which is
+why this is an item rather than a correction.
+
+**NEW-40 is deliberately skipped**: it is reserved by a package running in parallel (NEW-37, decision
+D79). The gap is not a lost item.
+
+**Three rows disagree with the section that owns them.** Measured by extracting every
+`| **ID** | … | STATUS |` row and comparing it against that ID's `## ID — … · STATUS` heading, then
+reading each hit by hand — the extractor's own truncation produced three false positives (`PARTLY` for
+`PARTLY DONE` on WP-09, WP-13 and WP-19) which are **not** defects:
+
+| item | the table says | its section says | which is right |
+| --- | --- | --- | --- |
+| **NEW-21** | `READY` | `DONE (D62)` | the section — D62 closed it, and the row is the state before that |
+| **WP-17** | `READY (spec only)` | `BLOCKED` | unresolved; the section's body says a person has to want a video provider, which is `BLOCKED`'s definition here, while the row's "spec only" is what D37 delivered |
+| **WP-18** | `CLOSED` | `BLOCKED` | **neither cleanly** — the section's own body says the rename "largely defused" it *"but the question itself is still unanswered on the host"*, so `CLOSED` overstates and `BLOCKED` understates |
+
+`NEW-11`'s two statuses read differently (`WON'T, until there is a second attempt` against
+`WON'T, until there is one`) and are the same answer in different words; it is listed here so the next
+sweep does not re-find it as a fourth.
+
+**The bigger finding is that the table is not stale — it is partial.** **Seventeen** sections have no
+table row at all: **NEW-23 through NEW-39**, unbroken. So the convention silently changed after NEW-22,
+and the table stopped being an index of the backlog while continuing to look like one. That changes the
+fix, which is the reason this is not a three-line edit:
+
+- **correcting the three rows** leaves a table that indexes 41 of 58 items and still reads as complete;
+- **completing the table** means seventeen new rows, each duplicating a status that already exists two
+  screens down — the duplication that produced all three disagreements in the first place;
+- **deleting the NEW-* rows from the table** and letting the sections be the record is the third shape,
+  and the cheapest to keep true: the table then indexes the **work packages** only, which is what its
+  header (`| WP | Package | Status | Blocked on |`) says it is, and the NEW items are read where they
+  are argued.
+
+The third is the one to reach for, and it wants the file's own vocabulary paragraph (line 10) updated to
+say where an item's status lives. **It is NEW-15's root cause in a document**: one fact in two places
+with nothing holding them together — and this file already carries the general rule for it, *"where the
+two disagree, `decisions.md` wins — and where either disagrees with the code, the code wins"*, which
+says nothing about a file disagreeing with itself.
+
+A derived check is possible and probably not worth it: a `grep` pairing every table row with its section
+heading would have caught all three, and is the same shape as `build.yml`'s CRUD gate one document over.
+Cost it against the third option, which removes the pairing rather than guarding it.
 
 ---
 

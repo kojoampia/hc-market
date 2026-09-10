@@ -1718,8 +1718,16 @@ esac
 #  upload, the login, the pull, the roll, the HEALTH GATE'S OWN POLL, both /management/info probes, the
 #  rollback and the deployments.log append — still hung on the TCP default. Measured against a
 #  blackholed address: 136s per connect unbounded, 8s with the timeout, which is 24 iterations × 5
-#  services × 136s — about four and a half HOURS — before the gate could say anything at all. All
-#  twelve ssh invocations and the one scp carry it now. See decisions.md D78 §7 and backlog NEW-36.
+#  services × 136s — about four and a half HOURS — before the gate could say anything at all.
+#
+#  EVERY INVOCATION CARRIES IT NOW, and the measure has to be named or the number is meaningless:
+#  in COMMAND POSITION, over the comment-stripped and continuation-joined file, there are 12 `ssh`
+#  and 1 `scp` — one of the ssh being host_run's, so ELEVEN were the deploy-phase ones this closed.
+#  Two other measures of the same thing give other numbers and both are right: lines carrying the
+#  `"${SSH_OPTS[@]}"` expansion is 13 (equal to the first, which is how you know none was missed),
+#  and invocations ANCHORED at the start of a line is 8, because five of them are written inside
+#  `$( )`, after a pipe, or after `if`. D78 §7 enumerates all thirteen by line; re-derive rather
+#  than quoting a number here. See decisions.md D78 §7, §13 and backlog NEW-36.
 #
 #  Optional ON THE HOST, in $REMOTE_PATH/secrets.env or .env — the founding brokerage terms
 #  (decisions.md D57, backlog NEW-18). All five may be left unset and an estate that sets none is
@@ -2513,11 +2521,14 @@ health_gate() {
       # $REMOTE_COMPOSE, not a bare `docker compose`: interpolation happens on every subcommand,
       # so an `exec` without the secrets file dies on the same `:?` an `up` would.
       #
-      # SSH_OPTS, because this probe is one of the eleven that had no ConnectTimeout (NEW-36's own
-      # second half). MEASURED here: an ssh with no ConnectTimeout spends **136s** on a blackholed
-      # address before answering, so 24 iterations × 5 services was **4.5 hours** to a refusal, not
-      # the four minutes the header implies. With the timeout it is 8s per probe. It bounds the
-      # CONNECT and not the remote command, so a slow readiness probe is unaffected.
+      # SSH_OPTS, because this probe was one of the eleven deploy-phase invocations with no
+      # ConnectTimeout (NEW-36's own second half). MEASURED here: an ssh with no ConnectTimeout
+      # spends **136s** on a blackholed address before answering, so 24 iterations × 5 services was
+      # **4.5 hours** to a refusal, not the four minutes the item assumed. With the timeout it is 8s
+      # per probe. It bounds the CONNECT and not the remote command, so a slow readiness probe is
+      # unaffected — and CI asserts the array still carries both options, which it did not until
+      # D78's review: the check lifted SSH_OPTS and read only HOST_SENTINEL's value, so emptying or
+      # renaming it left every assertion green.
       ssh "${SSH_OPTS[@]}" "$HOST" "cd '$REMOTE_PATH' && $REMOTE_COMPOSE exec -T $(compose_name "$s") bash -c \
         'exec 3<>/dev/tcp/localhost/8080 && printf \"GET /management/health/readiness HTTP/1.0\\r\\n\\r\\n\" >&3 && grep -q UP <&3'" \
         >/dev/null 2>&1 || bad+=" $s"

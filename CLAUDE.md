@@ -203,6 +203,15 @@ unestablished answer must not ship. The gateway version probe decides nothing at
 open as **NEW-39**. Since D78 every `ssh` and the one `scp` in this file carry `SSH_OPTS`, which is
 what took a blackholed host from **~4.5 hours** to a refusal down to about twenty minutes: an
 unbounded ssh connect there is **136s** and `ConnectTimeout=8` is **8s**, both measured.
+**Name the measure if you quote a count of them** — in command position there are 12 `ssh` and 1
+`scp`, of which eleven were this package's; anchored at the start of a line there are 7 and 1, because
+five are written inside `$( )`, after a pipe or after `if`. D78 §7 enumerates all thirteen by line and
+D78 §13 is the correction; both numbers are right and the first version of that section named neither
+measure. **The array's own value is asserted by CI since D78 §13** and was asserted by nothing before
+it: the check lifted `SSH_OPTS` beside `HOST_SENTINEL` and read only the sentinel's value, so emptying
+the array, dropping its `ConnectTimeout` or renaming it left all 44 assertions green — measured, three
+ways. It carries `BatchMode` **and** `ConnectTimeout` or the check refuses, because part 5's ban on an
+inline `-o BatchMode=yes` rests on this being the one place both are set.
 
 Instances of the shape have been found here over **three kinds of docker object** — a container's
 aliases on a network (D68), a container's networks (D69 and D71, one copy each) and a network's

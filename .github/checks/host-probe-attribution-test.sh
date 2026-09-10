@@ -415,6 +415,37 @@ expect_red "$f" "30  the health column dropped from the state probe" \
   "ps -a --format '{{.Service}} {{.State}}'" "{{.Service}} {{.State}} {{.Health}}" \
   "no longer asks the host about what state the services are in once the health gate has timed out"
 
+printf '\nSSH_OPTS: lifted by the check, and asserted by nothing until review\n'
+# CASES 31-33 ARE THE REVIEW FINDING ON D78 — every one of them exited 0 against the shipped check.
+# `SSH_OPTS` was lifted into LIFT_GLOBALS with a `|| true` beside it, the function-existence loop did
+# not name it, and only HOST_SENTINEL's value was ever read — so the array could lose the timeout,
+# lose every option, or be renamed out from under the grep, and part 6 stayed green because the stub
+# does not care how many options an `ssh` is handed. That is the half of NEW-36 taken beyond the item
+# (136s per connect against 8s, measured) with nothing behind it, and part 5's own success line
+# already claimed to cover it.
+#
+# THE TIMEOUT, which is the one the measurement is about.
+f="$(fresh m31)"
+sed -i 's|^SSH_OPTS=(-o BatchMode=yes -o "ConnectTimeout=\${HC_SSH_TIMEOUT:-8}")$|SSH_OPTS=(-o BatchMode=yes)|' "$f"
+expect_red "$f" "31  SSH_OPTS loses its ConnectTimeout" 'SSH_OPTS=(-o BatchMode=yes)' \
+  'ConnectTimeout=${HC_SSH_TIMEOUT:-8}' "carries no ConnectTimeout"
+
+# THE WHOLE ARRAY EMPTIED, which also takes BatchMode with it — so the refusal must be about the
+# option part 5's inline ban assumes is here, and the assertions are ordered to say both.
+f="$(fresh m32)"
+sed -i 's|^SSH_OPTS=(-o BatchMode=yes -o "ConnectTimeout=\${HC_SSH_TIMEOUT:-8}")$|SSH_OPTS=()|' "$f"
+expect_red "$f" "32  SSH_OPTS emptied" 'SSH_OPTS=()' 'BatchMode=yes -o "ConnectTimeout' \
+  "carries no ConnectTimeout"
+
+# THE ONE THE EXISTING GUARD WAS SHAPED TO CATCH AND DID NOT. Renaming the array leaves the grep
+# lifting only the HOST_SENTINEL line, so the sentinel guard passes, `LIFT_GLOBALS` is short by one
+# line, and every ssh in the shipped script expands an unset name. Under the stub that is invisible;
+# on a host it is the TCP default on all twelve of them.
+f="$(fresh m33)"
+sed -i 's|SSH_OPTS|SSH_CONNECT_OPTS|g' "$f"
+expect_red "$f" "33  SSH_OPTS renamed" 'SSH_CONNECT_OPTS=(-o BatchMode=yes' 'SSH_OPTS' \
+  "declares no SSH_OPTS at the top level"
+
 # THE ONE CASE THAT MUTATES THE CHECK'S OWN INSTRUMENT rather than the subject. Absent the shell
 # stripper, part 3 reads empty text: every `grep -F` finds nothing, so every site is reported
 # missing and — before the guard — every count came back 0, which reads as "no bare ssh anywhere".
