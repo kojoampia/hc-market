@@ -71,11 +71,19 @@
  * <p><strong>That second one is now a known cost rather than a principle</strong>, and whoever
  * implements Hubtel or MoMo meets it before anything else. "At its own boundary" turned out to mean
  * "from a source this estate does not have": Paystack needs an email, both of the others need a phone
- * number, and the account store that holds them belongs to the gateway with no endpoint to ask.
- * {@link net.jojoaddison.service.payment.CustomerContacts} is that boundary, it has no
- * implementation, and giving it one is a disclosure decision rather than a class — D50 sets out the
- * three candidate sources and why two of them were rejected. Do not solve it by adding a field to the
- * booking request; that is the first of the three and it is rejected on D22's grounds.
+ * number, and the account store that holds them belongs to the gateway.
+ * {@link net.jojoaddison.service.payment.CustomerContacts} is that boundary, and giving it an
+ * implementation was a disclosure decision rather than a class — D50 sets out the three candidate
+ * sources and why two of them were rejected. Do not solve it by adding a field to the booking request;
+ * that is the first of the three and it is rejected on D22's grounds.
+ *
+ * <p><strong>The EMAIL half is answered — D72 §3, D74.</strong> The architect took the decision on
+ * 2026-09-10 and {@code GatewayCustomerContacts} asks the gateway's
+ * {@code GET /internal/customers/{login}/email} with a short-lived estate-signed token. So Paystack can
+ * name who is paying. <strong>The PHONE NUMBER is not answered</strong>, and whoever implements Hubtel
+ * or MoMo should read D74 before assuming it follows: the door is one field wide, the mechanism is
+ * built, and whether a phone number is the same disclosure as an email is not a question the payment
+ * seam may settle for itself either. Widening it needs its own decision, and D74 says so.
  *
  * <h2>Act 987 is not answered here, and this package must not pre-empt it</h2>
  *

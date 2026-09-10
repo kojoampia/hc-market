@@ -392,29 +392,42 @@ serviceClass` makes JHipster generate `BookingService`, so hand-written logic th
 replaced on the next regeneration and the failure is a wall of "cannot find symbol" on methods that
 existed minutes ago. The booking lifecycle lives in **`BookingWorkflow`** for exactly this reason.
 
-The gateway has two hand-written files too — `MarketplacePublicRouteConfiguration` and
-`PaymentWebhookRouteConfiguration` — and both are new files, so regeneration leaves them alone. They
-close the same gap at two different doors, because the generated
+The gateway has **four** hand-written files now — `MarketplacePublicRouteConfiguration`,
+`PaymentWebhookRouteConfiguration`, `InternalApiSecurityConfiguration` and
+`InternalCustomerContactResource` — and all are new files, so regeneration leaves them alone. The first
+two close the same gap at two different doors, because the generated
 `.pathMatchers("/services/**").authenticated()` runs **before routing**. Without the first, Discover
 and Browse are 401 and "public reads need no token" is only true if you bypass the gateway. Without
 the second, every payment provider's callback is 401 at the edge: nothing reaches booking, nothing
 appears in booking's log, and the provider retries until it files the payment as undelivered (D45).
+The third and fourth are D74's contact lookup, and the third does the *opposite* of the first two —
+it opens a path the generated chain **denies** rather than one it authenticates. See the D74 entry
+under "Working here"; do not read it as a third instance of the same gap.
 
-**Both carry their `@Order` on the `@Bean` method, and it has to stay there.** On the
-`@Configuration` class — where both had it until WP-13's review — Spring never reads it: the
+**All three chains carry their `@Order` on the `@Bean` method, and it has to stay there.** On the
+`@Configuration` class — where the first two had it until WP-13's review — Spring never reads it: the
 comparator is offered the factory method and the bean type, never the declaring class, so
 `findAnnotationOnBean` answered `null` for all three of the gateway's chains and the only thing
-putting these two in front of the generated one was component-scan order, alphabetically.
-`PaymentWebhookRoutePermitIT` asks the running container rather than the source, because the CI grep
-and the hand-built unit test beside it both stay green when `@Configuration`, `@Bean` or `@Order` is
-removed.
+putting the first two in front of the generated one was component-scan order, alphabetically.
+`PaymentWebhookRoutePermitIT` and `InternalApiPermitIT` ask the running container rather than the
+source, because the CI greps and the hand-built unit tests beside them stay green when
+`@Configuration`, `@Bean` or `@Order` is removed. **catalog's `InternalApiSecurityConfiguration` still
+has its `@Order` on the class** and is the one place this was not corrected — backlog NEW-34, and
+re-measure in that service rather than porting the gateway's answer, because it is a servlet chain.
 
 Three things were made regeneration-proof on purpose and need no re-applying: `SeedProperties` is
 `@Component`-annotated rather than listed on the generated app class, public read access lives in a
 new `MarketplacePublicSecurityConfiguration` rather than as an edit to the generated
 `SecurityConfiguration`, and `/internal/**` gets its own new `InternalApiSecurityConfiguration`
-beside it. The internal lookup goes through the hand-written `MarketplaceService` for the same
-reason — a `findByUserLogin` added to the generated `ProfessionalRepository` would be discarded.
+beside it. All three are **catalog's**. The internal lookup goes through the hand-written
+`MarketplaceService` for the same reason — a `findByUserLogin` added to the generated
+`ProfessionalRepository` would be discarded.
+
+The **gateway's** contact lookup (D74) needed none of that last move, and the difference is worth
+knowing before copying either pattern: `UserRepository.findOneByLogin` is *generated and already there*,
+used by `DomainUserDetailsService` and `UserService`, so `InternalCustomerContactResource` reads the
+repository directly from `web` — which the ArchUnit rule permits — rather than adding a method to the
+generated `UserService`, which a regeneration would discard.
 
 `src/test/.../ProfessionalResourceIT.java` is **not a test** — it holds fixtures that four generated
 ITs call. Keep the `...IT` name; the callers are generated and will keep referencing it.
@@ -849,11 +862,18 @@ keeping it off the internet is that no route matches it (`decisions.md` D28).
 This used to read "booking holds no credential of its own, because this estate has no
 service-to-service authentication". **That stopped being true with D38**: booking mints a short-lived
 token signed with the estate key to fan an erasure out to messaging and catalog. It changes nothing
-about `/internal/**` — that endpoint still authenticates nobody, and the route predicates are still
-the only thing keeping it private — but the reason is now "it was never given one" rather than "no
-such thing exists here". Widen those four
+about **catalog's** `/internal/**` — that endpoint still authenticates nobody, and the route predicates
+are still the only thing keeping it private — but the reason is now "it was never given one" rather than
+"no such thing exists here". Widen those four
 predicates in any of the three compose files and the endpoint is public. Nothing is lost by the
 narrowing: every consumer in the repository already goes through `/api/**`.
+
+**Since D74 there are TWO `/internal/**` prefixes in this estate and only one of them is private by
+routing.** catalog's is D28's, above. **The gateway's is not**: `GET /internal/customers/{login}/email`
+sits on the gateway itself, so no route predicate is in front of it, both nginx vhosts proxy
+`location /` here, and dev and quality publish the gateway's port on every interface — it is reachable
+from outside on every estate and is refused by a credential instead. Do not read one prefix's argument
+onto the other; D72 §3 did, and D74 §3 is the correction.
 
 **The route being narrow is not the same as the endpoint being guarded, and nine endpoints proved
 it** — backlog **NEW-15**, found by D53 on one and **closed by D54 on nine**. Every service says
@@ -1216,7 +1236,7 @@ time.**
   has to compare before it counts. And **every row the sweep touches gets a number on the receipt** —
   catalog deleted favourites and reported nothing about them for a week. The nine counters and which
   two were wrong are tabulated in D39.
-- **FOUR families of file are copied verbatim across services, and CI diffs the copies.** There is no
+- **FIVE families of file are copied verbatim across services, and CI diffs the copies.** There is no
   shared library here, so a derivation whose answers must match across services is duplicated instead;
   edit one copy and you must edit them all identically, **comments included**. All are new files, so a
   regeneration leaves them alone. **The count in this sentence has been wrong before** — it read "two"
@@ -1252,6 +1272,17 @@ time.**
     missing is reported **and** the reduced comparison is announced rather than silently made.
     It was documented as byte-identical in three places and enforced nowhere for one commit — D62's
     review, and the house failure mode in miniature.
+  - `ContactLookupToken.java` — **booking and the gateway** (D74). The credential booking presents to
+    the gateway to read one customer's email: subject, claim, authority, lifetime, and the `mayRead`
+    the *accepting* side enforces. Diverge and a payment is a 403 that reads as a permissions problem,
+    in a service nobody working on payments would open, on an estate where no provider has ever been
+    enabled. **The reference is the GATEWAY's**, unlike the three above, because that is the copy where
+    the contract is enforced rather than promised — so a difference is reported as booking having
+    drifted from the acceptor. Same rules otherwise: the family is derived with `find`, a family of one
+    is refused, and `mayRead` is dead code in booking's copy on purpose so the two can be compared as
+    bytes rather than as behaviour. It is the second family whose reference is not payout's and the
+    first whose reference is not the alphabetically-first service, so read the check rather than
+    assuming the pattern.
 - **The scripts and the spec appendices are the same bytes in two places.** Appendix A is
   `deploy/deploy-dev.sh`, Appendix B is `deploy/deploy-prod.sh`. This is enforced mechanically —
   after editing either script, re-embed; before trusting the spec, check:
@@ -1568,21 +1599,81 @@ time.**
   currency field, so the account's currency decides — a silent mis-charge, not a rejected call), a
   secret not starting with `sk_` (refused at both doors and announced at startup; Paystack lists `pk_`
   beside it), and any unrecognised event.
-- **It still cannot take a payment, and that is a decision rather than a bug** (D50). Paystack's
-  initialize requires the customer's **email**; `PaymentIntent` carries a login and no contact details,
-  deliberately. `CustomerContacts` names the boundary and **has no implementation**, so `authorize`
-  refuses before the round trip. Two cheaper sources were rejected and stay rejected: a field on
+- **It can name the customer now, and that was a decision rather than an implementation** (D50, D72 §3,
+  D74). Paystack's initialize requires the customer's **email**; `PaymentIntent` carries a login and no
+  contact details, deliberately. Two cheaper sources were rejected and stay rejected: a field on
   `CreateBooking` (D22 verbatim — and the prototype renders the email read-only from the BridgeCare
   record, it never asks) and the login when it happens to be email-shaped (works for a subset, fails
-  when they pay). The only defensible source is the gateway's account store, and who may ask it is a
-  disclosure decision of D38's kind. **Hubtel and MoMo hit the same wall for a phone number.**
-  **It says so at boot** (D50, as reviewed). `announceIntegration`'s INFO — "enabled and implements
-  [authorize, readCallback]" — is true and reads as "it works", so `PaymentConfiguration` WARNs beside it
-  when `getIfAvailable()` finds no `CustomerContacts`. That bean method is the only place that can tell:
-  the adapter is handed a working `CustomerContacts.unanswered()` and cannot compare by identity, since
-  that factory returns a fresh lambda per call. **Exactly one implementation** — two make
-  `getIfAvailable` answer `NoUniqueBeanDefinitionException` and fail the context, which is the right
-  direction and not what "one `@Component` and no edit" used to imply.
+  when they pay). The only defensible source is the gateway's account store, and who may ask it was a
+  disclosure decision of D38's kind — **taken by the architect on 2026-09-10**. `CustomerContacts` has
+  one implementation, `GatewayCustomerContacts`, which asks the gateway's
+  `GET /internal/customers/{login}/email`. **Hubtel and MoMo still hit the same wall for a phone
+  number**, and whether that is the same disclosure is nobody's to decide inside the payment seam.
+  **`emailOf` has THREE answers, not two** (D74). An address; `Optional.empty()` for a *fact about the
+  account* — no such login, or a login carrying no address, which is reachable because `email` has no
+  `@NotNull` anywhere in the gateway's user model; and **`CustomerContacts.ContactsUnavailable`** for
+  *the question could not be put* — unreachable, timed out, 5xx, unreadable, or the gateway refusing this
+  estate's own token. All of them end in 502 and no booking, because D44 wraps the provider call, **so
+  what the split actually decides is what the log says** — and answering empty for an unreachable gateway
+  would print "this estate holds no email address" for an estate that holds one, which points a reader at
+  an unimplemented decision that is implemented. Same division as `CatalogClient`'s
+  `CatalogUnavailable`/`UnknownOffering`. An answer whose `login` is not the one asked about is **refused**
+  rather than used: Paystack accepts whatever email it is given, so it is the one wrong answer that would
+  go through unnoticed.
+  **A 404 must NAME the login, and the body is not decoration** (D74's review). Every Spring service in
+  this estate 404s on a path it does not map, so `HEALTHCONNECT_GATEWAY_BASE_URL` misdeployed to catalog,
+  payout or messaging 404s for **every login on the estate** — reported as "the account store holds no
+  account named X", that is a deployment fault wearing a per-account fact. So the endpoint answers its
+  404 with the same record naming the login, and booking refuses any 404 that does not carry it:
+  `ContactsUnavailable` with an ERROR naming the variable. **Do not "tidy" that back to
+  `notFound().build()`** — three unit cases and one IT assertion go red, and the discriminator is the same
+  one the 200 path uses. Establish who answered from the answer naming the question, never from a status
+  code and a configured base URL.
+  **The address is never logged, on either side**, and booking stores nothing — so the erasure sweep is
+  deliberately unchanged, and that is the sentence to re-read if anything ever caches this answer.
+  **It still says so at boot when there is no implementation** (D50, as reviewed).
+  `announceIntegration`'s INFO — "enabled and implements [authorize, readCallback]" — is true and reads
+  as "it works", so `PaymentConfiguration` WARNs beside it when `getIfAvailable()` finds no
+  `CustomerContacts`. That branch is **not dead code** now that one exists: it is what fires if the
+  `@Component` is deleted or renamed out of the scanned packages, and the symptom it names is invisible
+  otherwise. **Exactly one implementation** — two make `getIfAvailable` answer
+  `NoUniqueBeanDefinitionException` and fail the context, which is the right direction and not what "one
+  `@Component` and no edit" used to imply.
+- **Booking holds TWO credentials against the estate key, and they are not interchangeable** (D38, D74).
+  `FanoutTokenMinter.forErasureOf` carries `ROLE_CUSTOMER_ERASURE` on subject `system:erasure-fanout`;
+  `forContactLookupOf` carries `ROLE_CUSTOMER_CONTACT_READ` on subject `system:contact-lookup`. Reusing
+  the first for the email lookup was one line and was refused: it would have presented the gateway with a
+  credential claiming to authorise an *erasure*, leaving the scope everybody believes in as the name of a
+  Java method. **A scope that is a method name is not a scope.** Both share a private `mint(...)` in which
+  **every narrowing is a parameter**, so each public method states the whole of what its credential is on
+  one call — do not factor a default authority, subject or lifetime in there, and a third capability gets
+  its own method and its own authority. Neither carries an `aud`: nothing here validates one (see the
+  note on `iss`), and no second service grants either authority anything, so the authority *is* the
+  audience. `ROLE_BROKERAGE` is **not** a bypass on the contact lookup, unlike on erasure — no screen in
+  this estate shows a customer's email and nobody has asked for one.
+- **The gateway's `/internal/**` is NOT kept private by the route predicates, and D28's argument does not
+  transfer to it** (D74). catalog's `/internal/professionals/{ref}/login` is private because no route
+  matches it; the gateway's `GET /internal/customers/{login}/email` **is on the gateway itself**, so there
+  is no route in front of it, both nginx vhosts end in a `location /` that proxies everything here, and
+  the dev and quality compose files publish the gateway's port on every interface. **That path is
+  reachable from outside on every estate.** What refuses a stranger is the credential —
+  `ROLE_CUSTOMER_CONTACT_READ` is granted by no login, so only a holder of `JWT_BASE64_SECRET` can mint
+  one — plus `ContactLookupToken.mayRead`, which is what stops the *authority alone* being enough:
+  `POST /api/admin/authorities` creates an authority by name and `UserResource` grants it, so an
+  administrator can hand a real account that authority, and its ordinary 24-hour token then satisfies
+  `hasAuthority`. `mayRead` refuses it on the subject.
+  **`InternalApiSecurityConfiguration` in the gateway OPENS that door rather than closing it**, and the
+  opposite was written into its javadoc as "measured" before anybody measured it. **Measured, with
+  `@Configuration` removed and restored**: reactive Spring Security *denies* an exchange no
+  `authorizeExchange` rule matched, so with that chain gone a correct estate token gets **403** and
+  `/internalx/…` and `/nothing/at/all` answer identically. Deleting the file breaks payments; it does not
+  leak an address. `InternalApiPermitIT` pins the default-deny itself, so a framework upgrade that flipped
+  it goes red there rather than turning the gateway's whole unmatched surface into anonymous reads.
+  Two lines in that chain **no test can see** — `hasAuthority(...)` widened to `authenticated()`, and
+  `anyExchange().denyAll()` deleted — because `mayRead` and the framework default over-determine them;
+  both measured green under mutation and guarded by a CI grep instead. An nginx `return 404` was
+  considered and **rejected**: it would be a control on production and no control at all on the two
+  estates that publish the gateway's port, which is worse than none.
 - **A provider's signing secret is the estate's third secret, and absent means refused** (D45).
   `healthconnect.payments.<name>.secret`, injected by all three compose files as `HC_PAYSTACK_SECRET`,
   `HC_HUBTEL_SECRET`, `HC_MOMO_SECRET`, **never committed** — this repository is public. Optional,

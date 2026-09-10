@@ -138,21 +138,25 @@ class PaystackPaymentProviderUnitTest {
     }
 
     /**
-     * D50's open decision, and the reason this adapter cannot take a payment on today's estate.
+     * D50's open decision — <strong>answered by D74, and this case is still live.</strong>
      *
-     * <p>Paystack's initialize requires an email address; {@code PaymentIntent} carries a login and
-     * no contact details, deliberately; and nothing in this repository implements
-     * {@link CustomerContacts}, because standing up an endpoint that returns a person's email by
-     * login is a disclosure decision the payment seam may not take alone. So the refusal is
-     * <strong>before the round trip</strong>: no request is made, no reference is minted, and
-     * {@code BookingPayments} turns the throw into a 502 and no booking.
+     * <p>Paystack's initialize requires an email address and {@code PaymentIntent} carries a login and
+     * no contact details, deliberately. What has changed is that {@link CustomerContacts} now has an
+     * implementation ({@code GatewayCustomerContacts}, D72 §3); what has not is that it can legitimately
+     * answer <em>empty</em> — for a login the account store has never heard of, and for one whose
+     * account carries no address. {@code unanswered()} stands in for either, which is why that factory
+     * is kept.
+     *
+     * <p>So the refusal is still <strong>before the round trip</strong>: no request is made, no
+     * reference is minted, and {@code BookingPayments} turns the throw into a 502 and no booking. That
+     * is the right answer for a customer this platform cannot name to a payment provider.
      */
     @Test
     @DisplayName("no contact detail means no round trip and no booking")
     void authorizeRefusesWhenTheEstateCannotSayWhoIsPaying() {
         assertThatThrownBy(() -> provider(SECRET, CustomerContacts.unanswered()).authorize(intent(15_000L, "GHS")))
             .isInstanceOf(UnsupportedOperationException.class)
-            .hasMessageContaining("D50");
+            .hasMessageContaining("D74");
 
         assertThat(paystack.received()).isEmpty();
     }

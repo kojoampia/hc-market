@@ -465,6 +465,16 @@ services:
       # whichever it likes. The two above predate that rule and are load-bearing enough that changing
       # them belongs in its own change; a new one has no reason to be written the risky way.
       HEALTHCONNECT_MESSAGING_BASE_URL: http://hc-market-quality-messaging:8080
+      # The customer's email address, for a payment provider that needs one — decisions.md D72 §3,
+      # D74. Booking asks the gateway's GET /internal/customers/{login}/email with a second
+      # short-lived token (ContactLookupToken, NOT the erasure one).
+      #
+      # The CONTAINER name, for the reason given in the note above: `gateway` on hcnet is a four-way
+      # claim across this workspace's products, and a new address has no reason to be written the
+      # risky way. Note also what this stack CANNOT demonstrate: the eighteen seeded customers are
+      # rows in catalog, booking, messaging and payout and are NOT gateway accounts, so a lookup for
+      # one of them is a legitimate 404. `admin` and `user` are the only logins here with an email.
+      HEALTHCONNECT_GATEWAY_BASE_URL: http://hc-market-quality-gateway:8080
       # --- Payment providers, and the third estate-wide secret (decisions.md D37/D45/D50) ---------
       #
       # D37 chose Paystack, Hubtel and MTN MoMo, with the customer choosing between them. Each

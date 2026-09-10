@@ -38,7 +38,7 @@ distinction the declared five cannot express, so the declaration was the wrong h
 | **WP-10** | Payments: the seam can complete a lifecycle | DONE | D41 |
 | **WP-11** | Payments: asynchronous confirmation | DONE | D43 |
 | **WP-12** | Payments: the zero-amount booking | DONE | D44 — reviewed 2026-09-03, four findings, all fixed |
-| **WP-13** | Payments: provider choice and Act 987 | PARTLY DONE | D45 — registry, choice, route, permit and secrets built; reviewed 2026-09-04, five findings, all fixed. **D50 closed the Paystack adapter**: two of six calls implemented from a sibling product's working integration; reviewed 2026-09-05, five findings, all applied. Hubtel and MoMo are still seams, Act 987 is still a question for a person, and Paystack still cannot take a payment — it needs an email nobody has decided how to supply, and now says so at startup |
+| **WP-13** | Payments: provider choice and Act 987 | PARTLY DONE | D45 — registry, choice, route, permit and secrets built; reviewed 2026-09-04, five findings, all fixed. **D50 closed the Paystack adapter**: two of six calls implemented from a sibling product's working integration; reviewed 2026-09-05, five findings, all applied. Hubtel and MoMo are still seams and Act 987 is still a question for a person. **D74 closed the email**, on D72 §3's authorisation: `GatewayCustomerContacts` asks the gateway's `GET /internal/customers/{login}/email` with a **second** short-lived estate token (`ContactLookupToken` — reusing the erasure one would have made its scope a method name), so Paystack's `authorize` can name who is paying. Four sub-decisions argued, ten mutations run with eight red, and one of D72 §3's own stated terms **overturned by measurement**: D28's route-predicate argument does not keep a gateway endpoint private, because there is no route in front of it. Still no payment end to end, still no credentials, still `PARTLY DONE` |
 | **WP-14** | Verification badge | DONE | — |
 | **WP-15** | Badge: date-only on the wire | DONE | D47 — reviewed 2026-09-04, four findings, all applied |
 | **WP-16** | Search performance | WON'T (measured) | — |
@@ -650,18 +650,69 @@ collision between two providers is refused at startup rather than silently makin
 unreachable, the CI route check pins the webhook route's target and prefix, and two documents were
 corrected about their own subject.
 
+**One of those was closed on 2026-09-10 — the email, D72 §3 and D74, on
+`wp13-the-customers-email`.** The item was a *decision* rather than an implementation and the architect
+took it: the source is the gateway's own account store, asked over `GET /internal/customers/{login}/email`
+with the short-lived estate-signed token D38's mechanism mints. `CustomerContacts` has one implementation
+now — `GatewayCustomerContacts` — and Paystack's `authorize` can obtain an email for a login that has one.
+
+**Precisely which half closed.** The *source* question, and nothing else. A payment is still not taken end
+to end (no account, no credentials — D50), `capture`, `refund`, `voidAuthorization` and `status` still
+refuse, Hubtel and MoMo are still seams needing a phone number through the same door, and **Act 987 is
+still a stated blocker with no code behind it** (D72 §4). So WP-13 stays **PARTLY DONE**.
+
+Four things D72 §3 left to the package, each argued in D74:
+
+- **a second credential, not the erasure one.** `ContactLookupToken` — subject `system:contact-lookup`,
+  authority `ROLE_CUSTOMER_CONTACT_READ`, claim `contact_subject`, thirty seconds — and
+  `FanoutTokenMinter.forContactLookupOf` beside `forErasureOf`. Reusing the erasure token would have
+  presented the gateway with a credential claiming to authorise an erasure while reading an email, and the
+  scope everybody believed in would have been the name of a method. **The FIFTH verbatim-copy family**:
+  byte-identical in booking and the gateway, CI diffs it, the gateway's copy is the reference, and the
+  family is derived with `find` rather than listed;
+- **a reactive chain, `@Order` on the `@Bean` method.** catalog's servlet config does not copy, and its
+  own `@Order` is on the class where Spring cannot read it — **NEW-34**;
+- **what keeps it off the internet, and D72 §3's terms were wrong about it.** D28's route-predicate
+  argument does not transfer to an endpoint on the gateway itself, because there is no route in front of
+  it: both nginx vhosts proxy `location /` here and dev and quality publish the port on every interface.
+  What refuses a stranger is the *credential*, plus `mayRead`'s narrowings — the authority alone is
+  grantable to a real account by an administrator. **Measured, and it overturned the premise the chain was
+  written on**: reactive Spring Security *denies* an unmatched exchange, so the chain opens a door rather
+  than closing one, and deleting it breaks payments rather than leaking an address;
+- **four failure cases, and a third answer.** `Optional.empty()` for a fact about the account (no email,
+  no such login); a new `CustomerContacts.ContactsUnavailable` for "could not ask" — unreachable, 5xx,
+  unreadable, or the gateway refusing the estate's own token. All end in 502 and no booking; what differs
+  is the log, and folding them would print "this estate holds no email" for an estate that holds one.
+
+**Fourteen mutations were run and eleven are red.** The three that are green are named in D74 §3 and §6 —
+two guarded by a CI grep, one unreachable — rather than claimed as covered.
+
+**Reviewed 2026-09-10 — no blocking findings, one should-fix and four optionals, all applied.** Recorded
+in D74 §6. The should-fix was a 404 from a **misdeployed base URL** logged as a fact about somebody's
+account, since every Spring service in the estate 404s on a path it does not map; the endpoint's 404 now
+names the login and booking refuses one that does not. **Two of the five inverted their own premise when
+run**: the review's suggested ProblemDetail check could not work (our own 404 had no body), and the
+negative-span term it asked for turned out to be **unreachable** — `Jwt.Builder` refuses `exp` before
+`iat`, so the test written for it went red at the fixture. The term is kept and the *framework's* refusal
+is pinned instead, with both the javadoc and the test saying plainly that nothing covers the term itself.
+The review also established two claims more strongly than this package had: the authority is granted by
+no code path in either service, and `system:contact-lookup` is unconstructible as a login because
+`LOGIN_REGEX` admits no colon — so "matches no user in any store" is enforced by validation rather than
+by convention.
+
 **Still open:**
 
-- **the email, and it is a decision rather than an implementation.** Who may ask the gateway's account
-  store for a person's contact details, under what authority, and whether the answer is routable —
-  the same shape D38 answered for the erasure fan-out. Until somebody with standing answers it,
-  Paystack is configured, offered, chosen and then 502s. Hubtel and MoMo hit the identical wall from
-  the other side: both need a **phone number**;
 - an implementer with credentials for **Hubtel and MTN MoMo**, working from the lists on those two
   classes. `hc-crowdfund-app` has a Hubtel adapter too, which is where its evidence will come from;
 - **Paystack's other four calls**, which need documentation the sibling product does not exercise.
   `refund` and `voidAuthorization` are the ones with a caller;
-- Act 987 itself, and with it whether settlement is split-at-capture or reconciled afterwards;
+- Act 987 itself, and with it whether settlement is split-at-capture or reconciled afterwards. **D72 §4
+  refused to build a settlement seam behind a flag** and D74 did not reopen it: a retention period behind
+  a flag is a number waiting for counsel, a settlement seam behind a flag is a capability this platform
+  may not be licensed to have, built on the assumption that it may;
+- **Hubtel's and MoMo's phone number**, which is the same door one field wider and is deliberately not
+  D74's. What is not obvious, and is nobody's to decide inside the payment seam, is whether a phone number
+  is the same disclosure as an email;
 - no run against the quality box, and no live provider — the sixth package in a row to say so, though
   Paystack is the first adapter for which a sandbox run is something somebody could actually do;
 - no endpoint publishes the provider list. Deliberate (D45): no screen asks for one, and the 400 that
@@ -2625,6 +2676,74 @@ decided applies to `infranet`, `hcmarketnet` and `monitoring` at once.
 
 `--dry-run` prints this check and contacts nothing, which is the only exercise available and does not
 reach the refusal.
+
+---
+
+## NEW-34 — catalog's `/internal/**` chain declares a precedence Spring cannot read · READY
+
+Found while building D74's reactive equivalent, and it is WP-13's own review finding in a second service.
+
+`catalog/src/main/java/net/jojoaddison/config/InternalApiSecurityConfiguration.java` carries
+`@Order(Ordered.HIGHEST_PRECEDENCE + 5)` on the **`@Configuration` class**. That is exactly where WP-13's
+review found it on the gateway's `PaymentWebhookRouteConfiguration` and established, by mutation, that
+Spring never reads it: the comparator is handed the factory *method* and the bean *type* as order sources,
+never the declaring class, so `findAnnotationOnBean(name, Order.class)` answers `null`. Both of the
+gateway's hand-written chains were moved onto the `@Bean` method for that reason; catalog was not looked
+at, because nothing in that package touched it.
+
+**What is holding it up today is the alphabet.** catalog has three `SecurityFilterChain` beans —
+`InternalApiSecurityConfiguration`, `MarketplacePublicSecurityConfiguration` and the generated
+`SecurityConfiguration` — and `I` sorts before `M` sorts before `S`. A rename of the class, or a fourth
+chain sorting earlier, reorders them with nothing failing to build.
+
+**Whether it currently matters is NOT established, and that is the first thing the item has to do.** The
+three chains may be disjoint by path, in which case order decides nothing and the annotation is merely
+untrue rather than load-bearing; the generated one's `securityMatcher` is what decides that, and it must
+be read rather than assumed. **Do not port D74's measurement across**: catalog is servlet, its chains are
+selected by `FilterChainProxy` rather than `WebFilterChainProxy`, and D52's lesson is that a data answer
+of this kind is never transferable — re-measure in the service.
+
+Deliberately not fixed in D74: a different service, a different stack, one line, and a package that had
+already found its own reason to re-measure everything it inherited. The fix is likely `@Order` moved to
+the `@Bean` method plus a servlet equivalent of `InternalApiPermitIT`'s precedence assertion — and the
+test is the point, because the grep and the annotation both stay green when the annotation is where Spring
+cannot see it.
+
+---
+
+## NEW-35 — `MarketplaceEventFanoutIT` asserts an exact list over a shared sink, and the neighbour's events land in it · READY
+
+Found during D74's review pass: one gateway `clean verify` out of three went red on
+`MarketplaceEventFanoutIT.recipientsComeFromThePayload`, and the same suite passed either side of it.
+**Nothing in D74 touches the fan-out** — a reactive sink fed by a `@KafkaListener`, against an HTTP
+resource and a token contract — and the failure names its own cause:
+
+```
+Expecting actual:
+  ["kojo.customer", "akosua.mensah", "ama.other", "kwame.trainer"]
+to contain exactly in any order:
+  ["ama.other", "kwame.trainer"]
+but the following elements were unexpected:
+  ["kojo.customer", "akosua.mensah"]
+```
+
+`kojo.customer` and `akosua.mensah` are **the previous test method's payloads**, published to
+`healthconnect.booking.accepted` and `.completed` by `theStreamIsFilteredToTheSubject`. That is what makes
+this pre-existing rather than a regression, and it is stronger evidence than a re-run: the two surplus
+values could only have come from a neighbour.
+
+The shape is the estate's own recurring one, in a test rather than in production code. Each method
+subscribes to `fanout.stream()` — **one sink, shared across the class** — waits on
+`until(() -> received.size() >= 2)`, and then asserts `containsExactlyInAnyOrder` over the whole list. So
+the await is a floor and the assertion is exact: any emission still in flight from the previous method
+arrives between the two and fails it. The consumer group is `${random.uuid}` per instance (D25/D29) but
+the *context* is shared across methods, so the lag is real and unbounded by anything.
+
+**Not fixed in D74, deliberately**: a different subject in a file that package never opened, and the fix
+is a decision rather than a line — filter the subscription to the logins the method published, or assert
+`contains` and drop the exactness, or give the class one context per method. The first keeps what the test
+is for (addressing comes from the payload) while removing the shared-sink coupling, and is the shape to
+reach for.
 
 ---
 

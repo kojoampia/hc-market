@@ -12133,3 +12133,361 @@ roll time and is not persisted. That is the intended behaviour under §3, not an
 means the current quality stack differs from what a plain `startup.sh --local` would produce, and the
 next roll will silently detach the agent. Anyone reading dashboards should know which of those they
 are looking at.
+
+---
+
+## D74 — The customer's email, from the one store that has it; and the endpoint that is not private by routing
+
+**Executed 2026-09-10**, on the authorisation D72 §3 gave. WP-13's last code-shaped gap: the Paystack
+adapter is real, and it could not take a payment because `/transaction/initialize` needs the customer's
+email address and `PaymentIntent` carries a login and no contact details (D22, D50). `CustomerContacts`
+named the boundary and had no implementation. It has one now.
+
+**What was authorised and what was left to this package.** D72 §3 chose the source — a gateway
+`/internal/**` endpoint reached with the short-lived estate-signed token D38 already mints — and stated
+its costs: booking gains the ability to read any customer's email, and Hubtel and MoMo will want a phone
+number through the same door. Four things it did not settle are settled here, and the fourth of them
+found that one sentence of D72 §3 is wrong.
+
+### 1. What the token says it is for, and why it is not `forErasureOf`
+
+`FanoutTokenMinter.forErasureOf(login)` is scoped by more than its name, which had to be established
+rather than assumed: read from the code, that token carries `sub = system:erasure-fanout`, one authority
+`ROLE_CUSTOMER_ERASURE` in the space-delimited `auth` claim, an `erasure_subject` claim naming the one
+login it may erase, an `iss` nothing validates, and thirty seconds. So the scope is real — it is the
+authority plus the subject plus the named login, each enforced by `ErasureFanoutToken.mayErase` on the
+**accepting** side.
+
+**Which is exactly why it may not be reused.** Spending it on a contact lookup would present the gateway
+with a credential that says `ROLE_CUSTOMER_ERASURE` while doing something that is not an erasure, and
+the only thing distinguishing the two acts would be the name of a Java method in booking. **A scope that
+is a method name is not a scope.**
+
+**Answer: a second contract, a second authority, a second subject, and a second minter method.**
+`ContactLookupToken` — `sub = system:contact-lookup`, authority `ROLE_CUSTOMER_CONTACT_READ`, claim
+`contact_subject`, thirty seconds — with `FanoutTokenMinter.forContactLookupOf(login)` beside
+`forErasureOf`. The two methods share a private `mint(subject, authority, subjectClaim, login, lifetime)`
+and **every narrowing is a parameter**, so each public method states the whole of what its credential is
+on one call. Factoring a default authority or a shared subject into `mint` is how two capabilities become
+one by accident.
+
+Rejected:
+
+- **Reuse `forErasureOf` verbatim.** Above. It is one line and it makes the estate's only
+  service-to-service authority mean "and also read anybody's email".
+- **A scope or audience claim on the existing token.** This was the shape the item suggested, and it
+  loses to a second authority on two counts. An `aud` claim would have to be *validated*, and nothing in
+  this estate validates one today — `FanoutTokenMinter`'s own note on `iss` says why an unvalidated claim
+  is theatre. And it would leave one authority granting two powers, so a service that wanted the lookup
+  would still be handed the erasure. `ContactLookupToken` deliberately carries **no `aud`**: no other
+  service grants `ROLE_CUSTOMER_CONTACT_READ` anything, so the authority already *is* the audience. The
+  day a second acceptor appears, an `aud` check goes in with it.
+- **`ROLE_BROKERAGE`.** It needs no new constant, and it also resolves disputes, moves money and decides
+  who wears the verification badge. `mayErase` lets the desk erase anybody because erasure is a screen a
+  person operates after an off-system identity check; **`mayRead` deliberately has no such bypass**,
+  because no screen anywhere in this estate shows a customer's email, nobody has asked for one, and
+  adding the bypass turns a machine-to-machine lookup into a staff-readable contact directory. That is a
+  disclosure decision nobody has taken.
+- **Put the authority in `MarketplaceAuthorities`.** That is where "authorities this product adds beyond
+  JHipster's" lives, and it cannot host this one: the file is **per-service and differs between booking,
+  catalog and messaging** (three distinct hashes), and the gateway has none at all. A byte-identical
+  contract cannot depend on a file that exists on one side of it and not the other, so `AUTHORITY` lives
+  on `ContactLookupToken` and `MarketplaceAuthorities` is left alone.
+
+**`ContactLookupToken.java` is the FIFTH verbatim-copy family** — the gateway's and booking's copies are
+byte-identical and CI diffs them, with the **gateway's as the reference** because that is the side that
+enforces rather than promises. `mayRead` is dead code in booking's copy on purpose, exactly as
+`mayErase` is dead code in booking's copy of `ErasureFanoutToken`, so the two files can be compared as
+bytes rather than as behaviour. The family is **derived** with `find`, not enumerated: a third copy
+dropped into catalog or messaging is checked the moment it exists, and a family of one is refused.
+
+**`mayRead` is a pure function of `(Jwt, login)`** — no security context, no reactive context, no
+`Authentication`. That is what lets one file serve a servlet minter and a reactive acceptor, and it is
+why every branch is unit-testable. It also reads the authorities **from the `auth` claim** rather than
+from Spring's `GrantedAuthority` set, deliberately: that mapping is configured by
+`authorities-claim-name: auth` in the *generated* `config/application.yml`, which a regeneration rewrites
+and whose test copy shadows it. Losing that line fails the filter chain's `hasAuthority` closed, which is
+the right direction, and leaves this check intact.
+
+### 2. The gateway is reactive, and catalog's config does not copy
+
+catalog's `InternalApiSecurityConfiguration` is servlet — `SecurityFilterChain`, `HttpSecurity`,
+`authorizeHttpRequests`. The gateway's is `SecurityWebFilterChain`, `ServerHttpSecurity`,
+`authorizeExchange`. Same file name in both services deliberately, so the estate reads uniformly; **not**
+a copy family, and nothing diffs them.
+
+Four things carried over:
+
+- **A new file**, so a regeneration leaves it alone while rewriting `SecurityConfiguration`.
+- **`@Order` on the `@Bean` method, not the class.** WP-13's own review found that Spring hands the
+  comparator the factory method and the bean type and never the declaring class, so `findAnnotationOnBean`
+  answers `null` for a class-level annotation and the only thing ordering the gateway's chains was
+  component-scan order. `InternalApiPermitIT.theInternalChainsPrecedenceIsDeclared` asserts the
+  annotation is readable and strictly ahead of the generated chain — **red when the line is deleted,
+  measured**, which position alone cannot be.
+- **Everything that is not a GET is denied**, so the prefix cannot quietly acquire a write endpoint.
+- **Its own `oauth2ResourceServer`.** A chain scoped by `securityMatcher` gets no JWT converter for free;
+  without it every caller on the path is anonymous and the endpoint is 401 for booking too — fail-closed,
+  and still an outage.
+
+**catalog's copy still has its `@Order` on the class**, where the same argument says Spring cannot read
+it. Not fixed here — different service, servlet stack, and outside this package — and opened as
+**NEW-34** rather than left as a note.
+
+### 3. What keeps it off the internet — and D72 §3's terms are wrong about this
+
+**Nothing routes it away, and this is the claim to check hardest.** D28's argument for catalog's
+`/internal/**` is that the gateway's route predicates match `/services/<service>/api/**` and nothing else,
+so no request from outside can be routed to it. D72 §3 restated that as the terms of this decision — *"the
+route predicates are the only thing that will keep that endpoint off the internet — exactly as with
+catalog's"*. **It does not transfer, because this endpoint is on the gateway itself and there is no route
+in front of it.** Both nginx vhosts end in a `location /` that proxies everything to the gateway, and the
+dev and quality compose files publish the gateway's port on every interface. `/internal/**` here is
+reachable from outside on every estate, and nothing in this package changes that.
+
+So what refuses a stranger, established by measurement rather than by reading the classes:
+
+1. **The credential, and this is the load-bearing one.** `ROLE_CUSTOMER_CONTACT_READ` is granted by no
+   login. The gateway is the only issuer of user tokens in this estate and it never puts that authority
+   in one, so the only way to satisfy the chain is to sign a token with `JWT_BASE64_SECRET`.
+2. **`mayRead`, because the authority alone is not enough.** `POST /api/admin/authorities` creates an
+   authority by name and `UserResource` assigns it, both behind `ROLE_ADMIN` — so an administrator can
+   hand a real account `ROLE_CUSTOMER_CONTACT_READ`, and that person's ordinary twenty-four-hour token
+   then satisfies `hasAuthority`, which is all a filter chain can check. The subject check refuses it:
+   `system:contact-lookup` matches no user in any store. `InternalCustomerContactResourceIT` mints exactly
+   that token and asserts the 403.
+3. **The generated chain's default-deny, underneath both** — and this is where the package's premise was
+   wrong.
+
+**The measurement, and it inverted the reason this file was written.** `InternalApiSecurityConfiguration`
+was first written with a javadoc asserting that reactive Spring Security *permits* an exchange no
+`authorizeExchange` rule matched, and calling that measured. It was not measured; it was reasoned from
+`DelegatingReactiveAuthorizationManager` completing empty. **It is false.** With `@Configuration` removed
+and restored on a real container:
+
+```
+chain present  ->  /internal/customers/{login}/email   anonymous 401, contact-lookup token 404
+chain removed  ->  /internal/customers/{login}/email   anonymous 401, contact-lookup token 403
+either way     ->  /internalx/... and /nothing/at/all   anonymous 401, that token 403
+```
+
+An unmatched exchange is **denied**. catalog's file of this name is right to call that a version-dependent
+detail nobody should have to look up. So this chain's job is the opposite of what was claimed: **it opens
+a door that was closed.** Deleting it breaks payments; it does not disclose an address. The comment says
+so now, and `InternalApiPermitIT` pins the default-deny itself with an estate-signed token, so a Spring
+Security upgrade that flipped it would go red here rather than turning every unmatched path on the gateway
+into an anonymous read in silence.
+
+**Two lines in that chain no test can see, and a grep guards them instead.** Ten mutations of this package
+were run, each asserted applied before the suite was believed; eight are red. The two that are green:
+
+| mutation | result |
+| --- | --- |
+| `hasAuthority(ContactLookupToken.AUTHORITY)` to `authenticated()` | **green**, 14/14 |
+| `anyExchange().denyAll()` deleted | **green**, 14/14 |
+
+Neither discloses anything today, which is exactly why nothing goes red: `mayRead` refuses everything the
+authority rule would have (an ordinary token's subject is a person), and the framework's default-deny
+refuses everything `denyAll` would have. Both are **over-determined**, so a test asserting either would be
+asserting a coincidence and would go red on a correct change. They stay because over-determined is not
+unnecessary — the authority rule makes the requirement legible at the edge rather than only inside a
+resource, and `denyAll` is what stops the prefix acquiring a write endpoint the day the framework's default
+changes — and they are guarded by *"The gateway's contact lookup must stay behind the estate's own
+credential"*, which greps both plus the `mayRead` call.
+
+**That check strips comments, and how much the stripper buys was measured needle by needle** rather than
+asserted, because "the stripper is why this works" is the shape eight fail-opens in this repository have
+taken. With each line mutated away, grepping the raw file beside the stripped one:
+
+| needle | raw | stripped | stripper load-bearing |
+| --- | --- | --- | --- |
+| `hasAuthority(ContactLookupToken.AUTHORITY)` | 0 | 0 | no |
+| `.denyAll()` | 1 | 0 | **yes** |
+| `ContactLookupToken.mayRead(jwt, login)` | 0 | 0 | no |
+
+One of the three would fail open without it. The other two survive an unstripped grep **only because the
+javadoc happens to spell them without their argument lists** — a property of prose, which is precisely
+what must not be relied on, and one rewording turns the first into the third case. That is written into
+the check's own header.
+
+Rejected for this section:
+
+- **An nginx `return 404` on `/internal`.** There is precedent — the production vhost blocks
+  `/management` on exactly the "no reason for this to be reachable" argument — and it loses here on
+  something worse than redundancy: **it would be a control on production and no control at all on dev or
+  quality**, both of which publish the gateway's port on every interface. A control that exists on one
+  estate and not on the two people actually test against is worse than none, because it is the one people
+  would cite. The production vhost's own `location /` comment makes the general version of this point.
+- **A second server port for `/internal/**`.** The genuinely strong answer, and out of proportion: Spring
+  Cloud Gateway is one reactive server, a second port means a second container-level listener and a fourth
+  thing every compose file has to get right, and the gain over "a token only the estate can sign" is
+  narrow.
+- **A source-address check.** Fragile behind two nginx hops and a docker network, and it would fail closed
+  in a way that reads as a broken provider.
+
+### 4. What happens when the gateway cannot answer — three answers, not two
+
+`CustomerContacts.emailOf` returns an `Optional`, so it has two answers in it, and its javadoc is explicit
+that empty is not an error and the **caller** decides. That was exactly right while the only implementation
+was `unanswered()` and could not fail. A real implementation makes a network call.
+
+**Answer: `Optional.empty()` is a fact about the account; "could not ask" is a new
+`CustomerContacts.ContactsUnavailable`.**
+
+| what happened | answer | log |
+| --- | --- | --- |
+| the account exists and holds no email | empty | INFO |
+| 404 — no such login | empty | WARN |
+| unreachable, timed out, 5xx, unreadable | `ContactsUnavailable` | ERROR naming the root cause's type |
+| 401/403 — the gateway refused the estate's own token | `ContactsUnavailable` | ERROR naming the status **and the two causes it can have** |
+| an answer whose `login` is not the one asked about | `ContactsUnavailable` | ERROR |
+
+All of them end in the same place for the customer: `authorize` refuses, `BookingPayments.take` wraps the
+provider call and turns any `RuntimeException` into `FAILED` (D44), so 502 and no booking. **So what is
+being decided is what the log says** — and that decides whether anybody fixes anything. Folding "could not
+ask" into empty would print *"the account store holds no email address for X"* for an estate that holds
+one, pointing whoever reads it at an unimplemented decision that is implemented. That is this repository's
+most expensive recurring shape, and it is why the split exists rather than being the tidier signature.
+
+It follows `CatalogClient` exactly — `CatalogUnavailable` for "cannot ask", `UnknownOffering` for "asked,
+and there is no such thing" — and D44's boundary is respected: only the provider call is wrapped, and this
+is inside it.
+
+Two sub-decisions:
+
+- **A login with no email is 200 with a null address, not 404.** `email` carries no `@NotNull` on `User`
+  or on `AdminUserDTO`, so it is a reachable state rather than a corruption, and "we do not know this
+  person" and "we know them and hold no address" need different log lines on the calling side. It is not
+  a user-existence oracle: a stranger can get neither answer without the estate key, and the caller named
+  the login in a signed token in order to ask.
+- **An answer about a different login is refused.** The endpoint echoes `login` precisely so this can be
+  compared. It is the one wrong answer that would go through unnoticed — Paystack accepts whatever email
+  it is given, so somebody else would be sent the payment page for this booking — and the refusal is
+  asserted not to carry the address.
+
+**The one thing the four-case split then got wrong in its own first draft, caught by running it**: a
+single message covered every `RestClientResponseException`, so a 500 was logged as *"the account store
+refused this service's own contact-lookup token: HTTP 500"*. A wrong diagnosis in the log, which is the
+same defect one level down from the one the split exists to prevent. 401 and 403 now get their own
+sentence naming the two causes they can have — the two services on different signing keys, or
+`ContactLookupToken` drifted between its copies — and everything else says what it was.
+
+### 5. What this does and does not deliver
+
+**Verified.** `CustomerContacts` has one implementation; it asks the gateway with a contact-lookup token;
+the gateway answers for a login that has an email; every refusal above is asserted; both services
+`clean verify` green.
+
+**The address is never logged**, on either side — not at DEBUG, not in a refusal, not in an exception
+message. The point of the arrangement is that the address exists in the gateway's store and in the
+provider's request and nowhere in between; booking does not persist it either, because `payment_attempt`
+holds a provider handle and no personal data (D41). A log line is a place data is kept. **The erasure
+sweep is deliberately unchanged**: nothing new is stored, so there is nothing new to redact, and that is
+the sentence to re-read if anybody ever caches this answer.
+
+**Not delivered, and not claimed.** No payment is taken end to end — there is no Paystack account and no
+credentials here (D50), and `capture`, `refund`, `voidAuthorization` and `status` still refuse. Nothing was
+run against a live estate: the dev estate is wedged (NEW-31) and the quality stack was not started, per the
+standing rules.
+
+**Something worth knowing before believing a demonstration**: the eighteen seeded customers are rows in
+catalog, booking, messaging and payout and are **not gateway accounts**. On the quality box only `admin`
+and `user` have an email (D61 gives them `admin@localhost` and `user@localhost`), so a contact lookup for
+`ama.mensah` is a legitimate 404 there, and `verify-cycle.sh` mints tokens for logins no account store has
+ever held. An estate-level demonstration of this endpoint needs a registered account, not a seeded one.
+Said in `quality/compose.yml` beside the variable.
+
+**Hubtel's and MoMo's phone number is a separate item**, as D72 §3 anticipated. The door is now one field
+wide and the shape to widen is obvious; what is not obvious, and is nobody's to decide here, is whether a
+phone number is the same disclosure as an email. D50's rule stands either way: neither adapter gets a
+method that pays the professional, and Act 987 stays a stated blocker with no code behind it (D72 §4).
+
+### 6. Reviewed 2026-09-10 — one should-fix and four optionals, all applied; two of the five inverted their own premise
+
+The verdict was that the endpoint would ship on this evidence, with no blocking finding. What the review
+**verified independently** is worth recording, because two of the claims it checked are stronger than the
+ones this decision made for them:
+
+- **`ROLE_CUSTOMER_CONTACT_READ` is granted by no code path**, grepped across both services' `src/main`:
+  the string exists only in the two `ContactLookupToken` copies. Registration assigns `ROLE_USER`,
+  `PUT /api/account` carries no authorities, and D61's migration seeds only `ROLE_ADMIN`/`ROLE_USER`.
+- **`system:contact-lookup` is unconstructible as a login.** `Constants.LOGIN_REGEX` admits no colon and
+  is enforced by `@Pattern` on `User.login`, `AdminUserDTO.login` and `UserResource`'s path variables. So
+  §3's "matches no user in any store" is enforced by **validation**, not by convention — which is a
+  stronger claim than the one made above, and it is the reason the subject check is the right narrowing
+  to lean on.
+- **The corrected premise in §3 was re-derived independently, two legs**: the generated chain claims
+  everything except four static prefixes and ends at `/management/**` with no `anyExchange()`, and
+  `DelegatingReactiveAuthorizationManager.check` completes **empty** for an unmatched exchange, which
+  `verify` maps to `AccessDeniedException` through `switchIfEmpty`. Denial, not fall-through — matching
+  the measured 401/403 pair exactly.
+- **No single narrowing can be deleted green.** The review's main structural worry was that
+  `aPersonHoldingTheAuthorityIsStillRefused` is over-determined, refused by subject *and* lifetime at
+  once; the unit test isolates each — `aPersonsTokenIsRefused` with an otherwise-valid thirty-second
+  token, `theNamedCustomerIsTheOnlyOne`, `theLifetimeIsChecked`.
+
+#### The fix: a 404 from the wrong host was logged as a fact about the account
+
+`GatewayCustomerContacts`' `NotFound` arm said *"the account store holds no account named X"*. **Every
+Spring service in this estate 404s on a path it does not map**, so a `HEALTHCONNECT_GATEWAY_BASE_URL`
+misdeployed to catalog, payout or messaging produces that line for **every login on the estate** — a
+deployment fault reported as a per-account fact. It is diagnosis rather than disclosure, because the
+money path still fails closed either way; what makes it worth fixing is that the arm immediately below
+it already carries this exact lesson, applied to a 500 and not to this.
+
+**The stronger of the two offered shapes was taken, and it is not the one the review proposed**, because
+that one could not work here: checking the 404 body is "the gateway's own ProblemDetail" fails against
+our own endpoint, which answered `ResponseEntity.notFound().build()` — **no body at all**. Rather than
+reason from an absence, the endpoint now answers its 404 with **the same record, naming the login it was
+asked about**, and booking refuses any 404 that does not carry it. That is the *same* discriminator the
+200 path already used, applied to the refusal: this service establishes who answered from the answer
+naming the question, on both paths, rather than from a status code and a base URL it was configured with.
+
+Three ways a body can fail to identify the answerer are three branches, each with its own case: no body,
+a body of another shape (a real JHipster `ProblemDetail` is the fixture), and a body about somebody else.
+All three are `ContactsUnavailable` with an ERROR naming the variable; a 404 naming the login stays
+`Optional.empty()` with the WARN.
+
+**`RestClientResponseException.getResponseBodyAs` was the load-bearing unknown and it works** — measured,
+not assumed: `RestClient` sets the body-conversion function on the exception it raises. The conversion is
+wrapped anyway, because an exception escaping that arm would land in the caller's
+`catch (RestClientException)` one level up and report a misdeployment as an unreadable answer.
+
+**Residual, stated rather than discovered**: booking and the gateway roll independently (D56's argument),
+so a booking talking to a gateway from before this change sees a bodyless 404 and answers
+`ContactsUnavailable` instead of empty. That is louder for a correct estate, on a path that 502s on every
+estate today because no provider is enabled — and no gateway carrying this endpoint has ever been
+deployed anywhere, so the window is theoretical rather than open.
+
+#### The four optionals, and the two that inverted
+
+- **`withinLifetime` accepted a negative span** — `exp` before `iat` trivially satisfies "no longer than
+  thirty seconds". The term went in, and **the test written for it went red at the fixture rather than
+  the assertion**: `Jwt.Builder.build()` answers `IllegalArgumentException: expiresAt must be after
+  issuedAt`, and "after" is strict, so zero is refused too. Every `Jwt` in existence comes through that
+  builder, `NimbusJwtDecoder`'s included, so such a token cannot reach `mayRead` as a `Jwt` at all. **The
+  term is unreachable**, kept for the reason D60's read-side fallback is kept, and what is pinned instead
+  is *the framework's refusal* — so an upgrade that relaxes it goes red and points at the term.
+  Mutation-checked: deleting the term is **green**, and the javadoc and the test both say so rather than
+  implying coverage.
+- **The wrong-login refusal logs the other login** — free text off another service's wire, which D60
+  declined to do for catalog's zone string. **Kept, with the argument written at the call site.** The
+  distinction: D60's value was headed for a *column* and its refusal named the row to correct, so the
+  string bought nothing; here the value **is** the evidence — "it answered about somebody else" is
+  unactionable without saying who — and it reaches a log line and never a response body or a row. Revisit
+  if a third service ever answers this endpoint, because the argument rests on who is on the other end.
+- **The base-URL check asserts the variable appears somewhere in each file, not that booking carries
+  it.** Pre-existing shape, now extended to a fifth variable, so the limit is written into that step's
+  own header: a value on catalog's block instead of booking's passes, and so does a URL naming the wrong
+  container. Not deepened here — reading the merged per-service environment means `docker compose
+  config`, which costs a docker on the runner; what stands behind it is that booking fails **closed**,
+  with an ERROR naming the variable since this review.
+- **"Thirty seconds" is up to about ninety in practice**: `NimbusJwtDecoder`'s default
+  `JwtTimestampValidator` allows sixty seconds of skew on `exp`, and `mayRead` checks the *span* rather
+  than freshness. Every statement about the span is exact; how long a captured copy remains *usable* is
+  the framework's to say. One javadoc clause, and it names why reading a clock here would be wrong — a
+  second, disagreeing opinion about time in front of the one the whole estate already validates with.
+
+**Fourteen mutations now, and the tally is what the report says rather than a number to trust**: eleven
+red, three green. The three are `hasAuthority` widened, `denyAll` deleted (both §3, guarded by the grep)
+and the negative-span term (unreachable, guarded by nothing and documented as such).

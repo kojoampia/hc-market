@@ -101,15 +101,23 @@ import org.springframework.web.client.RestClient;
  * either, since the callback HMAC is computed with the secret key. It is refused here at both doors
  * and announced at startup, which is where the mistake belongs.
  *
- * <h2>And one thing this estate does not have: an email address</h2>
+ * <h2>The email address, which this estate could not supply for a year</h2>
  *
- * <p>Paystack's initialize requires one. {@link PaymentIntent} carries a login and no contact
- * details, deliberately, and nothing in this repository implements {@link CustomerContacts} —
- * because the only defensible source is the account store and standing up an endpoint that returns a
- * person's email by login is a disclosure decision the payment seam may not take alone. So on
- * today's estate {@code authorize} refuses <strong>before the round trip</strong>: no request, no
- * reference, no money, and a 502 with an ERROR line naming D50. Read {@link CustomerContacts} for
- * the three candidate sources and why two of them were rejected.
+ * <p>Paystack's initialize requires one. {@link PaymentIntent} carries a login and no contact details,
+ * deliberately, and nothing implemented {@link CustomerContacts} — because the only defensible source
+ * is the account store and standing up an endpoint that returns a person's email by login is a
+ * disclosure decision the payment seam may not take alone. <strong>D72 §3 took it and D74 built
+ * it</strong>: {@code GatewayCustomerContacts} asks the gateway with a short-lived estate-signed token,
+ * so {@code authorize} can name who is paying.
+ *
+ * <p><strong>The refusal below is still live, and for two reasons rather than one.</strong> An account
+ * that carries no email address answers empty — a reachable state, since {@code email} has no
+ * {@code @NotNull} in the gateway's user model — and so does a login the account store has never heard
+ * of, which on the quality box is every one of the eighteen seeded customers, because those are rows in
+ * four services and not gateway accounts. Either way {@code authorize} refuses <strong>before the round
+ * trip</strong>: no request, no reference, no money, and a 502. Read {@link CustomerContacts} for the
+ * three candidate sources, why two of them stay rejected, and what {@code ContactsUnavailable} means
+ * beside empty.
  */
 public class PaystackPaymentProvider extends ProviderAwaitingIntegration {
 
@@ -237,8 +245,10 @@ public class PaystackPaymentProvider extends ProviderAwaitingIntegration {
             .filter(address -> !address.isEmpty())
             .orElseThrow(() ->
                 new UnsupportedOperationException(
-                    "paystack needs the customer's email address to start a transaction and this estate holds none it may " +
-                        "give it: no CustomerContacts is implemented. See CustomerContacts (decisions.md D50)"
+                    "paystack needs the customer's email address to start a transaction and this estate holds none for " +
+                        "that login — either the account store has no such account, or it has one with no address on " +
+                        "it. Not the same as being unable to ask, which is ContactsUnavailable. See CustomerContacts " +
+                        "(decisions.md D50, D74)"
                 )
             );
 
