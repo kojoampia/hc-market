@@ -165,8 +165,30 @@ SHARED_KAFKA="${HC_SHARED_KAFKA:-hc-shared-quality-kafka}"
 SHARED_INFRA_DIR="${HC_SHARED_INFRA_DIR:-$HOME/webroot/01-healthconnect/hc-infra}"
 check_shared_plane() {
   local fix="start it with:  (cd $SHARED_INFRA_DIR && ./startup.sh)"
-  docker network inspect "$SHARED_NETWORK" >/dev/null 2>&1 \
-    || die "the shared network '$SHARED_NETWORK' does not exist — $fix"
+  # THE SAME READING, ONE DOCKER OBJECT ALONG, and this is the FIRST thing the function does — so
+  # on an unanswerable daemon it is the message an operator actually reaches (decisions.md D71).
+  # `>/dev/null 2>&1 || die "does not exist"` discarded the difference between a network that is
+  # not there and a daemon that could not be asked, and sent both to hc-infra. It is also what
+  # stopped `DOCKER_HOST=unix:///nonexistent` — the technique the pepper guard is measured with —
+  # from reaching the membership probe below: it died here, saying the network does not exist.
+  #
+  # MATCHED ON THE MESSAGE, not the status, exactly as the container arms below are: docker exits 1
+  # for both outcomes. Measured on docker 29.7.2 — "Error response from daemon: network X not
+  # found" against "failed to connect to the docker API at unix:///nonexistent" — and `[]` goes to
+  # STDOUT in both cases, so the output cannot tell them apart either. Both streams are captured,
+  # like the arms below, which is why that `[]` is in the message: `2>&1 >/dev/null` would quote
+  # docker's sentence alone and is one reordering away from quoting nothing at all, which would
+  # make an absent network read as an unanswerable daemon — this defect, mirrored.
+  local net_probe net_rc=0
+  net_probe="$(docker network inspect "$SHARED_NETWORK" 2>&1)" || net_rc=$?
+  if (( net_rc != 0 )); then
+    case "$net_probe" in
+      *"not found"*)
+        die "the shared network '$SHARED_NETWORK' does not exist — $fix" ;;
+      *)
+        die "docker could not be asked whether the shared network '$SHARED_NETWORK' exists, so whether this stack can reach the shared plane is unestablished: $net_probe" ;;
+    esac
+  fi
   for c in "$SHARED_CONSUL" "$SHARED_KAFKA"; do
     # THREE OUTCOMES, NOT TWO. This was one line saying "$c is not running" for all of them, and the
     # case it misdescribed is the likeliest wrong value somebody will type: hc-infra's own compose
@@ -199,11 +221,26 @@ check_shared_plane() {
     # serves and reports healthy.
     #
     # The container is asked rather than the network, so this reads the same object the two lines
-    # around it read. `pipefail` is on, so a Go template that stops matching yields nothing, the
-    # grep finds nothing, and this refuses — the direction a check about a silent failure has to
-    # fail in.
-    docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{println $k}}{{end}}' "$c" 2>/dev/null \
-      | grep -Fxq "$SHARED_NETWORK" \
+    # around it read. A Go template that stops matching yields nothing, the grep finds nothing, and
+    # this refuses — the direction a check about a silent failure has to fail in. That used to be
+    # credited to `pipefail`, and since the capture below it is not: `printf` cannot fail, so what
+    # keeps it fail-closed is the grep finding no match in an empty answer, whatever the status.
+    #
+    # STATUS-CHECKED, like the three arms above it and for the same reason — decisions.md D71,
+    # backlog NEW-32. This was `2>/dev/null` piped straight into the grep, which discards docker's
+    # error and hands the pipeline grep's status, so A DAEMON THAT COULD NOT ANSWER WAS REPORTED AS
+    # A BROKER ON THE WRONG NETWORK: the refusal misdiagnosing itself, in the same loop body as the
+    # arms that grew three messages to stop precisely that (D66 §7). Measured on the shipped function
+    # with a stub that answers `true` for Running and then fails: the folded form blamed
+    # non-membership, this one names the daemon. Both are fatal, so nothing about the outcome
+    # changes — only the cause named, and with it whether an operator is sent to hc-infra to fix a
+    # plane that is fine. The rule is already written in this file, for `project_volumes`: non-zero
+    # means docker could not be asked, NEVER that there is nothing there. D69 §10 closed the
+    # identical folding in deploy-dev.sh's copy and left this one, which is why it is D71.
+    local nets rc2=0
+    nets="$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{println $k}}{{end}}' "$c" 2>&1)" || rc2=$?
+    (( rc2 == 0 )) || die "docker could not be asked which networks '$c' is on, so whether this stack can reach it is unestablished: $nets"
+    printf '%s\n' "$nets" | grep -Fxq "$SHARED_NETWORK" \
       || die "$c is running but is not on '$SHARED_NETWORK', which is the network this stack joins — so its name would not resolve from any of these five containers, and every one of them would come up healthy and publish into nowhere (decisions.md D27, D66). $fix"
   done
   # A leader, not merely an answering agent: Consul serves /v1/status/leader before it has elected

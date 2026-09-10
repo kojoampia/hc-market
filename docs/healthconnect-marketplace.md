@@ -1259,8 +1259,30 @@ preflight() {
 running() { [[ "$(docker inspect -f '{{.State.Running}}' "$1" 2>/dev/null)" == "true" ]]; }
 shared_plane() {
   local fix="start it with:  (cd $SHARED_INFRA_DIR && ./startup.sh)"
-  docker network inspect "$SHARED_NETWORK" >/dev/null 2>&1 \
-    || die "the shared network '$SHARED_NETWORK' does not exist — $fix"
+  # THE SAME READING, ONE DOCKER OBJECT ALONG, and this is the FIRST thing the function does — so
+  # on an unanswerable daemon it is the message an operator actually reaches (decisions.md D71).
+  # `>/dev/null 2>&1 || die "does not exist"` discarded the difference between a network that is
+  # not there and a daemon that could not be asked, and sent both to hc-infra. It is also what
+  # stopped `DOCKER_HOST=unix:///nonexistent` — the technique the pepper guard is measured with —
+  # from reaching the membership probe below: it died here, saying the network does not exist.
+  #
+  # MATCHED ON THE MESSAGE, not the status, exactly as the container arms below are: docker exits 1
+  # for both outcomes. Measured on docker 29.7.2 — "Error response from daemon: network X not
+  # found" against "failed to connect to the docker API at unix:///nonexistent" — and `[]` goes to
+  # STDOUT in both cases, so the output cannot tell them apart either. Both streams are captured,
+  # like the arms below, which is why that `[]` is in the message: `2>&1 >/dev/null` would quote
+  # docker's sentence alone and is one reordering away from quoting nothing at all, which would
+  # make an absent network read as an unanswerable daemon — this defect, mirrored.
+  local net_probe net_rc=0
+  net_probe="$(docker network inspect "$SHARED_NETWORK" 2>&1)" || net_rc=$?
+  if (( net_rc != 0 )); then
+    case "$net_probe" in
+      *"not found"*)
+        die "the shared network '$SHARED_NETWORK' does not exist — $fix" ;;
+      *)
+        die "docker could not be asked whether the shared network '$SHARED_NETWORK' exists, so whether this stack can reach the shared plane is unestablished: $net_probe" ;;
+    esac
+  fi
   for c in "$SHARED_CONSUL" "$SHARED_KAFKA"; do
     # THREE OUTCOMES, NOT TWO. This was `running "$c" || die "$c is not running"` for all of them,
     # and the case it misdescribed is the likeliest wrong value somebody will type: hc-infra's own

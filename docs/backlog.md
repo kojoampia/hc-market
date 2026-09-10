@@ -1,6 +1,6 @@
 # Backlog — hc-market
 
-Every open item in this repository, folded into work packages. Sources: `docs/decisions.md` D1–D69,
+Every open item in this repository, folded into work packages. Sources: `docs/decisions.md` D1–D71,
 the two code reviews of 2026-09-01, and the verification runs against the quality box.
 
 **This is a derived document.** `decisions.md` holds the reasoning and stays the record; this holds
@@ -2477,7 +2477,7 @@ real estate, including the refusal, which no test in CI can reach.
 
 ---
 
-## NEW-32 — `check_shared_plane`'s membership probe cannot tell "not on it" from "could not ask" · READY
+## NEW-32 — `check_shared_plane`'s membership probe cannot tell "not on it" from "could not ask" · DONE (D71)
 
 Opened by **D69 §10**, which fixed it in `deploy-dev.sh` and left the twin alone rather than editing a
 ratified decision's file from outside its scope. It is **D68's fix 2 for a third docker object**, and
@@ -2506,6 +2506,68 @@ refuses, because the grep finds nothing. And part 4 of `.github/checks/shared-pl
 docker with a function that always succeeds, so **no CI mutation can see this either way** — measure it
 with a stub that answers `running` and then fails, which is how D69 measured both readings of the dev
 copy.
+
+**Closed by D71**, and it was **four** instances rather than one. The membership repair is
+`deploy-dev.sh`'s four lines verbatim, with the refusal text identical in both copies because that
+sentence names a container, a question and docker's own answer and nothing about which stack is asking
+(D71 §3) — the `ok` line's deliberate divergence, D69 §5, stands for the opposite reason.
+
+**The item's own suggested measurement is what found the rest.** `DOCKER_HOST=unix:///nonexistent`
+cannot reach the membership probe: the **first** line of the function is
+`docker network inspect "$SHARED_NETWORK" >/dev/null 2>&1 || die "the shared network … does not
+exist"`, the identical fold one docker object earlier, byte-identical in **both** scripts — so an
+unreachable daemon is told the network does not exist, about a network that has existed for the
+estate's whole life, with `hc-infra` printed as the remedy. Both arms are fixed in both scripts, and
+the network arm is matched on docker's **message**, because docker exits 1 and prints `[]` on stdout
+for an absent network and for an unanswerable daemon alike (measured, 29.7.2). Editing `deploy-dev.sh`
+means **Appendix A was re-embedded**.
+
+**"No CI mutation can see this" was true and is not any more.** Measured at `466e706` rather than
+accepted: with D69's fix folded back out of `deploy-dev.sh`, part 4 exits **0**. The stub now takes a
+fourth argument naming *which* docker read fails, and part 4 asks **five** states of each copy — on the
+network, off it, the membership `inspect` unanswerable, the `network inspect` unanswerable, and the
+network genuinely absent. The last is the positive control for the fourth: those two differ only in
+docker's words, so a repair collapsing them into "could not be asked" would pass everything else here
+while destroying NEW-25's own sentence. The check is 24 assertions where it was 18, and its test 32 ok
+where it was 26 — six new cases, three per copy, **none** of them about a refusal going missing and all
+of them about which cause it names. Case 26 is D69's fix folded back out, so the copy that already had
+the repair is guarded too.
+
+**What did not run is the script.** Everything was measured on the shipped function lifted out by
+`awk`, as in D66, D67 and D69: D65 and D67 both correctly refuse this worktree, and `deploy-dev.sh`
+cannot run at all while NEW-31 stands. Three folded reads survive in the two files deliberately — a
+`warn`, a poll and `running()` — because the rule is *a `die` may not fold; a `warn` and a poll may*
+(D71 §5), and "always check the status" would have made a transient flake fatal in the health-wait
+loop.
+
+---
+
+## NEW-33 — `deploy-prod.sh` folds four outcomes into "the network does not exist on the host" · READY
+
+Opened by **D71 §6** as an explicit loser, and it is the **sixth** instance of the reading D68 fix 2,
+D69 §10 and D71 have each closed one copy of. `deploy/deploy-prod.sh`'s host-network preflight is
+
+```
+ssh -o BatchMode=yes "$HOST" "docker network inspect $net >/dev/null 2>&1" \
+  || die "the '$net' network does not exist on $HOST. $net_hint …"
+```
+
+and `$net_hint` tells the reader to go and create it, or to start the owning stack. Four outcomes reach
+that one message: ssh unreachable, ssh refused (`BatchMode` and a key that is not there), docker
+unanswerable **on the host**, and the network genuinely absent. Only the last is what the message says,
+and it fires for all three of the others across a network — where the first two are the likeliest.
+
+**Not fixed with D71 for three reasons, each of which is why this is an item rather than a line.**
+Production is off limits by instruction. **Nothing in that path has ever run against a host**
+(`deploy/prod-server/README.md`), so a repair there is unmeasurable in the way D71's was — the
+distinguishing messages would be invented rather than read off a daemon. And the taxonomy is genuinely
+different: `ssh` and `docker` each have their own exit statuses and their own words, `ssh`'s status is
+the *remote* command's when it connects at all, and separating those is a decision about what an
+operator is told rather than a port of D71's four lines. It runs three times in a loop, so whatever is
+decided applies to `infranet`, `hcmarketnet` and `monitoring` at once.
+
+`--dry-run` prints this check and contacts nothing, which is the only exercise available and does not
+reach the refusal.
 
 ---
 

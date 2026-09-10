@@ -11436,3 +11436,299 @@ instead, which is why the question arrived costed rather than as a surprise. Two
 characterisations are corrected here — the "release process" estimate in §3(b), and the transferability
 of its resolve-to-canonical objection in §3(a) — and both corrections argue *for* leaving the code
 alone, not against the guard it shipped.
+
+---
+
+## D71 — A daemon that could not answer is not a broker on the wrong network
+
+**Ratified 2026-09-10.** Closes backlog **NEW-32**, and opens **NEW-33**. Opened by **D69 §10**, which
+fixed this reading in `deploy/deploy-dev.sh` and deliberately left the twin in `quality/startup.sh`
+alone rather than editing a ratified decision's file from outside its scope.
+
+**`main` ends at D70, the backlog's highest item is NEW-32, and `gh pr list --state open` answers
+nothing** — all three re-checked at `466e706` rather than taken from the brief, which is this
+document's rule for its own numbering.
+
+`quality/startup.sh`'s `check_shared_plane` ended each loop iteration with `docker inspect -f
+'{{range …Networks}}…' "$c" 2>/dev/null | grep -Fxq "$SHARED_NETWORK" || die "$c is running but is not
+on '$SHARED_NETWORK'"`. The `2>/dev/null` discards docker's error and the pipeline's status is
+`grep`'s, so **a daemon that could not answer was reported as a broker on the wrong network** — in the
+very function that grew three separate messages four lines earlier (D66 §7) precisely to stop refusals
+misdiagnosing themselves.
+
+**Nothing was unsafe**: both readings are fatal and both stop the `up`. What it cost is an operator
+sent to `hc-infra` to fix a plane that is fine, which is the exact cost D66's own optional (3) was
+taken to remove. That is why this is an item rather than part of D69, and it is why every assertion
+added here is about **which cause a refusal names** rather than about whether it refuses.
+
+### §1 What was established, and how
+
+Every row is a read off the live daemon, or the **shipped** function lifted out of its file by `awk`
+into a subshell with `die`/`ok`/`log`/`warn` stubbed — D66's and D69's technique, and the only one
+available while the dev estate is wedged (NEW-31). **No estate was started, stopped or recreated**,
+`quality/startup.sh` was not run in any mode, the quality stack was not touched, the five wedged dev
+containers were not touched, nothing was published to the broker, and the one throwaway network was
+removed.
+
+| | |
+| --- | --- |
+| the **shipped** `check_shared_plane`, membership probe answered `true` for Running and then failed | `DIE probe-consul is running but is not on 'hcnet' … every one of them would come up healthy and publish into nowhere` — **the defect: the wrong cause, in full sentences** |
+| the same function with the stub **off the network** instead | byte-for-byte the same refusal — so the two states were genuinely indistinguishable from outside, not merely similarly worded |
+| the instrument, checked both ways before either reading was trusted | on the network → `OK shared plane: probe-consul (leader elected), probe-kafka on hcnet`; off it → `DIE … is not on 'hcnet'` |
+| `deploy-dev.sh`'s `shared_plane`, same stub, same state | `DIE docker could not be asked which networks 'probe-consul' is on, so whether this stack can reach it is unestablished: Cannot connect to the Docker daemon …` — D69's fix, working |
+| `DOCKER_HOST=unix:///nonexistent`, the **real** function, **both** copies | `DIE the shared network 'hcnet' does not exist — start it with: (cd … && ./startup.sh)`. **It never reaches the membership probe**: it dies at the first arm, which folds the same two readings together — §2 |
+| `docker network inspect <absent>` vs the same against an unreachable daemon (docker 29.7.2) | **rc 1 both times**, `[]` on **stdout** both times, and `Error response from daemon: network … not found` against `failed to connect to the docker API at unix:///nonexistent; …`. So neither the status nor the output tells them apart — only the message |
+| part 4 of `shared-plane-wiring.sh` at `466e706`, pointed at a copy of `deploy-dev.sh` with **D69's fix folded back out** | `CHECK EXIT=0 (green)`, two `ok`s, printing the same `off it:` line it prints today. **The item's claim, measured rather than accepted** |
+| the same part today, with the three new states, per copy | five states, five `ok`s, `24` assertions in the check where there were `18` |
+| the fixed `check_shared_plane` against the **live** plane, real daemon, real containers | `OK shared plane: hc-shared-quality-consul (leader elected), hc-shared-quality-kafka on hcnet` — unchanged, and the two `docker exec`s really ran |
+| the same against a throwaway **empty** network | `DIE hc-shared-quality-consul is running but is not on 'hc-market-d71-probe' …` — D66's refusal still fires for its own reason |
+
+### §2 The decision the item did not anticipate: the same reading, one docker object earlier — and it is what blocks the item's own measurement
+
+The brief named `DOCKER_HOST=unix:///nonexistent` as one way to measure this, on the model of the
+pepper guard's docker probe. It cannot reach the subject, and **why** is the finding: the first thing
+`check_shared_plane` does is
+
+```
+docker network inspect "$SHARED_NETWORK" >/dev/null 2>&1 \
+  || die "the shared network '$SHARED_NETWORK' does not exist — $fix"
+```
+
+which is the identical fold — a discarded status read as an absence — one docker object earlier, in
+both copies, byte-identical in each. Against an unreachable daemon *this* is the line that fires, and
+it answers **"the shared network 'hcnet' does not exist"** about a network that has existed for the
+estate's whole life, with `$fix` telling the reader to go and start `hc-infra`. So the arm an operator
+actually reaches first was the worse of the two, and the item's subject was unreachable behind it.
+
+Both are fixed here, in **both** scripts. The network arm is **matched on docker's message**, exactly
+as the container arms below it are and for the same measured reason (§1): docker exits 1 for a network
+that is absent and for a daemon that cannot be asked, and prints `[]` on stdout for both.
+
+Taking it was not free — it is scope NEW-32 did not name, and it puts an edit into `deploy-dev.sh`,
+whose plane function D69 ratified, with Appendix A re-embedded as a consequence. Three things decided
+it. It is **the same defect, in the same function, four lines apart**, so fixing one and shipping the
+other is a function whose first refusal misdiagnoses and whose last one does not. It is **the message
+an unanswerable daemon actually produces**, so leaving it leaves the whole of NEW-32's cost in place
+while closing NEW-32. And the two copies of the network arm are byte-identical, so fixing one would
+have created a divergence in the pair of files whose divergence is precisely what NEW-32 exists to
+report — D69 §7 having already established that they cannot be held together by a diff.
+
+### §3 Decision one: the repair is `deploy-dev.sh`'s, and the refusal text is IDENTICAL
+
+The membership repair is D69's four lines taken verbatim — capture with `2>&1`, `(( rc2 == 0 )) || die`,
+then `printf | grep -Fxq` — and the `die` string is **the same bytes in both scripts**:
+
+```
+docker could not be asked which networks '$c' is on, so whether this stack can reach it is unestablished: $nets
+```
+
+That is a decision, because D69 §5 recorded a deliberate **divergence** in the neighbouring `ok` line
+and declined to smooth it. The discriminator is whether the sentence carries a fact about its own
+script. The `ok` line does — it enumerates the questions *that function* asked, and dev's asks one more
+than quality's — so the two legitimately differ. This refusal carries none: it names a container, a
+question and docker's own answer, and nothing about which stack is asking. Identical text is also the
+only text a check can assert as one fixed string across both copies, which is what parts 4's three new
+assertions do.
+
+Two things are deliberately **not** made identical. The membership refusal keeps its own citation —
+`(D27, D66)` in quality, `(D27, D66, D69)` in dev — because each names the decision that put the check
+in *that* file, and rewriting quality's for symmetry is the change D69 declined. And the comments above
+each fix differ, because they explain different histories: quality's says this is the folding D69 closed
+in the other copy, dev's says nothing of the kind is needed there.
+
+The new arm carries **no `$fix`**, unlike every refusal around it, and that is deliberate: `(cd hc-infra
+&& ./startup.sh)` is not the remedy for a docker daemon that cannot answer, and a remedy printed against
+the wrong cause is the whole defect in one line.
+
+### §4 Decision two: CI CAN see this, and the stub is extended rather than the limit stated
+
+NEW-32 said no CI mutation could see this either way, because part 4 stubs `docker` with a function
+that always succeeds. **Measured, and true at `466e706`**: with D69's fix folded back out of
+`deploy-dev.sh`, the check exits 0 and prints two `ok`s (§1). Three options were open — extend the
+stub so it can fail, drive the real function against an unreachable daemon, or state the limit — and
+the second is ruled out by §2: an unreachable daemon never reaches the membership probe, so it can
+only ever exercise the network arm, and only in the state where *everything* fails.
+
+So the stub takes a fourth argument naming **which docker read fails**, and part 4 asks five states of
+each copy instead of two:
+
+| state | what must be answered |
+| --- | --- |
+| on the network | passes (the positive control D66 added) |
+| off the network | refuses, naming non-membership |
+| the membership `inspect` fails | refuses, naming **the daemon** — NEW-32 |
+| the `network inspect` fails | refuses, naming **the daemon** — §2 |
+| the network is genuinely absent | refuses, naming **the network** |
+
+The last is the **positive control for the fourth**, and it is not a courtesy: those two states differ
+only in docker's message, so a repair that collapsed them into "could not be asked" would satisfy every
+other assertion in part 4 while destroying NEW-25's own sentence. It is this defect mirrored, and case
+25 constructs it.
+
+Each of the three new assertions has **three** arms, not two — refused naming this cause, refused
+naming another, accepted — because "it went red" is not the assertion here. Both readings are fatal, so
+what is being pinned is the cause, and a check that could not tell a misnamed refusal from an accepted
+plane would be asserting the thing that was never in doubt.
+
+**And the extension retro-guards D69.** Dev's copy has had this fix since D69 and CI could not see it;
+case 26 is that fix folded back out, and it is red now. A fix nothing can see is how this shape survived
+twice.
+
+### §5 What generalises beyond "check the status" — the third and fourth instance, one rule
+
+This is the **third** time this exact reading has been found in this repository, and §2 makes it the
+fourth and fifth instance:
+
+| | object | where | closed by |
+| --- | --- | --- | --- |
+| 1 | a container's **aliases on a network** | `verify-outbox-recovery.sh`'s `aliases_on_net` | D68 fix 2 |
+| 2 | a container's **networks** | `deploy-dev.sh`'s `shared_plane` | D69 §10 optional (2) |
+| 3 | a container's **networks** | `quality/startup.sh`'s `check_shared_plane` | here |
+| 4–5 | a **network's existence** | both scripts' plane preflight, first line | here |
+
+"Check the status" is the mechanical lesson and it is not the useful one, because three of these five
+were written by people who knew that rule. Two things generalise.
+
+**The shape is a `2>/dev/null` (or a discarded status) on a docker read whose refusal message asserts
+an ABSENCE.** The reading is only a defect where the status becomes a *claim*. Both scripts were swept
+for the rest of the family, and the three remaining folded reads are each correct as they stand: the
+otel-collector line in `quality/startup.sh` **warns** and all three outcomes lead to the same advisory;
+the health-wait loop folds deliberately, because during 90 polls an unanswerable daemon should be a
+retry and the timeout is the refusal; and `deploy-dev.sh`'s `running()` was argued in D69 §6 — the
+container it asks about is nobody's configuration, so "not there" and "not running" are one fact and
+neither is an error. So the rule is **a `die` may not fold; a `warn` and a poll may** — and it is worth
+stating that way, because "always check the status" would have demanded three changes that make nothing
+better and one (the poll) that would make a transient flake fatal.
+
+**And the second: a message matched, not a status.** Every one of these five needs docker's *words* to
+tell the two outcomes apart, and in three of them the outcomes share an exit code — measured here for
+`network inspect`, and already established in D66 §7 for `inspect`. A repair that only adds `rc` checking
+gets a refusal that is honest about *whether* it knows and silent about *what* it knows, which is how
+§4's control case would have been shipped as a fix.
+
+**The file stated the rule in one function and broke it in another.** *"Non-zero means docker could
+not be asked, NEVER there is nothing there"* was already written in `quality/startup.sh`, in
+`project_volumes`' header (D65) — four hundred lines below the two lines that did the opposite, in the
+same file, at `466e706`. That is this repository's named
+failure mode one turn tighter than usual — not a claim in a document contradicted by code, but a claim
+in a **file** contradicted by the same file — and it is the reason the comment on each fix now points at
+the other, rather than restating the rule a third time.
+
+### §6 Losers
+
+- **Fix the named line only and record the network arm as NEW-33.** Rejected on §2: it is the arm an
+  operator reaches first, it is what blocked the item's own suggested measurement, and it would have
+  shipped a function that misdiagnoses at its first refusal and attributes at its last.
+- **Fix quality's network arm and leave dev's.** Rejected: the two are byte-identical today, and NEW-32
+  itself says the pair must be read by eye because no diff holds them together. Creating a divergence
+  while closing an item about a divergence is the defect through its own fix.
+- **`DOCKER_HOST=unix:///nonexistent` as the CI probe**, on the model of the pepper guard. Rejected
+  because it cannot reach the subject (§2), and it is worth naming rather than omitting: the technique
+  is right for a function whose *only* docker read is the one under test, and wrong for one that asks
+  four questions in sequence. The stub is the only instrument that can put a working daemon in front of
+  one read and a broken one in front of the next — which is also the *real* state this defect fires in:
+  a flake, a daemon restart, or a container removed between two `inspect`s.
+- **State the CI limit instead of extending the stub**, which the item explicitly allowed. Rejected: a
+  fix nothing can see is how this shape survived twice, and the extension is one argument on the stub.
+- **Capture the network probe's stderr alone** (`2>&1 >/dev/null`), so the refusal quotes docker's
+  sentence without the `[]` that precedes it. Rejected, and it is the closest call here: it reads better
+  and it is one reordering away from `>/dev/null 2>&1`, which captures **nothing** — and an empty probe
+  falls to the `*)` arm, so every genuinely absent network would then be reported as an unanswerable
+  daemon. That is §4's control case reached by a formatting edit. The `[]` stays, with the reason on the
+  line, and both arms capture both streams exactly as the two container arms below them do.
+- **Add `D71` to the neighbouring membership refusal's citation.** Rejected as D69 §5's call in the
+  other direction: that sentence is unchanged, its citation names the decisions that wrote it, and
+  editing a ratified message for tidiness is what D69 declined to do to the `ok` line beside it.
+- **Rename `net_probe`/`net_rc` to match `probe`/`rc`** in the container arms, so the four captures read
+  as one idiom. Rejected: `probe` and `rc` are `local` to the loop body and these are `local` to the
+  function, and one name for two scopes in one function is how a later edit moves a read out of the loop
+  and silently reuses the outer variable.
+- **A CI check that bans `2>/dev/null` on a `docker` line in these scripts.** Rejected on §5: three
+  correct folded reads survive in the two files, all three in non-refusing positions, so the check would
+  be red on a correct tree — and the honest predicate ("a `die` whose message asserts absence must be
+  preceded by a status check") is not something a grep can establish. Part 4's behavioural states are
+  what covers the two functions that matter.
+- **Extending the fix to `deploy-prod.sh`**, which has the same shape at its host-network preflight:
+  `ssh … "docker network inspect $net >/dev/null 2>&1" || die "the '$net' network does not exist on
+  $HOST"`. Rejected as out of scope and out of reach — production is off limits by instruction, nothing
+  in that script has ever run against a host, and it folds **four** outcomes rather than two (ssh
+  unreachable, ssh refused, docker unanswerable on the host, network genuinely absent), so it needs its
+  own taxonomy and cannot be measured here. Recorded as **NEW-33**.
+
+### §7 What this does not establish
+
+**Neither guard has ever run inside its own script.** Everything in §1 is the shipped function lifted
+out by `awk` and run against a real or stubbed daemon. `quality/startup.sh` was deliberately not run in
+any mode: D65 refuses to invent a pepper against existing volumes and D67 refuses an `up` from a
+checkout that did not create the containers, and both refusals are correct about this worktree.
+`deploy-dev.sh` cannot be run at all while the dev estate is wedged (NEW-31). The lift is faithful in
+the way that matters — same bytes, same shell options, real docker where the state allows — and it is
+not the same as the script having run. D66, D67 and D69 were each in this position and each said so.
+
+**Part 4's reach is otherwise unchanged and inherited.** The stub answers with a network list, so it
+still catches the refusal being deleted or weakened and not the Go template being wrong; that direction
+was measured by hand in D66 §3 and again in D69 §2. What is new is that it can now fail a *named* read,
+which is the only state a folded status is visible in.
+
+**One fail-open in the membership grep is structural rather than checked, in both copies.**
+`grep -Fxq ""` matches the empty line an empty template produces, so a `$SHARED_NETWORK` that is the
+empty string would pass the membership question having established nothing. It is unreachable because
+all three values are spelled `${HC_SHARED_X:-default}` and `:-` treats empty as unset — the same
+argument D65 makes about an empty `$PROJECT`, and the same reason it costs a sentence rather than a
+line of code. A `:` in place of the `:-` would make it live.
+
+**The fail-closed direction moved from `pipefail` to the grep, and quality's comment said otherwise.**
+The old pipeline was credited with refusing an empty template because `pipefail` carried docker's
+status; with the capture, `printf` cannot fail and what keeps it closed is the grep finding no match in
+an empty answer. The behaviour is identical and the sentence was not, so it is corrected in place —
+dev's copy never made the claim.
+
+**The `not found` match is a substring of docker's message, and docker's messages are not an API.** A
+future daemon that says "no such network" would send an absent network to the "could not be asked" arm
+— a refusal with the wrong cause, which is this defect in miniature, and fail-**closed**: the `up` still
+stops. It is matched the same way D66 §7 matches `o such object` for containers, for the same reason,
+and the version it was measured against (29.7.2) is written on the line.
+
+### §8 Verified in this round, by running
+
+The defect reproduced first, at `466e706`, by lifting `check_shared_plane` and answering `true` for
+Running and then failing the membership `inspect` — **the refusal named non-membership, in the same
+words the genuinely-off-the-network state produces** — with the instrument checked both ways before that
+reading was trusted. `DOCKER_HOST=unix:///nonexistent` against the real function, both copies, dying at
+the network arm with *"the shared network 'hcnet' does not exist"*. `docker network inspect` measured
+against an absent network and an unreachable daemon: rc 1 and `[]` on stdout for both, different
+sentences. Part 4 at `466e706` measured **green** on a `deploy-dev.sh` with D69's fix folded back out,
+the mutation asserted applied (`rc2` gone, the `2>/dev/null` pipeline present, `bash -n` parsing) before
+the reading was believed.
+
+After the change: five states per copy, all five answered correctly, printed by the check itself; the
+live plane still passes through the real daemon in both copies; a throwaway empty network still refuses
+for D66's reason; an absent network still says it is absent. `bash -n` on both scripts and on every
+script `build.yml` parses. **The check green at 24 assertions** (18 before) and **its test at 32 ok, 0
+failed** — the 26 inherited states plus six new ones, three per copy, each asserting the mutation applied
+(mutant text present, original text gone as a single-line fixed string, `bash -n` parsing) and each
+matching the error fragment of **the door it was aimed at**, since two of the three new refusals share
+the phrase "named the wrong cause".
+
+**The harness's own instrument was checked by removing the thing it tests**: with part 4's three new
+`case` blocks deleted, the check is still green on a clean tree and the test reports exactly
+`26 ok, 6 failed` — cases 23–28, each *"the check PASSED on a broken tree"* — and exits 1. So the six new
+cases are covered by the six new assertions and by nothing else. Two harness defects were found by
+running it rather than by reading it: a `|`-delimited `sed` whose pattern stopped one character short of
+a `||` and became six fields, and an error fragment that matched two doors.
+
+`quality-pepper-persistence-test.sh` **40 passed**, `quality-project-checkout-test.sh` **28 passed**,
+`outbox-alias-restore-test.sh`, `pepper-wiring.sh`, `signing-key-severance.sh`, `observability-claims.sh`
+all green — the three guards on `quality/startup.sh` re-run because they mutate the file this decision
+edits. `quality/compose.yml` is **byte-identical to `466e706`** (`git diff` empty) and still renders with
+nothing set. **Appendix A re-embedded** after the `deploy-dev.sh` edit and `sync-appendices.sh --check`
+green afterwards. `node deploy/demo/extract-seed.mjs` left the seed unchanged. No Java changed, so no
+Maven gate was run.
+
+One stale claim was corrected in passing, and it is the subject of this decision at its smallest:
+`shared-plane-wiring.sh`'s header said **FOUR PARTS** while numbering five — D69 added the fifth and
+left the sentence above it — so a file stated a count about itself that the same file contradicted.
+
+**No estate was started, stopped or recreated; `quality/startup.sh` was not run in any mode; the quality
+stack was not touched; the five wedged dev containers were read and left exactly as they are; nothing was
+published to the broker; and the one throwaway network was removed with a sweep for leftovers.**

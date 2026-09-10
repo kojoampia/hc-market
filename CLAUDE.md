@@ -134,11 +134,40 @@ running `deploy-dev.sh`**: the dev estate is wedged (backlog **NEW-31** — five
 since 2026-08-30, off `hcnet`, looping on `http://consul:8500`, the Consul D27 removed), so no package
 since D66 has been able to run that script at all.
 
-**Both membership probes fail closed; only dev's says WHY.** `deploy-dev.sh` status-checks the
-`docker inspect` behind its membership question, so an unanswerable daemon is reported as such rather
-than as a broker on the wrong network; `quality/startup.sh`'s copy still folds the two together, which
-is **NEW-32** and cannot be caught by CI either way, because part 4 stubs docker with a function that
-always succeeds.
+**Both membership probes fail closed and both say WHY, since D71 (backlog NEW-32) — and so does the
+line above each of them.** A `2>/dev/null` piped into a `grep` hands the pipeline grep's status, so an
+unanswerable daemon was reported as a broker **on the wrong network**; both copies status-check the
+`docker inspect` now, with the same refusal sentence in each, because that sentence names a container,
+a question and docker's own answer and nothing about which stack is asking. The neighbouring `ok`
+line's deliberate divergence (D69 §5) stands for the opposite reason.
+
+**The same fold was in the FIRST line of both plane functions, and that is the arm an operator
+actually reaches.** `docker network inspect … >/dev/null 2>&1 || die "the shared network … does not
+exist"` told an unreachable daemon that `hcnet` is absent, with `hc-infra` printed as the remedy —
+which is also why `DOCKER_HOST=unix:///nonexistent`, the technique the pepper guard is measured with,
+can never reach the membership probe behind it. Both arms **match on docker's message, not its exit
+status**: docker exits 1 and prints `[]` on stdout for an absent network and for an unanswerable
+daemon alike (measured, 29.7.2), exactly as D66 §7 matches `o such object` for a container.
+
+**CI can see all of it now, and could see none of it before.** Measured rather than read off the stub:
+with D69's fix folded back out of `deploy-dev.sh`, part 4 exited **0**. Its docker stub takes an
+argument naming *which* read fails, so part 4 asks **five** states of each copy — on the network, off
+it, the membership `inspect` unanswerable, the `network inspect` unanswerable, and the network
+genuinely absent. The last is the **positive control** for the fourth: those two are told apart only by
+docker's words, so a repair collapsing them into "could not be asked" would pass everything else while
+destroying NEW-25's own sentence. Three of the five assertions are about **which cause** a refusal
+names rather than whether it refuses, because both readings are fatal either way and what an operator
+is told decides whether they restart a plane with nothing wrong with it.
+
+**The rule is `a die may not fold; a warn and a poll may`** (D71 §5). Three folded docker reads survive
+in these two scripts deliberately — the otel-collector `warn`, the 90-iteration health wait (where an
+unanswerable daemon must be a retry, not a fatal) and `deploy-dev.sh`'s `running()`, argued in D69 §6.
+The defect is only a defect where a discarded status becomes a **claim of absence in a refusal**. Five
+instances of that shape have now been found here across four docker objects — aliases (D68), a
+container's networks twice (D69, D71) and a network's existence twice (D71) — and a **sixth** is open
+as **NEW-33**, in `deploy-prod.sh`, where one message covers four outcomes across an ssh hop.
+`quality/startup.sh` stated the rule in `project_volumes`' header and broke it four hundred lines up,
+in the same file.
 
 Only the host mapping moves. Inside the containers every service listens on **8080**, because the
 compose files set `SERVER_PORT: 8080` explicitly — overriding the per-service `serverPort` the JDL

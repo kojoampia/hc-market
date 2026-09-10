@@ -45,6 +45,24 @@
 #   22  the branch labels unreadable        — a set comparison over zero labels, which is this
 #                                             family's empty-subject fail-open
 #
+#  Six more since D71 — backlog NEW-32 — and NONE of them is about a refusal going missing. Every
+#  one leaves the function fatal and changes only WHICH CAUSE it names, which is what decides
+#  whether whoever reads it goes and restarts a shared plane with nothing wrong with it (D66 §7).
+#  Three per copy, because the copy that already had the fix was the one CI could not see it in:
+#
+#   23  quality's membership status check made vacuous  — an unaskable daemon reported as a broker
+#                                                         on the wrong network: NEW-32 itself
+#   24  quality's unaskable-network arm made unreachable — the same one docker object along, and it
+#                                                         ACCEPTS rather than misnaming
+#   25  quality's "not found" arm removed              — the POSITIVE CONTROL: an absent network
+#                                                         reported as an unaskable daemon, which is
+#                                                         the defect mirrored and passes every
+#                                                         other assertion in part 4
+#   26  the DEV membership status check made vacuous   — D69's fix, folded back; CI was green on
+#                                                         exactly this before D71 (measured)
+#   27  the dev unaskable-network arm made unreachable
+#   28  the dev "not found" arm removed
+#
 #      ./.github/checks/shared-plane-wiring-test.sh
 # ==============================================================================
 set -Eeuo pipefail
@@ -177,6 +195,33 @@ expect_red "$d" "8  env_for_compose stops exporting the three" '  : \' 'export H
 d="$(fresh m9)"; sed -i '/grep -Fxq "\$SHARED_NETWORK"/,+1d;/docker inspect -f .{{range \$k, \$v := \.NetworkSettings\.Networks}}/d' "$d/startup.sh"
 expect_red "$d" "9  the membership refusal deleted" 'is not running' 'grep -Fxq' "$d/startup.sh" "accepted a Consul and a broker"
 
+# ------------------------------------------------------------------ D71 / NEW-32, quality's copy --
+#
+# NOT "the refusal was deleted" — that is case 9. These three leave the function refusing and change
+# the CAUSE it names, which is the whole of NEW-32: both readings stop the `up`, and the difference
+# is whether an operator is sent to hc-infra to fix a plane that is fine.
+#
+# Each is a SUBSTITUTION rather than a deletion, so both halves of `expect_red`'s control can be
+# fixed strings on one line: the mutant text present, the original gone. A deletion here would leave
+# nothing to assert the presence of, and case 14's trap is that a multi-line must-be-absent string
+# is split by `grep -F` into an empty first pattern that matches every file.
+printf '\nquality/startup.sh: which cause the plane refusal names (decisions.md D71)\n'
+# `#` as the delimiter, not `|`: the line being matched ends `)) || die …`, and a `|`-delimited
+# expression that stops one character short of it silently becomes six fields and errors out.
+d="$(fresh m23)"; sed -i 's#^    (( rc2 == 0 )) #    (( rc2 >= 0 )) #' "$d/startup.sh"
+expect_red "$d" "23 the membership status check made vacuous" '(( rc2 >= 0 ))' '(( rc2 == 0 ))' "$d/startup.sh" "refused a plane it could not ask about, but named the wrong cause"
+
+# The arm is made UNREACHABLE rather than deleted, which is why this one accepts instead of
+# misnaming: a `case` whose patterns all miss falls through and the function carries on.
+d="$(fresh m24)"; sed -i 's|^      \*)$|      *"no docker ever says this"*)|' "$d/startup.sh"
+expect_red "$d" "24 the unaskable-network arm made unreachable" '*"no docker ever says this"*)' '' "$d/startup.sh" "ACCEPTED a shared network it could not ask about"
+
+# THE POSITIVE CONTROL, and it is red for the opposite reason to everything above: the fix names two
+# outcomes docker separates only by its message, so collapsing them into "could not be asked" keeps
+# every other assertion in part 4 green while losing NEW-25's own sentence.
+d="$(fresh m25)"; sed -i 's|^      \*"not found"\*)$|      *"a network docker will never describe"*)|' "$d/startup.sh"
+expect_red "$d" "25 the absent-network arm removed" '*"a network docker will never describe"*)' '*"not found"*)' "$d/startup.sh" "no longer says it is absent"
+
 printf '\nSubjects that must be refused rather than skipped\n'
 d="$(fresh m10)"; sed -i -e 's|^  hcnet:$|  sharednet:|' -e 's|networks: \[quality, qualitynet, hcnet\]|networks: [quality, qualitynet, sharednet]|' "$d/compose.yml"
 expect_red "$d" "10 the network key renamed" '  sharednet:' '' "$d/compose.yml" "declares no network under the key"
@@ -212,6 +257,20 @@ expect_red "$d" "13 the DEV membership refusal deleted" 'exists but is not runni
 # names the substituted text.
 d="$(fresh_dev m14)"; sed -i 's|^shared_plane() {|shared_plane_renamed() {|' "$d/deploy-dev.sh"
 expect_red "$d" "14 the dev plane function renamed" 'shared_plane_renamed() {' '' "$d/deploy-dev.sh" "declares no function 'shared_plane'"
+
+# Cases 23-25 in the other copy, and 26 is the one that says what D71 bought: this fix has been in
+# deploy-dev.sh since D69 and part 4 was green with it folded back out, measured by doing exactly
+# what this case does. The two copies are not a verbatim-copy family (D69 §7), so nothing but a case
+# per copy can hold them together here.
+printf '\ndeploy-dev.sh: which cause the plane refusal names (decisions.md D71)\n'
+d="$(fresh_dev m26)"; sed -i 's#^    (( rc2 == 0 )) #    (( rc2 >= 0 )) #' "$d/deploy-dev.sh"
+expect_red "$d" "26 the DEV membership status check made vacuous" '(( rc2 >= 0 ))' '(( rc2 == 0 ))' "$d/deploy-dev.sh" "refused a plane it could not ask about, but named the wrong cause"
+
+d="$(fresh_dev m27)"; sed -i 's|^      \*)$|      *"no docker ever says this"*)|' "$d/deploy-dev.sh"
+expect_red "$d" "27 the dev unaskable-network arm made unreachable" '*"no docker ever says this"*)' '' "$d/deploy-dev.sh" "ACCEPTED a shared network it could not ask about"
+
+d="$(fresh_dev m28)"; sed -i 's|^      \*"not found"\*)$|      *"a network docker will never describe"*)|' "$d/deploy-dev.sh"
+expect_red "$d" "28 the dev absent-network arm removed" '*"a network docker will never describe"*)' '*"not found"*)' "$d/deploy-dev.sh" "no longer says it is absent"
 
 # PART 5 IS AN EXACT SET, so both directions are constructed: an action that GAINED preflight (which
 # a broken plane can then wedge) and one that LOST it (which starts the estate with no plane check at
