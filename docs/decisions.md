@@ -12959,3 +12959,390 @@ host. The quality stack was not touched — it is on `fabb959` with the agent at
 is evidence — the five wedged dev containers were not touched, the dev estate was left empty so its next
 `up` is still a first run, nothing was published to the broker, and the throwaway `sshd` was stopped and
 its directory removed, with the port confirmed empty against a control port that is not.
+
+---
+
+## D76 — The sink is not the test's channel, and the neighbour that polluted it was in another file
+
+**Ratified 2026-09-10.** Closes backlog **NEW-35**, opened by **D74's review**. Opens **NEW-37**.
+
+**`main` ends at D75, the backlog's highest item is NEW-36, and `gh pr list --state open` answers
+nothing** — all three re-checked at `f3557db` rather than taken from the brief.
+
+`MarketplaceEventFanoutIT`'s three methods each subscribed to `fanout.stream()`, waited for
+`received.size() >= 2`, and then asserted `containsExactlyInAnyOrder` over the **whole** collection.
+The sink is one bean's, shared by every subscriber in the JVM, and it carries an estate's events rather
+than this test's, so the assertion says *"nothing else in this process emitted while I was watching"* —
+which is not a property of the fan-out and was never true by construction. One full `clean verify` in
+four went red on it.
+
+**The item named the wrong cause, and §4 is why that matters more than the flake.**
+
+### §1 What was established, and how — and the item's own attribution is the first casualty
+
+Everything below was measured on this workstation at `f3557db`, on Java 25, against the class's own
+Testcontainers broker (`apache/kafka-native:4.3.1`, a `@Container` static in `SseKafkaTestContainer`).
+**Nothing was published to the broker four products borrow** — that was established before anything was
+run, because the whole subject of this item is a test that produces to a broker.
+
+**The flake reproduces, and the message is byte-identical to the item's.** The very first baseline full
+`clean verify` went red:
+
+```
+[ERROR] net.jojoaddison.service.MarketplaceEventFanoutIT.recipientsComeFromThePayload
+Expecting actual:
+  ["kojo.customer", "akosua.mensah", "ama.other", "kwame.trainer"]
+to contain exactly in any order:
+  ["ama.other", "kwame.trainer"]
+but the following elements were unexpected:
+  ["kojo.customer", "akosua.mensah"]
+```
+
+Four baseline runs in total: **1 red, 3 green**, which matches the "one in three" the item recorded.
+
+**`recipientsComeFromThePayload` runs FIRST**, in all four runs, read off the failsafe XML in execution
+order:
+
+```
+order=recipientsComeFromThePayload,anEventPublishedToKafkaReachesTheFanout,aFilteredStreamCarriesOnlyItsOwnersEvents
+```
+
+So the item's *"`kojo.customer` and `akosua.mensah` are the previous test method's payloads, published
+by `theStreamIsFilteredToTheSubject`"* cannot be right: the method that failed is the one nothing in the
+file precedes. **The surplus pair also appears at the HEAD of the received list**, before the method's
+own two events, which is the shape of something delivered at consumer startup rather than of a
+neighbour's laggard.
+
+**They came from another test class.** `MarketplaceStreamFramingIT.anEventArrivesOnTheWire` publishes
+`b-onwire-1` with `customerLogin: kojo.customer, professionalLogin: akosua.mensah` to
+`healthconnect.booking.accepted` — one of the six topics the fan-out listens to — and it runs
+**earlier in the same JVM**, on the same static broker (failsafe defaults to one fork, reused). Read off
+the failing run's own log by line number: framing starts at 382 and ends at 1991, the fan-out class
+starts at 2214.
+
+**A second Spring context is a second `${random.uuid}` group, and a fresh group starts at `earliest`.**
+The fan-out class fixes `webEnvironment = MOCK` and the framing class takes a real port, so the two
+cannot share a context; eleven distinct `healthconnect-gateway-sse-<uuid>` groups appear in one run,
+and **exactly two** of them are seen joining by the broker's own coordinator — the two classes that have
+a broker. `SseKafkaTestContainer` registers `spring.kafka.consumer.auto-offset-reset: earliest`
+deliberately, to remove a different race (a fresh topic has no committed offset and the consumer must
+not start at the end and miss a message published moments later).
+
+**The two joins bracket the failure, from the failing run's own log.** `…-e2f883cc` joins at
+**18:27:51.026**, inside the framing class; `…-71b1bf9c` joins at **18:28:11.239**, and the assertion
+fails at roughly **18:28:11.35** — a new group, on a topic that by then holds `b-onwire-1`, one hundred
+milliseconds before the two logins that record carries turn up at the head of the list.
+
+**The replay was then measured end to end rather than inferred**, with a throwaway probe that stopped
+the listener container, gave its `ContainerProperties` a fresh group id and restarted it — which is
+what a second context does, minus the context:
+
+```
+PROBE rejoined as probe-d5a16812-6e8c-47dc-8737-a04aaa8ebb0c
+PROBE replayed into the sink with no new publish: [UserEvent[recipientLogin=probe.customer, …,
+  aggregateRef=b-sse-1, …], UserEvent[recipientLogin=probe.pro, …]]
+```
+
+An already-consumed record, both of its recipients, back on the sink with nothing published. That is the
+cause, and it lands in whichever method happens to hold a subscription at that instant — which is
+nothing anybody can order.
+
+**One more measurement, because it removes the obvious reply.** Failsafe here is configured
+`runOrder=alphabetical`, and the classes do **not** run in fully-qualified-name order:
+`web.rest.MarketplaceStreamFramingIT` runs before `broker.…`, `config.…`, `security.…` and `service.…`,
+which are then alphabetical among themselves. So **nothing in this build pins which class runs first**,
+and "make framing run last" is not a fix available to be written down. The mechanism behind that
+observation — the JUnit Platform provider not honouring surefire's `runOrder` — is a candidate
+explanation and is *not* measured here; what is measured is that the order is not the one the
+configuration names.
+
+**And the two methods have the same defect, established rather than assumed.** A forced adversary — two
+foreign events on the sink while each method's subscription is live, never awaited, carrying exactly the
+two pairs the real suite leaks — reddens `anEventPublishedToKafkaReachesTheFanout` and
+`recipientsComeFromThePayload` with the item's failure shape, and leaves the third **green**:
+
+```
+Expecting actual:  ["intruder.customer", "intruder.pro", "kojo.customer", "akosua.mensah"]
+to contain exactly in any order:  ["kojo.customer", "akosua.mensah"]
+```
+
+Which is §5.
+
+### §2 Decision one: SCOPE THE ASSERTION. Do not isolate the sink
+
+Each method mints an `aggregateRef` nothing else in the JVM uses, publishes it on the envelope, and
+every assertion is taken over the events carrying **that** reference. The unfiltered `fanout.stream()`
+subscription stays exactly as it was; what changes is that the method reads its own publication out of
+the broadcast instead of assuming the broadcast is its own.
+
+The argument is not convenience, it is that **the alternative asserts something false**. This sink is a
+shared, lossy, best-effort broadcast of an estate's events (D25/D29), and other subscribers and other
+publishers are its normal condition, not an interfering test harness. A fix that made the sink private
+to one method would leave the assertion true only for as long as this JVM happens to run nothing else —
+and the whole of §1 is the story of that assumption expiring in a file nobody edited.
+
+It is also the only shape that survives the cause actually found. **Isolation would have made this
+worse**: `@DirtiesContext` per method is a new context per method, therefore a new consumer group per
+method, therefore `earliest` per method — a *certain* full replay of every record the run has produced
+into every method, instead of a 25% chance of one. That is not a costed guess; it is the mechanism the
+probe in §1 measured, applied three times per class.
+
+**What scoping costs**, stated rather than waved past: an assertion can no longer see a foreign event at
+all, so a real defect that fanned somebody *else's* event into this sink would not be caught by these
+three methods. That loss is nominal here — the fan-out emits one `UserEvent` per recipient of the record
+it was handed and has no other input — and the disclosure property that matters, "an event not addressed
+to me does not reach my filtered stream", is asserted **positively** in §5 against an event this method
+published for exactly that purpose.
+
+### §3 Decision two: the wait is a predicate about a named event, never a count
+
+`until(() -> received.size() >= 2)` is the mechanism the flake exploited: a count cannot say whose. Each
+method now publishes a **barrier** — a second event on the same topic, after the one under test, whose
+only job is to be seen — and waits for that.
+
+The barrier is what makes the exactness *sound* rather than usually right, and this is the half that a
+ref-scoped count would still have got wrong. `SseKafkaTestContainer` creates every topic with **one
+partition** and the listener container runs at concurrency **1** (measured: only `…#0-0-C-n` consumer
+threads ever appear in a run, and `concurrency` is configured nowhere), so records on a topic are
+consumed strictly in produced order on one thread, and `Sinks.Many.tryEmitNext` delivers synchronously
+on that thread. So when the barrier's emission reaches a subscriber, every `tryEmitNext` the earlier
+record was ever going to make has already returned into the same list. Waiting on "my two arrived"
+instead would leave an assertion that *nothing else was addressed* racing the very emission it exists to
+catch — the extra recipient is emitted **after** the two expected ones, because `recipientsOf` walks
+`customerLogin`, `professionalLogin`, `recipientLogin` in that order.
+
+That is not theoretical: it is exactly mutation 2 in §8, whose extra recipient is third of three, and it
+is red deterministically because of the barrier.
+
+**A second, free consequence.** An event the fan-out drops entirely used to be a 30-second
+`ConditionTimeoutException`; it is now the barrier arriving and an assertion printing `[]` against the
+two logins that were expected. Measured — that is what mutation 5 prints.
+
+### §4 The decision the item did not anticipate: the attribution failed because the LOGINS were shared
+
+The item was wrong about the cause, and it was wrong *confidently* — *"it is stronger evidence than a
+re-run: the two surplus values could only have come from a neighbour"*. The reasoning was sound and the
+premise was not: `kojo.customer` beside `akosua.mensah` is published by **three** publications in **two**
+classes (this class's first and second methods, and the framing IT's `b-onwire-1`), so the pair names no
+publisher at all. A day was available to be spent isolating methods from each other, which would have
+fixed nothing.
+
+So the fix does one more thing than the item asked for, and it is the part that would have prevented the
+misdiagnosis: **no login and no aggregate reference is shared between publications any more.** Each
+method has its own pair, suffixed with the method's own tag, none of them shared with
+`MarketplaceStreamFramingIT`. If anything ever does leak past the scoping, the failure message names its
+own publisher.
+
+Two details that make the point sharper. The old file used **one** aggregate reference, `b-sse-1`, for
+every publication in every method — so scoping by reference was not even available to it without
+changing the envelope, while the actual intruder carried a perfectly distinguishable `b-onwire-1`. And
+the same string was hard-coded into the `bookingRef` inside the payload, so the *only* two identifiers
+the test controlled were spent on one value. The identifiers a test mints are the only thing that can
+attribute a leak.
+
+### §5 The second defect this found, and it is a GREEN rather than a red
+
+`aFilteredStreamCarriesOnlyItsOwnersEvents` did **not** fail under the adversary in §1, and that is
+worse than the flake rather than better. Its assertions were `containsOnly`, `hasSize(1)` and
+`contains` — the relaxed forms — so foreign traffic satisfies them instead of breaking them.
+
+**Measured, by deleting its own two publishes and letting four foreign emissions supply everything**:
+the old method passes **green**, `BUILD SUCCESS`, having never published a byte of its own. The four
+foreign emissions used were not invented for the probe either — they are `(ama.other, kwame.trainer)`,
+which the method that runs *first* in this class publishes, and `(kojo.customer, akosua.mensah)`, which
+the framing IT replays. Both leaks are real and both are present in the suite that runs today, so a
+green from this method has never been evidence that `streamFor` was asked anything.
+
+**The precise limit, because overstating this would be the same failure one level up**: a *fully*
+removed filter was still caught, because `mine` would then receive the foreign events too and
+`hasSize(1)` breaks. What was lost is not the ability to fail — it is that a passing run establishes
+nothing about the disclosure boundary. `streamFor` is the only thing standing between one customer and
+everybody else's bookings, and its test spent an unknown fraction of its runs asserting facts about
+another file's data.
+
+The rewritten method asserts per reference, against the two events it published itself: the control
+(`fanout.stream()`) must carry both recipients of **both** of its own events, and the filtered stream
+must carry exactly the owner's copy of the addressed one and **nothing** of the other. The same vacuity
+probe against it is **red**:
+
+```
+Expecting actual: []
+to contain exactly in any order: ["ama.somebodyelse", "kwame.somebodyelse"]
+```
+
+### §6 Losers
+
+**Relax `containsExactlyInAnyOrder` to `contains`.** One character of diff, the flake gone, and it is
+the trap this package was set to walk into — §5 is what that edit looks like three months later, in the
+one method that already had it. Refused, and the refusal is now measurable: five separate mutations of
+the fan-out are red against the new assertions (§8), and mutation 2's extra recipient is invisible to
+`contains` by construction.
+
+**Raise the `>= N` floor.** Cannot work in principle: the count is the defect, not its size. Four
+foreign emissions satisfied `>= 4` in the run that failed, and the vacuity probe in §5 satisfied every
+threshold the method had with nothing of its own.
+
+**`@DirtiesContext`, or a context per method.** Refused on the mechanism in §2: a new context is a new
+group and a certain replay, so the cure is the disease three times a class. It is also ~40 seconds of
+Mongo-plus-Kafka context startup per method.
+
+**Drain the sink before subscribing.** There is nothing to drain — `directBestEffort` holds nothing for
+a subscriber that is not there, which is why the leak is a *live* emission and not a buffer. "Drain"
+here can only mean subscribe, wait for silence, and hope; a sleep dressed as a barrier.
+
+**A broker container per test class, or a topic name per method.** Both would work against *this*
+instance and neither addresses the subject: the sink is fed by an estate, and the estate is entitled to
+publish. A per-class container also costs a second Kafka start, and a per-method topic set would mean
+the class no longer exercises the topic names the `@KafkaListener` actually names, which is most of what
+the class is for.
+
+**Fix the harness: `auto-offset-reset: latest`.** This would end the replay at its source and
+reintroduce the race `SseKafkaTestContainer` documents in place — a consumer joining a fresh topic at
+the end and missing a message published seconds later, which is a *flake in the other direction* and
+was already paid for once. Refused: the harness is right and the assertion was wrong.
+
+**Change `MarketplaceStreamFramingIT`'s logins instead.** Treats one symptom in the wrong file, and
+leaves the next publisher to rediscover it. The framing IT is left untouched deliberately: its own
+assertions are `contains` over a joined string of frames scoped to its own `b-onwire-1`, so foreign
+traffic cannot redden it — the relaxed form, acceptable there because its subject is the wire framing
+rather than the addressing, and named here so that is a decision rather than an oversight.
+
+**A CI check.** There is nothing textual to guard that the test does not guard better itself, and this
+repository's own record on enumerated checks (D52, D62, D69, D75) argues against adding a tenth one
+whose subject is a test that is already red when it is wrong.
+
+### §7 What this does not establish
+
+**The natural race was reproduced once in four runs, and "it is gone" rests on nine.** Nine full
+`clean verify` runs of the whole gateway suite after the fix, green (§8) — eight, then three
+comment-only edits, then a ninth on the exact bytes committed. Nine green runs against a
+25% baseline is roughly a one-in-ten chance of having simply missed it, which is **not** the evidence
+this rests on: the load-bearing evidence is the forced adversary, where the same four foreign emissions
+that redden the old file leave the new one green, and the vacuity probe, which is red where the old
+method was green. A flake declared fixed on green runs alone is a flake with a longer period.
+
+**It is not established that the cross-class replay is the ONLY foreign source.** It is the one that
+matches the observed values, the observed position in the list and the observed timing, and it is
+measured; there may be others, and the fix does not depend on which. That is deliberate — a fix that
+depended on knowing every publisher would be the assumption this item exists to remove.
+
+**The barrier's soundness has three premises and one of them is a framework default.** One partition
+per topic is read from `SseKafkaTestContainer`; synchronous emission is read from `Sinks.Many`'s
+`directBestEffort` contract and from the code path; container concurrency 1 is **measured** (no
+`#0-1-C-*` thread appears in a whole run) but not *configured* — `spring.kafka.listener.concurrency` is
+set nowhere in this repository and the `@KafkaListener` names no `concurrency`, so it is the
+framework's 1. That is **NEW-37**.
+
+**This paragraph attributed the risk to the wrong premise, and the correction is §9's.** It said a
+higher concurrency default *"would break the ordering the barrier rests on"*. It would not: Spring
+Kafka's concurrency distributes **partitions** across child containers and a partition is owned by one
+consumer at a time, so per-partition order survives any concurrency — and the barrier is on the same
+topic, hence the same single partition, as the event it follows. **Only a partition-count change
+breaks the ordering**, and that count is in `SseKafkaTestContainer`. What concurrency > 1 would
+introduce is concurrent `tryEmitNext` on a *serialized* sink answering `FAIL_NON_SERIALIZED`, which
+`onEstateEvent`'s failure arm logs at DEBUG and **drops** — a missing element or a barrier timeout
+here, and a silently dropped live event in production, which is not the loss the class javadoc
+accounts for. **The safe direction stands and gains a second reason**: a drop happens at the sink,
+before `streamFor`'s filter, so it reaches the *control* assertion — both recipients of both of this
+method's own events, by reference — before it could flatter the `isEmpty()` beneath it. Never a false
+pass. NEW-37 carries the corrected mechanism and two costed shapes aimed at the two different
+premises.
+
+**Nothing here changes the fan-out.** `MarketplaceEventFanout` is byte-identical to `f3557db`; the five
+mutations in §8 were applied, run, and reverted, each verified by `git diff` before its run and each
+followed by `git checkout`. The final tree carries one changed file plus the two documents.
+
+**The estate was not asked anything.** No estate, no quality stack, no dev estate, no production, no
+network beyond Maven Central and the two test containers.
+
+### §8 Verified in this round, by running
+
+Every line below is a run, on `JAVA_HOME=/usr/lib/jvm/jdk-25.0.2-oracle-x64`, always `clean verify`.
+
+| # | What | Result |
+| --- | --- | --- |
+| 1 | Baseline, full suite × 4 | **1 red, 3 green** — the item's message verbatim |
+| 2 | Baseline, method order from the failsafe XML × 4 | `recipientsComeFromThePayload` first, every time |
+| 3 | Replay probe: fresh group on the running container | an already-consumed record's **two** recipients back on the sink, no publish |
+| 4 | Adversary (4 foreign emissions, unawaited) vs the OLD file | 2 red of 3, the item's shape; the disclosure method **green** |
+| 5 | Adversary vs the NEW file | **3 green** |
+| 6 | Vacuity probe (own publishes deleted) vs the OLD disclosure method | **green**, `BUILD SUCCESS` |
+| 7 | Vacuity probe vs the NEW disclosure method | **red**, `Expecting actual: []` |
+| 8 | Mutant 1 — `streamFor` returns `sink.asFlux()` unfiltered | red: *"Expecting empty but was: [ama.somebodyelse, kwame.somebodyelse]"* |
+| 9 | Mutant 2 — the envelope's `actor` is addressed too | red in **all three**, each naming `actor.b-fanout-<tag>` |
+| 10 | Mutant 3 — `professionalLogin` no longer addressed | red in all three |
+| 11 | Mutant 4 — `plain()` returns the `JsonNode` | red: the payload is no longer a `Map` |
+| 12 | Mutant 5 — `aggregateRef` replaced by a constant | red in all three, `[]` against the expected logins — the new scoping fails **closed** |
+| 13 | The fix, full suite × 8, then × 1 more on the committed bytes | **9 green**, 195–255 s each |
+| 14 | `node deploy/demo/extract-seed.mjs` + `git status --porcelain` | seed unchanged |
+| 15 | `./deploy/sync-appendices.sh --check` | green; neither script was touched |
+
+Mutants 2 and 9's decoy is new and deliberate: the envelope's `actor` used to be the professional's own
+login, so an addressing rule that read the envelope instead of the payload would have emitted a
+duplicate the `LinkedHashSet` swallowed, and **nothing in the estate could have seen it**. It is now a
+login nobody addresses.
+
+**Nothing was deployed and nothing was published to the shared broker.** The class's broker is a
+Testcontainer and that was confirmed before the first run. The quality stack was not touched — it is on
+`fabb959` with the OTel agent attached by hand (D73) and is evidence — the five wedged dev containers
+were not touched, and the dev estate was left empty so its next `up` is still a first run.
+
+### §9 Review, and what it found — approved, no blocking findings, one should-fix taken as docs
+
+**Reviewed on `454e66c`.** Everything load-bearing was **reproduced rather than accepted**, which is
+the only kind of review this family responds to: mutant 5 re-run (3 failures, 0 errors, **0
+`ConditionTimeout`** — so both halves at once, the scoping failing closed *and* every red being a
+diff, because the barrier awaits on `recipientLogin` and still arrives); the vacuity probe re-run on
+**both** files, red on the new control and **green, 1 test, 0 failures, 0.7 s** on the base file with
+its own publishes deleted; and the forced adversary re-run with the foreign events moved to the *same
+topic*, published **between** the event under test and its barrier so they are guaranteed present at
+assertion time — **3 green**. The scoping holds under the harshest interleaving available, which is
+stronger than what §8 row 5 measured.
+
+It also independently confirmed the two premises §7 leans on: the barrier's ordering is real because
+`flush()` returns only after broker ack, so the barrier's append to the same single partition
+happens-after the event's; and the broker was the Testcontainer alone, with `withReuse` nowhere under
+`gateway/src` and no reuse flag in `~/.testcontainers.properties`. `hc-shared-quality-kafka` was never
+addressed.
+
+**The should-fix was a mechanism this entry got plausibly wrong, which is the failure mode of the item
+it closes.** §7 said a higher listener-concurrency default *"would break the ordering the barrier
+rests on"*, bundled with a second partition. It would not: concurrency distributes **partitions**, a
+partition has one consumer at a time, and the barrier shares its event's partition. **Only a
+partition-count change touches the ordering** — and that count is in `SseKafkaTestContainer`, so the
+ordering premise was already ours and the item was smaller than it claimed. What concurrency > 1
+actually introduces was verified in the code: concurrent `tryEmitNext` on the *serialized*
+`Sinks.many()` spec answers **`FAIL_NON_SERIALIZED`**, which `onEstateEvent:148` logs at **DEBUG** and
+drops — a missing element or a barrier timeout in the test, and in production a **silently dropped
+live event**, which is not the loss the class javadoc accounts for ("drops for a subscriber too slow
+to keep up"). Corrected in §7 and rewritten in NEW-37, whose second costed shape was aimed at the
+wrong premise and is now a **partition-count** assertion; asserting concurrency off the
+`KafkaListenerEndpointRegistry` is named as the thing not to do, because it would pin a value that is
+not load-bearing and read as though it were.
+
+**The safe direction stands and gains a second reason**, which is this entry's own rather than
+review's: a drop happens at the sink, *before* `streamFor`'s filter, so it reaches the control
+assertion — both recipients of both of the method's own events, by reference — before it could flatter
+the `isEmpty()` beneath it. Never a false pass, under drops or under any subscriber ordering.
+
+**Both optionals taken.**
+
+- **The `b-fanout-` prefix was claimed as an estate-unique namespace and is not one.** Catalog's
+  `ErasureFanoutLegIT` already mints `b-fanout-1/2/3` — a different Maven project, so a different JVM,
+  so no live collision and every full value unique today. But §4 makes name-uniqueness the attribution
+  mechanism, and a prefix that reads as the guarantee is the same shape as everything else this entry
+  is about. Both comments now say **unique by full value**, with catalog named so the next reader does
+  not have to find it.
+- **Two of the three methods are one deletion from a vacuous pass**, defended only by a comment:
+  delete `anEventPublishedToKafkaReachesTheFanout`'s exact assertion and the `allSatisfy` beneath it
+  goes vacuous over an empty list; delete `recipientsComeFromThePayload`'s single assertion and it is
+  barrier-only. `aFilteredStreamCarriesOnlyItsOwnersEvents` needs **three** deletions and is the most
+  resistant. §6's refusal of a CI check stands — there is nothing textual a check could reach here
+  that the test does not reach better — so this is recorded as what it is: a **review** obligation
+  rather than an automated one. The residual is named here so that a future reviewer of this file
+  knows which assertion is holding which door.
+
+**Verified at review, by running**: the mechanism claims re-established from source (`:88`, `:148`,
+the absent `concurrency` attribute, catalog's three refs); and after these edits, one further full
+`clean verify` — **green, `tests="3" failures="0"` read from the failsafe XML rather than the console**,
+which is the tenth green full run of this fix. Production code is still byte-identical to `f3557db`.
