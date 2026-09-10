@@ -2446,7 +2446,7 @@ the volumes are untouched and the seed is not read again after startup.
 
 ---
 
-## NEW-31 — nothing can exercise a dev-estate change, and the five containers say why · READY
+## NEW-31 — nothing can exercise a dev-estate change, and the five containers say why · BLOCKED
 
 Opened by **D69 §7**, which named it rather than touching it. It is the reason NEW-29 waited a package
 and the reason D69 could verify its own fix only by lifting the function out of the file: **two
@@ -2474,6 +2474,29 @@ Whoever takes it should decide the order deliberately: sweep first and then `up`
 itself is not moving out of. **And it is the package that can finally run what D66 and D69 could
 not** — `./deploy-dev.sh up --no-build --services catalog`, then the shared-plane preflight against a
 real estate, including the refusal, which no test in CI can reach.
+
+**Clearing it was authorised on 2026-09-10 (D72 §1, full clean including volumes) and is blocked below
+compose.** `down --clean` fails on all five with `tried to kill container, but did not receive an exit
+event`; `docker rm -f` fails identically; `docker update --restart=no` succeeds and does not help.
+
+**The cause is established, not guessed:** each of the five holds **exactly one orphaned
+`containerd-shim`** while its own process is gone — `State.Pid=0`, `Restarting=true`, `Dead=false`.
+Docker 29.8.0, containerd v2.3.5.
+
+**What it needs is one root command**, which this workspace cannot run (no passwordless sudo):
+
+```bash
+for id in 0b7a0b100587 a5de9d671558 59560b782b59 883df00b0289 4e84382e3101; do
+  sudo pkill -f "containerd-shim.*$id"
+done
+```
+
+then `./deploy/deploy-dev.sh down --clean` completes normally. The alternative,
+`systemctl restart docker`, was rejected in D72 §1: it bounces **47 running containers**, including
+three other products' only quality environments.
+
+Status is `BLOCKED` rather than `READY` because what remains is a person with root, not engineering.
+Nothing was destroyed by the attempt — five containers and five volumes are exactly as they were.
 
 ---
 

@@ -11811,3 +11811,181 @@ applied (mutant present, original gone, `bash -n`) and the other five assertions
 `quality-pepper-persistence-test.sh` 40 and `quality-project-checkout-test.sh` 28 re-run because
 `quality/startup.sh` moved again; **Appendix A re-embedded** and `--check` green. Nothing was started,
 stopped or recreated, and the estate is as the roll left it.
+
+---
+
+## D72 — Four answers from the architect, and what each one authorises
+
+**Ratified 2026-09-10**, in response to four questions posed together after the D63–D71 queue emptied
+of everything the repository could settle by itself. Each was asked with the shapes costed and a
+recommendation; two answers took the recommendation, one did not, and one needs a scoping note.
+
+This entry exists because **an answer recorded only in conversation is an answer the next person
+cannot act on**. Every rejected shape is argued, so each of these can be revisited.
+
+### 1. The wedged dev estate — clear it completely, volumes included
+
+**Answer: `./deploy/deploy-dev.sh down --clean`.** Not the recommendation, which was containers-only.
+
+Five `healthconnect-dev-*` containers had been `Restarting` since 2026-08-30, dying in Hazelcast
+discovery against `http://consul:8500` — the Consul **D27 removed** — with `RestartPolicy=no` and
+five volumes created 2026-08-27. They had blocked two packages (D69, D71) from exercising
+`deploy-dev.sh` against a real estate.
+
+Shapes rejected:
+
+- **Containers only, keeping the volumes** was the recommendation and lost on what it preserves: the
+  volumes hold seeded demo data regenerable from `seed-data.json`, so keeping them buys nothing that
+  a `reseed` would not, while leaving the estate unable to demonstrate a **first run**.
+- **Start it first to inspect the volumes** lost because an `up` touches the shared broker and Consul
+  four products borrow, and these containers fail in discovery — noise on somebody else's
+  infrastructure for information the seed already answers.
+- **Leave it and close as `WON'T`** lost because the gap recurs on every future dev-estate change,
+  and D69 and D71 both had to state "the guard has never run inside `deploy-dev.sh`" as their honest
+  limit.
+
+**What the answer buys, and it is the reason it beat the recommendation**: the next `up` is a genuine
+first run, which is the path **D65's** "no volumes is a first run and still generates" branch and
+**D67's** "no containers at all is a first run and proceeds" branch were written for and which
+*nothing has ever exercised*. Two strict guards whose first-run case has only been tested against
+throwaway projects get tested against the real thing.
+
+**The residual was stated when the question was asked and is restated here**: nothing had written to
+those volumes for ten days and the seed is deterministic, but that could not be *proven* without
+starting the estate, which was itself a rejected shape. So the irreversibility was accepted knowingly
+rather than argued away.
+
+### 2. The production path — halted, code-only fixes authorised
+
+**Answer: no change to the standing rule.** No deploy, no `--host`, no credential, no ssh. Code fixes
+to `deploy-prod.sh` are authorised, verified by lifting functions against stubs — the technique D66,
+D67, D69 and D71 all used — and reporting what a deploy *would* do from the script remains fine.
+
+So **NEW-33** (four outcomes folded into "the network does not exist on the host") is buildable as a
+code change, and **WP-18** and **WP-19** stay parked as needing host access.
+
+Rejected: `--dry-run --host` to exercise preflight's later phases, which would have been the first
+real test of WP-19's fifteen host items — it contacts the production host over ssh, which is an
+outward-facing act, and it is not one this queue needed. Also rejected: tightening to *nothing at
+all*, which would have left NEW-33's fold in place — the one copy of a defect class D68, D69 and D71
+each fixed elsewhere, and the one that would mislead an operator during a real deploy.
+
+**`deploy/prod-server/` remains unexecuted configuration**, and D49's lesson still stands: the first
+execution of each piece is where its defects are.
+
+### 3. The customer's email — a gateway `/internal/**` endpoint, reached with D38's token
+
+**Answer: the recommendation.** `CustomerContacts` gets an implementation that asks the gateway.
+
+Paystack's `initialize` requires the customer's email; `PaymentIntent` carries a login and no contact
+details, deliberately (D22, D50). The gateway's `User` **does** hold `email`, and **D38** already has
+booking minting a short-lived token signed with the estate key to fan an erasure out to messaging and
+catalog — so the mechanism exists and this is a disclosure decision rather than a design problem.
+
+Rejected, both previously and again:
+
+- **A field on `CreateBooking`** is D22 verbatim — nothing a client sends may decide what a booking
+  costs or whose it is, and an email that reaches a payment provider is exactly that class. The
+  prototype renders the email read-only from the BridgeCare record; it never asks.
+- **Leaving it unimplemented** keeps the seam honest and keeps the estate unable to take a payment.
+  Defensible, and rejected because the source is now authorised.
+
+**What this decision costs, stated rather than discovered later**: booking gains the ability to read
+any customer's email. The route predicates are the only thing that will keep that endpoint off the
+internet — exactly as with catalog's `/internal/professionals/{ref}/login` (D28) — and Hubtel and
+MoMo will want a phone number through the same door. Those are the terms on which it must be built.
+
+### 4. Items blocked on facts — build behind flags, **with one scope this decision does not cover**
+
+**Answer: implement what can be implemented, with the unknown values as configuration**, so an answer
+becomes a deployment input rather than a code change.
+
+That is sound where the unknown is a **value**. WP-09's three retention periods are already bound to
+`${HC_RETENTION_*}` placeholders in booking's `application.yml`, which is this shape working; WP-17's
+video and WhatsApp providers are endpoints and credentials, which is the same shape.
+
+**It is refused where the unknown is whether a capability may legally exist**, and that is not a
+reinterpretation of the answer but the application of a rule already ratified. CLAUDE.md and D50:
+
+> do not add a settlement or transfer call: `PaymentProvider` having no method that pays the
+> professional is what lets the seam survive the Act 987 answer either way, and it is unanswered.
+
+A retention period behind a flag is a number waiting for counsel. A settlement seam behind a flag is
+a capability this platform may not be licensed to have, built on the assumption that it may — which
+is the shape D50 refused for Hubtel and MoMo, on the path where a customer's money is already
+committed. **So WP-13's Act 987 half stays a stated blocker with no code behind it**, and the
+architect has been told this reading was applied. If the intent was the other way, it needs its own
+decision and this section is the argument to overturn.
+
+### 5. The protocol this came from
+
+These four were asked together, batched rather than trickled, because the architect's time is the
+scarce input. The rule now recorded: **pose the question costed, document the answer where the code's
+readers will find it, then continue** — with that item if the answer unblocks it, with the next if it
+does not. A blocked item that is merely reported stalls the queue; one that is asked well costs a
+single reply and then moves.
+
+The distinction that makes it work is between a **decision** the architect makes by choosing — which
+shape, what posture, what is authorised — and a **fact** nobody in the repository holds: counsel's
+ratified figures, a DPC registration number, a budget, provider credentials, a regulator's answer.
+Decisions get asked and recorded. Facts get parked with a precise statement of what is needed and who
+holds it, and the work that does not depend on them gets finished first.
+
+### 6. What happened when §1 and the OTel answer were executed, 2026-09-10 07:00–07:15Z
+
+Both authorised actions were attempted immediately and **both were stopped by the host**, not by
+anything in this repository. Recorded here because a ratified answer that could not be carried out is
+a different state from one nobody tried, and the next reader needs to know which this is.
+
+**§1's clean is blocked below compose.** `./deploy/deploy-dev.sh down --clean` failed on all five
+containers with
+
+```
+Error response from daemon: cannot stop container: …:
+  tried to kill container, but did not receive an exit event
+```
+
+`docker rm -f` fails identically, and `docker update --restart=no` succeeds without helping. The cause
+is established rather than guessed: each of the five has **exactly one orphaned `containerd-shim`**
+while its own process is gone — `State.Pid=0`, `Restarting=true`, `Dead=false`. Ten days of
+restart-looping left the daemon holding a record it cannot reap. Docker 29.8.0, containerd v2.3.5.
+
+Two remedies, and the narrow one was chosen: kill the five shims as root, then the daemon reaps them
+and the clean completes. The broad one — `systemctl restart docker` — would bounce **47 running
+containers** including three other products' only quality environments and the monitoring stack. That
+is why it was not taken. **Neither is available to this workspace**: there is no passwordless sudo
+here, so the shim kill is the architect's to run. Nothing was destroyed by the attempt; five
+containers and five volumes remain exactly as they were.
+
+**The OTel attach was refused by D66's own preflight, correctly.** With the documented invocation from
+`quality/compose.yml:163` — one variable, since D64 —
+
+```
+✓ every 'hc-market-quality' container was created from this checkout
+✗ hc-shared-quality-kafka is not answering — wait, or start it with: (cd … && ./startup.sh)
+```
+
+The broker is `running/healthy` with `restarts=0` and **answers `kafka-broker-api-versions.sh`
+directly, rc=0** — but its own log shows `Unable to send a heartbeat because the RPC got timed out`
+and `Disconnecting from node 1 due to request timeout`. The host was at load average **56.65 on 16
+cores**, with an unrelated `ng test` at 154% CPU; `docker stats` itself timed out at 30 seconds.
+
+So the refusal was a **transient under contention, not a broken plane** — and the guard was right to
+refuse rather than start five services against a broker that cannot keep its own heartbeats. **The
+refusal was also a clean no-op**: preflight stops before touching containers, and all five were still
+on their 05:57 containers afterwards with `restarts=0`, `agent=0`, five volumes and one config file.
+That is D66's fatal preflight earning its keep on the first occasion it met a real degraded plane, and
+it is worth recording as evidence for the decision rather than only as an obstacle.
+
+**Both actions therefore remain pending, and neither is pending on a decision.** §1 needs one root
+command; the attach needs a quiet box. The baseline for the attach was captured before either attempt
+and is the thing to compare against: `agent=0` in all five, and over the preceding hour ERROR 1/1/0/0/1
+and WARN 110/112/112/112/595 for gateway/catalog/booking/messaging/payout, with **zero** `otel`,
+`opentelemetry` or `HttpExporter` mentions anywhere.
+
+**One state change that is not ours and matters to D63.** `monitoring-quality` came up at
+2026-09-10T06:38:13Z after being exited since 2026-09-05, and `otel-collector` now resolves from
+inside our containers at `172.24.0.19` on `qualitynet` — the network D64 joined for exactly this. That
+is what expired D63's reason for leaving the agent off, and it is why the question was asked. It is
+another repository's stack, so it may go down again; `quality/compose.yml`'s note that a live collector
+is **unmeasured** stays true until the attach actually runs.
