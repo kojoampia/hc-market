@@ -117,12 +117,28 @@ of the other file — which is why the CI check's membership part now walks **`s
 and treats an unliftable function as an error rather than a skip. Both copies are **fatal**, and in dev
 that is safe on its own argument rather than quality's: dev's router is a `case` at the foot of the
 file calling `preflight` per branch, and `down`, `status` and `logs` do not call it, so a broken plane
-cannot wedge the teardown or the diagnostic beside it. CI asserts that premise too — an
-argument of the form "safe because that other thing is arranged so" is the shape this repository keeps
-finding broken. **Verified by lifting the function out of the file against the real daemon, never by
+cannot wedge the teardown or the diagnostic beside it.
+
+**CI pins that premise as the EXACT SET of branches calling `preflight` — `{up, reseed, restart}` —
+and a deny-list over the teardowns was not enough** (D69 §10). Written that way first, it *counted and
+did not attribute*: deleting `up`'s own `preflight` left CI green, which ships an `up` that starts the
+estate with the plane, the JDK, the seed file and the profile never checked at all, and a new
+`doctor) preflight; …` branch was green too. Both measured. It is the same limitation this file already
+records for the CRUD gate, recreated in a new check — so an action that gains or loses `preflight` is
+red until it is argued in the decision. **What it matches is a DIRECT call in the branch**: a
+`plane_gate() { preflight; }` wrapper is invisible (measured), which is why the success line says
+"direct calls" rather than "reaches". Keep the call direct.
+
+**Verified by lifting the function out of the file against the real daemon, never by
 running `deploy-dev.sh`**: the dev estate is wedged (backlog **NEW-31** — five containers `restarting`
 since 2026-08-30, off `hcnet`, looping on `http://consul:8500`, the Consul D27 removed), so no package
 since D66 has been able to run that script at all.
+
+**Both membership probes fail closed; only dev's says WHY.** `deploy-dev.sh` status-checks the
+`docker inspect` behind its membership question, so an unanswerable daemon is reported as such rather
+than as a broker on the wrong network; `quality/startup.sh`'s copy still folds the two together, which
+is **NEW-32** and cannot be caught by CI either way, because part 4 stubs docker with a function that
+always succeeds.
 
 Only the host mapping moves. Inside the containers every service listens on **8080**, because the
 compose files set `SERVER_PORT: 8080` explicitly — overriding the per-service `serverPort` the JDL

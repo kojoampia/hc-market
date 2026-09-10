@@ -2327,8 +2327,11 @@ the file calling `preflight` per branch, and `down`, `status` and `logs` do not 
 plane cannot wedge the teardown or the diagnostic beside it, and part 5 of the check now asserts that
 premise rather than leaving it to a comment. `.github/checks/shared-plane-wiring.sh` was extended
 rather than duplicated: part 4 walks `script:function` pairs (an unliftable function is an error, not
-a skip), part 3 stays quality-only for a reason D69 §4 re-established rather than inherited, and the
-test beside it is green at 23 with seven new mutations. Appendix A re-embedded.
+a skip), part 3 stays quality-only for a reason D69 §4 re-established rather than inherited, and part
+5 asserts the **exact set** of router branches that call `preflight` — `{up, reseed, restart}` — after
+review reproduced both holes in the deny-list it replaced: `up` losing its own `preflight` and a new
+`doctor)` branch gaining one were each green (D69 §10). Test green at 26 with ten new mutations.
+Appendix A re-embedded twice.
 
 **What is NOT done, and it is the honest limit**: the guard has never run *inside* `deploy-dev.sh`.
 Every measurement is the shipped function lifted out of the file, because the dev estate is still
@@ -2427,6 +2430,38 @@ Whoever takes it should decide the order deliberately: sweep first and then `up`
 itself is not moving out of. **And it is the package that can finally run what D66 and D69 could
 not** — `./deploy-dev.sh up --no-build --services catalog`, then the shared-plane preflight against a
 real estate, including the refusal, which no test in CI can reach.
+
+---
+
+## NEW-32 — `check_shared_plane`'s membership probe cannot tell "not on it" from "could not ask" · READY
+
+Opened by **D69 §10**, which fixed it in `deploy-dev.sh` and left the twin alone rather than editing a
+ratified decision's file from outside its scope. It is **D68's fix 2 for a third docker object**, and
+the third time this exact reading has been found in this repository.
+
+`quality/startup.sh`'s `check_shared_plane` ends each loop iteration with
+
+```
+docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{println $k}}{{end}}' "$c" 2>/dev/null \
+  | grep -Fxq "$SHARED_NETWORK" || die "$c is running but is not on '$SHARED_NETWORK' …"
+```
+
+so a daemon that cannot answer is reported as a broker **on the wrong network** — in the very function
+that grew three separate messages two lines earlier (D66 §7) precisely to stop refusals misdiagnosing
+themselves. **Nothing is unsafe**: both readings are fatal and both stop the `up`, which is why this is
+an item rather than part of D69. What it costs is an operator sent to `hc-infra` to fix a plane that is
+fine, which is the exact cost D66's own optional (3) was taken to remove.
+
+The repair is four lines and is already written in `deploy/deploy-dev.sh`'s copy — capture into a
+variable with `2>&1`, `(( rc == 0 )) || die "docker could not be asked which networks …"`, then
+`printf | grep -Fxq`. Take it verbatim, with the comment, and note that the two copies are **not** a
+verbatim-copy family (D69 §7 argues why they cannot be), so the diff must be read by eye.
+
+Two things whoever takes it should keep. The fail-**closed** direction: an empty template still
+refuses, because the grep finds nothing. And part 4 of `.github/checks/shared-plane-wiring.sh` stubs
+docker with a function that always succeeds, so **no CI mutation can see this either way** — measure it
+with a stub that answers `running` and then fails, which is how D69 measured both readings of the dev
+copy.
 
 ---
 

@@ -22,21 +22,28 @@
 #   11  one service given its own broker    — two planes in one estate, reported as a count
 #   12  the compose file absent             — an unreadable subject, which must not read as clean
 #
-#  Seven more since D69, all about deploy-dev.sh's copy — backlog NEW-29. Trust the list and not the
+#  Ten more since D69, all about deploy-dev.sh's copy — backlog NEW-29. Trust the list and not the
 #  number; this repository has written that count wrong three times. The first two are cases 9 and
-#  10's shapes one script along; the last five are part 5, which exists because part 4's refusal is
-#  FATAL and that is only safe while a teardown cannot reach it:
+#  10's shapes one script along; the rest are part 5, which exists because part 4's refusal is FATAL
+#  and that is only safe while a teardown cannot reach it. Cases 20 and 21 are the two that a
+#  per-branch DENY-LIST version of part 5 passed — reproduced at review, which is why it is an exact
+#  set now (D69 §10):
 #
 #   13  the DEV membership refusal deleted  — the defect D69 closed, back again
 #   14  the dev function renamed            — an awk range that lifts nothing must not pass
 #   15  preflight added to `down`           — a broken plane would wedge the teardown
 #   16  the dev router renamed              — part 5's subject gone, which must not read as clean
-#   17  a teardown branch deleted           — "it does not call preflight", established by reading
-#                                             nothing
+#   17  an expected branch renamed          — the set compared against a branch that is not there
 #   18  preflight never called at all       — every teardown assertion true, of a script that checks
 #                                             no plane on any action
 #   19  the shell stripper absent           — one file four checks trust, and two of them once
 #                                             printed `ok` having read nothing without it
+#   20  up's own preflight deleted          — an `up` that starts the estate with NO plane check;
+#                                             the deny-list passed this, and it is the worse half
+#   21  a new branch gains preflight        — `doctor) preflight; …`: the next diagnostic wedged by a
+#                                             broken plane, invisible to a deny-list
+#   22  the branch labels unreadable        — a set comparison over zero labels, which is this
+#                                             family's empty-subject fail-open
 #
 #      ./.github/checks/shared-plane-wiring-test.sh
 # ==============================================================================
@@ -206,19 +213,58 @@ expect_red "$d" "13 the DEV membership refusal deleted" 'exists but is not runni
 d="$(fresh_dev m14)"; sed -i 's|^shared_plane() {|shared_plane_renamed() {|' "$d/deploy-dev.sh"
 expect_red "$d" "14 the dev plane function renamed" 'shared_plane_renamed() {' '' "$d/deploy-dev.sh" "declares no function 'shared_plane'"
 
-printf '\ndeploy-dev.sh: a teardown must not reach a fatal preflight\n'
+# PART 5 IS AN EXACT SET, so both directions are constructed: an action that GAINED preflight (which
+# a broken plane can then wedge) and one that LOST it (which starts the estate with no plane check at
+# all). Cases 20 and 21 are the two the deny-list version of this part passed, reproduced at review
+# before it was rewritten — 20 is the one the reviewer found first and the more dangerous of the two.
+printf '\ndeploy-dev.sh: the exact set of actions that reach a fatal preflight\n'
 d="$(fresh_dev m15)"; sed -i 's|^  down)$|  down)\n    preflight|' "$d/deploy-dev.sh"
 expect_red "$d" "15 preflight added to the down branch" '  down)
-    preflight' '' "$d/deploy-dev.sh" "'down' calls preflight"
+    preflight' '' "$d/deploy-dev.sh" "are not accounted for: down"
 
 d="$(fresh_dev m16)"; sed -i 's|^case "\$COMMAND" in$|case "${COMMAND}" in|' "$d/deploy-dev.sh"
 expect_red "$d" "16 the dev router renamed" 'case "${COMMAND}" in' 'case "$COMMAND" in' "$d/deploy-dev.sh" "router this check can read"
 
-d="$(fresh_dev m17)"; sed -i '/^  status)  compose ps ;;$/d' "$d/deploy-dev.sh"
-expect_red "$d" "17 the status branch deleted" 'logs)' '  status)  compose ps ;;' "$d/deploy-dev.sh" "has no 'status)' branch"
+# An action RENAMED, not deleted: deleting `status)` removes an action and is nobody's defect, while
+# renaming one this check is told about leaves it comparing the set against a branch that is not
+# there. Both halves of the difference must be reported — `up` missing, `start` unaccounted for.
+d="$(fresh_dev m17)"; sed -i 's|^  up)$|  start)|' "$d/deploy-dev.sh"
+expect_red "$d" "17 an expected branch renamed" '  start)' '  up)' "$d/deploy-dev.sh" "has no branch for: up"
 
 d="$(fresh_dev m18)"; sed -i -e 's|^    preflight$|    :|' -e 's|^  restart) preflight$|  restart) :|' "$d/deploy-dev.sh"
-expect_red "$d" "18 preflight never called at all" '  restart) :' '  restart) preflight' "$d/deploy-dev.sh" "never calls preflight at all"
+expect_red "$d" "18 preflight never called at all" '  restart) :' '  restart) preflight' "$d/deploy-dev.sh" "never calls preflight from any router branch"
+
+# 20. THE ONE THE DENY-LIST PASSED. `up` is the only action that both joins the plane and is the
+#     estate's entry point, so an `up` with no preflight is NEW-29's defect in a stronger form: not a
+#     plane checked wrongly but a plane, a JDK, a seed file and a profile never checked at all. Two
+#     `    preflight` lines exist (up, reseed); this deletes the FIRST, which is up's.
+#     `sed`'s `n` rather than a first-match `awk`, so the line replaced is provably the one after
+#     `  up)` and a single-line presence assertion is enough to say WHICH branch lost it. A count
+#     assertion stands beside it because a marker's presence cannot say the original went: two
+#     `    preflight` lines must become one, and `expect_red`'s absence test is a fixed-string grep
+#     that cannot count (nor span lines — see case 14).
+d="$(fresh_dev m20)"
+sed -i '/^  up)$/{n;s|^    preflight$|    : # D69 test: up no longer preflights|;}' "$d/deploy-dev.sh"
+n20="$(grep -c '^    preflight$' "$d/deploy-dev.sh" || true)"
+[[ "$n20" == 1 ]] || bad "20 — the mutation did not apply as intended ($n20 bare preflight call lines, wanted 1)"
+expect_red "$d" "20 up's preflight deleted (the deny-list passed this)" ': # D69 test: up no longer preflights' '' "$d/deploy-dev.sh" "Must call it and do not: up"
+
+# 21. THE OTHER ONE. A deny-list cannot see an action nobody anticipated, and the next diagnostic
+#     added to this router is exactly that: wedged by a broken plane, with CI silent.
+d="$(fresh_dev m21)"; sed -i 's|^  status)  compose ps ;;$|  status)  compose ps ;;\n  doctor)  preflight; compose ps ;;|' "$d/deploy-dev.sh"
+expect_red "$d" "21 a new branch gains preflight (the deny-list passed this)" '  doctor)  preflight; compose ps ;;' '' "$d/deploy-dev.sh" "are not accounted for: doctor"
+
+# 22. The router is present and its LABELS are not readable — every branch re-indented. A set
+#     comparison over zero labels is the empty-subject fail-open this family keeps producing, so it
+#     must be its own error rather than "nothing calls preflight".
+#     No absence string: a re-indented `      up)` CONTAINS `  up)`, so a fixed-string absence test
+#     would report the mutation as unapplied. A count stands in for it — seven two-space labels must
+#     become none.
+d="$(fresh_dev m22)"
+sed -i -E 's|^  ([a-z*]+\))|      \1|' "$d/deploy-dev.sh"
+n22="$(grep -cE '^  [a-z*]+\)' "$d/deploy-dev.sh" || true)"
+[[ "$n22" == 0 ]] || bad "22 — the mutation did not apply as intended ($n22 two-space labels remain, wanted 0)"
+expect_red "$d" "22 the router's branch labels unreadable" '      up)' '' "$d/deploy-dev.sh" "yielded no branch labels"
 
 RUNNER=run_check
 

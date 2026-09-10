@@ -11135,13 +11135,15 @@ compose is invoked, failing **closed** (a Go template that stops matching yields
 
 **And the premise is now guarded, which it was not in quality until D67 came at it from another
 direction.** An argument of the form "this is safe because that other thing is arranged so" is the
-shape this repository keeps finding broken, so part 5 of the CI check asserts it: `preflight` is
-called by the dev router at all (else every teardown assertion below is true of a script that checks
-no plane on any action), and the `down`, `status` and `logs` branches do not call it. An absent branch
-and an unreadable router are each their own error rather than a skip. Watched red **five** ways —
-`preflight` added to `down`, the router renamed, a teardown branch deleted, `preflight` never called
-at all, and the shell stripper part 5 depends on absent, which is one file four checks trust and
-without which two of them once printed `ok` having read nothing (D62's review).
+shape this repository keeps finding broken, so part 5 of the CI check asserts it — as **the exact set
+of router branches that call `preflight`**, `{up, reseed, restart}`, and not as a deny-list over the
+teardowns. §10 is why: the deny-list was written first, and it counted rather than attributed. An
+absent branch, an unreadable router, no readable labels and nothing calling `preflight` anywhere are
+each their own error rather than a skip. Watched red **eight** ways — `preflight` added to `down`, a
+new `doctor)` branch gaining it, `up` losing its own, an expected branch renamed, the router renamed,
+`preflight` never called at all, the labels made unreadable, and the shell stripper part 5 depends on
+absent (one file four checks trust, without which two of them once printed `ok` having read nothing,
+D62's review). Trust that list rather than the number, which is the count of *doors*, not of cases.
 
 ### §4 Decision two: the check is EXTENDED, and part 3 deliberately is not
 
@@ -11262,11 +11264,13 @@ the key move and all five app services attached. After the change: `hcnet` passe
 one-clause-per-question line, the empty network is refused, and the alias and created-but-stopped arms
 each give their own message — four states, live daemon. `bash -n deploy/deploy-dev.sh`;
 `./deploy/sync-appendices.sh` re-embedded Appendix A and `--check` green afterwards. The extended
-check green on a clean tree under `bash -e`, at **21** assertions, and its test green at **23 ok, 0
-failed** — the twelve D66 states plus the four ambient controls plus **seven new ones**: the dev
-membership refusal deleted, the dev function renamed, `preflight` added to `down`, the dev router
-renamed, a teardown branch deleted, `preflight` never called at all, and the shell stripper absent.
-Trust that list and not its number. Each asserts the mutation
+check green on a clean tree under `bash -e`, at **18** assertions (part 5 is one set comparison
+rather than a per-branch line), and its test green at **26 ok, 0 failed** — the twelve D66 states
+plus the four ambient controls plus **ten new ones**: the dev membership refusal deleted, the dev
+function renamed, `preflight` added to `down`, the dev router renamed, an expected branch renamed,
+`preflight` never called at all, the shell stripper absent, `up`'s own `preflight` deleted, a new
+`doctor)` branch gaining one, and the branch labels made unreadable. Trust that list and not its
+number. Each asserts the mutation
 applied (original gone where a fixed string can say so, mutant present, `bash -n` parses) and that the
 failure came **through the door it was aimed at** by matching the error fragment; the case-13 mutant
 was additionally run outside the harness to confirm the `::error::` names the sandbox file rather than
@@ -11276,3 +11280,72 @@ the real one, and that the check exits 1. `shared-plane-wiring-test.sh`,
 Maven gate was run. **No estate was started, stopped or recreated, the quality stack was not touched,
 the five wedged dev containers were read and left exactly as they are, nothing was published to the
 broker, and the throwaway network and container were removed with a sweep for leftovers.**
+
+### §10 Review, and the three things it found — all of them in the guard, none in the fix
+
+No blocking findings. Nothing about `shared_plane` itself moved: the three refusal arms, the
+membership refusal, fatal, the router reading and part 4's anchored `awk` range all held on
+independent re-measurement. **All three should-fixes were in part 5 — the guard added on this
+decision's own premise — and all three were reproduced by mutation rather than argued.** That is the
+shape worth recording: the repair was measured and the *check on the repair's assumption* was the
+soft part, which is the third package running where a new guard was the weakest thing in the commit.
+
+**Should-fix 1: part 5 counted, it did not attribute.** The first version walked the teardowns and
+refused only `calls == 0`, so deleting the single `    preflight` line under `up)` left it **green** —
+verified, `up) still calls preflight? 0 … check exit=0`. What that ships is worse than NEW-29: not a
+plane checked wrongly but an `up` that starts the estate with the plane, the JDK, the seed file and
+the profile **never checked at all**, the question never asked. This limitation is already written
+down in CLAUDE.md for the CRUD gate — *"the gate branch counts, it does not attribute"*, measured
+there with three `@PreAuthorize` on one handler — so it is a known failure mode recreated in a
+brand-new check, which is why it is here rather than quietly fixed.
+
+**Should-fix 2: a deny-list cannot see an action nobody anticipated.** `doctor) preflight; compose ps
+;;` added to the router was green too — the next diagnostic wedgeable by a broken plane, with CI
+silent, which is precisely the property part 5 exists to pin.
+
+**One change closed both, and it is this repository's own rule from three packages ago.** D67:
+*"the EXACT set is required, not 'this checkout is among the ones docker names'"*. Part 5 now
+attributes each `preflight` call to its branch in one `awk` pass and compares the **set** against
+`{up, reseed, restart}`, so an action that gains it and an action that loses it are both red, and a
+new branch is red until somebody argues it here. Branch extents run label-to-label rather than
+label-to-first-`;;`, because a nested `case` inside a branch would end the range early and silently.
+Four fail-open states are named separately — no router, no readable labels, nothing calling
+`preflight` anywhere, and an expected branch that does not exist — because each would satisfy a set
+comparison by reading nothing, and an *absent* expected branch is the ghost D67's third relation was
+about.
+
+**Should-fix 3: the `ok` line claimed "reach" while the matcher pinned "a direct textual call in the
+branch".** Measured: `plane_gate() { preflight; }` above the router with `plane_gate` in `down)`
+leaves the check green. The exact-set fix does **not** close that — attribution needs a call graph,
+which a grep is not — so the limit is stated in the header and the success line now reads *"calls
+preflight from exactly {up reseed restart} — direct calls in the branch; see the header on
+indirection"*. This is D67's shape again, an assertion whose name claims a property its matcher does
+not have, and the honest repair is the wording plus the stated limit rather than a stronger claim.
+**Keep the call direct.**
+
+**Both optionals taken.** (1) The two enumerated lists — `PLANE_FNS`'s two `script:function` pairs
+and `DEV_PREFLIGHT_BRANCHES`'s three actions — now carry their justification in the header, to the
+standard the zone-write check set: within the files they name every failure mode exits 1 loudly, and
+what they do **not** reach is a *third* script growing a plane preflight, for which no derivation
+exists (a shared plane is not declared in a model file the way an entity or a `messageBroker` is), so
+that day the pair is added by hand. (2) **The membership probe folded "docker could not be asked"
+into "is not on the network"** — a `2>/dev/null` piped straight into the grep, in the very function
+that grew three arms two lines earlier to stop refusals misdiagnosing themselves. It is
+status-checked now, and both readings measured with a stub that answers `running` and then fails:
+the committed version blamed non-membership, the fixed one says *"docker could not be asked which
+networks 'probe-consul' is on"*. Both are fatal, so only the named cause changed. **Quality's copy
+has the identical folding** and is deliberately not edited from here — recorded as **NEW-32**, which
+is D68's fix 2 for a third docker object.
+
+**Verified at review, by running**: the deny-list's two holes reproduced on asserted mutations before
+the rewrite, and both red after it; the indirection wrapper measured green, which is the limit the
+header now states; the new `awk` attribution read against the real router (`* down logs reseed restart
+status up` found, `reseed restart up` gated); the unanswerable-docker arm measured against the
+committed script and the fixed one; `bash -n deploy/deploy-dev.sh`; **Appendix A re-embedded and
+`--check` green**; the lifted function re-measured against the live daemon on `hcnet` (passes) and a
+second throwaway empty network (refuses), removed afterwards; the check green at 18 assertions and its
+test at **26 ok, 0 failed**, with three cases' assertions rewritten after the harness caught them
+itself — two multi-line must-be-absent strings, which `grep -F` splits so the empty first pattern
+matches every file (case 14's documented trap, hit twice more), and one fragment whose case did not
+match the message. Counts stand in where a fixed string cannot: two bare `preflight` call lines
+becoming one, seven two-space labels becoming none.

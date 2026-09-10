@@ -534,18 +534,20 @@ jobs:
       # A script rather than a `run:` block, because it has a test beside it that constructs each
       # broken state — the compose half hardcoded again, a `name:` commented out, a default renamed,
       # the export dropped, the membership refusal deleted — and requires this to go red through the
-      # door each one was aimed at. Nineteen of them.
+      # door each one was aimed at. Twenty-two of them.
       #
       # BOTH SCRIPTS since decisions.md D69 (backlog NEW-29). D66 fixed the membership blindness in
       # `check_shared_plane` and left the same four questions unasked in deploy-dev.sh's
       # `shared_plane` — a different NAME, which is why nothing carried across and why this step's
       # part 4 now walks `script:function` pairs rather than a script list. It also asks the one
-      # thing that makes a FATAL refusal safe in dev: that `down`, `status` and `logs` never reach
-      # preflight, so a broken plane cannot wedge the teardown or the diagnostic beside it.
+      # thing that makes a FATAL refusal safe in dev: which of the dev router's actions reach
+      # preflight, as an EXACT set — `{up, reseed, restart}`. A deny-list over the teardowns was
+      # written first and passed two mutations at review: `up` losing its own preflight, and a new
+      # `doctor)` branch gaining one. It counted, it did not attribute.
       - name: Every stack must address the shared plane it preflight-checks
         run: ./.github/checks/shared-plane-wiring.sh
 
-      - name: …and that check must fail on each of the nineteen states it exists to refuse
+      - name: …and that check must fail on each of the twenty-two states it exists to refuse
         run: ./.github/checks/shared-plane-wiring-test.sh
 
       # "The agent must be verified as INSTRUMENTING, not merely loading" has been in CLAUDE.md

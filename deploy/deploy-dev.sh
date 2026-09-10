@@ -256,11 +256,18 @@ shared_plane() {
     # reports healthy, and everything it publishes goes nowhere.
     #
     # The container is asked rather than the network, so this reads the same object the two lines
-    # around it read. `pipefail` is on, so a Go template that stops matching yields nothing, the
-    # grep finds nothing, and this refuses — the direction a check about a silent failure has to
-    # fail in.
-    docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{println $k}}{{end}}' "$c" 2>/dev/null \
-      | grep -Fxq "$SHARED_NETWORK" \
+    # around it read. A Go template that stops matching yields nothing, the grep finds nothing, and
+    # this refuses — the direction a check about a silent failure has to fail in.
+    #
+    # STATUS-CHECKED, like the three arms above it and for the same reason (D69 §10, and D68 took
+    # this finding one script along). Piping `2>/dev/null` straight into the grep folded "docker
+    # could not be asked" into "is not on the network": a daemon flake at this call misdiagnosed
+    # itself as the very refusal the arms above grew three messages to stop misdiagnosing. Both
+    # readings are fatal, so nothing about the outcome changes — only which cause is named.
+    local nets rc2=0
+    nets="$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{println $k}}{{end}}' "$c" 2>&1)" || rc2=$?
+    (( rc2 == 0 )) || die "docker could not be asked which networks '$c' is on, so whether this stack can reach it is unestablished: $nets"
+    printf '%s\n' "$nets" | grep -Fxq "$SHARED_NETWORK" \
       || die "$c is running but is not on '$SHARED_NETWORK', which is the network this stack joins — so its name would not resolve from any of these five containers, and every one of them would come up healthy and publish into nowhere (decisions.md D27, D66, D69). $fix"
   done
 
