@@ -2764,11 +2764,15 @@ and no failure beats both, and booking's obvious rename (`WebhookSecurityConfigu
 subject.** D77's new CI check passed on the estate it was written for, reporting `ok` for eight files
 and never mentioning the three it existed to guard, because `strip-comments.awk` read `/**` inside a
 path pattern as a block-comment opener and truncated **14 of 535 main-source files** from that string
-to end of file — every service's `SecurityConfiguration` and `WebConfigurer` among them — plus 82
-further lines cut mid-line by an unconditional `//` strip. Its own header said "nothing in the estate
-has one" and that the failure would be "fail-CLOSED"; both were false, and for the three estate-wide
-bans the direction was fail-**open**. The ninth fail-open in that family and the first inside the
-mechanism the other eight were fixed with.
+to end of file — every service's `SecurityConfiguration` and `WebConfigurer` among them — while **22
+more lost 67 lines cut mid-line** by an unconditional `//` strip. Its own header said "nothing in the
+estate has one" and that the failure would be "fail-CLOSED"; both were false, and for the three
+estate-wide bans the direction was fail-**open**. The ninth fail-open in that family and the first
+inside the mechanism the other eight were fixed with.
+
+**Every figure here names its tree and its measure**, because D77's first draft did not: it reported a
+main+test line count (82/50) against a main-only file count, which is this repository's own recurring
+defect inside the entry describing it. Main sources: 36 files differ over 444 lines. See D77 §7.
 
 Shipped: `@Order` on the `@Bean` method in all three classes; the two false paragraphs corrected in
 place; `FilterChainPrecedenceIT` in catalog and booking, asking the container rather than the source;
@@ -2944,6 +2948,32 @@ first draft of this item proposed: it would pin a value that is not load-bearing
 as though it were.
 
 Nothing is wrong today. One premise is the framework's; the other two are already ours.
+
+---
+
+## NEW-38 — the SHELL stripper's caller count is stale, in a file that is not its own · READY
+
+Found by D77's review-fix sweep, and deliberately **not** folded into it: different mechanism,
+different file, and a package that had just been corrected for widening its own scope should not widen
+it again on the way out.
+
+`.github/checks/shared-plane-wiring-test.sh:39` describes state 19 as *"the shell stripper absent — one
+file **four** checks trust"*. Measured: `strip-sh-comments.awk` is called by **one** workflow step
+(*"verify-outbox-recovery.sh must restore the aliases it severs"*) and **four** check scripts —
+`strip-sh-comments-test.sh`, `outbox-alias-restore-test.sh`, `host-probe-attribution.sh` and
+`shared-plane-wiring.sh` — so **five** callers, and the sentence is one short whichever of the two
+things it means by "checks".
+
+It is a comment and nothing depends on it, so the cost is a reader's confidence rather than a check's
+reach. What makes it worth an item is that it is **the same defect D77 §7 and its review are about, on
+the other stripper**: a count written into a sentence, gone stale, in a test-of-a-check whose subject is
+that mechanism's reliability. D77 fixed its own by *deriving* the number at run time from `build.yml`
+and printing it as an assertion, and `strip-comments.awk`'s header carries the one-line `awk` that
+produces it. The same treatment fits here, and the shell stripper's callers are **not all in
+`build.yml`** — four of the five are check scripts — so the derivation is a `grep -rl` rather than a
+copy of D77's expression.
+
+Do it as one line of shell, not as a corrected constant: a number in a comment is what this is.
 
 ---
 

@@ -34,16 +34,30 @@
 #    in the estate has one; the failure would be fail-CLOSED (too much removed, a check goes red on
 #    correct code), which is the right direction for a tool whose whole job is to stop things passing."
 #
-# MEASURED, on the tree that sentence was written against:
+# MEASURED, on the tree that sentence was written against. THREE DIFFERENT MEASURES ARE IN PLAY here
+# and the first version of this comment mixed two of them — it reported a main+test line count against
+# a main-only file count, which is the defect this whole entry is about, one document along. Each
+# figure below therefore names its TREE and its MEASURE. Method: run both strippers over each file and
+# compare OUTPUT LINE BY LINE — both emit one line per input line, so the outputs align by number.
+# Do not use `diff` for this; it realigns and over-counts (499 against the true 444).
 #
-#   14 of 535 main-source files were TRUNCATED FROM A STRING LITERAL TO END OF FILE — every service's
-#   generated SecurityConfiguration ("/api/admin/**"), every service's WebConfigurer
-#   ("/api/**"), catalog's two hand-written chains ("/internal/**", "/api/professionals/*"),
-#   booking's webhook chain ("/webhooks/**") and payout's LedgerDTO. `/**` inside a string opened a
-#   block comment that never closed.
-#   82 further lines across 50 files were cut mid-line, because the old `//` strip was applied to the
-#   whole line unconditionally — so every `@Value("${…:http://healthconnectcatalog}")` in booking's
-#   four service clients lost everything from `http:` onwards.
+#   MAIN SOURCES, 535 files
+#     36 files differ at all, over 444 output lines
+#     14 of those are TRUNCATED FROM A STRING LITERAL TO END OF FILE, losing 377 lines between them —
+#        every service's generated SecurityConfiguration ("/api/admin/**"), every service's
+#        WebConfigurer ("/api/**"), catalog's two hand-written chains ("/internal/**",
+#        "/api/professionals/*"), booking's webhook chain ("/webhooks/**") and payout's LedgerDTO
+#        (invisible from line 14 to 210). `/**` inside a string opened a block comment that never closed.
+#     22 differ WITHOUT truncating, losing 67 lines cut mid-line, because the old `//` strip was
+#        applied to the whole line unconditionally — so every
+#        `@Value("${…:http://healthconnectcatalog}")` in booking's four service clients lost
+#        everything from `http:` onwards.
+#
+#   MAIN AND TEST, 886 files
+#     56 files differ, over 528 lines; 15 truncated to EOF.
+#
+# The 14/535 half is the one to re-derive first if any of this is ever in doubt: it reproduces file
+# for file, and it is the half that made a check pass on its own subject.
 #
 # And the direction was backwards. Removing too much is fail-CLOSED only for a check that must FIND
 # something; for a check that must NOT find something — the three estate-wide bans, and D77's own —
@@ -58,12 +72,22 @@
 # `instr` and `inchr` are reset at end of line deliberately, so that a construct this does not
 # understand costs one line rather than the rest of the file, which is what the old version did.
 #
+# ONE FILE PER INVOCATION, and the `FNR == 1` reset is what makes that safe rather than conventional.
+# `inblk` and `intxt` are global, so a file ending inside an unterminated construct would otherwise
+# leak that state into the NEXT file on the same command line and truncate it from line 1 — the same
+# fail-open as above, arriving without any Java being unusual. Every caller in build.yml runs this per
+# file today, and nothing enforces that, so the guard is here instead of in a comment asking for it.
+# It costs nothing when there is one file, and it is the right per-file semantics in any case.
+#
 # It is still not a Java parser and does not need to be. What it does not handle is stated rather
 # than assumed, because the sentence it replaced was an assumption: a `"""` opening a text block must
 # be the last token on its line in Java, so it is never confused with an empty string beside a quote;
 # and a unicode escape spelling a comment opener (u002a after a backslash-u) is not decoded, which
-# javac would accept and no file here contains. Verify a claim about this file by running
-# strip-comments-test.sh, never by reading this comment.
+# javac would accept and no file here contains. Both were probed adversarially at D77's review, along
+# with char literals holding a delimiter, an escaped quote followed by a real comment on one line, a
+# `"*/"` in a string beside a stray `*/` in code, CRLF, tabs and a missing trailing newline. Verify a
+# claim about this file by running strip-comments-test.sh, never by reading this comment.
+FNR == 1 { inblk = 0; intxt = 0 }
 {
   line = $0
   out = ""

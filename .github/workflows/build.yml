@@ -886,6 +886,19 @@ jobs:
       # quotes `{@code @Order}` in prose ABOVE the class declaration. Measured — unstripped, this
       # check reports a class-level @Order in six of the seven chain-declaring files, including the
       # three it was just corrected on, so it would fail closed on a correct estate and be reverted.
+      #
+      # IT REACHES LESS FAR THAN IT READS, IN ONE WAY WORTH KNOWING — the same family as the CRUD
+      # gate's documented "counts, does not attribute", and stated rather than fixed. The annotation
+      # must be ON ITS OWN LINE to be seen: `@Configuration @Order(5)` on one line does not match
+      # `^[[:space:]]*@Order[[:space:]]*\(` and passes as clean. That is fail-OPEN, and it is only
+      # consequential in messaging and payout, where no FilterChainPrecedenceIT stands behind it.
+      # The converse fails CLOSED and is therefore safe: an @Order on the class-declaration line
+      # itself (`@Order(5) public class X {`) makes `decl` that same line, so the annotation is not
+      # "above" it, and the file is reported as having no class declaration this check can find —
+      # which exits 1. Widening the expression to catch a shared line would mean matching @Order
+      # anywhere before the class, which the javadoc quotes on purpose; prettier keeps annotations on
+      # their own lines in this repository, so the shape this misses is one nobody writes by accident.
+      # Both branches were watched, not reasoned from the expression.
       - name: A filter chain's precedence may not be declared where Spring cannot read it
         run: |
           fail=0

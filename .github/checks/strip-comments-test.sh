@@ -2,14 +2,19 @@
 #
 # The shared comment stripper must strip the case its predecessor could not, and must not strip code.
 #
-# WHY THIS EXISTS. TEN steps in build.yml match against source text and every one of them is only
-# as good as `strip-comments.awk` — the count is derived in that file's own header rather than
-# restated here, because it read "four" for four decisions after it had stopped being four.
-# Three of the callers carried a private line-based `sed` until
-# decisions.md D56's review, which removes only a block comment that opens and closes on ONE line —
-# so a comment naming a deleted call satisfied the check guarding it, verified on two of them, and
-# that was the eighth fail-open in this family. Consolidating fixed it and created a new risk: the
-# stripper is now one file that four checks trust, and nothing was asserting it works.
+# WHY THIS EXISTS. Every step in build.yml that matches against source text is only as good as
+# `strip-comments.awk`. **THE NUMBER OF THEM IS COUNTED BELOW, NEVER WRITTEN HERE** — D77's reviewer
+# found this file still saying "four checks" in two places, including the operator-facing message, in
+# the same commit whose whole subject was a comment that rots: the stripper's own header had read
+# "four" for four decisions after it stopped being four. A count in a sentence is the first thing to
+# go stale, so `callers` is derived from the workflow on every run and interpolated into the one
+# message an operator reads at the worst moment.
+#
+# Three of the callers carried a private line-based `sed` until decisions.md D56's review, which
+# removes only a block comment that opens and closes on ONE line — so a comment naming a deleted call
+# satisfied the check guarding it, verified on two of them, and that was the eighth fail-open in this
+# family. Consolidating fixed it and created a new risk: the stripper is now one file that every
+# text-matching check trusts, and nothing was asserting it works.
 #
 # It is a TEST OF A CHECK'S MECHANISM, which is the pattern pepper-wiring-test.sh established: it
 # builds the states the old version passed on and asserts the new one does not.
@@ -17,15 +22,24 @@ set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 1
 
 awkfile=.github/checks/strip-comments.awk
+workflow=.github/workflows/build.yml
 fail=0
 
 pass() { echo "ok   $1"; }
 bad() { echo "::error file=$awkfile::$1"; fail=1; }
 
+# Derived, not stated — the same one-liner the stripper's own header publishes. `?` rather than a
+# number if the workflow is unreadable, because a wrong count in a refusal is worse than no count.
+callers='?'
+if [ -f "$workflow" ]; then
+  callers=$(awk '/^      - name: /{n=$0} /strip-comments\.awk/{print n}' "$workflow" | sort -u | grep -c . || true)
+fi
+
 if [ ! -f "$awkfile" ]; then
-  echo "::error::$awkfile does not exist — four checks in build.yml call it and two of them PASS when it is absent. See decisions.md D56."
+  echo "::error::$awkfile does not exist — $callers steps in build.yml call it and two of them PASS when it is absent. See decisions.md D56 and D77."
   exit 1
 fi
+pass "$callers steps in $workflow call the stripper — counted, not quoted"
 
 probe=$(mktemp)
 trap 'rm -f "$probe"' EXIT
@@ -152,8 +166,10 @@ else
   bad "a '/**' inside a string literal still swallows the rest of the file — D77's defect, restored. Fourteen main-source files have one, including every service's SecurityConfiguration"
 fi
 
-# 8. `//` inside a string is not a line comment. 82 lines across 50 files were cut this way, all of
-#    them @Value defaults like ${healthconnect.catalog.base-url:http://healthconnectcatalog}.
+# 8. `//` inside a string is not a line comment. In the main sources, 22 files that did NOT truncate
+#    lost 67 lines this way — the figure's tree and measure are named because D77's first draft mixed
+#    a main+test line count with a main-only file count. Nearly all of them are @Value defaults like
+#    ${healthconnect.catalog.base-url:http://healthconnectcatalog}.
 if printf '%s\n' "$s" | grep -q 'http://healthconnectcatalog'; then
   pass "a '//' inside a string literal is not treated as a line comment"
 else
@@ -214,6 +230,40 @@ if awk -f "$truncating" "$strprobe" | grep -q 'marker("survived")'; then
   bad "the string-blind version no longer truncates this probe; case 7's premise needs re-establishing"
 else
   pass "the string-blind version it replaced does truncate this probe — the defect is real and reproduced here"
+fi
+
+# 13. LINE NUMBERING IS PRESERVED FOR THIS PROBE TOO. Case 5 asserts it only for the first probe,
+#     which has no text block — and a text block is the one construct here that spans lines, so it is
+#     exactly where a state machine could swallow or emit an extra one. Two callers quote the original
+#     line back by number and D77's precedence check compares an annotation's line against the class
+#     declaration's, so an off-by-one here mis-attributes an error to the wrong line rather than
+#     failing. A review finding: cheap, and untested until asked for.
+in_str=$(wc -l < "$strprobe")
+out_str=$(printf '%s\n' "$s" | wc -l)
+if [ "$in_str" -eq "$out_str" ]; then
+  pass "line numbering survives the string and text-block probe — $in_str lines in, $out_str out"
+else
+  bad "line numbering changed on the string probe: $in_str lines in, $out_str out; the text block is the likely culprit and three callers cite lines by number"
+fi
+
+# 14. STATE DOES NOT LEAK BETWEEN FILES. `inblk` and `intxt` are global, so a file ending inside an
+#     unterminated construct would truncate the NEXT file on the same command line from line 1 — the
+#     same fail-open one level up, arriving with no Java being unusual. Every caller passes one file
+#     today and nothing enforces that, so the awk guards it with `FNR == 1` and this pins the guard.
+#
+#     THE SECOND FILE MUST BE $strprobe, NOT $probe, and that is case 12's lesson applied to case 14
+#     rather than restated. Written with $probe first, this assertion did NOT discriminate: leaked
+#     state recovers at the first `*/` it meets, $probe closes a block comment on its fourth line, and
+#     `queryParam("amountMinor")` sits well below that — so deleting the FNR == 1 reset from the awk
+#     left this GREEN. Measured, with the mutant's absence asserted first. $strprobe's only `*/` is
+#     below its marker, so leakage swallows `marker("survived")` and the assertion bites.
+leaky=$(mktemp)
+trap 'rm -f "$probe" "$strprobe" "$truncating" "$leaky"' EXIT
+printf 'class Unterminated {\n    /* a block comment with no end\n' > "$leaky"
+if awk -f "$awkfile" "$leaky" "$strprobe" | grep -q 'marker("survived")'; then
+  pass "an unterminated comment in one file does not truncate the next file on the same command line"
+else
+  bad "block-comment state leaked from one file into the next, so a multi-file invocation truncates from line 1 with nothing unusual in the Java. The FNR == 1 reset in $awkfile is missing"
 fi
 
 exit "$fail"

@@ -1138,10 +1138,15 @@ literal** as comment openers, and its own header said "nothing in the estate has
 failure would be fail-*closed*. Measured, both false: **14 of 535 main-source files were truncated from
 a path pattern to end of file** — every service's `SecurityConfiguration` (`"/api/admin/**"`) and
 `WebConfigurer` (`"/api/**"`), catalog's two hand-written chains, booking's webhook chain, payout's
-`LedgerDTO` — plus **82 further lines cut mid-line**, including every
+`LedgerDTO` — and **22 more lost 67 lines cut mid-line without truncating**, including every
 `@Value("${…:http://healthconnectcatalog}")` in booking's four service clients. And for a check that
 must *not* find something, text that is not there cannot be matched, so the three estate-wide bans were
-fail-**open** over exactly the files that configure security. It was found by watching D77's own new
+fail-**open** over exactly the files that configure security.
+**Name the tree and the measure whenever quoting any of this.** Three measures are in play — files
+truncated, files affected, lines lost — and D77's first draft mixed two, reporting a main+test line
+count against a main-only file count, which is this family's own defect one document along. Main
+sources: 36 files differ over 444 lines. Main and test: 56 over 528. Compare the two strippers' output
+**line by line**, never with `diff`, which realigns and over-counts. It was found by watching D77's own new
 check report `ok` for the three chains it had just been written to guard: **a check that cannot see its
 own subject reports success.** The stripper tracks strings, char literals and text blocks now, resetting
 the first two at end of line so an unrecognised construct costs one line rather than the rest of the

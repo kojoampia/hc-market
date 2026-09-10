@@ -13351,7 +13351,7 @@ which is the tenth green full run of this fix. Production code is still byte-ide
 
 ## D77 — The precedence Spring cannot read, and the stripper that could not see its own subject
 
-**Ratified 2026-09-10.** Closes backlog **NEW-34**. Opens nothing.
+**Ratified 2026-09-10.** Closes backlog **NEW-34**. Opens **NEW-38** at review.
 
 **`main` ends at D76, the backlog's highest item is NEW-37, and `gh pr list --state open` answers
 nothing** — all three re-checked at `30f101b` rather than taken from the brief.
@@ -13546,20 +13546,36 @@ its claims wrong:
 > in the estate has one**; the failure would be **fail-CLOSED** (too much removed, a check goes red on
 > correct code), which is the right direction for a tool whose whole job is to stop things passing."
 
-Measured on the tree that sentence was written against:
+Measured on the tree that sentence was written against. **Three different measures are in play** —
+files truncated, files affected, lines lost — and the first version of this section mixed two of them,
+reporting a main+test line count against a main-only file count. That is this decision's own subject
+recurring one document along, and it is the reviewer's Fix 1. Each figure below names its **tree** and
+its **measure**. Method: run both strippers over each file and compare **output line by line**, since
+both emit one line per input line and the outputs align by number — `diff` realigns and over-counts
+(499 against the true 444).
 
-- **14 of 535 main-source files were truncated from a string literal to end of file.** Every service's
-  generated `SecurityConfiguration` (`"/api/admin/**"`, line 35), every service's `WebConfigurer`
-  (`"/api/**"`, line 49), the gateway's `SecurityConfiguration` (line 80), catalog's two hand-written
-  chains (`"/internal/**"`, `"/api/professionals/*"`), booking's webhook chain (`"/webhooks/**"`) and
-  payout's `LedgerDTO`. A `/**` inside a path pattern opened a block comment that never closed.
-- **82 further lines across 50 files were cut mid-line**, because the `//` strip was applied
+**Main sources, 535 files:**
+
+- **36 files differ at all, over 444 output lines.**
+- **14 of those are truncated from a string literal to end of file**, losing **377** lines between
+  them. Every service's generated `SecurityConfiguration` (`"/api/admin/**"`, line 35), every
+  service's `WebConfigurer` (`"/api/**"`, line 49), the gateway's `SecurityConfiguration` (line 80),
+  catalog's two hand-written chains (`"/internal/**"`, `"/api/professionals/*"`), booking's webhook
+  chain (`"/webhooks/**"`) and payout's `LedgerDTO`, invisible from line 14 to 210. A `/**` inside a
+  path pattern opened a block comment that never closed.
+- **22 differ without truncating, losing 67 lines cut mid-line**, because the `//` strip was applied
   unconditionally to the whole line — so every
   `@Value("${healthconnect.catalog.base-url:http://healthconnectcatalog}")` in booking's four service
   clients lost everything from `http:` onward.
-- **And the direction was backwards.** Removing too much is fail-closed only for a check that must
-  FIND something. For a check that must NOT find something — the three estate-wide bans, and D77's own
-  — text that is not there cannot be matched, so a banned line hidden behind a path pattern **passes**.
+
+**Main and test, 886 files:** 56 files differ over 528 lines; 15 truncated to EOF.
+
+**The 14/535 half is the one to re-derive first if any of this is doubted** — it reproduces file for
+file, independently confirmed at review, and it is the half that made a check pass on its own subject.
+
+**And the direction was backwards.** Removing too much is fail-closed only for a check that must FIND
+something. For a check that must NOT find something — the three estate-wide bans, and D77's own — text
+that is not there cannot be matched, so a banned line hidden behind a path pattern **passes**.
 
 That is the ninth fail-open in this family and the first one *inside the mechanism the other eight were
 fixed with*. It is also the exact shape this repository keeps finding: a comment asserting an invariant
@@ -13584,9 +13600,10 @@ green.
 
 **Regression-tested across all ten callers rather than argued about.** Every build.yml step that calls
 the stripper was lifted out by name and run against the real tree with the new version: ten steps, all
-`rc=0`, zero `::error` lines. The three estate-wide bans now read 14 files and 82 lines they had never
-read, and find nothing in them — so the widening closes a gap without moving a verdict. The precedence
-check went from `scanned 8` to `scanned 11`.
+`rc=0`, zero `::error` lines. The three estate-wide bans now read the 444 main-source lines across 36
+files they had never read, and **find nothing in them** — so the widening closes a gap without moving a
+verdict, which is a result rather than an absence of one and was confirmed independently at review. The
+precedence check went from `scanned 8` to `scanned 11`.
 
 **The count in the stripper's header is now derived rather than stated.** It read "four checks" for four
 decisions after it had stopped being four; the header carries the one-line `awk` that produces the
@@ -13616,3 +13633,97 @@ assembled by the same `WebSecurityConfiguration` a running service uses. Nothing
 broker. One environmental note, twice reproduced and unrelated: booking's `postgres:18.4` Testcontainer
 timed out on its 60-second readiness wait under a host load average of 15, and passed on the third
 attempt with the image layers warm — the same run, the same code.
+
+### 9. Reviewed 2026-09-10 — no blocking findings, two should-fixes and three optionals, all applied
+
+The verdict on the rewritten stripper was that it is **correct as a parser**, established by six
+families of adversarial probes the reviewer wrote rather than by re-reading this entry: char literals
+holding a delimiter (`'/'`, `'*'`, `'\''`, `'"'`) in adjacent case labels; `"a \" /* still in string
+*/ b"` followed by a *real* comment on the same line; `"\\"` and `"\\\\"` with code after; `"*/"` in a
+string beside a stray `*/` preserved as code; `"\"\"\""`; text blocks containing `/**`, `//`,
+unbalanced quotes, an escaped `\"""` and a closing `"""` followed by `.formatted(...)`; plus CRLF, tabs
+and no trailing newline. Line numbering held in all of them. The **removal** direction was checked too
+— swapping `main`'s stripper back in turns cases 7, 8, 9 and 11 red with case 10 correctly green — and
+the end-to-end story reproduced: under the old stripper the new precedence check **passes on a
+class-level `@Order`**, caught only by case 0's count assertion. The independent sweep found the same
+11 chain-declaring files, the same 14 truncating, and no class-level `@Order` anywhere.
+
+**Should-fix 1 — the mid-line figure was not reproducible at its stated scope, and it was in five
+places, not four.** §7's "82 further lines across 50 files" was a **main + test** count reported
+against "535 main-source files": the two trees had been summed and the scope taken from one of them.
+The reviewer could not reproduce it three different ways, and named the reason it matters — the next
+person re-deriving it at the stated scope concludes the stripper regressed and chases a phantom. That
+is this decision's own subject, one document along, and the diagnosis generalises: **three legitimate
+measures were in play** (files truncated, files affected, lines lost) and the sentence did not say
+which it counted. Re-derived with the tree *and* the measure named, and with the method named too —
+compare the two strippers' output **line by line**, since both preserve numbering, because `diff`
+realigns and over-counts (499 against the true 444):
+
+| tree | files | differ | lines | truncated to EOF | cut but not truncated |
+| --- | --- | --- | --- | --- | --- |
+| main | 535 | 36 | 444 | 14 files / 377 lines | 22 files / 67 lines |
+| main + test | 886 | 56 | 528 | 15 files / 383 lines | 41 files / 145 lines |
+
+Corrected in `strip-comments.awk`, `strip-comments-test.sh`, this entry twice, `CLAUDE.md` and
+`backlog.md` — the fifth was missed by the reviewer's count and found by grepping for the figure. The
+**14/535 half reproduced exactly, file for file**, including `LedgerDTO` invisible from line 14 to 210,
+and it is named as the half to re-derive first.
+
+**Should-fix 2 — the count rot survived in the file beside the one that fixed it.**
+`strip-comments-test.sh` still said "four checks" twice, once in the **missing-file error an operator
+reads at the worst moment** — in the same commit whose header says *"the number in a sentence is the
+first thing to rot"*. Fixed by **deriving it at run time** rather than by writing 10: the script counts
+the callers out of `build.yml` with the same one-liner the awk header publishes, prints the number as
+its first assertion, and interpolates it into the refusal. Both paths measured with the mutant asserted
+present — stripper absent gives *"10 steps in build.yml call it"*, and an unreadable workflow gives
+`?` rather than a stale number, because a wrong count in a refusal is worse than none.
+
+**Optional 1 — an orphaned endorsement.** The gateway's `InternalApiSecurityConfiguration` said
+*"catalog's file of this name is right to call that a version-dependent detail nobody should have to
+look up"* — and this commit had corrected catalog's file to say the opposite, in a paragraph two
+sections away that the same commit touched. Rewritten to say that the sentence was deleted from catalog
+and why: the detail *was* looked up (401 in the servlet stack, the same refusal measured on the
+gateway), and the claim under it confused `authorizeHttpRequests` rules with a `securityMatcher`.
+
+**Optional 2 — the CI step's reach, stated and watched.** `@Configuration @Order(5)` **on one line**
+does not match `^[[:space:]]*@Order[[:space:]]*\(` and passes as clean — fail-open, consequential only
+in messaging and payout where no IT stands behind it. The converse fails **closed**: `@Order(5) public
+class X {` makes the annotation not "above" the class declaration, so the file is refused as having no
+class declaration this check can find. Both branches **watched, with each mutant asserted present** —
+exit 0 and exit 1 respectively — rather than reasoned from the expression, and recorded as a stated
+limit in the step's comment beside the CRUD gate's "counts, does not attribute". Not fixed: widening it
+would mean matching `@Order` anywhere before the class, which every one of these files' javadoc quotes
+on purpose, and prettier keeps annotations on their own lines here.
+
+**Optional 3 — line numbering was asserted for only one of the two probes**, and the untested one is
+the one with a text block, which is the only construct here that spans lines. Case 13 adds it, and
+**discriminates**: a `print out` narrowed to `if (length(out)) print out` turns case 5 red at 14→7 and
+case 13 red at 18→14.
+
+**And the reviewer's one remaining limit became a fix rather than a line of prose.** Cross-file state
+leakage — `inblk` and `intxt` are global, so a file ending inside an unterminated construct would
+truncate the *next* file on the same command line from line 1, with no Java being unusual. Every caller
+runs per file and nothing enforced it, so rather than documenting the convention the awk now resets both
+at `FNR == 1`, which is the correct per-file semantics anyway and costs nothing for a single file.
+
+**Case 14 pins that, and its first version did not — which is case 12's lesson recurring inside the
+review that asked for it.** Written with the *first* probe as the second file, the assertion stayed
+**green with the reset deleted**: leaked state recovers at the first `*/` it meets, that probe closes a
+block comment on its fourth line, and the marker sits well below. It uses the string probe now, whose
+only `*/` is beneath its marker, and it is red with the reset removed and green with it restored —
+verified with the mutant's absence asserted by matching the **code** line, since `grep -c 'FNR == 1'`
+counts the header comment that describes it and read as "not applied" the first time. The reviewer's own
+warning, arrived at independently, twice in one session.
+
+**One item opened rather than fixed — NEW-38.** Sweeping for the stale count found a third instance of
+it, in `shared-plane-wiring-test.sh`, about the **shell** stripper: *"one file four checks trust"*, where
+`strip-sh-comments.awk` has five callers and four of them are check scripts rather than workflow steps.
+Different mechanism, different file, and a package being corrected for mixing its own scopes should not
+widen again on the way out. It is a comment, nothing depends on it, and the fix is the same derivation
+one `grep -rl` along.
+
+**Re-run after these edits:** `strip-comments-test.sh` 15/15, `filter-chain-precedence-test.sh` 9/9,
+`strip-sh-comments-test.sh` green, all ten stripper-calling steps `rc=0` with zero `::error`, every
+shell script in the shipped parse gate ok, and gateway `clean verify` green for the javadoc change.
+`extract-seed.mjs` re-extracts identically and `sync-appendices.sh --check` is clean. **No production
+code changed in this pass** — the only Java touched is one gateway javadoc paragraph.
