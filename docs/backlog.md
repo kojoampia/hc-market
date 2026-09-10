@@ -2479,21 +2479,29 @@ real estate, including the refusal, which no test in CI can reach.
 compose.** `down --clean` fails on all five with `tried to kill container, but did not receive an exit
 event`; `docker rm -f` fails identically; `docker update --restart=no` succeeds and does not help.
 
-**The cause is established, not guessed:** each of the five holds **exactly one orphaned
-`containerd-shim`** while its own process is gone — `State.Pid=0`, `Restarting=true`, `Dead=false`.
-Docker 29.8.0, containerd v2.3.5.
+**The cause recorded here was wrong for one hour on 2026-09-10 and is corrected in `decisions.md`
+D72 §7.** It claimed one orphaned `containerd-shim` per container; the probe behind that claim
+subtracted one for its own `grep` and reported the remainder, which returns 1 for a container with no
+shim at all. `pgrep -fc "containerd-shim.*<id>"` returns **1 for an id that does not exist**, which is
+how it was caught — the verification one-liner was tested against a fabricated id before being handed
+over, and the fabricated id reported a shim. CLAUDE.md names that trap.
 
-**What it needs is one root command**, which this workspace cannot run (no passwordless sudo):
+**What is actually true**, three ways with a healthy container as the positive control: `State.Pid=0`,
+**zero** processes carrying the full 64-hex id, **no** `/sys/fs/cgroup/.../docker-<id>.scope`, and
+absent from the 38 shim-backed ids parsed out of every shim's own `-id` argument. The control shows
+pid 2433102, one process, and a cgroup — so the method can find what exists.
 
-```bash
-for id in 0b7a0b100587 a5de9d671558 59560b782b59 883df00b0289 4e84382e3101; do
-  sudo pkill -f "containerd-shim.*$id"
-done
-```
+The containers are gone at the OS level. **Only docker's in-memory record still says `restarting`**,
+which is why `stop`, `rm -f` and `down -v` all fail with *"tried to kill container, but did not receive
+an exit event"*: the daemon is waiting for an exit from something that no longer exists.
 
-then `./deploy/deploy-dev.sh down --clean` completes normally. The alternative,
-`systemctl restart docker`, was rejected in D72 §1: it bounces **47 running containers**, including
-three other products' only quality environments.
+**There is no narrow remedy.** The shim-kill this item recommended for an hour would have killed
+nothing and read as a fix, which is worse than a visible failure. What remains:
+
+- **`sudo systemctl restart docker`** — reloads the daemon's container state and clears the stale
+  records. The only known cure. Bounces **47 running containers**, including three other products'
+  only quality environments and the monitoring stack.
+- **Leave them.** No process, no cgroup, no CPU — a daemon record and five volumes.
 
 Status is `BLOCKED` rather than `READY` because what remains is a person with root, not engineering.
 Nothing was destroyed by the attempt — five containers and five volumes are exactly as they were.

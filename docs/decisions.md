@@ -11945,17 +11945,14 @@ Error response from daemon: cannot stop container: …:
   tried to kill container, but did not receive an exit event
 ```
 
-`docker rm -f` fails identically, and `docker update --restart=no` succeeds without helping. The cause
-is established rather than guessed: each of the five has **exactly one orphaned `containerd-shim`**
-while its own process is gone — `State.Pid=0`, `Restarting=true`, `Dead=false`. Ten days of
-restart-looping left the daemon holding a record it cannot reap. Docker 29.8.0, containerd v2.3.5.
+`docker rm -f` fails identically, and `docker update --restart=no` succeeds without helping. **This paragraph originally recorded a cause that was wrong, and the correction is §7.** It claimed
+each of the five had exactly one orphaned `containerd-shim`, "established rather than guessed". It was
+guessed, by a probe that could not tell one from zero. What is true: `State.Pid=0`, `Restarting=true`,
+`Dead=false`, ten days of restart-looping, Docker 29.8.0, containerd v2.3.5.
 
-Two remedies, and the narrow one was chosen: kill the five shims as root, then the daemon reaps them
-and the clean completes. The broad one — `systemctl restart docker` — would bounce **47 running
-containers** including three other products' only quality environments and the monitoring stack. That
-is why it was not taken. **Neither is available to this workspace**: there is no passwordless sudo
-here, so the shim kill is the architect's to run. Nothing was destroyed by the attempt; five
-containers and five volumes remain exactly as they were.
+On that wrong cause, two remedies were offered and the narrow one was chosen: kill the five shims as
+root. **That remedy does not exist** — see §7. Nothing was destroyed by the attempt; five containers
+and five volumes remain exactly as they were.
 
 **The OTel attach was refused by D66's own preflight, correctly.** With the documented invocation from
 `quality/compose.yml:163` — one variable, since D64 —
@@ -11989,3 +11986,59 @@ inside our containers at `172.24.0.19` on `qualitynet` — the network D64 joine
 is what expired D63's reason for leaving the agent off, and it is why the question was asked. It is
 another repository's stack, so it may go down again; `quality/compose.yml`'s note that a live collector
 is **unmeasured** stays true until the attach actually runs.
+
+### 7. Correction to §6: there are no orphaned shims, and the narrow remedy does not exist
+
+**Recorded 2026-09-10, within the hour, before the architect ran the command §6 recommended.**
+
+§6 stated that each of the five wedged `healthconnect-dev-*` containers held **exactly one orphaned
+`containerd-shim`**, and called that "established rather than guessed". It was guessed. The probe was
+
+```bash
+n=$(ps -eo args | grep -c "$full_container_id"); echo $((n>0?n-1:0))
+```
+
+which subtracts one for the `grep`'s own command line and reports the remainder. For a container with
+no shim at all that arithmetic returns **1**, not 0 — the residual was the self-match, not a shim.
+`pgrep -fc "containerd-shim.*$id"` has the same defect and returns **1 for an id that does not
+exist**, which is how it was caught: the verification one-liner was tested against a fabricated id
+before being handed over, and the fabricated id reported a shim.
+
+**CLAUDE.md names this exact trap** — *"Don't `pkill -f` on a pattern that appears in your own command
+line — it matches the shell running it"* — and it was written into a decision as an established fact
+anyway.
+
+**What is actually true**, established three independent ways with a healthy container as the positive
+control:
+
+| | the five dev containers | `hc-market-quality-catalog` (control) |
+| --- | --- | --- |
+| `docker inspect .State.Pid` | **0** | 2433102 |
+| processes whose cmdline contains the full 64-hex id | **0** | **1** |
+| `/sys/fs/cgroup/system.slice/docker-<id>.scope` | **absent** | **present** |
+| appears among the 38 shim-backed ids parsed from every shim's own `-id` argument | **no** | — |
+
+The containers are gone at the OS level: no process, no cgroup, no shim. **Only docker's in-memory
+record still says `restarting`**, which is why `stop`, `rm -f` and `down -v` all fail with *"tried to
+kill container, but did not receive an exit event"* — the daemon is waiting for an exit from something
+that no longer exists.
+
+**So the option the architect chose is void.** There is nothing to kill, and killing nothing would
+have been a harmless no-op that read as a fix — which is worse than a visible failure, because the
+next `down --clean` would have failed for a reason everybody believed was already addressed.
+
+The remedies that remain are the two §1 rejected or did not have:
+
+- **`systemctl restart docker`** — reloads the daemon's container state from disk and clears the stale
+  records. Bounces **47 running containers**, including three other products' only quality
+  environments and the monitoring stack that came up at 06:38Z. Still the only known cure.
+- **Leave them.** They consume no process, no cgroup and no CPU — a daemon record and five volumes.
+  The cost is unchanged: `deploy-dev.sh` stays unexercisable, and D65's and D67's first-run branches
+  stay untested against a real estate.
+
+**The general lesson is the one this repository keeps paying for, and this is its sixteenth instance
+in a fortnight**: a probe whose subject can go vacuous, answering vacuously, and being believed. The
+distinguishing feature here is that it reached a *decision document* as a fact and was one command
+away from wasting the architect's time. What caught it was testing the verification against a value
+that must not match — the discipline every CI check in this repository now applies, applied for once
+to a one-liner before it was handed over.
