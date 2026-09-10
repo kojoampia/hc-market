@@ -104,9 +104,12 @@ import org.springframework.security.web.server.util.matcher.PathPatternParserSer
  * generated chain was the letter P sorting before the letter S. Read
  * {@link PaymentWebhookRouteConfiguration}'s note on the measurement before moving this line.
  *
- * <p><strong>catalog's file of this name still has its {@code @Order} on the class.</strong> That is
- * not corrected here — a servlet chain, a different service, and out of this package's scope. It is
- * backlog {@code NEW-34}.
+ * <p><strong>catalog's file of this name had its {@code @Order} on the class until D77</strong>
+ * (backlog {@code NEW-34}), and so did catalog's public-reads chain and booking's webhook chain — three
+ * files, where that item and CLAUDE.md both said one. D77 re-measured the mechanism in the servlet
+ * stack rather than porting this one, per D52's rule, and found it holds there identically; it also
+ * found that the servlet generated chain declares no {@code securityMatcher} at all, so the ordering is
+ * total rather than merely tidy. Do not read the reactive measurement here as covering that one.
  */
 @Configuration
 public class InternalApiSecurityConfiguration {

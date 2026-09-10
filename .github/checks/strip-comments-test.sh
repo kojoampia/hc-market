@@ -2,8 +2,10 @@
 #
 # The shared comment stripper must strip the case its predecessor could not, and must not strip code.
 #
-# WHY THIS EXISTS. Four checks in build.yml match against source text and every one of them is only
-# as good as `strip-comments.awk`. Three of the four carried a private line-based `sed` until
+# WHY THIS EXISTS. TEN steps in build.yml match against source text and every one of them is only
+# as good as `strip-comments.awk` — the count is derived in that file's own header rather than
+# restated here, because it read "four" for four decisions after it had stopped being four.
+# Three of the callers carried a private line-based `sed` until
 # decisions.md D56's review, which removes only a block comment that opens and closes on ONE line —
 # so a comment naming a deleted call satisfied the check guarding it, verified on two of them, and
 # that was the eighth fail-open in this family. Consolidating fixed it and created a new risk: the
@@ -97,6 +99,121 @@ if printf '%s\n' "$old" | grep -q 'queryParam("at"'; then
   pass "the sed it replaced does leave that comment intact — the defect is real and reproduced here"
 else
   bad "the sed it replaced no longer reproduces the defect; this test's premise needs re-establishing"
+fi
+
+# ---------------------------------------------------------------------------------------------------
+# STRING LITERALS — decisions.md D77, the ninth fail-open in this family.
+#
+# The header used to say `/*` inside a string "would confuse it, and nothing in the estate has one".
+# Fourteen main-source files had one: every service's generated SecurityConfiguration and
+# WebConfigurer, catalog's two hand-written filter chains, booking's webhook chain and payout's
+# LedgerDTO. A `/**` inside a path pattern opened a block comment that never closed, so the file was
+# truncated from that line to EOF — and for a check that must NOT find something, text that is not
+# there cannot be matched, so the direction was fail-OPEN and not fail-closed as the header claimed.
+#
+# Every assertion below is paired with the shape it is defending, and case 11 is the CONTROL for the
+# whole group: a stripper that simply stopped stripping would satisfy 7 through 10.
+#
+# THE BLOCK COMMENT IS LAST, AND THAT ORDERING IS LOAD-BEARING. It was above `marker` in the first
+# version of this file and case 12 caught it: the string-blind stripper opens an unterminated block
+# comment at `"/internal/**"` and then RECOVERS at the first `*/` it meets, so a closing comment
+# delimiter anywhere above the marker hands it back everything below — case 7 passed under both
+# versions and distinguished nothing. Keep every assertion's subject above the only `*/` in the probe.
+strprobe=$(mktemp)
+trap 'rm -f "$probe" "$strprobe"' EXIT
+cat > "$strprobe" <<'JAVA'
+package probe;
+
+public final class StringProbe {
+
+    static final String PATHS = "/internal/**";
+    static final String GLOB = "/api/professionals/*";
+    static final String URL = "http://healthconnectcatalog";
+    static final char SLASH = '/';
+    static final String ESCAPED = "a\"/*b";
+    String block = """
+        {"href":"http://x/**","note":"not a comment"}""";
+
+    void keptAfterEveryStringAbove() {
+        marker("survived");
+    }
+
+    /* a real block comment naming shouldNotSurvive("x") */
+}
+JAVA
+
+s=$(awk -f "$awkfile" "$strprobe")
+
+# 7. THE HEADLINE CASE. `/**` inside a path pattern must not open a comment, so everything after it
+#    in the file is still there. This is the exact shape of all six filter-chain files.
+if printf '%s\n' "$s" | grep -q 'marker("survived")'; then
+  pass "a '/**' inside a string literal does not truncate the rest of the file"
+else
+  bad "a '/**' inside a string literal still swallows the rest of the file — D77's defect, restored. Fourteen main-source files have one, including every service's SecurityConfiguration"
+fi
+
+# 8. `//` inside a string is not a line comment. 82 lines across 50 files were cut this way, all of
+#    them @Value defaults like ${healthconnect.catalog.base-url:http://healthconnectcatalog}.
+if printf '%s\n' "$s" | grep -q 'http://healthconnectcatalog'; then
+  pass "a '//' inside a string literal is not treated as a line comment"
+else
+  bad "a '//' inside a string literal is still cut as a line comment — every cross-service base-url default in booking loses its host"
+fi
+
+# 9. A text block is code. booking/.../OutboxPublisher.java and every service's App class have one,
+#    and their content contains both quotes and URLs.
+if printf '%s\n' "$s" | grep -q 'not a comment'; then
+  pass "a text block's content survives, quotes and slashes included"
+else
+  bad "a text block's content was stripped or truncated; OutboxPublisher's envelope template is one"
+fi
+
+# 10. A comment is STILL a comment when it follows all of that — the state machine has to come back
+#     out of every literal above, and an off-by-one in any of them leaves it inside a string for ever.
+if printf '%s\n' "$s" | grep -q 'shouldNotSurvive'; then
+  bad "a block comment after the string literals survived, so the stripper never left one of them — it is now keeping comments, which is the fail-open all five callers exist to close"
+else
+  pass "a block comment after every literal above is still stripped"
+fi
+
+# 11. THE CONTROL. An escaped quote and a char literal holding a slash are the two ways to leave the
+#     state machine mid-string; if either is mishandled the rest of the file is either swallowed or
+#     treated as a string, and 7 through 10 can pass for the wrong reason.
+if printf '%s\n' "$s" | grep -q 'a\\"/\*b'; then
+  pass "an escaped quote and a char literal do not desynchronise the scanner"
+else
+  bad "an escaped quote or a char literal desynchronised the scanner; cases 7 to 10 may be passing for the wrong reason"
+fi
+
+# 12. And the version this replaced really did truncate case 7, so the defect is reproduced here
+#     rather than asserted in prose — the same discipline as case 6.
+truncating=$(mktemp)
+trap 'rm -f "$probe" "$strprobe" "$truncating"' EXIT
+cat > "$truncating" <<'AWK'
+{
+  line = $0
+  while (1) {
+    if (inblk) {
+      p = index(line, "*/")
+      if (p == 0) { line = ""; break }
+      line = substr(line, p + 2); inblk = 0
+    } else {
+      p = index(line, "/*")
+      if (p == 0) break
+      pre = substr(line, 1, p - 1); rest = substr(line, p + 2)
+      q = index(rest, "*/")
+      if (q == 0) { line = pre; inblk = 1; break }
+      line = pre substr(rest, q + 2)
+    }
+  }
+  sub(/\/\/.*/, "", line)
+  print line
+}
+AWK
+if awk -f "$truncating" "$strprobe" | grep -q 'marker("survived")'; then
+  bad "the string-blind version no longer truncates this probe; case 7's premise needs re-establishing"
+else
+  pass "the string-blind version it replaced does truncate this probe — the defect is real and reproduced here"
 fi
 
 exit "$fail"

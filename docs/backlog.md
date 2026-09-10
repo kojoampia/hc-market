@@ -671,7 +671,9 @@ Four things D72 §3 left to the package, each argued in D74:
   byte-identical in booking and the gateway, CI diffs it, the gateway's copy is the reference, and the
   family is derived with `find` rather than listed;
 - **a reactive chain, `@Order` on the `@Bean` method.** catalog's servlet config does not copy, and its
-  own `@Order` is on the class where Spring cannot read it — **NEW-34**;
+  own `@Order` was on the class where Spring cannot read it — **NEW-34**, since closed by **D77**, which
+  re-measured the claim in the servlet stack rather than porting this one and found the same answer in
+  three files rather than the one this item named;
 - **what keeps it off the internet, and D72 §3's terms were wrong about it.** D28's route-predicate
   argument does not transfer to an endpoint on the gateway itself, because there is no route in front of
   it: both nginx vhosts proxy `location /` here and dev and quality publish the port on every interface.
@@ -2730,35 +2732,49 @@ driven against real fixtures now, including a **directory** as the unreadable fi
 
 ---
 
-## NEW-34 — catalog's `/internal/**` chain declares a precedence Spring cannot read · READY
+## NEW-34 — catalog's `/internal/**` chain declares a precedence Spring cannot read · DONE (D77)
 
-Found while building D74's reactive equivalent, and it is WP-13's own review finding in a second service.
+Found while building D74's reactive equivalent, and it was WP-13's own review finding in a second
+service — **and in a third, which this item did not know about.**
 
-`catalog/src/main/java/net/jojoaddison/config/InternalApiSecurityConfiguration.java` carries
-`@Order(Ordered.HIGHEST_PRECEDENCE + 5)` on the **`@Configuration` class**. That is exactly where WP-13's
-review found it on the gateway's `PaymentWebhookRouteConfiguration` and established, by mutation, that
-Spring never reads it: the comparator is handed the factory *method* and the bean *type* as order sources,
-never the declaring class, so `findAnnotationOnBean(name, Order.class)` answers `null`. Both of the
-gateway's hand-written chains were moved onto the `@Bean` method for that reason; catalog was not looked
-at, because nothing in that package touched it.
+**Both of the item's questions are answered by measurement, and both answers are yes.** The annotation
+is **not read** in a servlet chain: inverting catalog's class-level `@Order` to `LOWEST_PRECEDENCE`
+moved nothing at all on the running container, while the same annotation on a `@Bean` method both reads
+back through `findAnnotationOnBean` and reorders `FilterChainProxy`. And the ordering **matters
+totally**, because the generated `SecurityConfiguration` declares no `securityMatcher` at all — its
+`/api/**`, `/v3/api-docs/**` and `/management/**` entries are `authorizeHttpRequests` rules, which
+narrow authorization and not the chain — so it matches `any request` and claims both hand-written
+prefixes as well. The two hand-written chains are disjoint from each other and neither is disjoint from
+it. What was holding the order up was the alphabet, exactly as this item said.
 
-**What is holding it up today is the alphabet.** catalog has three `SecurityFilterChain` beans —
-`InternalApiSecurityConfiguration`, `MarketplacePublicSecurityConfiguration` and the generated
-`SecurityConfiguration` — and `I` sorts before `M` sorts before `S`. A rename of the class, or a fourth
-chain sorting earlier, reorders them with nothing failing to build.
+**It was three files, not one.** This item and CLAUDE.md both called catalog's the "one place" the
+gateway's correction had not reached. A derived sweep found catalog's *two* chains and booking's
+`PaymentWebhookSecurityConfiguration`, all three with the annotation on the class and two of them
+carrying the same false paragraph about what the generated chain matches. A list trusted rather than
+derived — NEW-15's root cause, recurring inside the description of itself.
 
-**Whether it currently matters is NOT established, and that is the first thing the item has to do.** The
-three chains may be disjoint by path, in which case order decides nothing and the annotation is merely
-untrue rather than load-bearing; the generated one's `securityMatcher` is what decides that, and it must
-be read rather than assumed. **Do not port D74's measurement across**: catalog is servlet, its chains are
-selected by `FilterChainProxy` rather than `WebFilterChainProxy`, and D52's lesson is that a data answer
-of this kind is never transferable — re-measure in the service.
+**One thing the item did not anticipate: a mis-ordering is loud, not silent.** Servlet Spring Security
+refuses to build the proxy — `WebSecurityFilterChainValidator` throws
+`UnreachableFilterChainException` and the context does not start, measured at 109 failed contexts. That
+does not make the annotation pointless, which is D77 §4's argument: a loud failure beats a silent one
+and no failure beats both, and booking's obvious rename (`WebhookSecurityConfiguration`) sorts *after*
+`SecurityConfiguration`.
 
-Deliberately not fixed in D74: a different service, a different stack, one line, and a package that had
-already found its own reason to re-measure everything it inherited. The fix is likely `@Order` moved to
-the `@Bean` method plus a servlet equivalent of `InternalApiPermitIT`'s precedence assertion — and the
-test is the point, because the grep and the annotation both stay green when the annotation is where Spring
-cannot see it.
+**And the finding that mattered more than the line: the shared comment stripper could not see its own
+subject.** D77's new CI check passed on the estate it was written for, reporting `ok` for eight files
+and never mentioning the three it existed to guard, because `strip-comments.awk` read `/**` inside a
+path pattern as a block-comment opener and truncated **14 of 535 main-source files** from that string
+to end of file — every service's `SecurityConfiguration` and `WebConfigurer` among them — plus 82
+further lines cut mid-line by an unconditional `//` strip. Its own header said "nothing in the estate
+has one" and that the failure would be "fail-CLOSED"; both were false, and for the three estate-wide
+bans the direction was fail-**open**. The ninth fail-open in that family and the first inside the
+mechanism the other eight were fixed with.
+
+Shipped: `@Order` on the `@Bean` method in all three classes; the two false paragraphs corrected in
+place; `FilterChainPrecedenceIT` in catalog and booking, asking the container rather than the source;
+a string-, char- and text-block-aware stripper with six new cases in its own test; and a CI check
+deriving its service list from `jdl/*.jdl` so that a fifth chain in messaging or payout — which have
+never had one and have no test written to be red about one — is caught the day it exists.
 
 ---
 

@@ -42,26 +42,40 @@ import org.springframework.security.web.SecurityFilterChain;
  * rather than one relying on the other.
  *
  * <p>It exists at all for the same reason {@code InternalApiSecurityConfiguration} does in catalog:
- * the generated {@code SecurityConfiguration} matches {@code /api/**}, {@code /v3/api-docs/**} and
- * {@code /management/**}, a path under {@code /webhooks/} matches none of them, and what Spring
- * Security does with an unmatched request is a version-dependent detail nobody should have to look up
- * to know whether this returns 200 or 401.
+ * this chain <strong>opens</strong> a door the generated one closes. This paragraph said something
+ * else until {@code decisions.md} D77 — that the generated {@code SecurityConfiguration} "matches
+ * {@code /api/**}, {@code /v3/api-docs/**} and {@code /management/**}" so a path under
+ * {@code /webhooks/} matches none of them, and that what happens next is "a version-dependent detail
+ * nobody should have to look up". <strong>Both halves were wrong</strong>, in the same words in two
+ * services. Those three are {@code authorizeHttpRequests} rules, which narrow authorization and not
+ * the chain; the generated chain declares no {@code securityMatcher} at all, so it matches <em>any
+ * request</em> and claims this prefix too. And the detail was looked up, by measurement on catalog's
+ * identically-shaped context: a path its rules never name is <strong>401</strong>. So without this
+ * file every provider callback is refused rather than merely unmatched.
  *
- * <h2>A new file, on purpose</h2>
+ * <h2>A new file, and the {@code @Order} is on the METHOD</h2>
  *
  * <p>Regenerating booking from JDL rewrites {@code SecurityConfiguration} and discards edits to it. A
  * lost rule here would present as every provider callback returning 401 while the signature is
  * perfectly good — a symptom that sends you to the provider's dashboard rather than to this
  * repository.
+ *
+ * <p>The {@code @Order} sat on this class until D77, where <strong>Spring cannot read it</strong>:
+ * the comparator is handed the factory method and the bean type and never the declaring class, so
+ * {@code findAnnotationOnBean} answered {@code null} and the only thing putting this chain in front
+ * of the generated one was component-scan order — {@code P} sorting before {@code S}. This service
+ * was <strong>not</strong> named by backlog NEW-34, which said catalog was "the one place" the
+ * gateway's correction had not reached; it was three places, and this was the third.
+ * {@code FilterChainPrecedenceIT} is the guard.
  */
 @Configuration
-@Order(Ordered.HIGHEST_PRECEDENCE + 5)
 public class PaymentWebhookSecurityConfiguration {
 
     /** Everything a payment provider may reach. One entry, and it should stay one. */
     static final String WEBHOOK_PATHS = "/webhooks/**";
 
     @Bean
+    @Order(Ordered.HIGHEST_PRECEDENCE + 5)
     public SecurityFilterChain paymentWebhookFilterChain(HttpSecurity http) throws Exception {
         http
             .securityMatcher(WEBHOOK_PATHS)

@@ -846,6 +846,108 @@ jobs:
           fi
           exit "$fail"
 
+      # A filter chain's precedence must be declared where Spring can READ it — decisions.md D77.
+      # That is the @Bean METHOD and never the @Configuration class: Spring hands the comparator the
+      # factory method and the bean type as order sources and never the declaring class, so
+      # findAnnotationOnBean answers null for a class-level annotation. WP-13 found that on the
+      # gateway; D77 RE-MEASURED it in the servlet stack rather than porting it (D52's rule, that a
+      # data answer of this kind never transfers). It held, both ways round: inverting catalog's
+      # class-level @Order to LOWEST_PRECEDENCE moved nothing at all, and an @Order on the generated
+      # chain's @Bean method moved that chain to the front immediately.
+      #
+      # WHAT A MIS-ORDERING COSTS IS TOTAL, because the generated SecurityConfiguration declares no
+      # securityMatcher in any of the four servlet services and therefore claims EVERY request — its
+      # /api/**, /v3/api-docs/** and /management/** entries are authorizeHttpRequests rules, which
+      # narrow authorization and not the chain. With it in front, catalog's /internal/** lookup and
+      # every anonymous marketplace read are 401 and booking's provider callbacks are 401 at booking
+      # itself. What was holding the order up was component-scan order: I before M before S in
+      # catalog, P before S in booking.
+      #
+      # THE SERVICE LIST IS DERIVED from jdl/*.jdl, and that is the whole reason this step exists
+      # beside the tests. NEW-34 named catalog's one file and said it was "the one place" the
+      # gateway's correction had not reached; there were THREE — catalog's two chains and booking's
+      # one — because the item's list was trusted rather than derived, which is this repository's
+      # oldest failure recurring inside the description of itself. The two FilterChainPrecedenceITs
+      # and the gateway's two PermitITs guard the annotation's PRESENCE in the four services that
+      # have a hand-written chain today; nothing but a derived sweep can see a FIFTH chain dropped
+      # into messaging or payout with the annotation in the wrong place, in a service that has never
+      # had one and has no test written to be red about it.
+      #
+      # PRESENCE IS DELIBERATELY NOT ASSERTED HERE, and the division of labour is stated because the
+      # error message below does not imply it. "Must carry an @Order on the method" is not derivable
+      # from source: the gateway's generated chain has a securityMatcher AND correctly has no @Order,
+      # while catalog's has neither, so no property of the file separates a chain that must declare a
+      # precedence from one that must not. The ITs cover deletion; the framework covers the rest —
+      # WebSecurityFilterChainValidator throws UnreachableFilterChainException and the context refuses
+      # to start when an any-request chain precedes a narrower one, which is measured in D77 §3.
+      #
+      # COMMENTS ARE STRIPPED FIRST and here that is a requirement rather than a precaution: every
+      # one of these files now carries a javadoc paragraph explaining this very arrangement, and each
+      # quotes `{@code @Order}` in prose ABOVE the class declaration. Measured — unstripped, this
+      # check reports a class-level @Order in six of the seven chain-declaring files, including the
+      # three it was just corrected on, so it would fail closed on a correct estate and be reverted.
+      - name: A filter chain's precedence may not be declared where Spring cannot read it
+        run: |
+          fail=0
+          [ -f .github/checks/strip-comments.awk ] || { echo "::error::.github/checks/strip-comments.awk is missing — every chain would strip to nothing, no class declaration would be found, and this check would report an error it cannot attribute or pass having read nothing. See decisions.md D77."; exit 1; }
+          jdls=$(ls jdl/*.jdl 2>/dev/null || true)
+          if [ -z "$jdls" ]; then
+            echo "::error::jdl/*.jdl matched nothing — this check would scan no service and pass. See decisions.md D77."
+            exit 1
+          fi
+          total=0
+          for jdl in $jdls; do
+            svc=$(basename "$jdl" .jdl)
+            dir="$svc/src/main/java/net/jojoaddison/config"
+            if [ ! -d "$dir" ]; then
+              echo "::error file=$jdl::$dir does not exist, so no filter chain in $svc can be checked and this step is blind to that service. See decisions.md D77."
+              fail=1
+              continue
+            fi
+            found=0
+            for f in "$dir"/*.java; do
+              code=$(awk -f .github/checks/strip-comments.awk "$f")
+              printf '%s\n' "$code" | grep -qE 'Security(Web)?FilterChain +[A-Za-z0-9_]+ *\(' || continue
+              found=$((found + 1))
+              total=$((total + 1))
+              # Line numbering survives the stripper (one blank line out per comment line in), so a
+              # line number from the stripped text is the line number in the file.
+              decl=$(printf '%s\n' "$code" | grep -nE '^[[:space:]]*(public |final |abstract |sealed |non-sealed )*class +[A-Za-z0-9_]+' | head -1 | cut -d: -f1)
+              if [ -z "$decl" ]; then
+                echo "::error file=$f::declares a filter chain and no class declaration this check can find, so it cannot tell a class-level @Order from a method-level one. See decisions.md D77."
+                fail=1
+                continue
+              fi
+              # The LINE NUMBER of the offending annotation, not a count and not the class
+              # declaration's line — the message tells the author to move a specific line, so it has
+              # to say which one. `head -n 0` when the class is on line 1 emits nothing, which is the
+              # right answer rather than an error.
+              early=$(printf '%s\n' "$code" | head -n "$((decl - 1))" | grep -nE '^[[:space:]]*@Order[[:space:]]*\(' | cut -d: -f1 | head -1)
+              if [ -n "$early" ]; then
+                echo "::error file=$f,line=$early::this class declares a SecurityFilterChain bean and carries @Order on the @Configuration CLASS (line $early, above the class declaration on line $decl), where Spring never reads it — findAnnotationOnBean answers null and the chain's position is component-scan order, which a rename changes. Move it onto the @Bean method. See decisions.md D77."
+                fail=1
+              else
+                echo "ok   $f declares no class-level @Order"
+              fi
+            done
+            if [ "$found" = 0 ]; then
+              echo "::error file=$jdl::no file in $dir declares a SecurityFilterChain or SecurityWebFilterChain bean, so this check scanned nothing in $svc. Every service in this estate has at least the generated chain — if the derivation no longer matches it, this step has gone blind rather than clean. See decisions.md D77."
+              fail=1
+            fi
+          done
+          echo "scanned $total chain-declaring files across $(echo "$jdls" | wc -w) services"
+          exit "$fail"
+
+      # The check above is the only thing in this repository that can see a class-level @Order on a
+      # filter chain in messaging or payout, which have never had a hand-written chain and have no
+      # test written to be red about one. So it gets driven rather than trusted — and it needed to be:
+      # its FIRST version passed while reporting `ok` for all three of the chains it had just been
+      # written to guard, because the shared stripper truncated each of them at its own path pattern.
+      # A check that cannot see its own subject reports success. Case 0 there asserts the COUNT for
+      # that reason, not just the exit status.
+      - name: …and that check must fail on each of the six states it exists to refuse
+        run: .github/checks/filter-chain-precedence-test.sh
+
       # ContactLookupToken.java is copied byte-identically into booking and the gateway — the FIFTH
       # verbatim-copy family, decisions.md D74. Booking mints; the gateway accepts and enforces.
       #

@@ -439,16 +439,41 @@ The third and fourth are D74's contact lookup, and the third does the *opposite*
 it opens a path the generated chain **denies** rather than one it authenticates. See the D74 entry
 under "Working here"; do not read it as a third instance of the same gap.
 
-**All three chains carry their `@Order` on the `@Bean` method, and it has to stay there.** On the
-`@Configuration` class — where the first two had it until WP-13's review — Spring never reads it: the
+**Every hand-written chain in the estate carries its `@Order` on the `@Bean` method, and it has to
+stay there.** On the `@Configuration` class — where the gateway's first two had it until WP-13's
+review, and where **catalog's two and booking's one** had it until D77 — Spring never reads it: the
 comparator is offered the factory method and the bean type, never the declaring class, so
-`findAnnotationOnBean` answered `null` for all three of the gateway's chains and the only thing
-putting the first two in front of the generated one was component-scan order, alphabetically.
-`PaymentWebhookRoutePermitIT` and `InternalApiPermitIT` ask the running container rather than the
-source, because the CI greps and the hand-built unit tests beside them stay green when
-`@Configuration`, `@Bean` or `@Order` is removed. **catalog's `InternalApiSecurityConfiguration` still
-has its `@Order` on the class** and is the one place this was not corrected — backlog NEW-34, and
-re-measure in that service rather than porting the gateway's answer, because it is a servlet chain.
+`findAnnotationOnBean` answers `null` and the only thing putting a chain in front of the generated one
+is component-scan order, alphabetically. `PaymentWebhookRoutePermitIT` and `InternalApiPermitIT` on
+the gateway, and `FilterChainPrecedenceIT` in catalog and booking, ask the running container rather
+than the source, because the CI greps and the hand-built unit tests beside them stay green when
+`@Configuration`, `@Bean` or `@Order` is removed.
+
+**D77 re-measured the mechanism in the SERVLET stack rather than porting the gateway's answer** (D52's
+rule), and it holds identically: inverting catalog's class-level `@Order` to `LOWEST_PRECEDENCE` moved
+nothing at all, while the same annotation on a `@Bean` method reads back and reorders `FilterChainProxy`.
+Two things it also established, both of which the backlog item had wrong:
+
+- **The servlet generated `SecurityConfiguration` declares NO `securityMatcher`**, so it matches `any
+  request` and claims every hand-written prefix as well — its `/api/**`, `/v3/api-docs/**` and
+  `/management/**` entries are `authorizeHttpRequests` rules, which narrow authorization and not the
+  chain. Two files said the opposite in the same words and are corrected. So these chains **open** doors
+  the generated one closes (an unmatched path is **401**, measured — the servlet twin of D74's reactive
+  finding), and their order relative to it decides everything.
+- **A mis-ordering is loud.** `WebSecurityFilterChainValidator` throws `UnreachableFilterChainException`
+  from `FilterChainProxy.afterPropertiesSet` when an `any request` chain precedes a narrower one, so the
+  context refuses to start — measured at 109 failed contexts. That is why the annotation still matters
+  rather than why it does not: no failure beats a loud one, and booking's obvious rename
+  (`WebhookSecurityConfiguration`) sorts *after* `SecurityConfiguration`. It is deliberately **not**
+  asserted anywhere — the validator is a package-private final framework class — and both
+  `FilterChainPrecedenceIT`s say so, because green tests would otherwise read as covering it.
+
+**It was three files where this file and NEW-34 both said one**, which is NEW-15's root cause again, so
+the guard is derived: CI's *"A filter chain's precedence may not be declared where Spring cannot read
+it"* takes its service list from `jdl/*.jdl` and its file list from a grep for the bean type, and refuses
+a class-level `@Order` on any of them. That is the only thing that can see a chain appear in **messaging
+or payout**, which have never had one and have no test written to be red about one;
+`.github/checks/filter-chain-precedence-test.sh` drives it against six broken states.
 
 Three things were made regeneration-proof on purpose and need no re-applying: `SeedProperties` is
 `@Component`-annotated rather than listed on the generated app class, public read access lives in a
@@ -1103,8 +1128,24 @@ closes on **one line**. Javadoc survived it by accident (a `grep -v` dropped `*`
 lines); a **non-javadoc** multi-line `/* … */`, which is the house style, passed straight through. So a
 comment naming a deleted call satisfied the check guarding it, verified on two of them. D54's stateful
 awk was the only correct copy and is now the shared file. It **preserves line numbering** — one blank
-line out per comment line in — because two callers quote the original line back by number. Adding a
-fifth text-matching check means calling it, not writing a fifth stripper.
+line out per comment line in — because three callers quote the original line back by number. Adding a
+text-matching check means calling it, not writing another stripper. **Do not quote a count of callers
+from this file** — the number here was "four" for four decisions after it stopped being four; the
+stripper's own header carries the one-line `awk` that derives it, and today that answers **10**.
+
+**And the stripper itself was the ninth fail-open — D77.** It read `/*` and `//` inside a **string
+literal** as comment openers, and its own header said "nothing in the estate has one" and that the
+failure would be fail-*closed*. Measured, both false: **14 of 535 main-source files were truncated from
+a path pattern to end of file** — every service's `SecurityConfiguration` (`"/api/admin/**"`) and
+`WebConfigurer` (`"/api/**"`), catalog's two hand-written chains, booking's webhook chain, payout's
+`LedgerDTO` — plus **82 further lines cut mid-line**, including every
+`@Value("${…:http://healthconnectcatalog}")` in booking's four service clients. And for a check that
+must *not* find something, text that is not there cannot be matched, so the three estate-wide bans were
+fail-**open** over exactly the files that configure security. It was found by watching D77's own new
+check report `ok` for the three chains it had just been written to guard: **a check that cannot see its
+own subject reports success.** The stripper tracks strings, char literals and text blocks now, resetting
+the first two at end of line so an unrecognised construct costs one line rather than the rest of the
+file; six new cases pin it, and all ten callers were re-run against the real tree before and after.
 
 **There are TWO strippers since D68, and the second is not a private copy of the first.**
 `strip-comments.awk` is a **Java** stripper — `//` and `/* */` — and run over a **shell** script it
@@ -1129,14 +1170,22 @@ the deliberate direction) and `;#` is not seen (fail-**open**, named and tolerat
 would truncate punctuation-adjacent expansions nobody has written yet).
 
 **Each caller guards that the file EXISTS, and that guard is measured rather than decorative.** One
-file four checks trust is a single point of failure, and absent it the two whose subject is a silent
-gap **passed**: the implicit-zone check printed `ok` for all five services having read nothing, and
-the CRUD check saw every resource strip to empty, so `maps` and `pre` were both 0 and a resource with
-no annotation passed as gated. Consolidating eight fail-opens produced a ninth, found by running it.
-All four exit 1 now with one error naming the cause. `strip-comments-test.sh` is the mechanism's own
-test — it rebuilds the comment the old `sed` could not see, asserts line numbering survives, and
-asserts **real code survives**, which is the control, because every other assertion there is satisfied
-by a stripper that outputs nothing.
+file every text-matching check trusts is a single point of failure, and absent it the two whose subject
+is a silent gap **passed**: the implicit-zone check printed `ok` for all five services having read
+nothing, and the CRUD check saw every resource strip to empty, so `maps` and `pre` were both 0 and a
+resource with no annotation passed as gated. Consolidating eight fail-opens produced a ninth, found by
+running it. Every caller exits 1 now with one error naming the cause. `strip-comments-test.sh` is the
+mechanism's own test — it rebuilds the comment the old `sed` could not see, asserts line numbering
+survives, and asserts **real code survives**, which is the control, because every other assertion there
+is satisfied by a stripper that outputs nothing.
+
+**Two of its cases embed the version they replaced, and one of those caught a flaw in its own probe**
+(D77). Case 6 does it for the line-based `sed` and case 12 for the string-blind awk: each asserts the
+old version *does* still fail on the probe, so the defect is reproduced rather than asserted in prose.
+Case 12 went red first time — the probe had a closing `*/` above its marker, and the string-blind
+stripper **recovers at the first `*/` it meets**, so case 7 had been passing under both versions and
+distinguishing nothing. Keep every assertion's subject above the only `*/` in that probe; it says so in
+place.
 
 There was no CI before this. That is how the whole suite came to be skipped for a week: D9 switched
 local builds to `-DskipTests`, nothing else ran them, and when they were finally run booking had 137
