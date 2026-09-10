@@ -13346,3 +13346,384 @@ the `isEmpty()` beneath it. Never a false pass, under drops or under any subscri
 the absent `concurrency` attribute, catalog's three refs); and after these edits, one further full
 `clean verify` — **green, `tests="3" failures="0"` read from the failsafe XML rather than the console**,
 which is the tenth green full run of this fix. Production code is still byte-identical to `f3557db`.
+
+---
+
+## D77 — The precedence Spring cannot read, and the stripper that could not see its own subject
+
+**Ratified 2026-09-10.** Closes backlog **NEW-34**. Opens **NEW-38** at review.
+
+**`main` ends at D76, the backlog's highest item is NEW-37, and `gh pr list --state open` answers
+nothing** — all three re-checked at `30f101b` rather than taken from the brief.
+
+NEW-34 asked two questions and this entry answers both by measurement. **Yes, the annotation is unread
+in a servlet chain**; **yes, the ordering matters, completely** — and neither answer is the interesting
+part, because establishing them turned up a fail-open in the mechanism that ten CI steps trust, and it
+was found by watching this package's own new check report success on the three files it had just been
+written to guard.
+
+### 1. Both questions, answered on the running container
+
+`InternalApiSecurityConfiguration` in catalog carried `@Order(Ordered.HIGHEST_PRECEDENCE + 5)` on the
+`@Configuration` class. WP-13's review established, on the *gateway*, that Spring never reads that:
+the comparator is handed the factory method and the bean type as order sources and never the
+declaring class. **D52's rule is that a data answer of this kind never transfers**, and the gateway is
+reactive while catalog is servlet — a different proxy, a different builder — so it was re-measured
+rather than ported. Four runs, all `@IntegrationTest` contexts in `catalog`:
+
+| | `findAnnotationOnBean` | `FilterChainProxy` order |
+| --- | --- | --- |
+| **M0** as shipped, `@Order` on the class | `internalApiFilterChain` **null**, `publicMarketplaceFilterChain` **null**, `filterChain` null | internal, public, generated |
+| **M1** class annotation inverted to `LOWEST_PRECEDENCE` | null | internal, public, generated — **nothing moved** |
+| **M2** `@Order(LOWEST_PRECEDENCE)` on the `@Bean` method | **2147483647** | unchanged, and correctly so: all three then tie |
+| **M3** `@Order(HIGHEST_PRECEDENCE)` on the *generated* chain's `@Bean` | — | the generated chain moved to **first** |
+
+**M1 is the answer to the first question and M2/M3 are its controls.** Inverting a class-level
+annotation to the worst possible precedence moved nothing at all, so it is not read; the same
+annotation on a `@Bean` method is both readable by `findAnnotationOnBean` and able to reorder
+`FilterChainProxy`. M2 alone would have been a bad control and was: `LOWEST_PRECEDENCE` ties with the
+two unannotated chains, so the stable sort keeps registration order and the chain does not move. The
+positive control had to be M3.
+
+What was ordering the three chains, therefore, was **component-scan order** — `I` before `M` before
+`S` — which happens to be the order the estate needs. `MarketplacePublicSecurityConfiguration` had the
+identical defect and was not named by NEW-34 at all.
+
+### 2. Order matters totally, because the generated chain claims every request
+
+NEW-34 allowed that the three chains might be disjoint by path, in which case the annotation would be
+merely untrue rather than load-bearing, and said the generated chain's `securityMatcher` decides it.
+**It has none.** `SecurityConfiguration.filterChain` calls `csrf`, `authorizeHttpRequests`,
+`sessionManagement`, `exceptionHandling` and `oauth2ResourceServer` and never `securityMatcher`, so
+its matcher is `any request` — read off the running proxy rather than off the source:
+
+```
+proxy[0] bean=internalApiFilterChain       matching=[Or [PathPattern [/internal/**]]]
+proxy[1] bean=publicMarketplaceFilterChain matching=[Or [PathPattern [/api/categories], … 8 patterns]]
+proxy[2] bean=filterChain                  matching=[any request]
+
+claims GET /internal/professionals/p1/login -> chain indexes: 0 2
+claims GET /api/professionals               -> chain indexes: 1 2
+claims GET /api/account                     -> chain indexes: 2
+claims GET /nothing/at/all                  -> chain indexes: 2
+```
+
+So the two hand-written chains are disjoint **from each other** and neither is disjoint from the
+generated one. Their relative order decides nothing; their order relative to the generated chain
+decides everything, because whichever claims a request first is the only one that runs.
+
+**The `/api/**`, `/v3/api-docs/**` and `/management/**` entries are `authorizeHttpRequests` rules,
+which narrow authorization and not the chain**, and two files in this estate said otherwise in the
+same words: catalog's `InternalApiSecurityConfiguration` and booking's
+`PaymentWebhookSecurityConfiguration` both claimed the generated chain "matches" those three so that
+their own prefix "matches none of them". Both are corrected in place.
+
+### 3. What a mis-ordering costs, and the thing the item did not anticipate
+
+The same paragraph in both files went on to say that what Spring Security does with an unmatched
+request "is a version-dependent detail nobody should have to look up to know whether this returns 200
+or 401". It was looked up. `GET /nothing/at/all`, anonymous, through the real filter chain:
+**401**, from the generated chain's `BearerTokenAuthenticationEntryPoint`, for a path its rules never
+name. So **these chains open doors that were closed** rather than closing doors that were open —
+exactly the correction D74 made to the same sentence in the reactive stack, holding here too. Without
+`InternalApiSecurityConfiguration`, booking's `professionalLogin` lookup is refused; without
+`PaymentWebhookSecurityConfiguration`, every provider callback is refused at booking itself.
+
+**And then the framework refuses the mis-ordering outright, which no part of NEW-34 expected.** M3
+did not produce a silently wrong estate; it produced no estate at all:
+
+```
+org.springframework.security.web.UnreachableFilterChainException: A filter chain that matches any
+request [DefaultSecurityFilterChain defined as 'filterChain' … matching [any request] …] has already
+been configured, which means that this filter chain [… 'internalApiFilterChain' … matching
+[Or [PathPattern [/internal/**]]] …] will never get invoked. Please use `HttpSecurity#securityMatcher`
+to ensure that there is only one filter chain configured for 'any request' and that the 'any request'
+filter chain is published last.
+    at WebSecurityFilterChainValidator.checkForAnyRequestRequestMatcher(WebSecurityFilterChainValidator.java:63)
+    at FilterChainProxy.afterPropertiesSet(FilterChainProxy.java:182)
+```
+
+109 tests failed to load a context. **So NEW-34's "a rename reorders them with nothing failing to
+build" is right about the build and wrong about the consequence**: nothing fails to compile, and the
+service then refuses to start. That is loud, and it changes the character of the risk from a silent
+disclosure to a deploy that does not land — which on `deploy-prod.sh`'s health gate is a rollback
+rather than an outage.
+
+**It does not make the annotation pointless, and that is the whole of the fix decision.** A loud
+failure is better than a silent one; **no failure is better than either.** With the precedence
+declared where Spring reads it, a class rename or a fourth chain cannot reorder these at all, so the
+`UnreachableFilterChainException` is never reached. Without it, the estate is one rename away from a
+service that will not boot — and in booking the rename is the obvious one:
+`WebhookSecurityConfiguration` sorts *after* `SecurityConfiguration`.
+
+### 4. The fix, and the three losers
+
+`@Order` moved onto the `@Bean` method in **all three** servlet classes that had it on the class:
+catalog's two and **booking's `PaymentWebhookSecurityConfiguration`**, which NEW-34 did not name.
+
+- **Keep it on the class.** Refuted by M1: it is not read, so it is a declaration of intent the
+  container cannot act on. Worse than absent, because a reader checking "is the precedence declared?"
+  finds an answer and stops.
+- **Delete it, and record path-disjointness as the guarantee.** Rejected, and its premise is half
+  false: the two catalog chains *are* disjoint from each other, and **neither is disjoint from the
+  generated chain**, which claims every request. The honest version of this option is "delete it and
+  let `WebSecurityFilterChainValidator` be the guarantee" — which is a guarantee that you will find
+  out at startup, not that you are ordered correctly. It also leaves the intent recorded nowhere in a
+  file whose whole subject is that it must run before the generated chain.
+- **Move it and also give the generated chain an explicit `LOWEST_PRECEDENCE`.** Rejected: the
+  generated `SecurityConfiguration` is a regenerated file (top of CLAUDE.md's restore table), so the
+  annotation would be discarded on the next `jhipster jdl --force` and its absence is *already* the
+  correct value. Adding a line to a generated file to state a default is a maintenance obligation that
+  buys nothing.
+
+Nothing about the chains' behaviour changed: same matchers, same rules, same measured order before and
+after. What changed is that the order is now declared rather than inherited from the alphabet.
+
+### 5. NEW-34 named one file and there were three
+
+The item said catalog's was "the one place this was not corrected"; CLAUDE.md said the same. A sweep of
+`grep -rn "@Order"` across all five services' `config` packages found **six** occurrences on
+chain-declaring classes: the gateway's three, all correctly on the method since WP-13, and **three on
+`@Configuration` classes** — catalog's two and booking's one.
+
+This is the repository's oldest failure recurring inside the description of itself: *a list trusted
+rather than derived*, which is NEW-15's root cause verbatim. It is why this decision's CI check derives
+its service list from `jdl/*.jdl` and its file list from a `grep` for the bean type, rather than naming
+the three files it was written for.
+
+### 6. What guards it, and what deliberately does not
+
+**`FilterChainPrecedenceIT` in catalog and in booking.** They ask the *container*, not the source —
+D74's reason, restated because it applies unchanged: a CI grep and a hand-built chain test both stay
+green when `@Configuration`, `@Bean` or `@Order` is removed. Four assertions each:
+
+1. `findAnnotationOnBean` answers non-null for each hand-written chain, and strictly ahead of the
+   generated chain's order. **This is the guard for D77's change**, and it is red with the annotation
+   back on the class — measured in *both* services, independently, because D52.
+2. The generated chain claims `/internal/**`, the public reads and an unruled path. This is §2's
+   premise, pinned so that a regeneration giving it a `securityMatcher` goes red here rather than
+   quietly invalidating the argument above.
+3. A narrower chain claims each path before the generated chain does. Green today with no readable
+   annotation anywhere, so it is **not** the guard — it is the statement of what the guard protects.
+4. An unruled path is 401 rather than 200 — §3's framework floor, the servlet twin of D74's
+   `anUnmatchedPathIsDeniedRatherThanPermitted`.
+
+**Not guarded, and said out loud rather than implied:** the `UnreachableFilterChainException` itself.
+`WebSecurityFilterChainValidator` is a package-private `final` class in
+`org.springframework.security.config.annotation.web.builders` and `FilterChainProxy` exposes no
+`setFilterChains`, so pinning it would mean reflecting into framework internals or declaring a test
+class inside a Spring package. It is recorded as a measurement in §3 instead. Both ITs' javadoc says
+so, because a reader counting green tests would otherwise conclude it is covered.
+
+**Not guarded either:** that a *future* hand-written chain declares an `@Order` at all. "Must carry
+one" is not derivable from the source — the gateway's generated chain has a `securityMatcher` **and**
+correctly has no `@Order`, while catalog's has neither, so no property of a file separates a chain that
+must declare a precedence from one that must not. Presence is covered by the four ITs for the four
+chains that exist; for a fifth, the framework's refusal to start is the backstop.
+
+**And one CI check, because the ITs cannot see an omission.** *"A filter chain's precedence may not be
+declared where Spring cannot read it"* refuses a class-level `@Order` on any file in any service's
+`config` package that declares a `SecurityFilterChain` or `SecurityWebFilterChain` bean. Its value is
+precisely the case no test can have: **messaging and payout have never had a hand-written chain**, so
+nothing there is written to be red about one, and a fifth chain dropped into either with the annotation
+in the wrong place is invisible to every IT in the estate. Driven by
+`.github/checks/filter-chain-precedence-test.sh` against a synthetic five-service estate — nine
+assertions, six refusals, and case 0 asserts the **count** rather than the exit status, for the reason
+in §7.
+
+### 7. The thing that was actually wrong here: the shared stripper could not see its own subject
+
+**The check above passed, on the estate it had just been written for, reporting `ok` for eight files and
+never mentioning the three it existed to guard.** It found `booking/SecurityConfiguration`,
+`catalog/SecurityConfiguration`, the gateway's four and messaging's and payout's — and not
+`InternalApiSecurityConfiguration`, not `MarketplacePublicSecurityConfiguration`, not
+`PaymentWebhookSecurityConfiguration`. `scanned 8 chain-declaring files across 5 services`, exit 0.
+
+The cause is in `.github/checks/strip-comments.awk`, and its own header named the case and got both of
+its claims wrong:
+
+> "It is deliberately not a Java parser. `/*` inside a string literal would confuse it, **and nothing
+> in the estate has one**; the failure would be **fail-CLOSED** (too much removed, a check goes red on
+> correct code), which is the right direction for a tool whose whole job is to stop things passing."
+
+Measured on the tree that sentence was written against. **Three different measures are in play** —
+files truncated, files affected, lines lost — and the first version of this section mixed two of them,
+reporting a main+test line count against a main-only file count. That is this decision's own subject
+recurring one document along, and it is the reviewer's Fix 1. Each figure below names its **tree** and
+its **measure**. Method: run both strippers over each file and compare **output line by line**, since
+both emit one line per input line and the outputs align by number — `diff` realigns and over-counts
+(499 against the true 444).
+
+**Main sources, 535 files:**
+
+- **36 files differ at all, over 444 output lines.**
+- **14 of those are truncated from a string literal to end of file**, losing **377** lines between
+  them. Every service's generated `SecurityConfiguration` (`"/api/admin/**"`, line 35), every
+  service's `WebConfigurer` (`"/api/**"`, line 49), the gateway's `SecurityConfiguration` (line 80),
+  catalog's two hand-written chains (`"/internal/**"`, `"/api/professionals/*"`), booking's webhook
+  chain (`"/webhooks/**"`) and payout's `LedgerDTO`, invisible from line 14 to 210. A `/**` inside a
+  path pattern opened a block comment that never closed.
+- **22 differ without truncating, losing 67 lines cut mid-line**, because the `//` strip was applied
+  unconditionally to the whole line — so every
+  `@Value("${healthconnect.catalog.base-url:http://healthconnectcatalog}")` in booking's four service
+  clients lost everything from `http:` onward.
+
+**Main and test, 886 files:** 56 files differ over 528 lines; 15 truncated to EOF.
+
+**The 14/535 half is the one to re-derive first if any of this is doubted** — it reproduces file for
+file, independently confirmed at review, and it is the half that made a check pass on its own subject.
+
+**And the direction was backwards.** Removing too much is fail-closed only for a check that must FIND
+something. For a check that must NOT find something — the three estate-wide bans, and D77's own — text
+that is not there cannot be matched, so a banned line hidden behind a path pattern **passes**.
+
+That is the ninth fail-open in this family and the first one *inside the mechanism the other eight were
+fixed with*. It is also the exact shape this repository keeps finding: a comment asserting an invariant
+that the file itself contradicts, in the file whose job is to stop checks depending on comments.
+
+**The stripper now tracks four states rather than one.** `"…"`, `'…'` and `"""…"""` are code and are
+copied through verbatim, with a backslash escaping the next character in each. Only the block-comment
+and text-block states carry across lines; `instr` and `inchr` are **reset at end of line deliberately**,
+because a normal string or char literal may not contain a newline in Java — so a construct this does
+not understand costs one line rather than the rest of the file, which is precisely what the old version
+did. Text blocks are handled rather than ignored: `OutboxPublisher`'s envelope template and all five
+App classes have one, and their content is full of quotes and URLs.
+
+**Six new cases in `strip-comments-test.sh`, and one of them caught a flaw in its own probe.** Case 12
+embeds the string-blind version and asserts it *does* truncate the probe — the same discipline as the
+existing case 6 — and it went red on the first attempt, because the probe had the block comment *above*
+the marker: the old stripper opens an unterminated comment at `"/internal/**"` and then **recovers at
+the first `*/` it meets**, handing back everything below. So case 7 had been passing under both versions
+and distinguishing nothing. The comment is last in the probe now, and the ordering is documented in
+place as load-bearing. Verified against the old stripper: cases 7, 8, 9 and 11 red, case 10 correctly
+green.
+
+**Regression-tested across all ten callers rather than argued about.** Every build.yml step that calls
+the stripper was lifted out by name and run against the real tree with the new version: ten steps, all
+`rc=0`, zero `::error` lines. The three estate-wide bans now read the 444 main-source lines across 36
+files they had never read, and **find nothing in them** — so the widening closes a gap without moving a
+verdict, which is a result rather than an absence of one and was confirmed independently at review. The
+precedence check went from `scanned 8` to `scanned 11`.
+
+**The count in the stripper's header is now derived rather than stated.** It read "four checks" for four
+decisions after it had stopped being four; the header carries the one-line `awk` that produces the
+number, and running it answers **10**.
+
+### 8. Verified, and by what
+
+- **catalog `./mvnw clean verify`** on `jdk-25.0.2-oracle-x64`, from clean. `FilterChainPrecedenceIT`
+  green, and red before the fix on assertion 1 alone with the other three green — which is the
+  measurement of §1 as much as it is the guard.
+- **booking `./mvnw clean verify`**, same JDK, from clean. Same four assertions, same single-assertion
+  red under the class-level mutation, measured independently in that service.
+- **Six mutations of the CI check's subject**, each applied, each asserted applied, each caught with a
+  message naming the file and the line: the three corrected chains one at a time, a fourth chain planted
+  in messaging, the stripper deleted, and a config package removed. Plus two more in the companion test
+  — no JDL at all, and a chain whose class declaration the check cannot parse, which fails **closed**.
+- **`.github/checks/strip-comments-test.sh`** — 12 assertions green; 4 of the 6 new ones red against the
+  version it replaced.
+- **`.github/checks/filter-chain-precedence-test.sh`** — 9 assertions green.
+- **`node deploy/demo/extract-seed.mjs`** re-extracts identically and **`./deploy/sync-appendices.sh
+  --check`** is clean; neither the seed nor either script was touched.
+
+**Not exercised.** No estate was started: the quality box is on `fabb959` with the agent attached by hand
+(D73) and is evidence, and the dev estate is deliberately empty (NEW-31). Every measurement here is from
+a Testcontainers-backed Spring context in `catalog` or `booking`, which is where these chains are
+assembled by the same `WebSecurityConfiguration` a running service uses. Nothing was published to the
+broker. One environmental note, twice reproduced and unrelated: booking's `postgres:18.4` Testcontainer
+timed out on its 60-second readiness wait under a host load average of 15, and passed on the third
+attempt with the image layers warm — the same run, the same code.
+
+### 9. Reviewed 2026-09-10 — no blocking findings, two should-fixes and three optionals, all applied
+
+The verdict on the rewritten stripper was that it is **correct as a parser**, established by six
+families of adversarial probes the reviewer wrote rather than by re-reading this entry: char literals
+holding a delimiter (`'/'`, `'*'`, `'\''`, `'"'`) in adjacent case labels; `"a \" /* still in string
+*/ b"` followed by a *real* comment on the same line; `"\\"` and `"\\\\"` with code after; `"*/"` in a
+string beside a stray `*/` preserved as code; `"\"\"\""`; text blocks containing `/**`, `//`,
+unbalanced quotes, an escaped `\"""` and a closing `"""` followed by `.formatted(...)`; plus CRLF, tabs
+and no trailing newline. Line numbering held in all of them. The **removal** direction was checked too
+— swapping `main`'s stripper back in turns cases 7, 8, 9 and 11 red with case 10 correctly green — and
+the end-to-end story reproduced: under the old stripper the new precedence check **passes on a
+class-level `@Order`**, caught only by case 0's count assertion. The independent sweep found the same
+11 chain-declaring files, the same 14 truncating, and no class-level `@Order` anywhere.
+
+**Should-fix 1 — the mid-line figure was not reproducible at its stated scope, and it was in five
+places, not four.** §7's "82 further lines across 50 files" was a **main + test** count reported
+against "535 main-source files": the two trees had been summed and the scope taken from one of them.
+The reviewer could not reproduce it three different ways, and named the reason it matters — the next
+person re-deriving it at the stated scope concludes the stripper regressed and chases a phantom. That
+is this decision's own subject, one document along, and the diagnosis generalises: **three legitimate
+measures were in play** (files truncated, files affected, lines lost) and the sentence did not say
+which it counted. Re-derived with the tree *and* the measure named, and with the method named too —
+compare the two strippers' output **line by line**, since both preserve numbering, because `diff`
+realigns and over-counts (499 against the true 444):
+
+| tree | files | differ | lines | truncated to EOF | cut but not truncated |
+| --- | --- | --- | --- | --- | --- |
+| main | 535 | 36 | 444 | 14 files / 377 lines | 22 files / 67 lines |
+| main + test | 886 | 56 | 528 | 15 files / 383 lines | 41 files / 145 lines |
+
+Corrected in `strip-comments.awk`, `strip-comments-test.sh`, this entry twice, `CLAUDE.md` and
+`backlog.md` — the fifth was missed by the reviewer's count and found by grepping for the figure. The
+**14/535 half reproduced exactly, file for file**, including `LedgerDTO` invisible from line 14 to 210,
+and it is named as the half to re-derive first.
+
+**Should-fix 2 — the count rot survived in the file beside the one that fixed it.**
+`strip-comments-test.sh` still said "four checks" twice, once in the **missing-file error an operator
+reads at the worst moment** — in the same commit whose header says *"the number in a sentence is the
+first thing to rot"*. Fixed by **deriving it at run time** rather than by writing 10: the script counts
+the callers out of `build.yml` with the same one-liner the awk header publishes, prints the number as
+its first assertion, and interpolates it into the refusal. Both paths measured with the mutant asserted
+present — stripper absent gives *"10 steps in build.yml call it"*, and an unreadable workflow gives
+`?` rather than a stale number, because a wrong count in a refusal is worse than none.
+
+**Optional 1 — an orphaned endorsement.** The gateway's `InternalApiSecurityConfiguration` said
+*"catalog's file of this name is right to call that a version-dependent detail nobody should have to
+look up"* — and this commit had corrected catalog's file to say the opposite, in a paragraph two
+sections away that the same commit touched. Rewritten to say that the sentence was deleted from catalog
+and why: the detail *was* looked up (401 in the servlet stack, the same refusal measured on the
+gateway), and the claim under it confused `authorizeHttpRequests` rules with a `securityMatcher`.
+
+**Optional 2 — the CI step's reach, stated and watched.** `@Configuration @Order(5)` **on one line**
+does not match `^[[:space:]]*@Order[[:space:]]*\(` and passes as clean — fail-open, consequential only
+in messaging and payout where no IT stands behind it. The converse fails **closed**: `@Order(5) public
+class X {` makes the annotation not "above" the class declaration, so the file is refused as having no
+class declaration this check can find. Both branches **watched, with each mutant asserted present** —
+exit 0 and exit 1 respectively — rather than reasoned from the expression, and recorded as a stated
+limit in the step's comment beside the CRUD gate's "counts, does not attribute". Not fixed: widening it
+would mean matching `@Order` anywhere before the class, which every one of these files' javadoc quotes
+on purpose, and prettier keeps annotations on their own lines here.
+
+**Optional 3 — line numbering was asserted for only one of the two probes**, and the untested one is
+the one with a text block, which is the only construct here that spans lines. Case 13 adds it, and
+**discriminates**: a `print out` narrowed to `if (length(out)) print out` turns case 5 red at 14→7 and
+case 13 red at 18→14.
+
+**And the reviewer's one remaining limit became a fix rather than a line of prose.** Cross-file state
+leakage — `inblk` and `intxt` are global, so a file ending inside an unterminated construct would
+truncate the *next* file on the same command line from line 1, with no Java being unusual. Every caller
+runs per file and nothing enforced it, so rather than documenting the convention the awk now resets both
+at `FNR == 1`, which is the correct per-file semantics anyway and costs nothing for a single file.
+
+**Case 14 pins that, and its first version did not — which is case 12's lesson recurring inside the
+review that asked for it.** Written with the *first* probe as the second file, the assertion stayed
+**green with the reset deleted**: leaked state recovers at the first `*/` it meets, that probe closes a
+block comment on its fourth line, and the marker sits well below. It uses the string probe now, whose
+only `*/` is beneath its marker, and it is red with the reset removed and green with it restored —
+verified with the mutant's absence asserted by matching the **code** line, since `grep -c 'FNR == 1'`
+counts the header comment that describes it and read as "not applied" the first time. The reviewer's own
+warning, arrived at independently, twice in one session.
+
+**One item opened rather than fixed — NEW-38.** Sweeping for the stale count found a third instance of
+it, in `shared-plane-wiring-test.sh`, about the **shell** stripper: *"one file four checks trust"*, where
+`strip-sh-comments.awk` has five callers and four of them are check scripts rather than workflow steps.
+Different mechanism, different file, and a package being corrected for mixing its own scopes should not
+widen again on the way out. It is a comment, nothing depends on it, and the fix is the same derivation
+one `grep -rl` along.
+
+**Re-run after these edits:** `strip-comments-test.sh` 15/15, `filter-chain-precedence-test.sh` 9/9,
+`strip-sh-comments-test.sh` green, all ten stripper-calling steps `rc=0` with zero `::error`, every
+shell script in the shipped parse gate ok, and gateway `clean verify` green for the javadoc change.
+`extract-seed.mjs` re-extracts identically and `sync-appendices.sh --check` is clean. **No production
+code changed in this pass** — the only Java touched is one gateway javadoc paragraph.

@@ -60,9 +60,16 @@ import org.springframework.security.web.server.util.matcher.PathPatternParserSer
  * every other path the generated chain claims and has no rule for — {@code /internalx/…} and
  * {@code /nothing/at/all} give the identical pair. Reactive Spring Security's
  * {@code DelegatingReactiveAuthorizationManager} <em>denies</em> an exchange no rule matched; it does
- * not fall through. catalog's file of this name is right to call that a version-dependent detail nobody
- * should have to look up, and {@code InternalApiPermitIT} now pins it so an upgrade that flips it goes
- * red here rather than quietly.
+ * not fall through. {@code InternalApiPermitIT} pins it, so an upgrade that flips it goes red here
+ * rather than quietly.
+ *
+ * <p>This paragraph used to endorse catalog's file for calling that "a version-dependent detail nobody
+ * should have to look up". <strong>D77 deleted that sentence from catalog</strong>, because it was
+ * wrong twice over: the detail <em>was</em> looked up — in the servlet stack it is <strong>401</strong>,
+ * the same refusal measured here — and the claim it rested on, that the generated chain matches only
+ * {@code /api/**}, {@code /v3/api-docs/**} and {@code /management/**}, confused
+ * {@code authorizeHttpRequests} rules with a {@code securityMatcher}. Do not cite it; catalog now says
+ * the opposite, and both services' chains open doors rather than closing them.
  *
  * <p>So what this chain does is <strong>open</strong> a door that was closed — it is the reason booking
  * can reach the endpoint at all, and every refusal above is a refusal it introduces on the way. That is
@@ -104,9 +111,12 @@ import org.springframework.security.web.server.util.matcher.PathPatternParserSer
  * generated chain was the letter P sorting before the letter S. Read
  * {@link PaymentWebhookRouteConfiguration}'s note on the measurement before moving this line.
  *
- * <p><strong>catalog's file of this name still has its {@code @Order} on the class.</strong> That is
- * not corrected here — a servlet chain, a different service, and out of this package's scope. It is
- * backlog {@code NEW-34}.
+ * <p><strong>catalog's file of this name had its {@code @Order} on the class until D77</strong>
+ * (backlog {@code NEW-34}), and so did catalog's public-reads chain and booking's webhook chain — three
+ * files, where that item and CLAUDE.md both said one. D77 re-measured the mechanism in the servlet
+ * stack rather than porting this one, per D52's rule, and found it holds there identically; it also
+ * found that the servlet generated chain declares no {@code securityMatcher} at all, so the ordering is
+ * total rather than merely tidy. Do not read the reactive measurement here as covering that one.
  */
 @Configuration
 public class InternalApiSecurityConfiguration {

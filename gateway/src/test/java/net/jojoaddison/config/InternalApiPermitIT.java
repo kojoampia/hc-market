@@ -233,8 +233,14 @@ class InternalApiPermitIT {
      * class it answers {@code null} — the finding WP-13's review made on the webhook chain, where the
      * only thing putting it in front of the generated one was the letter P sorting before the letter S.
      * {@code InternalApiSecurityConfiguration} carries the annotation on the {@code @Bean} method for
-     * that reason, and this is what would go red if it moved. catalog's file of the same name still has
-     * it on the class — backlog {@code NEW-34}, deliberately not fixed here.
+     * that reason, and this is what would go red if it moved.
+     *
+     * <p>catalog's file of the same name had it on the class until {@code decisions.md} D77 — backlog
+     * {@code NEW-34}, and it was <strong>three</strong> files rather than the one that item named.
+     * D77 re-measured the mechanism in the servlet stack rather than porting this one (D52's rule) and
+     * got the same answer, so {@code FilterChainPrecedenceIT} in catalog and in booking now makes this
+     * assertion there too. There is also a CI check deriving the file list from the bean type, because
+     * neither this test nor those two can see a chain appear in a service that has never had one.
      */
     @Test
     @DisplayName("the internal chain's precedence is declared, not inherited from the alphabet")
