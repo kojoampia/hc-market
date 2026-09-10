@@ -2980,8 +2980,24 @@ Five notes folded in: `HC_SSH_TIMEOUT=0` reinstated the unbounded connect (measu
 dropping it makes every blip an established-unready rollback with all assertions green; the docker stub
 renders `--format` **in order**, so a reordered format is red rather than silently dead; the warn arm no
 longer claims more than a blank health column supports; and §8's counterfactual is corrected to the
-direction-to-fail argument that was always carrying it. Final: **49** assertions, **37 ok / 0 failed**
-over 36 numbered mutations, and **three** harness controls (29/8, 33/4, 36/1).
+direction-to-fail argument that was always carrying it. That round ended at **49** assertions,
+**37 ok / 0 failed** over 36 numbered mutations, and **three** harness controls (29/8, 33/4, 36/1).
+
+**A THIRD review followed, and it fired the cycle rule: three rounds of findings in one area means the
+decision was wrong rather than the code** (D78 §15). Every round's fail-open was in the guard added to
+close the previous one, and the pattern is worth more than the fixes — **each guard was exact about the
+text it had just been burned by and silent about the binding one step away**. Blocking instance:
+swapping `health_gate rollback` for `health_gate deploy` in `rollback()` parses and left the check AND
+its test at exit **0**, restoring the false *"NOTHING HAS BEEN ROLLED BACK"* verbatim, because the
+no-default guard sees only an absent argument and part 6 drives the function with call strings the
+harness itself writes. Repaired with two call-site assertions (cases 37, 38) plus three more: the
+`SSH_OPTS` guard pins the **expression** `ConnectTimeout=${HC_SSH_TIMEOUT:-8}` and refuses a second
+assignment (39, 40) — a `:-0` default had printed "bounded" for an array that hands ssh an unbounded
+connect — the compose premise strips YAML comments in its own window and refuses `disable: true`
+(41, 42), and `$left` no longer makes **arm** claims, which removes rather than tests four undriven
+phase × arm pairs. **NEW-42 is the structural close**, and this was the last textual round: **51**
+assertions, **43 ok / 0 failed** over 42 mutations, **four** controls (33/10, 37/6, 42/1, 41/2), each
+verifying as a set.
 
 ---
 
@@ -3088,9 +3104,9 @@ is now correct. Thirteen times better and still not 240 seconds.
 
 Two shapes, neither costed:
 
-One more fact for whoever takes it, from D78 §14's review: **`sleep 10` runs on the final iteration
-too**, before the exhaustion check, so the real budget is `24 × (probes + 10s)` with one sleep spent on
-nothing at all — ten seconds added to every failing gate for no probe.
+One more fact for whoever takes it, from D78 §14's review and re-checked at §15: **`sleep 10` runs on
+the final iteration too**, before the exhaustion check, so the real budget is `24 × (probes + 10s)`
+with one sleep spent on nothing at all — ten seconds added to every failing gate for no probe.
 
 - **bound the loop by a wall clock** (`SECONDS` at entry) so the banner and the behaviour agree. It is
   one line and it is **not free**: on a healthy estate an iteration is roughly `5 × probe + 10s`, so a
@@ -3152,6 +3168,63 @@ says nothing about a file disagreeing with itself.
 A derived check is possible and probably not worth it: a `grep` pairing every table row with its section
 heading would have caught all three, and is the same shape as `build.yml`'s CRUD gate one document over.
 Cost it against the third option, which removes the pairing rather than guarding it.
+
+---
+
+## NEW-42 — part 6 asserts TEXT about `deploy-prod.sh`'s call sites instead of executing them · READY
+
+Opened by **D78 §15**, and it is the item the cycle discipline produced rather than a defect anybody
+found in the code: NEW-36's area returned findings three rounds running, each one a fail-open **in the
+guard added to close the previous round**, so the wrong decision was the guarding strategy and not any
+of the matchers.
+
+| round | the fail-open | where it was |
+| --- | --- | --- |
+| D78 §13 | `SSH_OPTS` lifted and asserted about nowhere | in the check just extended for the gate |
+| D78 §14 | that guard satisfied by a **trailing comment** | in the fix for §13 |
+| D78 §15 | the guard asserts the option's **name** on the **first** declaration; the **phase** is bound to its call sites by nothing | in the fix for §14 |
+
+**Each guard was exact about the text it had just been burned by and silent about the binding one step
+away** — the value behind the option name, the code behind the comment, the caller behind the phase.
+The blocking instance: `health_gate rollback` swapped for `health_gate deploy` in `rollback()` parses,
+and left the check *and* its test at exit **0** while restoring §14's defect verbatim — an operator
+told *"NOTHING HAS BEEN ROLLED BACK"* and offered `--rollback` after the rollback had just run.
+
+**The structural cause is that part 6 never runs the program.** It lifts functions with `awk` and
+drives them with call strings the harness itself writes (`GATE='health_gate deploy; …'`), so it
+verifies a *function* and cannot see what the *script* passes. §15's repair for the blocking finding
+is two stripped-text greps — which is a compromise stated as one at the site.
+
+**The shape.** Source the shipped `deploy-prod.sh` in a subshell with `ssh`, `scp`, `docker` and `run`
+replaced by stubs, then invoke the real `rollback()` and the real router branch, and assert on what
+the stubs were handed. That closes findings 1 and 4 of §15 structurally, and with them the whole
+"one step away" class: the phase a caller passes, which options an `ssh` actually receives per site,
+and whether a refusal's sentence matches the arm *and* the caller that reached it. It also subsumes
+the near-vacuous `>= 2` floor with real per-site coverage.
+
+**Costed honestly, and it is not small:**
+
+- **Nothing in this repository sources `deploy-prod.sh` today.** Every existing reading — D66, D69,
+  D71, D75 and all of D78 — lifts functions by `awk` precisely to avoid it.
+- **The file resists sourcing in three specific ways.** It runs `cd "$DEPLOY_DIR"` at the top; it
+  installs an `ERR` trap that `die`s on any non-zero command; and its **router runs on load** (the
+  `if (( DO_ROLLBACK ))` block and the `resolve_tag; preflight; confirm; …` sequence at the foot), so
+  a naive `source` performs a deploy. Sourcing therefore needs either a guard in the script — a
+  `[[ "${BASH_SOURCE[0]}" == "$0" ]]` around the router, which is a real change to the one script
+  nothing can integration-test — or an `awk` that strips the router before sourcing, which
+  reintroduces a lift and with it a terminator to get wrong (D75 case 21).
+- **`resolve_tag` shells out to Maven and `preflight` requires `docker`, `git` and a `--host`**, so
+  the router branch has to be reachable with those stubbed too.
+- **The `run` wrapper is the cheap half**: every mutating command already goes through it, so stubbing
+  `run` captures most call sites without touching `ssh` itself.
+
+**D49 still holds and bounds the whole thing**: `deploy-prod.sh` has never been executed against a
+host. That is *why* a harness matters — no environment will ever catch these — and it is also the
+ceiling: sourcing the file with stubs establishes what the script *passes*, never what a production
+host *answers*.
+
+**Do not close it with a fourth textual guard.** D78 §15 is explicitly the last textual round on that
+branch; if a fifth guard of this shape looks necessary, that is this item.
 
 ---
 

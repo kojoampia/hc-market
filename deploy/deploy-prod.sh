@@ -934,15 +934,24 @@ health_gate() {
 # command for the moment the host comes back.
 gate_exhausted() {
   local bad="$1" phase="$2" svc unproven="" logs_of="" left rolling
-  # WHAT IS TRUE ABOUT THE STACK, PER CALLER — decisions.md D78 §14. Composed once and interpolated
-  # into every refusal below, so a fifth arm cannot be written that claims the wrong one, and a third
-  # phase has to answer this question before it can reach any of them.
+  # WHAT IS TRUE ABOUT THE REVERT, PER CALLER — decisions.md D78 §14, narrowed by §15. Composed once
+  # and interpolated into every refusal below, so a fifth arm cannot be written that claims the wrong
+  # one, and a third phase has to answer this question before it can reach any of them.
+  #
+  # IT SAYS NOTHING ABOUT WHAT STATE THE STACK IS IN, and that narrowing is the third review's
+  # finding 4 rather than tidiness. §14's first version bought "composed once per phase" by letting
+  # the phase text make ARM claims — the rollback string ended *"the stack on $HOST is running $TAG
+  # and its state is now unestablished"*, which the no-containers arm (there is nothing there) and the
+  # blip arm (every service is answering) each contradict in the same sentence. Four of the eight
+  # phase × arm pairs are driven by nothing, so the contradiction was reasoned from the strings rather
+  # than caught. The combination is REMOVED instead of tested: $left is now "has a revert already
+  # happened, and what is the remedy", full stop, and each arm keeps its own account of the stack.
   case "$phase" in
     deploy)
-      left="NOTHING HAS BEEN ROLLED BACK, deliberately: a rollback needs this same host, and reverting a healthy estate over a hop nobody could ask is the failure this refusal exists to prevent. Revert by hand with \`./deploy-prod.sh --rollback --host $HOST\` once the host answers."
+      left="NOTHING HAS BEEN ROLLED BACK: this refusal reverts nothing, deliberately, because a rollback needs the same host it could not establish anything about. Revert by hand with \`./deploy-prod.sh --rollback --host $HOST\` once the host answers."
       rolling="rolling back." ;;
     rollback)
-      left="THE ROLLBACK TO $TAG HAS ALREADY BEEN APPLIED — this gate is what was checking it — so there is nothing further to revert to and no rollback is being attempted: the stack on $HOST is running $TAG and its state is now unestablished. This needs a person, not another deploy command."
+      left="THE ROLLBACK TO $TAG HAS ALREADY BEEN APPLIED — this gate is what was checking it — so no further revert is available and none is being attempted. This needs a person, not another deploy command."
       rolling="and this WAS the rollback, so there is nothing further to revert to." ;;
     *)
       die "gate_exhausted was called with phase '$phase', so it cannot say what state the stack is in — and every refusal below makes that claim. See decisions.md D78 §14." ;;
@@ -971,7 +980,7 @@ gate_exhausted() {
   done
   if [[ -z "$unproven" ]]; then
     printf '%s\n' "$HOST_OUTPUT" | sed 's/^/    /'
-    die "the health gate timed out after ${HEALTH_TIMEOUT}s, and docker on $HOST reports every service it gave up on —$bad — as RUNNING and HEALTHY, from the same readiness probe run inside the host (see the table above). So what failed is this end of the wire and not the estate: the deploy's probes cross an ssh, docker's healthcheck does not. The stack on $HOST is $TAG and is answering, and nothing about it has been changed by this refusal — which is the whole point of this arm. $left Nothing was recorded in deployments.log either way."
+    die "the health gate timed out after ${HEALTH_TIMEOUT}s, and docker on $HOST reports every service it gave up on —$bad — as RUNNING and HEALTHY, from the same readiness probe run inside the host (see the table above). So what failed is this end of the wire and not the estate: the deploy's probes cross an ssh, docker's healthcheck does not. The stack on $HOST is $TAG and is answering — which is the whole point of this arm. $left Nothing was recorded in deployments.log either way."
   fi
   # ESTABLISHED UNREADY: the host answered, and its own answer agrees. This is the one arm that
   # returns, and the router rolls the stack back on it.

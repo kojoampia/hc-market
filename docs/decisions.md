@@ -13907,9 +13907,10 @@ shifted every single one, in the commit whose own §13 said *"§7 now carries th
 numbers"* (review's finding 4). A line number is the least stable name a thing can have, and
 *"the enumeration is the record and the number is derived from it"* is only true if the enumeration
 survives an edit. So the record is what each invocation *does*, which no reformatting moves, and the
-current count is **printed by the check** rather than restated here: part 5's success line reads
-*"all 13 ssh/scp invocations that expand it are bounded"*, derived from the stripped source on every
-run. Re-derive with
+current count is **printed by the check** rather than restated here: the preamble guard's success line
+reads *"13 lines expand it (a count, not per-site coverage)"*, derived from the stripped source on
+every run. It counts **lines carrying the expansion**, which is not the same as every site being
+covered — §15's first note and NEW-42. Re-derive with
 `awk -f .github/checks/strip-sh-comments.awk deploy/deploy-prod.sh | grep -cF 'SSH_OPTS[@]}'`.
 
 Review, measuring invocations **anchored at the start of a line**, read the first version's 12+1 as
@@ -14240,9 +14241,9 @@ expression that produced it, and the expression has to be watched.
 **Finding 4: §7's thirteen line numbers were stale at the commit that shipped them.** Eleven lines
 added above them in the same branch moved every one, in the commit whose §13 said §7 "now carries the
 thirteen line numbers". §7 is rewritten to enumerate **what each invocation is**, which no
-reformatting moves, and the *number* is now printed by the check on every run — part 5's success line
-reads *"all 13 ssh/scp invocations that expand it are bounded"*, derived from the stripped source. A
-tool's number cannot rot; a document's can.
+reformatting moves, and the *number* is now printed by the check on every run — by the **preamble
+guard**, not part 5 as this section first said (§15), and as a **count rather than coverage** (§15's
+first note). A tool's number cannot rot; a document's can.
 
 **Five notes folded in, four as code and one as an item.**
 
@@ -14284,3 +14285,114 @@ checks and `build.yml`'s three inline matchers over this script re-run green; `H
 refused and `=8` accepted, both run; **Appendix B re-embedded** and `--check` clean; the seed
 unchanged. No Java changed. No host was contacted, nothing was deployed, and the quality stack, the
 empty dev estate and the parallel package's files were not touched.
+
+### §15 Third review — and the rule that fired: the wrong decision was to guard a call site by reading it
+
+**This is the third round of findings in the same area, and the cycle discipline here says that when
+that happens the decision was wrong rather than the code.** It was. Written down plainly, because the
+pattern is more useful than any of the three fixes:
+
+| round | the fail-open | where it was |
+| --- | --- | --- |
+| §13 | `SSH_OPTS` was lifted and asserted about nowhere | in the check that had just been extended for the gate |
+| §14 | the guard added for it was satisfied by a **trailing comment** | in the fix for §13 |
+| §15 | that guard asserts the option's **name** on the **first** declaration, and the **phase** mechanism is bound to its call sites by nothing at all | in the fix for §14 |
+
+**Each new guard was exact about the text it had just been burned by and silent about the binding one
+step away** — the value behind the option name, the code behind the comment, the caller behind the
+phase, the arm behind the phase's own sentence. Four guards, four different one-step-away holes, and
+every one of them found by a person reading the next thing along rather than by anything in CI.
+
+**So the wrong decision is not any one matcher: it is guarding this script's call-site binding by
+textual assertion at all.** Part 6 lifts functions and drives them with call strings *the harness
+writes* — `GATE='health_gate deploy; …'` — so it verifies the function and can never verify the
+program. That is structurally why every round's guard was one step short, and it is why swapping
+`health_gate rollback` for `health_gate deploy` in `rollback()` left the check *and* its test at exit
+0 while restoring §14's defect verbatim. **Backlog NEW-42** is the repair — stub `ssh`, `docker` and
+`run`, source the shipped file, invoke the real `rollback()` and the real router branch — and it is
+deliberately a separate item, because it is bigger than NEW-36 and because a fourth guard of this
+shape would be the same mistake a fourth time. **This is the last textual round on this branch.**
+
+#### The four findings, and the repair each got
+
+**1 — BLOCKING: nothing looked at what the program passes as the phase.** Reproduced by review at
+exit 0, both files blind. Repaired with two stripped-text assertions — `rollback()`'s body must call
+`health_gate rollback`, the router branch must read `if health_gate deploy && smoke_test` — each with
+its own refusal, plus cases **37** and **38**. Control D confirms nothing else covers them. The
+assertion is text and says so at the site, pointing at NEW-42 for the version that executes.
+
+**2 — the `SSH_OPTS` guard asserted the option's NAME on the FIRST declaration.** Two states, the
+first reproduced by review: `ConnectTimeout=${HC_SSH_TIMEOUT:-0}` printed *"bounded"* for an array
+that hands ssh `ConnectTimeout=0` whenever the environment is unset — the one value this script's own
+comment calls well-formed, accepted and exactly the defect §7 removed — and the script's
+declaration-time guard could not see it either, because that guard validates `${HC_SSH_TIMEOUT:-8}`,
+**its own** default. A **second** top-level assignment appended after the original also passed, since
+`sed … | head -1` reads the first and bash obeys the last. Repaired by asserting the exact
+`ConnectTimeout=${HC_SSH_TIMEOUT:-8}` byte string — which is also the string case 34's `sed` treats
+as canonical, so the two cannot drift — and by refusing more than one `SSH_OPTS=` assignment,
+**anchored and unanchored**, over stripped text. Cases **39** and **40**.
+
+**3 — the compose-premise guard was raw text, and a comment satisfied it.** The **third**
+comment-satisfies-a-guard on this branch, inside the commit repairing the second. Measured: drop the
+readiness path everywhere and add `# readiness (/management/health/readiness) dropped: …` inside the
+window, and the guard printed `ok` — and that is not a contrived edit, because whoever weakens a
+healthcheck names the path they removed. Repaired with a **two-line awk local to the guard**, not by
+teaching `strip-sh-comments.awk` YAML: the house rule is explicit that a stripper guessing its
+language is one missing case from stripping neither, and this subject is YAML while that file's
+contract is shell. Its limit is stated where it lives — a `#` inside a quoted scalar truncates the
+line, which fails **closed**. The weaker half is closed too rather than merely stated: a per-service
+`healthcheck: {disable: true}` leaves the anchor intact and the column blank, so it is refused. Cases
+**41** and **42**.
+
+**4 — `$left` bought "composed once per phase" by making ARM claims.** From `rollback`, the
+no-containers arm said *"NO CONTAINERS AT ALL … nothing there to be unready"* and then, through
+`$left`, *"the stack on $HOST is running $TAG"*; the blip arm said *"every service … is answering"*
+and then *"its state is now unestablished"*. Four of the eight phase × arm pairs are driven by
+nothing, so review reasoned it from the strings. **The combination is removed rather than tested**,
+which was the preferred repair: `$left` is now "has a revert already happened, and what is the
+remedy" and nothing else, and each arm keeps its own account of the stack. All four rollback-phase
+arms were then **read in full**, once, against the stub — no permanent readings added, because the
+combination they would test no longer exists.
+
+#### Three notes folded in
+
+- **The `>= 2` floor does almost no work, and two documents quoted the line beside it as coverage.**
+  Removing the expansion from any **eleven** of the twelve — the health gate's own poll included, which
+  is NEW-36's second half — leaves the count at two with nothing red, and exactly two is a real
+  collapse that passes. It also counts **lines**, not invocations, so a future
+  `local opts=("${SSH_OPTS[@]}")` inflates it. The floor's own message now says it establishes a total
+  collapse and nothing per-site, the printed line reads *"13 lines expand it (a count, not per-site
+  coverage — see NEW-42)"*, and §14's and CLAUDE.md's wording are corrected to match.
+- **§14 twice credited "part 5's success line"** with the *"all 13 … bounded"* sentence. It is printed
+  by the **preamble guard**, before part 1; part 5's line is *"no probe builds its own ssh options"*. A
+  reader grepping part 5's output would have found nothing. Corrected.
+- **A control copy must live inside `.github/checks/`.** The check derives `ROOT` from its own path,
+  so a copy in `/tmp` cd's elsewhere, reports the subject missing, and every case reads as red for the
+  wrong reason — review measured `7 ok, 30 failed`, which looks like a broken harness rather than a
+  misplaced control. Said where the controls are described.
+
+#### What survived attack, and is not to be churned
+
+Review's failed attacks are the load-bearing half and are recorded so the next round does not redo
+them: the stripper-absent path is genuinely closed and part 5's removed guard was truly unreachable;
+an empty stripper fails closed and a broken one kills the check through `set -e`; no `STRIPPED_SRC`
+staleness or emptiness path prints `ok`; case 34's door holds against the `##` variant; a
+`ConnectTimeoutX` misspelling makes ssh die loudly rather than silently; a multi-line array
+declaration fails closed; a quoted `#` truncates the line, the stated direction; the `die` in the
+`*)` phase arm is reachable in condition context (explicit `exit`, measured); case 36 fires on the
+mutation it names and the awk-window fix is genuine; the `cases` derivation survives its documented
+traps at 36 distinct numbers; and NEW-39's wasted-`sleep` addendum and §8's correction both check out
+against the shipped loop.
+
+#### Verified at review-three, by running
+
+The check green at **51** assertions; its test at **43 ok, 0 failed** over 42 numbered mutations;
+**four** harness controls, each failure through its own door and each verifying as a set — part 6
+removed **33 ok, 10 failed** ({23,24,25,26,27,28,35,36,41,42}), the `SSH_OPTS` value guard removed
+**37 ok, 6 failed** ({31,32,33,34,39,40}), the two-caller assertions removed **42 ok, 1 failed**
+({35}), and the two call-site assertions removed **41 ok, 2 failed** ({37,38}). All four rollback-phase
+arms read in full and coherent. `bash -n` on every script `build.yml` parses; the nine neighbouring
+checks and `build.yml`'s three inline matchers over this script re-run green; **Appendix B
+re-embedded** and `--check` clean; the seed unchanged. No Java changed. No host was contacted, nothing
+was deployed, and the quality stack, the empty dev estate and the parallel package's files were not
+touched.

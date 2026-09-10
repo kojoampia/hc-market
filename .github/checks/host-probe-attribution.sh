@@ -228,10 +228,28 @@ SSH_OPTS_VALUE="$(printf '%s\n' "$LIFT_GLOBALS" | sed -n 's|^SSH_OPTS=||p' | hea
 if [[ -z "$SSH_OPTS_VALUE" ]]; then
   err "$SCRIPT declares no SSH_OPTS at the top level. Every ssh in the file expands it, so an absent or renamed array means every remote probe AND the health gate's 24 polls connect on the TCP default — measured at 136s per attempt against a blackholed address, which is a refusal nobody is still waiting for. See decisions.md D78 §7 and backlog NEW-36."
 else
+  # THE WHOLE EXPRESSION, NOT THE OPTION'S NAME — third review's finding 2, measured:
+  # `ConnectTimeout=${HC_SSH_TIMEOUT:-0}` passed the name check and printed "bounded" for an array
+  # that hands ssh `ConnectTimeout=0` whenever the environment is unset, which is UNBOUNDED and is
+  # the one value this script's own comment calls "well-formed, accepted, and exactly the defect
+  # NEW-36's second half removed". The script's declaration-time guard cannot see it either: that
+  # guard validates `${HC_SSH_TIMEOUT:-8}` — its OWN default — so the two defaults could diverge with
+  # both green. Pinning the exact byte string is what makes them one fact; it is also the string
+  # case 34's `sed` already treats as canonical, so the two cannot drift apart either.
   case "$SSH_OPTS_VALUE" in
-    *ConnectTimeout*) : ;;
+    *'ConnectTimeout=${HC_SSH_TIMEOUT:-8}'*) : ;;
+    *ConnectTimeout*) err "$SCRIPT's SSH_OPTS names a ConnectTimeout whose value is not \`\${HC_SSH_TIMEOUT:-8}\`: '$SSH_OPTS_VALUE'. The option's NAME being present is not the property that matters — `ConnectTimeout=0` and `ConnectTimeout=\${HC_SSH_TIMEOUT:-0}` both read as bounded and are not (0 means wait for the TCP default, measured at 136s against a blackholed address). The default here must also be the one the script's own HC_SSH_TIMEOUT guard validates, or the two diverge silently. See decisions.md D78 §7 and §15." ;;
     *) err "$SCRIPT's SSH_OPTS carries no ConnectTimeout: '$SSH_OPTS_VALUE'. An unbounded connect is a refusal that arrives minutes late or never — 136s per attempt on a blackholed address, measured, against 8s with the timeout — and the health gate makes 24 × one-per-service of them before it can say anything at all. See decisions.md D78 §7." ;;
   esac
+  # ...AND EXACTLY ONE ASSIGNMENT, anchored and unanchored. `sed … | head -1` reads the FIRST
+  # declaration and bash executes the LAST, so a second top-level `SSH_OPTS=(-o BatchMode=yes)`
+  # appended below the original passed every assertion above (measured), and an INDENTED reassignment
+  # inside an arg-parsing branch is invisible to the anchored grep altogether. Both counts are taken
+  # from stripped text, so a mention inside a comment is not one of them.
+  ssh_opts_anchored="$(printf '%s\n' "$STRIPPED_SRC" | { grep -cE '^SSH_OPTS=' || true; })"
+  ssh_opts_any="$(printf '%s\n' "$STRIPPED_SRC" | { grep -cF 'SSH_OPTS=' || true; })"
+  (( ssh_opts_anchored == 1 && ssh_opts_any == 1 )) \
+    || err "$SCRIPT assigns SSH_OPTS $ssh_opts_any time(s) ($ssh_opts_anchored at the top level), and this check reads the first while bash obeys the last. Exactly one assignment, at the top level: a second one — appended below, or indented inside a branch — silently replaces the options every ssh in the file expands, with every assertion here still green. See decisions.md D78 §15."
   case "$SSH_OPTS_VALUE" in
     *BatchMode*) : ;;
     *) err "$SCRIPT's SSH_OPTS carries no BatchMode: '$SSH_OPTS_VALUE'. Part 5 bans an inline '-o BatchMode=yes' on the grounds that this array is where it is set, so dropping it here makes that ban a guard over nothing — and a deploy that stops halfway waiting for a passphrase is worse than one that does not start. See decisions.md D75 and D78 §9." ;;
@@ -239,11 +257,20 @@ else
   # THE COUNT IS DERIVED AND PRINTED, because the decision that shipped this listed thirteen LINE
   # NUMBERS and the next commit in the same branch moved every one of them (D78 §7, §14). A number a
   # tool prints on every run cannot rot; one written into a document can.
+  #
+  # WHAT THE FLOOR BELOW IS WORTH, STATED AT THE FLOOR because two documents quoted the line beside it
+  # as though the thirteen were COVERED rather than counted (third review's first note). It is nearly
+  # vacuous and is kept for the one thing it does catch: removing the expansion from any ELEVEN of the
+  # twelve — the health gate's own poll included, which is NEW-36's second half — leaves the count at
+  # two with nothing red, and exactly two is a real collapse to host_run's probe plus one that this
+  # passes. It counts LINES carrying the expansion, not invocations, so a future
+  # `local opts=("${SSH_OPTS[@]}")` inflates it. Per-site coverage is not available to a text matcher
+  # at all: that is backlog NEW-42, which executes the call sites instead of reading them.
   ssh_bounded="$(printf '%s\n' "$STRIPPED_SRC" | { grep -cF 'SSH_OPTS[@]}' || true; })"
   (( ssh_bounded >= 2 )) \
-    || err "$SCRIPT expands SSH_OPTS on $ssh_bounded line(s). host_run's own probe is one of them, so anything less than two means the deploy phase — the upload, the pull, the roll, the health gate's poll, the smoke probes, the rollback — has gone back to the TCP default. See decisions.md D78 §7."
+    || err "$SCRIPT expands SSH_OPTS on $ssh_bounded line(s) — a total collapse: host_run's own probe is one of them, so fewer than two means the whole deploy phase (the upload, the pull, the roll, the health gate's poll, the smoke probes, the rollback) has gone back to the TCP default. This floor does NOT establish that any particular one still expands it. See decisions.md D78 §7 and backlog NEW-42."
   [[ "$SSH_OPTS_VALUE" == *ConnectTimeout* && "$SSH_OPTS_VALUE" == *BatchMode* ]] \
-    && ok "SSH_OPTS carries both BatchMode and a ConnectTimeout, and all $ssh_bounded ssh/scp invocations that expand it are bounded"
+    && ok "SSH_OPTS carries both BatchMode and a ConnectTimeout, and $ssh_bounded lines expand it (a count, not per-site coverage — see NEW-42)"
 fi
 if (( fail )); then printf '\nhost probe attribution: FAILED\n'; exit 1; fi
 
@@ -737,6 +764,46 @@ printf '\n%s: the call sites\n' "$SCRIPT"
   (( batch == 0 )) \
     && ok "no probe builds its own ssh options — SSH_OPTS is the one place BatchMode and the timeout are set" \
     || err "$SCRIPT has $batch ssh invocation(s) spelling out their own '-o BatchMode=yes' rather than going through host_run and SSH_OPTS. Each is a probe whose failure cannot be attributed to a hop, and an ssh with no ConnectTimeout is a refusal that arrives minutes late or never. See decisions.md D75."
+  # ---- THE GATE'S TWO CALLERS, AND WHY THIS IS TEXTUAL -------------------------------------------
+  #
+  # BLOCKING FINDING OF THE THIRD REVIEW: swapping `health_gate rollback` for `health_gate deploy` in
+  # `rollback()` parsed and left this check AND its test at exit 0, both blind — so a gate exhausted
+  # from a revert told the operator *"NOTHING HAS BEEN ROLLED BACK, deliberately"* and offered
+  # `--rollback` after the rollback had just run. §14's own defect, through §14's own fix. The
+  # no-default guard sees an ABSENT argument, case 35 mutates `gate_exhausted`'s arm, and part 6
+  # drives the function with call strings THIS HARNESS writes — so nothing anywhere looked at what
+  # the program passes.
+  #
+  # It is asserted as TEXT here, and that is a stated compromise rather than the right answer: part 6
+  # cannot execute a call site at all, because it lifts functions instead of sourcing the script.
+  # Backlog **NEW-42** is that repair — stub `ssh`, `docker` and `run`, source the file, invoke the
+  # real `rollback()` and the real router branch — and it is the structural close for this whole
+  # "exact about the text, silent about the binding one step away" family. Until then: two greps, two
+  # mutation cases, and no claim that the program was run.
+  rb_body="$(printf '%s\n' "$stripped" | awk 'index($0, "rollback() {") == 1, /^\}/')"
+  if [[ -z "$rb_body" ]]; then
+    err "$SCRIPT declares no rollback() this check can read, so nothing establishes which phase it runs the health gate in. See decisions.md D78 §15."
+  else
+    case "$rb_body" in
+      *"health_gate rollback"*)
+        ok "rollback() runs the gate in the rollback phase, so its refusals do not offer a revert that has already happened" ;;
+      *health_gate*)
+        err "$SCRIPT's rollback() calls the health gate in the WRONG PHASE: '$(printf '%s\n' "$rb_body" | { grep -F health_gate || true; } | head -1)'. By the time that gate runs, .env has been restored and the stack rolled — so every refusal in gate_exhausted then says NOTHING HAS BEEN ROLLED BACK and offers \`--rollback\` as the remedy, in the one function every FAILED deploy reaches. The phase is a parameter precisely so this cannot be true, and part 6 drives the function with call strings the harness writes, so it cannot see this. See decisions.md D78 §14, §15 and backlog NEW-42." ;;
+      *)
+        err "$SCRIPT's rollback() no longer checks its own work with the health gate at all, so a revert that comes up broken is reported as a success. See decisions.md D78 §15." ;;
+    esac
+  fi
+  case "$stripped" in
+    *"if health_gate deploy && smoke_test"*)
+      ok "the deploy router runs the gate in the deploy phase" ;;
+    *"health_gate rollback && smoke_test"*)
+      err "$SCRIPT's deploy router runs the health gate in the ROLLBACK phase, so a deployment that fails its gate is told a revert has already been applied and that no further one is available — when in fact nothing has been reverted and \`rollback\` is about to run. See decisions.md D78 §14, §15 and backlog NEW-42." ;;
+    *"health_gate && smoke_test"*)
+      err "$SCRIPT's deploy router calls health_gate with no phase, which it refuses — so every deployment would die at the gate. See decisions.md D78 §14." ;;
+    *)
+      err "$SCRIPT's deploy router no longer reads 'if health_gate deploy && smoke_test', so this check cannot establish which phase a deployment's own gate runs in. Rename or restructure that branch and this check must be told. See decisions.md D78 §15." ;;
+  esac
+
   # Every site preflight asks about, by the question it asks. Enumerated, and that is acceptable
   # only because a site that is missing is an ERROR here rather than a skip: the whole point is that
   # a probe stopping short of host_run is invisible to parts 1 and 2.
@@ -794,10 +861,32 @@ if [[ ! -f "$PROD_COMPOSE" ]]; then
 # The ten lines FOLLOWING each `healthcheck:`, not an awk range: the obvious terminator
 # (`/^ *[a-z_]+:$/`) matches the `healthcheck:` line itself, so the range closed on its own first line
 # and the assertion reported the block missing on a correct tree. Caught by running it.
-elif ! awk '/^ *healthcheck:/ { n = 10; next } n-- > 0' "$PROD_COMPOSE" | grep -q '/management/health/readiness'; then
+#
+# COMMENTS IN THAT WINDOW ARE BLANKED FIRST — the THIRD comment-satisfies-a-guard on this branch, and
+# it arrived inside the commit repairing the second. Measured: replace every readiness path in the
+# prod compose with `/management/health` and add `# readiness (/management/health/readiness) dropped:
+# …` inside the window, and this printed `ok`. That is not a contrived edit — whoever weakens a
+# healthcheck writes down which path they removed.
+#
+# A LOCAL TWO-LINE AWK, DELIBERATELY NOT THE SHELL STRIPPER. This subject is YAML; `strip-sh-comments
+# .awk`'s contract is shell, and the house rule is explicit that a stripper which guesses its language
+# from the file is one missing case away from stripping neither. Its stated limit is the same one the
+# shell stripper carries: a `#` inside a quoted scalar truncates the line, which fails CLOSED (the
+# readiness path would stop matching and this guard would refuse a correct tree loudly). Nothing in
+# the window has one today, and if a healthcheck ever needs a `#` in its command the refusal will say
+# so rather than pass.
+elif ! awk '/^ *healthcheck:/ { n = 10; next } n-- > 0' "$PROD_COMPOSE" \
+       | awk '{ sub(/[[:space:]]*#.*$/, ""); print }' \
+       | grep -q '/management/health/readiness'; then
   err "$PROD_COMPOSE declares no healthcheck making the /management/health/readiness request, so docker's {{.Health}} column is blank for every service and gate_exhausted's blip arm can never fire. A host that goes away for one poll then reads as five services that failed, and the deploy reverts a healthy estate — which is backlog NEW-36's own harm, arriving through the premise of its fix. Every assertion in part 6 stays green either way, because the stub answers with a health column regardless. See decisions.md D78 §3 and §14."
+elif grep -qE '^ *disable: *true' "$PROD_COMPOSE"; then
+  # A PER-SERVICE OVERRIDE PUTS THE COLUMN BACK TO BLANK for that service with the anchor intact, so
+  # the guard above — which establishes that *a* healthcheck in this file requests readiness — is
+  # weaker than the sentence this repository writes about it ("every app service inherits it").
+  # Refused rather than stated, because one blank column is enough to make the blip arm mis-read.
+  err "$PROD_COMPOSE disables a healthcheck somewhere (\`disable: true\`). A service whose healthcheck is disabled reports a BLANK {{.Health}}, which gate_exhausted reads as unproven — so a host that blinks for one poll takes that service down the established-unready arm and the stack is reverted. The blip arm's premise is that all five inherit the same readiness check. See decisions.md D78 §3 and §15."
 else
-  ok "the prod compose still healthchecks readiness, so {{.Health}} is a second opinion rather than a blank column"
+  ok "the prod compose still healthchecks readiness, and disables it nowhere, so {{.Health}} is a second opinion rather than a blank column"
 fi
 # A REAL DIRECTORY, because every remote command in this script begins `cd '$REMOTE_PATH' && …` and
 # the shipped `cd` is part of what is being driven. Pointed at the default /srv/healthconnect, all

@@ -499,6 +499,92 @@ else
   grep '::error::' "$f.out" >&2 || true
 fi
 
+printf '\nThe gate'"'"'s two call sites — the binding nothing was looking at\n'
+# CASES 37 AND 38 ARE THE THIRD REVIEW'S BLOCKING FINDING. Both swaps parse, and against the previous
+# commit BOTH the check and this test exited 0 — the no-default guard sees only an absent argument,
+# case 35 mutates gate_exhausted's own arm, and part 6 drives the function with call strings THIS FILE
+# writes. So the phase mechanism was bound to the program by nothing at all, and case 37 restores
+# finding 2's defect exactly: a gate exhausted from a revert saying "NOTHING HAS BEEN ROLLED BACK" and
+# offering `--rollback` after the rollback has just run.
+f="$(fresh m37)"
+sed -i 's|^  health_gate rollback && ok "rolled back to \$prev"|  health_gate deploy \&\& ok "rolled back to $prev"|' "$f"
+expect_red "$f" "37  rollback() runs the gate in the deploy phase" \
+  'health_gate deploy && ok "rolled back to $prev"' 'health_gate rollback && ok' \
+  "calls the health gate in the WRONG PHASE"
+
+f="$(fresh m38)"
+sed -i 's|^if health_gate deploy && smoke_test; then$|if health_gate rollback \&\& smoke_test; then|' "$f"
+expect_red "$f" "38  the deploy router runs the gate in the rollback phase" \
+  'if health_gate rollback && smoke_test; then' 'if health_gate deploy && smoke_test; then' \
+  "runs the health gate in the ROLLBACK phase"
+
+printf '\nThe value behind the option name, and the assignment bash actually obeys\n'
+# CASE 39: the option's NAME with a zero default behind it — measured green before this round, and
+# printing "bounded" for an array that hands ssh ConnectTimeout=0 whenever the environment is unset.
+# The script's own declaration-time guard cannot see it: that guard validates ${HC_SSH_TIMEOUT:-8},
+# its OWN default, so the two defaults diverge with both green.
+f="$(fresh m39)"
+sed -i 's|ConnectTimeout=${HC_SSH_TIMEOUT:-8}|ConnectTimeout=${HC_SSH_TIMEOUT:-0}|' "$f"
+expect_red "$f" "39  the ConnectTimeout default changed to 0" \
+  'ConnectTimeout=${HC_SSH_TIMEOUT:-0}' 'ConnectTimeout=${HC_SSH_TIMEOUT:-8}' \
+  "names a ConnectTimeout whose value is not"
+
+# CASE 40: a SECOND top-level assignment. This check reads the first with `head -1`; bash obeys the
+# last. Appended immediately after the original, which is where a "temporary" edit goes.
+f="$(fresh m40)"
+awk '
+  /^SSH_OPTS=\(-o BatchMode=yes -o "ConnectTimeout=\$\{HC_SSH_TIMEOUT:-8\}"\)$/ {
+    print; print "SSH_OPTS=(-o BatchMode=yes) ## MUTATED-40"; next }
+  { print }' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+# THE ORIGINAL-IS-GONE CONTROL DOES NOT APPLY HERE and is passed empty deliberately: this mutation
+# ADDS a line rather than replacing one, so the original must still be present — that is the whole
+# point of it. The mutation-applied control is the marker grep.
+expect_red "$f" "40  a second SSH_OPTS assignment, which bash obeys and head -1 never sees" \
+  'SSH_OPTS=(-o BatchMode=yes) ## MUTATED-40' '' \
+  "and this check reads the first while bash obeys the last"
+
+printf '\nThe compose premise, and the comment that satisfied its guard\n'
+# CASE 41: the third comment-satisfies-a-guard on this branch, and the most realistic of them —
+# whoever weakens a healthcheck writes down which path they removed. Measured green before this round.
+f="$(fresh m41)"
+cp "$ROOT/deploy/docker/docker-compose.prod.yml" "$WORK/m41-compose.yml"
+sed -i 's|/management/health/readiness|/management/health|' "$WORK/m41-compose.yml"
+awk '
+  /^ *healthcheck:/ { print; print "    # readiness (/management/health/readiness) dropped: it flapped on slow disks"; next }
+  { print }' "$WORK/m41-compose.yml" > "$WORK/m41-compose.tmp" && mv "$WORK/m41-compose.tmp" "$WORK/m41-compose.yml"
+if ! grep -q '/management/health/readiness' "$WORK/m41-compose.yml"; then
+  bad "41  the readiness path survives only in a comment — the mutation did not apply (the path is gone entirely)"
+elif grep -qE "^ +- 'exec 3<>/dev/tcp.*readiness" "$WORK/m41-compose.yml"; then
+  bad "41  the readiness path survives only in a comment — the mutation did not apply (a real test still requests it)"
+elif run_check "$f" HC_PROD_COMPOSE="$WORK/m41-compose.yml"; then
+  bad "41  the readiness path survives only in a comment — the check PASSED, so a YAML comment satisfies the premise guard"
+  sed -n '1,40p' "$f.out" >&2
+elif grep -qF 'declares no healthcheck making the /management/health/readiness request' "$f.out"; then
+  note "41  the readiness path survives only in a comment → red"
+else
+  bad "41  the readiness path survives only in a comment — red, but not through the door it was aimed at"
+  grep '::error::' "$f.out" >&2 || true
+fi
+
+# CASE 42: the healthcheck disabled per service with the anchor intact — a blank {{.Health}} for that
+# service, which gate_exhausted reads as unproven, so a blink takes it down the rollback arm.
+f="$(fresh m42)"
+cp "$ROOT/deploy/docker/docker-compose.prod.yml" "$WORK/m42-compose.yml"
+awk '
+  /^  hc-market-payout:$/ { print; print "    healthcheck:"; print "      disable: true"; next }
+  { print }' "$WORK/m42-compose.yml" > "$WORK/m42-compose.tmp" && mv "$WORK/m42-compose.tmp" "$WORK/m42-compose.yml"
+if ! grep -qE '^ *disable: *true' "$WORK/m42-compose.yml"; then
+  bad "42  one service's healthcheck disabled — the mutation did not apply"
+elif run_check "$f" HC_PROD_COMPOSE="$WORK/m42-compose.yml"; then
+  bad "42  one service's healthcheck disabled — the check PASSED, so the premise is 'a healthcheck somewhere' rather than 'every service'"
+  sed -n '1,40p' "$f.out" >&2
+elif grep -qF 'disables a healthcheck somewhere' "$f.out"; then
+  note "42  one service's healthcheck disabled → red"
+else
+  bad "42  one service's healthcheck disabled — red, but not through the door it was aimed at"
+  grep '::error::' "$f.out" >&2 || true
+fi
+
 # THE ONE CASE THAT MUTATES THE CHECK'S OWN INSTRUMENT rather than the subject. Absent the shell
 # stripper, part 5 reads empty text: every `grep -F` finds nothing, so every site is reported
 # missing and — before the guard — every count came back 0, which reads as "no bare ssh anywhere".
