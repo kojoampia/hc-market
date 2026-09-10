@@ -172,15 +172,43 @@ same line, which fails loudly against a dead daemon: **measured**, `rc=1` and *"
 the docker API at unix:///nonexistent"*. A poll may fold; **a poll whose exhaustion is fatal needs
 something beside it that cannot**.
 
-Five instances of the shape have now been found here, over **three kinds of docker object** — a
-container's aliases on a network (D68), a container's networks (D69 and D71, one copy each) and a
-network's existence (D71, both copies) — and a **sixth** is open as **NEW-33**, in `deploy-prod.sh`,
-where one message covers four outcomes across an ssh hop. **Count the list, not the number**: this
-sentence read "four docker objects" over that three-kind list, in the very commit whose decision
+**`deploy-prod.sh`'s health gate is that edge with nothing beside it, and it is open as NEW-36** (D75
+§6). Its 24 polls fold correctly and its exhaustion `warn`s and then falls through to `rollback`, so a
+host that goes away mid-deploy names five healthy services as unhealthy and rolls the stack back. It
+was deliberately left alone: a status check inside the loop makes a one-second flake fatal, and the
+repair — one attributing probe *after* the loop, now that `host_run` is in the file — is a decision
+rather than a line.
+
+Instances of the shape have been found here over **three kinds of docker object** — a container's
+aliases on a network (D68), a container's networks (D69 and D71, one copy each) and a network's
+existence (D71, both copies, and **D75** in `deploy-prod.sh` across an ssh hop, closing NEW-33). So
+D75 is not a fourth *object*; it is the third one asked over two hops, which is what made it need a
+mechanism rather than D71's four lines. **Count the list, not the number**: this
+sentence read "four docker objects" over a three-kind list, in the very commit whose decision
 corrected the same defect in a CI header (D71 §8) — and the backlog counts the same family a third way
 again, by *instance*, which is why each statement now says which it is counting.
 `quality/startup.sh` stated the rule in `project_volumes`' header and broke it four hundred lines up,
 in the same file.
+
+**The `deploy-prod.sh` one is the only member with TWO hops, and it needed a different mechanism**
+(D75). `ssh` exits **255** when it cannot connect and otherwise exits with the **remote command's**
+status, so a remote `exit 255` is indistinguishable from ssh never arriving and no status check
+separates them — measured, OpenSSH 10.2p1, against real throwaway targets. Every remote probe there
+goes through `host_run`, which appends a sentinel line to the far side's command in a subshell, and the
+**presence of that line** — never an exit code — is what establishes which hop answered. Five outcomes
+where there was one message: ssh not reaching a shell (with a remedy chosen from ssh's own stderr,
+which is produced by the *local* client and is therefore measurable), no `docker` on the host (**127**),
+the network absent (D71's two-literal match), the daemon unanswerable, and present. **`$net_hint` is
+printed on the absence arm alone** — not even quoted to say it does not apply, because the check
+guarding the unanswerable arm goes red on the negation.
+**Six probes route through it, not one**: the arm an operator reaches *first* was the ssh-and-compose
+gate 130 lines above, whose message was an explicit *"cannot reach $HOST over ssh, **or** compose v2 is
+missing"*, and `grep`'s **2** for an unreadable `secrets.env`, the data tier's uncheckable
+`| grep -c … || true`, and `rollback`'s `|| true` were each folding a fact of their own.
+`.github/checks/host-probe-attribution.sh` drives the shipped functions against a stub that **runs**
+the wrapped script it is handed, so the sentinel it reads is the shipped code's; its test constructs
+fourteen broken states. **`deploy-prod.sh` has still never run against a host** (D49) — what ran against
+a real ssh, a real remote shell and a real daemon is the mechanism, lifted out by `awk`.
 
 Only the host mapping moves. Inside the containers every service listens on **8080**, because the
 compose files set `SERVER_PORT: 8080` explicitly — overriding the per-service `serverPort` the JDL

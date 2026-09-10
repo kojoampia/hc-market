@@ -44,6 +44,12 @@
 #  Optional:
 #     HC_PUBLIC_URL                 what the smoke test asks (default https://market.abofonsa.com)
 #     HC_SMOKE_MIN_PROFESSIONALS    minimum catalogue count the smoke test will accept (default 0)
+#     HC_SSH_TIMEOUT                seconds ssh will spend connecting, per probe (default 8)
+#
+#  That last one bounds the CONNECT, not the remote command, and it is the value the ssh check has
+#  always carried — now applied to every remote probe, because an unbounded connect means a refusal
+#  that never arrives, and a message nobody waits for is the same as no message. See host_run and
+#  decisions.md D75.
 #
 #  Optional ON THE HOST, in $REMOTE_PATH/secrets.env or .env — the founding brokerage terms
 #  (decisions.md D57, backlog NEW-18). All five may be left unset and an estate that sets none is
@@ -293,6 +299,117 @@ compose_names() { local out=() n; for n in "${SERVICES[@]}"; do out+=("$(compose
 
 # ------------------------------------------------------------------ preflight --
 require() { command -v "$1" >/dev/null 2>&1 || die "$1 is required but not on PATH"; }
+
+# ---- ASKING THE HOST SOMETHING, AND ESTABLISHING WHICH HOP ANSWERED -------------------------------
+#
+# EVERY REMOTE PROBE IN PREFLIGHT GOES THROUGH host_run, and it exists because one message covered
+# five outcomes (decisions.md D75, backlog NEW-33). The host-network check was
+#
+#     ssh -o BatchMode=yes "$HOST" "docker network inspect $net >/dev/null 2>&1" \
+#       || die "the '$net' network does not exist on $HOST. $net_hint"
+#
+# and $net_hint told the reader to go and create the network or start the owning stack. That is right
+# for exactly one of the outcomes: ssh not reaching the host, ssh being refused, no docker on the
+# host, a daemon that could not be asked, and the network genuinely being absent all produced it —
+# and across a network the first two are the likeliest. It asks about the same docker object D71's
+# first arm does — whether a network exists — and it is the family's first member with TWO HOPS in
+# it, which is why it needed a mechanism rather than D71's four lines. D68 fix 2, D69 §10 and D71
+# closed the earlier members; count the list and not the number, and each document says which of
+# instances, object kinds and occasions it is counting.
+#
+# THE SENTINEL IS THE WHOLE MECHANISM, and it is there because a status cannot do this job.
+# MEASURED, OpenSSH 10.2p1, against throwaway targets on this workstation: ssh exits **255** when it
+# cannot connect (unresolvable name, refused port, timed-out connect, host key mismatch, key refused
+# under BatchMode) and otherwise exits with the REMOTE command's status — so `exit 255` on the far
+# side is indistinguishable from ssh never getting there. Two round trips would not fix it either:
+# a host that becomes unreachable between them is a state neither probe saw, and this runs three
+# times in a loop. So the remote command announces its own status on its own line, and the presence
+# of that line — not any exit code — is what establishes that a shell on the host ran anything at
+# all. D74's rule, one protocol along: establish who answered from the answer naming the question.
+#
+# BOTH STREAMS ARE CAPTURED, as in D71's arms and for the same reason: docker exits 1 both for a
+# network that is absent and for a daemon that cannot be asked, printing `[]` on stdout for both
+# (re-derived here on docker 29.8.0, through a real ssh, rather than taken from D71 — which itself
+# carries a §7 for a claim that was wrong). Only the message tells them apart. This also means
+# ssh's own words are available for the hop it failed at, which is what ssh_hint reads.
+HOST_SENTINEL="__hc_remote_status__"
+HOST_STATUS=0
+HOST_OUTPUT=""
+# BatchMode is deliberate and is NOT a candidate for "just let it prompt": a deploy that stops
+# halfway waiting for a passphrase is worse than one that does not start. The timeout is the value
+# the ssh check has always carried, now applied to every probe — an unbounded connect means the
+# refusal never arrives, and a message nobody waits for is the same as no message.
+SSH_OPTS=(-o BatchMode=yes -o "ConnectTimeout=${HC_SSH_TIMEOUT:-8}")
+# What to tell an operator whose ssh never reached a shell. The CAUSE is established by the missing
+# sentinel; this only chooses the remedy, from ssh's own stderr — and it degrades to the generic arm
+# if a future OpenSSH words one of them differently, which leaves the cause correct and the advice
+# merely unspecific. That is the direction to fail in: the message quotes what ssh actually said
+# either way. Every branch below was measured on this workstation against a throwaway target.
+#
+# NOTE THE ASYMMETRY WITH THE REMOTE HALF, because it is the honest part of this. The ssh client is
+# LOCAL — its words are produced by the same binary a deploy would use — so keying on them is a
+# measurement. What a production host's docker says is not measurable from here (decisions.md D49:
+# nothing in that path has ever run against a host), which is why the remote arms key on a status
+# the remote shell reports, plus D71's already-measured two-literal absence match, and never on
+# prose nobody here has read.
+ssh_hint() {
+  case "$1" in
+    *"Could not resolve hostname"*)
+      printf 'That name does not resolve here. HC_PROD_HOST is an ssh TARGET — `webserver`, the alias every sibling stack uses, or an entry in ~/.ssh/config — not a URL and not the site hostname.' ;;
+    *"Connection refused"*|*"onnection timed out"*|*"No route to host"*|*"Network is unreachable"*)
+      printf 'The name resolved and nothing answered on the ssh port: the host is down, the port is closed, or you are not on a network that can reach it. None of that is about this stack.' ;;
+    *"Host key verification failed"*|*"REMOTE HOST IDENTIFICATION HAS CHANGED"*|*"o matching host key"*)
+      printf 'Something answered and ssh refused it — the key it presented is not the one ~/.ssh/known_hosts records for this target. Establish WHY before removing the entry: a rebuilt host and an interception look identical from here.' ;;
+    *"Permission denied"*|*"Too many authentication failures"*)
+      printf 'The host answered and refused the key. This script never prompts (BatchMode=yes), so an agent holding the key must be running — check `ssh-add -l` — or the identity must be named for this target in ~/.ssh/config.' ;;
+    *) printf 'ssh printed its own reason above. Nothing on the host was asked, so nothing about the stack there is established either way.' ;;
+  esac
+}
+# host_run <what is being asked, for the refusal> <sh to run on the host>
+#
+# Sets HOST_STATUS to the REMOTE command's own status and HOST_OUTPUT to everything the far side
+# printed on either stream. Dies itself — with one message, at every call site — when ssh did not
+# reach a shell, because that cause and its remedy are the same wherever it is asked from; the
+# `asking` clause is the only part that differs, and it is the fact the sentence carries about its
+# own site (decisions.md D69 §5's discriminator, applied to a helper). It deliberately carries no
+# advice about the stack: a remedy printed against the wrong cause is the whole of NEW-33.
+#
+# The sentinel line is printed with a LEADING newline, so it is always a line of its own even when
+# the remote command's last write had none — otherwise the status would be appended to a line of
+# output and that line would then be stripped with it.
+#
+# THE PROBE IS RUN IN A SUBSHELL ON THE FAR SIDE, and that is not decoration: without the
+# parentheses a remote command containing `exit` terminates the remote shell before the sentinel is
+# printed, and host_run then reports an ssh that never arrived for a command that ran perfectly.
+# None of the six probes below says `exit` — this was found by driving the shipped function with one
+# that did — so what the wrap buys is that the seventh cannot reintroduce NEW-33 by accident.
+host_run() {
+  local asking="$1" wrapped raw="" line said
+  HOST_STATUS=0; HOST_OUTPUT=""
+  wrapped="($2"$'\n'')'$'\n''printf "\n%s %s\n" "'"$HOST_SENTINEL"'" "$?"'
+  raw="$(ssh "${SSH_OPTS[@]}" "$HOST" "$wrapped" 2>&1)" || true
+  # `|| true` on the grep, not tidiness: `set -Eeuo pipefail` is on, an unmatched grep exits 1, and
+  # the substitution would then abort the script through the ERR trap — with the ssh diagnosis this
+  # function exists to print never reaching anybody. Not matching IS the answer here.
+  line="$(printf '%s\n' "$raw" | { grep -F "$HOST_SENTINEL " || true; } | tail -1)"
+  if [[ -z "$line" ]]; then
+    said="$(printf '%s' "$raw" | tr '\n' ' ')"
+    die "could not $asking — ssh did not reach a shell on $HOST at all, so NOTHING about the stack there was established, least of all that anything is missing. $(ssh_hint "$raw") ssh said: ${said:-«nothing at all»}"
+  fi
+  HOST_STATUS="${line##* }"
+  # A sentinel whose status is not a number means the far side is not doing what this function
+  # assumes — refuse rather than fall through, because every caller below branches on it and a
+  # non-numeric value would take the `*)` arm and be reported as the remote command failing.
+  [[ "$HOST_STATUS" =~ ^[0-9]+$ ]] \
+    || die "could not $asking — $HOST answered with a status this script cannot read ('$line'). Nothing about the stack there is established."
+  HOST_OUTPUT="$(printf '%s\n' "$raw" | { grep -vF "$HOST_SENTINEL " || true; })"
+}
+# 127 is the shell's status for a command it cannot find (POSIX, and measured here through a real
+# ssh with PATH emptied: `bash: line 1: docker: command not found`). It is keyed on the STATUS and
+# not on that sentence, because the wording belongs to whichever shell the host runs.
+no_docker_on_host() {
+  die "ssh reached $HOST and there is no \`docker\` command there — $HOST_OUTPUT. This script deploys applications onto a host that already runs docker and compose v2; it does not install either. Nothing about the stack on that host is established, and in particular this is NOT a missing network or a stopped service."
+}
 # What to tell an operator who is missing one of them. The pepper's advice is not the signing key's:
 # a wrong signing key signs everybody out and can be corrected, while a wrong pepper is written into
 # rows in place and nothing re-keys them (decisions.md D35).
@@ -381,13 +498,27 @@ preflight() {
     fi
   fi
 
+  # THIS IS THE ARM AN OPERATOR REACHES FIRST, so it is fixed here rather than left for NEW-33's own
+  # line further down — D71 §2's finding, one script along. Its message was an explicit two-way fold
+  # ("cannot reach $HOST over ssh, OR docker compose v2 is missing there"), and it fires BEFORE the
+  # network loop: repairing only the loop would have shipped a preflight whose first refusal names
+  # two causes and whose fourth names one.
+  #
+  # `ok "host reachable"` claims less than it reads, and that is worth knowing before trusting it:
+  # measured through a real ssh, `docker compose version` answers 0 with `DOCKER_HOST` pointed at a
+  # socket that does not exist. It establishes ssh, a docker CLI and the compose v2 plugin — and
+  # NOT that a daemon will answer. The network loop below is where the daemon is first asked, which
+  # is why its "could not be asked" arm is a live path rather than a theoretical one.
   log "checking ssh to $HOST"
   if (( DRY_RUN )); then
     skipped "would check ssh to $HOST — NOT contacted"
   else
-    ssh -o BatchMode=yes -o ConnectTimeout=8 "$HOST" 'docker compose version >/dev/null' \
-      || die "cannot reach $HOST over ssh, or docker compose v2 is missing there"
-    ok "host reachable"
+    host_run "reach $HOST over ssh" 'docker compose version >/dev/null'
+    case "$HOST_STATUS" in
+      0)   ok "host reachable — ssh works and docker compose v2 answers there" ;;
+      127) no_docker_on_host ;;
+      *)   die "ssh reached $HOST and \`docker compose version\` failed there (exit $HOST_STATUS): $HOST_OUTPUT. The host is reachable and the credential works; what is missing is compose v2 beside the docker CLI. Every remote command below is a \`docker compose\` invocation." ;;
+    esac
   fi
 
   # The two secrets docker-compose.prod.yml requires with `:?`. Checked HERE, before the stack is
@@ -404,12 +535,28 @@ preflight() {
     skipped "would confirm $REMOTE_PATH/$SECRETS_FILE holds all ${#SECRET_KEYS[@]} secrets and ${#CONNECTION_KEYS[@]} connection values — NOT contacted"
     for v in "${SECRET_KEYS[@]}" "${CONNECTION_KEYS[@]}"; do skipped "  $v"; done
   else
-    ssh -o BatchMode=yes "$HOST" "test -s '$REMOTE_PATH/$SECRETS_FILE'" \
-      || die "$HOST:$REMOTE_PATH/$SECRETS_FILE is missing or empty. It holds the estate's long-lived secrets (${SECRET_KEYS[*]}) and the five stores' connection values, it is created once by hand, and this script deliberately never writes it — see the header for the exact command and deploy/prod-server/secrets.env.example for the template. Without it every service refuses to start on the compose file's own :? checks."
+    # BOTH OF THESE ASSERTED AN ABSENCE FROM A DISCARDED SSH STATUS, exactly as the network loop did:
+    # an ssh that never arrived was reported as "secrets.env is missing" and then as "$v is not set",
+    # for all twelve, which sends an operator to a file that is fine. `test -s` folding "missing" and
+    # "empty" together is deliberate and stays — that is one remedy stated as a disjunction, not a
+    # cause asserted (decisions.md D75, and D71 §5 on what the rule is actually about).
+    host_run "read $REMOTE_PATH/$SECRETS_FILE on $HOST" "test -s '$REMOTE_PATH/$SECRETS_FILE'"
+    case "$HOST_STATUS" in
+      0) : ;;
+      1) die "$HOST:$REMOTE_PATH/$SECRETS_FILE is missing or empty. It holds the estate's long-lived secrets (${SECRET_KEYS[*]}) and the five stores' connection values, it is created once by hand, and this script deliberately never writes it — see the header for the exact command and deploy/prod-server/secrets.env.example for the template. Without it every service refuses to start on the compose file's own :? checks." ;;
+      *) die "whether $HOST:$REMOTE_PATH/$SECRETS_FILE is there could not be established — the check itself failed on the host (exit $HOST_STATUS): $HOST_OUTPUT. This is not a statement about the file." ;;
+    esac
     for v in "${SECRET_KEYS[@]}" "${CONNECTION_KEYS[@]}"; do
-      ssh -o BatchMode=yes "$HOST" "grep -qE '^[[:space:]]*$v=.' '$REMOTE_PATH/$SECRETS_FILE'" \
-        || die "$v is not set in $HOST:$REMOTE_PATH/$SECRETS_FILE. $(secret_hint "$v")"
-      ok "$v present"
+      host_run "look for $v in $REMOTE_PATH/$SECRETS_FILE on $HOST" \
+        "grep -qE '^[[:space:]]*$v=.' '$REMOTE_PATH/$SECRETS_FILE'"
+      case "$HOST_STATUS" in
+        0) ok "$v present" ;;
+        1) die "$v is not set in $HOST:$REMOTE_PATH/$SECRETS_FILE. $(secret_hint "$v")" ;;
+        # grep answers 2 for a file it cannot READ, which is a live state for a 0600 file owned by
+        # somebody else — measured at 2 with `No such file or directory` through a real ssh. Reported
+        # as "$v is not set" it reads as a value to add to a file the operator cannot open.
+        *) die "$HOST:$REMOTE_PATH/$SECRETS_FILE could not be read while looking for $v (grep exit $HOST_STATUS): $HOST_OUTPUT. Nothing is established about $v, or about the ${#SECRET_KEYS[@]} secrets and ${#CONNECTION_KEYS[@]} connection values beside it — check the file's ownership and mode for the account this ssh authenticates as." ;;
+      esac
     done
   fi
 
@@ -432,17 +579,47 @@ preflight() {
   # delete the network line -- and for `monitoring` that "fix" is silent: the stack comes up
   # healthy, serves correctly, and never reports another span. For hcmarketnet it is not silent at
   # all, which is the easier failure: five services that cannot resolve a datasource host.
+  # NEW-33's OWN LINE. `$net_hint` is right for exactly ONE of the outcomes this used to fold, and
+  # actively wrong for the others — it tells the reader to create a network or start a stack, which
+  # is no remedy at all for an ssh that never arrived or a daemon that could not be asked. So it is
+  # printed on the absence arm and nowhere else, which is the same call D71 §3 made about `$fix`.
+  #
+  # THE ABSENCE MATCH IS D71's, VERBATIM AND FOR ITS MEASURED REASON: `Error response from daemon`
+  # AND `not found`, in that order. Re-derived here on docker 29.8.0 through a real ssh rather than
+  # inherited — absent network and unanswerable daemon both exit 1 and both print `[]` on stdout,
+  # differing only in the sentence, so a status check alone would produce a refusal that is honest
+  # about *whether* it knows and silent about *what* it knows. Requiring the sentence only a daemon
+  # that ANSWERED can produce is what stops the other direction: `not found` on its own is carried
+  # by a CLI with no daemon behind it, and reported as an absent network that is NEW-33's cost
+  # arriving through NEW-33's fix.
+  #
+  # It fails closed the other way — a future daemon wording an absence differently routes to "could
+  # not be asked", which is the wrong cause and still stops the deploy.
   log "checking host networks"
   for net in "${HC_NETWORK:-infranet}" "${HC_DATA_NETWORK:-hcmarketnet}" "${HC_MONITORING_NETWORK:-monitoring}"; do
-    (( DRY_RUN )) && { printf '%s  [dry-run] docker network inspect %s%s\n' "$c_dim" "$net" "$c_reset"; continue; }
+    (( DRY_RUN )) && { skipped "would ask $HOST whether the '$net' network exists — NOT contacted"; continue; }
     if [[ "$net" == "${HC_DATA_NETWORK:-hcmarketnet}" ]]; then
       net_hint="It is hc-market's own and carries the five databases. Create it once on the host with \`cd $REMOTE_PATH && ./infra.sh\` — see deploy/prod-server/README.md."
     else
       net_hint="It is host-wide and this stack does not create it — start the owning stack first (~/webroot/00-infrastructure for infranet, ~/webroot/02-monitoring for monitoring)."
     fi
-    ssh -o BatchMode=yes "$HOST" "docker network inspect $net >/dev/null 2>&1" \
-      || die "the '$net' network does not exist on $HOST. $net_hint Do NOT drop it from docker-compose.prod.yml."
-    ok "network $net present"
+    host_run "ask $HOST whether the '$net' network exists" "docker network inspect '$net'"
+    if (( HOST_STATUS == 0 )); then
+      ok "network $net present"
+      continue
+    fi
+    (( HOST_STATUS == 127 )) && no_docker_on_host
+    case "$HOST_OUTPUT" in
+      *"Error response from daemon"*"not found"*)
+        die "the '$net' network does not exist on $HOST. $net_hint Do NOT drop it from docker-compose.prod.yml." ;;
+      *)
+        # THIS SENTENCE DELIBERATELY DOES NOT QUOTE THE OTHER ARM'S REMEDY, not even to say it does
+        # not apply. It read "…starting a plane or running ./infra.sh is not the remedy" first, and
+        # the check guarding this arm — which refuses a message carrying the absence arm's advice —
+        # went red on the negation. A refusal that names a command an operator should not run is one
+        # they will run.
+        die "docker could not be asked whether the '$net' network exists on $HOST, so whether this stack can join it is unestablished. This is NOT a statement that the network is missing, and the remedy on the absence arm above is not the remedy here: $HOST_OUTPUT" ;;
+    esac
   done
 
   # AND THE FIVE STORES, WHICH ARE A DIFFERENT COMPOSE PROJECT AND THEREFORE INVISIBLE TO EVERYTHING
@@ -463,11 +640,21 @@ preflight() {
   if (( DRY_RUN )); then
     skipped "would confirm all $DATA_STORE_COUNT stores in $REMOTE_PATH/$DATA_COMPOSE_FILE are running — NOT contacted"
   else
+    # THE COUNT IS DONE HERE, NOT ON THE HOST, and that is the whole of this hunk. The remote
+    # pipeline was `ps -a … 2>/dev/null | grep -c ' running$' || true`, which cannot fail: compose's
+    # error went to /dev/null, the status was grep's and then discarded, and `[[ =~ ]] || running=0`
+    # turned every remaining failure into the number 0. So a wrong --path, a missing
+    # data-compose.yml, an unanswerable daemon and an ssh that never arrived all read as
+    # "0 of 5 stores running" — a message about a data tier, for four things that are not one.
     local running
-    running="$(ssh -o BatchMode=yes "$HOST" \
-      "cd '$REMOTE_PATH' && docker compose --env-file '$SECRETS_FILE' -f '$DATA_COMPOSE_FILE' ps -a \
-         --format '{{.Service}} {{.State}}' 2>/dev/null | grep -c ' running\$' || true")"
-    [[ "$running" =~ ^[0-9]+$ ]] || running=0
+    host_run "ask docker compose about the data tier on $HOST" \
+      "cd '$REMOTE_PATH' && docker compose --env-file '$SECRETS_FILE' -f '$DATA_COMPOSE_FILE' ps -a --format '{{.Service}} {{.State}}'"
+    if (( HOST_STATUS != 0 )); then
+      (( HOST_STATUS == 127 )) && no_docker_on_host
+      die "docker compose could not be asked about the data tier on $HOST (exit $HOST_STATUS): $HOST_OUTPUT. Nothing is established about the five stores — this is not a report that they are down. Check --path (currently $REMOTE_PATH), that $DATA_COMPOSE_FILE is there under that name, and that the daemon is answering; see deploy/prod-server/README.md."
+    fi
+    # `|| true` because `grep -c` exits 1 when it counts none, and 0 is the answer being asked for.
+    running="$(printf '%s\n' "$HOST_OUTPUT" | { grep -c ' running$' || true; })"
     (( running == DATA_STORE_COUNT )) \
       || die "the data tier is not up on $HOST — $running of $DATA_STORE_COUNT stores running in $REMOTE_PATH/$DATA_COMPOSE_FILE. This stack deploys applications and never provisions a database; the stores are installed once and started with \`cd $REMOTE_PATH && ./start\`. Deploying now would roll five services onto databases that are not there, fail Liquibase in all of them, and roll back. See deploy/prod-server/README.md."
     ok "data tier up — $running stores running"
@@ -782,8 +969,21 @@ rollback() {
     skipped "would roll the stack back to that tag and re-run the health gate"
     return 0
   fi
+  # ROUTED THROUGH host_run FOR THE SAME REASON AS PREFLIGHT'S FIVE (decisions.md D75). `|| true` on
+  # an ssh whose answer is then tested for emptiness makes an unreachable host indistinguishable from
+  # a first deploy — and this function is where every FAILED deploy lands, so it is the worst place in
+  # the file to be told to go and look for a .env.previous that is sitting there intact. The status is
+  # `cut`'s and therefore 0 even when grep matched nothing, which is why the discriminator here is the
+  # OUTPUT rather than the status: empty means no HC_TAG line, and host_run has already refused if no
+  # shell ran at all.
   local prev
-  prev="$(ssh "$HOST" "cd '$REMOTE_PATH' && grep -m1 '^HC_TAG=' .env.previous 2>/dev/null | cut -d= -f2" || true)"
+  host_run "read the previous tag from $REMOTE_PATH/.env.previous on $HOST" \
+    "cd '$REMOTE_PATH' && grep -m1 '^HC_TAG=' .env.previous 2>/dev/null | cut -d= -f2"
+  # A non-zero status here is `cd` refusing the directory, not an absent file — reported as "no
+  # previous deployment recorded" that is a wrong --path wearing a fact about the estate's history.
+  (( HOST_STATUS == 0 )) \
+    || die "the previous tag could not be read on $HOST (exit $HOST_STATUS): $HOST_OUTPUT. Nothing has been rolled back and nothing about this estate's deployment history is established — check --path, which is currently $REMOTE_PATH."
+  prev="$(printf '%s' "$HOST_OUTPUT" | tr -d '[:space:]')"
   # THE FIRST DEPLOY HAS NO PREVIOUS ONE, and this is the path it reaches when its gates fail. Say
   # what state the host is in rather than only what could not be done: the stack is still running
   # whatever was just rolled onto it, nothing has been reverted, and the operator's next move is to

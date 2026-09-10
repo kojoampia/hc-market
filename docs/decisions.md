@@ -12491,3 +12491,361 @@ deployed anywhere, so the window is theoretical rather than open.
 **Fourteen mutations now, and the tally is what the report says rather than a number to trust**: eleven
 red, three green. The three are `hasAuthority` widened, `denyAll` deleted (both §3, guarded by the grep)
 and the negative-span term (unreachable, guarded by nothing and documented as such).
+
+---
+
+## D75 — Which hop failed, and the sentinel that answers it
+
+**Ratified 2026-09-10.** Closes backlog **NEW-33**, opened by **D71 §6** as an explicit loser. Opens
+**NEW-36**. Authorised by **D72 §2**: the production path stays halted — no deploy, no `--host`, no
+credential, no ssh to the production host — and code fixes to `deploy-prod.sh` are authorised,
+verified by lifting functions against stubs.
+
+**`main` ends at D74, the backlog's highest item is NEW-35, and `gh pr list --state open` answers
+nothing** — all three re-checked at `fabb959` rather than taken from the brief, which is this
+document's rule for its own numbering.
+
+`deploy/deploy-prod.sh`'s host-network preflight was
+
+```
+ssh -o BatchMode=yes "$HOST" "docker network inspect $net >/dev/null 2>&1" \
+  || die "the '$net' network does not exist on $HOST. $net_hint Do NOT drop it from docker-compose.prod.yml."
+```
+
+with `$net_hint` telling the reader to create the network or start the stack that owns it. That is the
+remedy for exactly one of the outcomes that reached it, and it ran three times in a loop. It is the
+**sixth** instance of the family D68 fix 2, D69 §10 and D71 have each closed a copy of, and the first
+with **two hops** in it.
+
+### §1 What was established, and how — and this one was measured against a real ssh
+
+Every row below was read off this workstation. `deploy-prod.sh` was **not run against any host**; the
+only production-path invocation was `--dry-run` with no `HC_PROD_HOST`, which stops at *"no target
+host"*. What made this different from D66, D69 and D71 — all of which had to say "the guard has never
+run inside its own script" — is that **the two hops can be built locally**: a user-owned `sshd` on
+port 22222 in a throwaway directory, with three authorized keys carrying different
+`environment=` options, gives a real ssh, a real remote shell and a real docker daemon, with the
+remote state selected by which key the client offers.
+
+**The ssh half. All five states exit 255, and the sentences differ** (OpenSSH 10.2p1, real targets):
+
+| state | rc | ssh's own words |
+| --- | --- | --- |
+| name does not resolve | **255** | `ssh: Could not resolve hostname nonexistent.invalid: Name or service not known` |
+| nothing listening | **255** | `ssh: connect to host 127.0.0.1 port 1: Connection refused` |
+| blackholed address | **255** | `ssh: connect to host 192.0.2.1 port 22: Connection timed out` |
+| host key mismatch | **255** | `Host key verification failed.` (after the banner) |
+| key refused under `BatchMode` | **255** | `kojo@localhost: Permission denied (publickey,password).` |
+| **connected, remote `exit 7`** | **7** | — |
+| **connected, remote `exit 255`** | **255** | — |
+
+The last two rows are the finding. **ssh's status is the remote command's when it connects at all**,
+so a remote command exiting 255 is *indistinguishable by status* from ssh never arriving. The item
+suspected "status alone conflates less than you might hope"; measured, it conflates exactly the case
+that matters, and no amount of status reading fixes it.
+
+**The remote half, through that real ssh, against docker 29.8.0:**
+
+| state | rc | output |
+| --- | --- | --- |
+| network present | 0 | — |
+| network absent | **1** | `[]` on **stdout**, `Error response from daemon: network X not found` on stderr |
+| daemon unanswerable (`DOCKER_HOST=unix:///nonexistent`) | **1** | `[]` on **stdout**, `failed to connect to the docker API at unix:///nonexistent…` |
+| no docker on `PATH` | **127** | `bash: line 1: docker: command not found` |
+| `grep -qE` on an unreadable file | **2** | `grep: …: No such file or directory` |
+| `cd` into a missing directory | 1 | `bash: line 1: cd: …: No such file or directory` |
+| `docker compose version` with the daemon unanswerable | **0** | `Docker Compose version v5.5.1` |
+
+Rows 2 and 3 **re-derive D71's measurement independently** rather than inheriting it — D71 carries a
+§7 for a claim of its own that was wrong, so its numbers are evidence and not authority. Same answer,
+one docker version along.
+
+**The defect reproduced, at `fabb959`, with the same instrument.** The shipped loop lifted out by
+`awk` and driven through the real ssh: an absent network, an unanswerable daemon, a host with no
+docker, an unreachable host and a host that refused the key all produced
+
+```
+DIE the 'bridge' network does not exist on 127.0.0.1. It is hc-market's own and carries the five
+databases. Create it once on the host with `cd /srv/healthconnect && ./infra.sh` …
+```
+
+**verbatim, four times over**, with only the network name differing. The instrument was checked both
+ways first: the present case printed three `OK network … present`.
+
+**One honest mitigation, stated because it is real.** For the two ssh states, ssh's own sentence is
+printed by the *local* client and does appear on stderr above the wrong `die`. For the two docker
+states it does not: the base remote command ends `>/dev/null 2>&1`, so docker's words are discarded
+**on the far side** and the wrong message is all there is. The refusal is the last line either way.
+
+**And one instrument error, caught by re-running it.** The first pass reported "ssh key refused →
+passes" for the base loop — because the probe supplied `-i`/`-p` and the target `kojo@127.0.0.1`
+authenticated, so the state was never constructed. Re-measured against the system `sshd` on port 22,
+which was already known to refuse `BatchMode`, and the base loop produces the absence claim there too.
+This repository's sixteenth-instance rule (D72 §7) applies to probes about probes: test the
+verification against a value that must not match.
+
+### §2 Decision one: five outcomes, and the cause is established by a SENTINEL, never by a status
+
+The remote command announces its own status on its own line, and the **presence of that line** is
+what establishes that a shell on the host ran anything:
+
+```
+wrapped="($2"$'\n'')'$'\n''printf "\n%s %s\n" "'"$HOST_SENTINEL"'" "$?"'
+```
+
+`host_run` sets `HOST_STATUS` to the remote command's own status and `HOST_OUTPUT` to everything the
+far side printed on either stream, and **dies itself, with one sentence, when there is no sentinel**.
+Five outcomes, each named by evidence:
+
+| outcome | how it is established | measured? |
+| --- | --- | --- |
+| ssh never reached a shell | **no sentinel** in the answer | yes — five ssh states, real client |
+| …and *which* ssh failure | ssh's own stderr, via `ssh_hint` | yes — the five sentences above |
+| no docker command on the host | `HOST_STATUS == 127` | yes — real ssh, `PATH` emptied |
+| the network is absent | `Error response from daemon` **and** `not found`, in order | yes — real daemon |
+| docker could not be asked | everything else | the branch, yes; a production host's wording, **no** |
+
+**The asymmetry is the honest part.** The ssh client is *local* — its words are produced by the same
+binary a deploy would use — so keying on them is a measurement. What a production host's docker says
+is not measurable from here (D49), so the remote arms key on a **status the remote shell reports** and
+on D71's already-measured two-literal match, and the residual arm claims only that the question could
+not be answered. `ssh_hint` **degrades to a generic arm** if a future OpenSSH words a state
+differently, which leaves the cause correct and the advice merely unspecific; the message quotes
+ssh's own sentence either way. That is the direction to fail in.
+
+**`$net_hint` is printed on the absence arm and nowhere else** — D71 §3's call about `$fix`, and the
+whole of NEW-33's cost in one line. It is not quoted even to say it does not apply: the unanswerable
+arm read *"…starting a plane or running ./infra.sh is not the remedy"* first, and the check guarding
+that arm went red on the negation. **A refusal that names a command an operator should not run is one
+they will run**, and the check refusing the negation is the mechanism agreeing.
+
+**Only one thing was invented and it is named as such**: nothing. Each of the four hop-level messages
+rests on a fact the code can read. What is *not* claimed is which of ssh's five failures it is when
+the wording changes, and which docker fault it is on the residual arm — both of those say what they
+do not know.
+
+### §3 Decision two: the arm an operator reaches FIRST is not the item's arm — D71 §2, one script along
+
+The item named the network loop. Preflight's **first** remote probe is 130 lines above it:
+
+```
+ssh -o BatchMode=yes -o ConnectTimeout=8 "$HOST" 'docker compose version >/dev/null' \
+  || die "cannot reach $HOST over ssh, or docker compose v2 is missing there"
+```
+
+an explicit two-way fold, in the message an operator meets before the loop can refuse anything. Fixing
+only the loop would have shipped a preflight whose first refusal names two causes and whose fourth
+names one — which is exactly what D71 §2 found in `check_shared_plane` and took as scope its item did
+not name.
+
+**So all six of the script's attributing remote probes go through `host_run`**, and each keeps its own
+statuses:
+
+| probe | 0 | its own failure | anything else |
+| --- | --- | --- | --- |
+| `docker compose version` | reachable | 127 → no docker | compose v2 missing, quoting it |
+| `test -s secrets.env` | present | 1 → missing or empty | the check itself failed |
+| `grep -qE '^X=.'` ×12 | present | 1 → not set | **2 → the file could not be read** |
+| `docker network inspect` ×3 | present | absent, per §2 | could not be asked |
+| `compose ps -a` | count it **locally** | — | could not be asked, quoting it |
+| `grep -m1 '^HC_TAG='` | read the tag | empty → first deploy | `cd` refused the path |
+
+Three of those columns are new facts rather than reworded ones. **`grep` answers 2 for a file it
+cannot read** — live for a `0600` file owned by another account — and reported as *"$v is not set"*
+that is a value to add to a file the operator cannot open. **The data tier was counted on the host**
+by `ps -a … 2>/dev/null | grep -c ' running$' || true`, a pipeline that cannot fail: compose's error
+went to `/dev/null`, the status was `grep`'s and then discarded, and `[[ =~ ]] || running=0` turned
+every remainder into the number **0** — so a wrong `--path`, a missing `data-compose.yml`, an
+unanswerable daemon and an ssh that never arrived all read as *"0 of 5 stores running"*. The count is
+done locally now, off an answer whose status was checked. And **`rollback`'s `|| true`** made an
+unreachable host indistinguishable from a first deploy: *"no previous deployment recorded on $HOST —
+nothing to roll back to"*, in the function every **failed** deploy lands in, about a `.env.previous`
+sitting there intact.
+
+**`ConnectTimeout` is now on every probe**, from `HC_SSH_TIMEOUT` with the value the ssh check already
+carried. Five of the six had none, so a refusal arrived minutes late or never — and a message nobody
+waits for is the same as no message.
+
+### §4 The decision the item did not anticipate: a remote `exit` swallows the sentinel
+
+Driving the shipped `host_run` with a probe body of `exit 255` reported an ssh that never arrived, for
+a command that ran perfectly. `exit` terminates the remote shell before the `printf`. **The probe is
+wrapped in a subshell on the far side** — `( … )` — so `exit` exits only that.
+
+None of the six probes says `exit`, so nothing was broken; what the wrap buys is that the **seventh**
+cannot reintroduce NEW-33 by accident, in the one place where the reintroduction would be silent. It
+is also why the check's part 1 sets the remote status *with* `exit`: that makes part 1 the guard for
+the wrap, at no extra cost, and the test's case 3 watches it go red.
+
+### §5 What CI can see, and the instrument it rests on
+
+`.github/checks/host-probe-attribution.sh`, in three parts, **22 assertions**. No `run:` grep could do
+this: ssh's 255 and the remote's 255 are the same number, so no expression over the source can
+establish that the hops are told apart.
+
+**The stub RUNS the wrapped script it is handed**, with `docker` stubbed on `PATH`. A stub that
+appended the sentinel itself would pass a `host_run` that had stopped appending one — so the sentinel
+in every reading is produced by the code under test. The ssh-hop states are the only ones that answer
+without running anything, which is what an ssh that never connected does.
+
+Part 2 asks **seven** states of the network arm, and the fourth is a positive control for the third:
+
+| state | must answer |
+| --- | --- |
+| present | passes |
+| absent, host-wide network | absent, **with** `start the owning stack` |
+| absent, `hcmarketnet` | absent, **with** `./infra.sh` |
+| daemon unanswerable | could not be asked, **carrying neither hint** |
+| no docker CLI (127) | no docker command on the host |
+| docker relaying somebody else's `not found` (rc **1**) | could not be asked |
+| ssh unreachable | ssh did not reach a shell |
+| `--dry-run` | says the host was **not contacted**, no tick |
+
+The sixth is the state D71's tightening exists for, and it is here because **the 127 branch cannot see
+it**: docker natively supports `DOCKER_HOST=ssh://…`, and against a host with no docker on it the
+*local* CLI answers, exit 1, relaying the far side's `command not found`. So no status branch stands in
+front of it and the two-literal match is the only thing that does.
+
+Part 3 is textual and enumerated — six call sites by the question each asks — because parts 1 and 2
+cannot see a **seventh** `ssh` growing back beside them. A missing site is an **error**, not a skip.
+Comments are stripped with the shell stripper (`ssh -o BatchMode=yes` reads **6 raw, 0 stripped**,
+because this file's comments quote the old folded lines verbatim), and **backslash-continued lines are
+joined first** — four of the six calls are written across two lines, so a line-at-a-time grep found the
+continuation and reported a correct call site as unrouted. Watched doing exactly that.
+
+`host-probe-attribution-test.sh` constructs **fourteen** broken states on copies, asserts each
+mutation applied (mutant present, original gone, `bash -n` parsing) before believing its result, and
+requires the check to go red **through the door it was aimed at**. It reports `15 ok, 0 failed`.
+
+**The harness's own instrument was checked by removing what it tests.** With part 2's five cause
+assertions deleted from a copy of the check, the test reports exactly `10 ok, 5 failed` — cases 4–8,
+each *"the check PASSED on a broken tree"* — while the other nine stay green. So those five mutations
+are covered by those five assertions and by nothing else.
+
+**Three harness defects were found by running it rather than by reading it**, which is the same tally
+D71 reported and for the same reason: a `sed` four quoting levels deep that matched nothing (replaced
+with a quoted here-doc and an `awk` line swap — the mutation-applied control caught it), an address
+restricted to the first of **two** identical `127` branches so the original-is-gone control failed on
+a mutation that had applied, and a guard that read `HOST_SENTINEL`'s **name** rather than its value.
+That last one is worth the sentence: `HOST_SENTINEL=""` satisfies a grep for the assignment *and*
+satisfies `grep -F "$HOST_SENTINEL "` against any line containing a space, so the function still
+refuses and refuses naming **neither** hop. Fails closed, diagnoses nothing — this defect wearing its
+own fix — so the guard reads the value.
+
+### §6 Losers
+
+- **Fix the named line only.** Rejected on §3, which is D71 §2's argument: the two-way fold 130 lines
+  above it fires first, so the operator would meet a message naming two causes before reaching the one
+  that names five. It is the same reason D71 took the network arm its item had deferred.
+- **Two round trips — one ssh to test reachability, another to ask docker.** Rejected, and it was the
+  item's own suggestion to weigh. It doubles the round trips in a loop of three (and in a loop of
+  twelve, over `secrets.env`), it needs a timeout on both halves or the refusal never arrives, and a
+  host that becomes unreachable *between* them is a fourth state neither probe saw — so it buys a
+  taxonomy that is still incomplete, at twice the latency. The sentinel establishes the same thing in
+  one trip, from the answer rather than from a status.
+- **Key on ssh's exit status of 255.** Rejected on measurement, not on taste: a remote command exiting
+  255 is the same number, and `deploy-prod.sh` runs remote `grep`, `test`, `cd` and `docker compose`
+  whose statuses are not ours to bound. It would have been correct for four of the five states and
+  silently wrong for the fifth, which is the shape of every fail-open in this repository.
+- **Match on ssh's stderr for the CAUSE rather than for the remedy.** Rejected as the same class of
+  claim D50 refuses: ssh's prose is stable enough to *choose advice from* and not to *assert a cause
+  with*. The cause comes from the sentinel — structural, and the same on any OpenSSH — while the hint
+  degrades to a generic arm and the message quotes ssh verbatim regardless.
+- **Sub-classify the residual docker arm** ("the daemon is down" versus "the socket is not there"
+  versus "permission denied on the socket"). Rejected on D50's rule, and this is the closest call in
+  the entry: those messages are docker's, on a host **nothing in this repository has ever run against**
+  (D49). Three arms read off *this* workstation's daemon, presented as an account of a production
+  host's, would be exactly the guessed status mapping D50 refuses inside code that otherwise works.
+  The arm quotes docker's own sentence, which is the same information without the claim.
+- **A `warn` instead of a `die` on the unanswerable arm**, so a daemon flake does not stop a deploy.
+  Rejected: all three networks are `external: true`, so an `up` fails outright — and it fails *after*
+  `.env` has been overwritten and `.env.previous` rotated. An unestablished network is not a
+  proceed-anyway.
+- **Split `test -s` into "missing" and "present but empty".** Declined as out of scope and argued
+  rather than omitted: that message is one remedy stated as a **disjunction**, not a cause asserted,
+  and D71 §5's rule is about a `die` that folds a *cause*. Cheap to add (`[ -e ]` then `[ -s ]`) and
+  the day the remedies differ — an empty file suggests a failed paste or a `umask` — it goes in.
+- **Extend the treatment to the health gate and the two smoke probes.** Rejected on D71 §5, whose rule
+  is *a `die` may not fold; a `warn` and a poll may*. `health_gate` folds 24 polls deliberately, and a
+  status check inside it would make a one-second flake fatal on the estate's slowest gate; the two
+  `/management/info` probes `warn`, and the brokerage one already names **both** readings ("holds NO
+  brokerage terms in force, **or could not be asked**") with a remedy paragraph covering both. What is
+  left of D71 §5's poll edge here is real and is recorded as **NEW-36** rather than fixed: the health
+  gate's exhaustion is fatal by way of `rollback`, and unlike `deploy-dev.sh` there is nothing beside
+  it that cannot fold. Changing that is a design decision with its own cost, not a line.
+- **A CI check that bans a bare `ssh` in this file.** Rejected for D71 §6's reason, and the survivors
+  are **enumerated rather than counted**, because the first draft of this bullet said "nine" and there
+  are eleven — the house failure mode in the entry that keeps naming it. Comments stripped, outside
+  `host_run`: **four `run`-wrapped** (`mkdir -p`, `pull`, `up -d`, and the rollback's `cp && pull &&
+  up`), **four bare but ERR-trapped**, so the trap prints the command itself (`.env.next`, the
+  `.env.previous` rotation, the remote `docker login`, the `deployments.log` append), and **three that
+  fold deliberately** — `health_gate`'s 24-iteration poll and the two `/management/info` probes, both
+  of which `warn`. A ban would be red on a correct tree. Part 3 asks the honest question instead — that
+  the six probes whose refusals *attribute* still go through `host_run`.
+- **`local -n` or a returned string instead of the `HOST_STATUS`/`HOST_OUTPUT` globals.** Rejected: the
+  output is multi-line and carries both streams, so a return value would have to be encoded and
+  decoded at six call sites, and `local -n` on bash 4.3+ buys nothing here that two documented globals
+  beside the sentinel do not. They are declared at the top level next to it, which is also where the
+  check lifts them from.
+
+### §7 What this does not establish
+
+**`deploy-prod.sh` has still never run against a host, and nothing here changes that** (D49). What is
+new is that the *mechanism* has run against a real ssh, a real remote shell and a real daemon — which
+is more than D66, D69 or D71 could say, and less than a deploy. `preflight` was never executed
+end-to-end: it requires `docker`, `git`, a resolvable channel and a `--host`, and the two functions
+plus the loop were lifted out by `awk` exactly as those three decisions did.
+
+**A production host's docker messages remain unmeasured**, by construction. The absence match is two
+substrings of a message docker is free to reword; the safe direction is stated in D71 §7 and holds here
+(an absence worded differently routes to "could not be asked", fail-closed, the deploy still stops),
+and the unsafe direction is closed the same way it was there, by requiring the sentence only a daemon
+that *answered* can produce.
+
+**Nothing exercised the twelve-key loop or the data tier against a real answer.** Their statuses were
+measured in isolation (`grep` 2, `cd` 1, `compose ps` shapes) and their branches are driven by the
+stub; what no reading here covers is a real `secrets.env` or a real five-store project, because there
+is no host. Part 3 is what stands behind them: it asserts they are asked through `host_run` and
+therefore cannot report an ssh failure as a missing secret.
+
+**The `--dry-run` path contacted nothing and is the only production-path invocation that was run**; it
+stops at *"no target host"*. Under `--dry-run` the network loop now prints `would ask $HOST whether the
+'<net>' network exists — NOT contacted` through `skipped`, replacing a dim line that read like a
+command; the check asserts no tick appears there, because a success line for a check that was not
+performed is the false confidence the two `skipped` lines beside it exist to remove.
+
+**One fail-open in part 3 is structural and stated rather than closed.** Its six call sites are
+enumerated, and a *seventh* probe added with a question none of the six needles matches is invisible to
+it. The mitigation is the one the zone-write check relies on: every failure mode that exists today
+exits 1 loudly — a renamed probe is an error, a missing stripper is an error, an unliftable function is
+an error — so it cannot pass having read nothing. There is no derivation available; a remote probe is
+not declared in a model file the way an entity or a `messageBroker` is.
+
+### §8 Verified in this round, by running
+
+The defect reproduced first, at `fabb959`, through a real ssh to a throwaway `sshd`: **four states, one
+message, verbatim**, with the instrument checked both ways before the reading was trusted — and the
+fifth state re-measured after the first probe of it was found not to construct it. The five ssh states
+and the seven remote states measured directly (§1). The shipped `host_run` and the shipped network arm
+then driven through the same real ssh across all five outcomes, each naming its own cause.
+
+`host-probe-attribution.sh` green at **22** assertions; its test at **15 ok, 0 failed**; the harness
+control at **10 ok, 5 failed** with part 2's five cause assertions removed, each failure through its own
+door. `bash -n` on every script `build.yml` parses, the two new files included. The other checks that
+read these files re-run green: `shared-plane-wiring.sh` and its test, `pepper-wiring.sh`,
+`signing-key-severance.sh`, `observability-claims.sh`, `admin-seed-wiring.sh`, `strip-comments-test.sh`,
+`strip-sh-comments-test.sh`. `build.yml`'s three inline matchers over this script re-run by hand: D57's
+`/management/info` and `termsInForce` (both still matched, comments stripped and continuations joined),
+and D13's image-prefix pair. Both renderable compose files still `config`.
+
+**Appendix B re-embedded** — `deploy-prod.sh` is it — and `sync-appendices.sh --check` green afterwards.
+`node deploy/demo/extract-seed.mjs` left the seed unchanged. **No Java changed, so no Maven gate was
+run.**
+
+`--dry-run` with no host stops at *"no target host"*; `--help` still prints the whole computed header.
+
+**Nothing was deployed and no host was contacted.** No `--host`, no credential, no ssh to the production
+host. The quality stack was not touched — it is on `fabb959` with the agent attached by hand (D73) and
+is evidence — the five wedged dev containers were not touched, the dev estate was left empty so its next
+`up` is still a first run, nothing was published to the broker, and the throwaway `sshd` was stopped and
+its directory removed, with the port confirmed empty against a control port that is not.

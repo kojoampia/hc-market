@@ -1,6 +1,6 @@
 # Backlog — hc-market
 
-Every open item in this repository, folded into work packages. Sources: `docs/decisions.md` D1–D71,
+Every open item in this repository, folded into work packages. Sources: `docs/decisions.md` D1–D75,
 the two code reviews of 2026-09-01, and the verification runs against the quality box.
 
 **This is a derived document.** `decisions.md` holds the reasoning and stays the record; this holds
@@ -2650,7 +2650,7 @@ fold; a poll whose exhaustion is fatal needs something beside it that cannot.
 
 ---
 
-## NEW-33 — `deploy-prod.sh` folds four outcomes into "the network does not exist on the host" · READY
+## NEW-33 — `deploy-prod.sh` folds four outcomes into "the network does not exist on the host" · DONE (D75)
 
 Opened by **D71 §6** as an explicit loser, and it is the **sixth** instance of the reading D68 fix 2,
 D69 §10 and D71 have each closed one copy of. `deploy/deploy-prod.sh`'s host-network preflight is
@@ -2676,6 +2676,46 @@ decided applies to `infranet`, `hcmarketnet` and `monitoring` at once.
 
 `--dry-run` prints this check and contacts nothing, which is the only exercise available and does not
 reach the refusal.
+
+**Closed by D75, and it was FIVE outcomes rather than four.** The fifth is a host with no `docker`
+command on it — exit **127**, the shell's own status for a command it cannot find — which nothing had
+counted because the item reasoned about ssh and the daemon and not about the CLI between them.
+
+**The item's second reason was wrong, and it is the interesting correction.** "Unmeasurable in the way
+D71's was" held only for the *messages a production host's docker prints*; the two **hops** are
+buildable here. A user-owned `sshd` on port 22222, three authorized keys carrying different
+`environment=` options, and the shipped functions lifted out by `awk` gave a real ssh client, a real
+remote shell and a real docker daemon — so the defect was **reproduced** rather than accepted (four
+states, one message, verbatim) and each of the five repairs was watched answering through a real ssh.
+That is more than D66, D69 or D71 could say and less than a deploy; §7 of D75 says which is which.
+
+**The taxonomy turned on a measurement, not a preference.** ssh exits **255** when it cannot connect
+and otherwise exits with the **remote command's** status, so a remote `exit 255` is indistinguishable
+from ssh never arriving — the one case that matters, and no status check separates it. The remote
+command therefore announces its own status on its own line, and the **presence of that line**
+establishes which hop answered: D74's rule, one protocol along. `$net_hint` is printed on the absence
+arm alone.
+
+**Three things came with it that the item did not name.** The arm an operator reaches **first** is 130
+lines above this one — `cannot reach $HOST over ssh, **or** docker compose v2 is missing there`, an
+explicit two-way fold — so fixing only the named line would have shipped a preflight whose first
+refusal names two causes and whose fourth names five; that is D71 §2's finding, one script along, and
+it is why **all six** attributing remote probes now go through one helper. Two of the other five were
+folding facts of their own: `grep` answers **2** for a `secrets.env` it cannot read, reported as *"$v is
+not set"*, and the data tier's remote `2>/dev/null | grep -c … || true` could not fail at all, so a
+wrong `--path`, a missing compose file, a dead daemon and an unreachable host all read as *"0 of 5
+stores running"*. And `rollback`'s `|| true` made an unreachable host indistinguishable from a first
+deploy, in the function every **failed** deploy lands in.
+
+**A remote `exit` used to swallow the sentinel** — found by driving the shipped function with one, not
+by reading it — so the probe is wrapped in a subshell on the far side. No shipped probe says `exit`;
+what the wrap buys is that the seventh cannot reintroduce this silently.
+
+CI sees all of it: `host-probe-attribution.sh`, **22** assertions over three parts, driven by a stub
+that **runs** the wrapped script it is handed so the sentinel is the shipped code's; its test at
+**15 ok, 0 failed** over fourteen mutations; and the harness's own control at **10 ok, 5 failed** with
+part 2's cause assertions removed. `deploy-prod.sh` is Appendix B, so **Appendix B was re-embedded**.
+Opens **NEW-36**.
 
 ---
 
@@ -2744,6 +2784,40 @@ is a decision rather than a line — filter the subscription to the logins the m
 `contains` and drop the exactness, or give the class one context per method. The first keeps what the test
 is for (addressing comes from the payload) while removing the shared-sink coupling, and is the shape to
 reach for.
+
+---
+
+## NEW-36 — the health gate's exhaustion is fatal and rests on 24 folded reads · READY
+
+Opened by **D75 §6** as an explicit loser, and it is D71 §5's stated poll edge in the one script where
+nothing stands beside it.
+
+`deploy-prod.sh`'s `health_gate` probes each service over `docker compose exec … bash /dev/tcp` with
+`>/dev/null 2>&1 || bad+=" $s"`, 24 times at ten-second intervals. **That folding is correct for each
+poll** — during a wait an unanswerable daemon or an unreachable host should be a retry, and a status
+check inside the loop would make a one-second flake fatal on the estate's slowest gate. What is not
+correct is where it ends: `warn "still unhealthy:$bad"; return 1`, which falls through to `rollback`.
+So a host that goes away mid-deploy costs four minutes and then names **five healthy services as
+unhealthy**, and rolls the stack back — or tries to, and then dies in `rollback` for the real reason.
+
+D71 §5's rule in full is *a poll may fold, and a poll whose exhaustion is fatal needs something beside
+it that cannot*. In `deploy-dev.sh` that something already exists: a `compose logs --tail=40` on the
+same line as the `die`, which fails loudly against a dead daemon (measured, D71 §9). **There is no
+equivalent here**, and the two `/management/info` probes in `smoke_test` are the same shape one step
+along — they `warn` rather than `die`, which D71 §5 permits, but the brokerage one `return 1`s into the
+same rollback. Its message already names both readings ("holds NO brokerage terms in force, **or**
+could not be asked") with a remedy paragraph covering both, which is why it is not a defect today.
+
+The fix is a decision rather than a line, which is why this is an item. Three shapes, none costed:
+one attributing probe **after** the loop exhausts — `host_run` is now in the file and would name the
+hop — so the refusal distinguishes "they never became ready" from "we stopped being able to ask"; a
+`compose logs --tail=40` beside the timeout, copying dev's answer, which diagnoses without deciding;
+or a bounded consecutive-unreachable count that gives up early on the hop rather than late on the
+services. The first is the one that makes the *message* right, which is what this family is about.
+
+Nothing is unsafe: a rollback of a healthy stack is the cost, and on a first deploy it ends in
+*"no previous deployment recorded"* — which, since D75, is at least no longer what an unreachable host
+is told.
 
 ---
 
