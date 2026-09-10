@@ -11067,3 +11067,212 @@ control so it cannot pass by refusing everything. `bash -n` on all 24 shell scri
 no Maven gate. **The recovery script was still never executed against the live quality stack**, whose
 ten containers were re-counted healthy with booking's three alias sets unchanged. Throwaways removed
 and the host swept.
+
+---
+
+## D69 — The same question, in the other script, with a different name on it
+
+Backlog **NEW-29**, opened by **D66 §6** in the same breath as the fix it declined to copy. **`main`
+ends at D68, the backlog's highest item is NEW-30, and `gh pr list --state open` answers nothing** —
+all three re-checked at `d3291a5` rather than taken from the brief, which is this document's rule for
+its own numbering.
+
+`deploy/deploy-dev.sh`'s `shared_plane` asked four things — the network exists, `$SHARED_CONSUL` and
+`$SHARED_KAFKA` are running, Consul has a leader, the broker answers — and **not one of them was
+whether those two containers are on the network the dev stack joins**. Then it printed
+`…$SHARED_KAFKA on $SHARED_NETWORK`, which is the one thing it had not looked at.
+
+The item named a shape to copy, so the latitude is narrow. What follows is the three decisions the
+brief left open, the one it did not anticipate, and the losers.
+
+### §1 What was established, and how
+
+Every row is a read off something running, or the shipped function lifted out of the file and run
+against the **live** daemon. **No estate was started, stopped or recreated**, nothing was published to
+the broker, the wedged dev containers were read and not touched, and the one throwaway network and one
+throwaway container were removed.
+
+| | |
+| --- | --- |
+| `hc-shared-quality-{kafka,consul}` — which networks they are actually on | **`hcnet`, and only `hcnet`**, both of them |
+| `docker-compose.dev.yml` rendered with `HC_SHARED_NETWORK=hc-market-d69-probe` | the `hcnet:` key → `name: hc-market-d69-probe`, `external: true`; all five app services on it, the five databases not — so the dev override is **honest**, and preflight and the join really are the same network |
+| `shared_plane` at `d3291a5`, lifted out, `HC_SHARED_NETWORK` naming a throwaway **empty** network | **PASSED**, printing `shared plane: hc-shared-quality-consul (leader elected), hc-shared-quality-kafka on hc-market-d69-probe` |
+| the same function with `HC_SHARED_CONSUL=shared-consul` (hc-infra's compose **service** name) | died *"shared-consul is not running — start it with (cd …/hc-infra && ./startup.sh)"* while hc-infra was running perfectly — D66 §7's third optional, unfixed in this copy |
+| `getent hosts shared-consul` from `hc-market-quality-catalog` | `172.21.0.4` — so that value resolves from inside the estate and is not a container `docker inspect` can find |
+| `deploy-dev.sh`'s router | a `case "$COMMAND"` at the **foot** of the file; `preflight` is called by `up`, `reseed` and `restart` and by **no other branch** |
+| the five `healthconnect-dev-*` containers | state `restarting`, `RestartPolicy=no`, on `healthconnect-dev_default` alone, dying in Hazelcast's discovery on `http://consul:8500` — a Consul this repository stopped declaring at D27. Recorded as **NEW-31**; not touched |
+
+### §2 The defect, and why it is milder here than it was in quality
+
+D66's version was live because `quality/compose.yml` **hardcoded** the plane while the script read a
+variable: preflight went green against the broker you named and the stack talked to the original one.
+Here the two halves already agree — `docker-compose.dev.yml` has interpolated all three since it was
+written, measured above — so nothing is half-wired. What was wrong is narrower and still exactly
+D27's silence: **an operator who names a plane the broker is not on gets a green preflight**, five
+services that start, serve and report healthy, everything they publish going nowhere, and
+`MessageDeliveryException` on a timer as the only signal. The success line asserting the membership is
+what turns that from an unasked question into a claim.
+
+The repair is D66's three lines and its whole loop: ask the container which networks it is on,
+`grep -Fxq "$SHARED_NETWORK"`, refuse. Measured after the change, against the live daemon: `hcnet`
+passes, the throwaway empty network is **refused**, the alias value is refused by name, and a
+`docker create`d container on the probe network gives *"exists but is not running"*.
+
+### §3 Decision one: FATAL — and the property that makes it safe was established here, not inherited
+
+D66 made the quality refusal fatal, and its review confirmed why that is safe there: `down`, `clean`
+and `verify` **exit at the router** before preflight runs, so a broken plane can never wedge a
+teardown. That argument does **not** transfer by shape, because `deploy-dev.sh` is built the other way
+round — its router is a `case` at the foot of the file and `preflight` is a function each branch calls
+for itself, so there is no "before preflight" for a branch to exit at.
+
+Read rather than assumed: `up` calls it first, `reseed` calls it after the subset refusal, `restart`
+calls it inline, and **`down`, `status` and `logs` do not call it at all**. Every action that can
+reach the refusal is an action that starts or restarts containers on that plane; the teardown and both
+diagnostics are untouched. So the same conclusion, on a different argument — fatal, one line before
+compose is invoked, failing **closed** (a Go template that stops matching yields nothing, the
+`grep -Fxq` finds nothing, preflight refuses).
+
+**And the premise is now guarded, which it was not in quality until D67 came at it from another
+direction.** An argument of the form "this is safe because that other thing is arranged so" is the
+shape this repository keeps finding broken, so part 5 of the CI check asserts it: `preflight` is
+called by the dev router at all (else every teardown assertion below is true of a script that checks
+no plane on any action), and the `down`, `status` and `logs` branches do not call it. An absent branch
+and an unreadable router are each their own error rather than a skip. Watched red **five** ways —
+`preflight` added to `down`, the router renamed, a teardown branch deleted, `preflight` never called
+at all, and the shell stripper part 5 depends on absent, which is one file four checks trust and
+without which two of them once printed `ok` having read nothing (D62's review).
+
+### §4 Decision two: the check is EXTENDED, and part 3 deliberately is not
+
+`.github/checks/shared-plane-wiring.sh` gains the dev copy rather than acquiring a sibling. Parts 1
+and 2 already walked both pairs; **part 4 now walks `script:function` pairs**, because the two copies
+are not called the same thing — `check_shared_plane` in quality, `shared_plane` here — and that
+difference is the whole reason nothing carried across. An `awk` range with one name hard-coded lifts
+**nothing** out of the other file, evals nothing, and both probes then answer identically for a reason
+that has nothing to do with any plane; so an unliftable function is now an error naming both
+spellings, not a silent skip. That is the same failure mode NEW-29 warned about one layer up, and the
+reason the parameter is a pair rather than a list.
+
+**Part 3 is not extended, and that is a decision rather than an omission.** Its subject in quality is
+`env_for_compose`, which resolves the three values and hands them to compose; `deploy-dev.sh` has no
+such function — it exports at the top level, above the router, so every action carries them. But the
+property that export *buys* quality is one dev already has by construction: dev's `SHARED_*` are
+resolved from the environment and from nowhere else, and every way of getting a value there — an
+`export`, a one-shot `HC_SHARED_KAFKA=… ./deploy-dev.sh up`, or `deploy/.env`, which is sourced under
+`set -a` — leaves it in the environment compose reads. Delete dev's export line and compose renders
+the same value. **A check whose subject cannot fail is worse than no check**, because it lends its
+credibility to the ones beside it; the reasoning is written into the check's header where the old
+"quality alone, deliberately" note used to stand unexplained.
+
+### §5 Decision three: the success line claims the four things it just asked
+
+`ok "shared plane: … (leader elected), … on $SHARED_NETWORK"` was the defect stated as a claim, and
+adding the membership check does not by itself make it honest: it attributes to the broker alone a
+fact now established for **both** containers. It reads:
+
+```
+✓ shared plane on hcnet: hc-shared-quality-consul (leader elected) and hc-shared-quality-kafka (answering), both on it
+```
+
+One clause per question asked, and nothing else. Quality's line is left as D66 wrote it — it is true
+there, its wording was measured through that decision's review, and re-opening it would be a change
+to a ratified decision for symmetry alone. The divergence is recorded here rather than smoothed over.
+
+### §6 The decision the item did not anticipate: there were TWO defects in that function
+
+NEW-29 described the membership blindness. Mirroring D66's loop also brings across the fix from its
+**§7 optional (3)**, and that had to be a decision because it changes what an operator is told:
+`running "$c" || die "$c is not running"` gave one message to three different outcomes, and the one it
+misdescribed is the likeliest wrong value anybody will type. Measured on this file, quoted in §1:
+`HC_SHARED_CONSUL=shared-consul` — hc-infra's own compose service name, which resolves perfectly from
+inside the estate — died with *"shared-consul is not running — start it with (cd hc-infra &&
+./startup.sh)"* **while hc-infra was running fine**, sending whoever read it to restart infrastructure
+with nothing wrong with it. Three arms now: docker knows no such container (say the container-name
+rule and name the defaults), docker could not be asked (quote it), exists but is not running (the
+original message, now only where it is true). Matched on `o such object` in docker's own message
+rather than on an exit status it shares with "I could not answer".
+
+Taking it was not free — it is scope the item did not ask for — and the alternative was leaving one
+copy of a two-copy function with a message the other copy's review had already condemned. The
+decisive point is that dev is where this value is *most* likely to be typed by hand: `deploy-dev.sh`
+is the script CLAUDE.md tells people to override the plane on.
+
+`running()` survives the rewrite because the quality-stack note at the foot of the function still asks
+it a question with only two answers — that container is nobody's configuration, so "not there" and
+"not running" are the same fact about it and neither is an error.
+
+### §7 Losers
+
+- **Advisory instead of fatal.** Rejected on §3's reading: nothing that can reach the refusal is a
+  teardown or a diagnostic, every other arm of the function is already fatal, and a warning before a
+  `compose up` that then comes up green is precisely the state D27 exists to prevent.
+- **A second check file for the dev copy.** Rejected: parts 1 and 2 already walk both pairs, so a
+  sibling would duplicate the render harness, the two-`env` fix D66's review earned, and the
+  probe-value constants — and the day one grew a case the other did not would be invisible. What the
+  extension cost is one parameter and one loop.
+- **Rename `shared_plane` to `check_shared_plane` so the two copies could be diffed byte-for-byte**,
+  the way the four Java families are. Rejected on two counts. The bodies legitimately differ — dev's
+  ends with the quality-stack topic-prefix note, which has no meaning in quality — so a verbatim diff
+  is impossible without extracting a shared shell library this repository does not have and D6 argues
+  against. And the rename would break the one pointer NEW-29 and D66 §7 both went out of their way to
+  correct: the taker of a deferred item greps for the name they were given. The two names stay, and
+  the check is keyed on the pair rather than on an assumption that they match.
+- **A `^`-anchored grep asserting dev still exports the three**, in the shape of part 2. Rejected by
+  §4: the property holds whether the line is there or not, so the check would be green either way and
+  would read as covering something.
+- **Extending part 5 to `quality/startup.sh`.** Rejected as a duplicate: D67 pins `router < preflight
+  < call` there and asserts `down`, `clean` and `verify` each exit at the router, which is the same
+  claim in the file whose decision owns it. A second copy in this check is how the two eventually
+  disagree; there is a pointer comment where you would look for it instead.
+- **Fixing the wedged dev estate to exercise the change end to end**, which is what NEW-29 suggested
+  doing afterwards. Out of scope by instruction and by prudence — an `up` touches the plane four
+  products borrow — and the five containers are a pre-D27 estate addressing a Consul this repository
+  no longer declares. Recorded as **NEW-31** with the state read off docker.
+
+### §8 What this does not establish, which is most of the honest limit
+
+**The guard has never run inside `deploy-dev.sh` itself.** Everything measured in §1 and §2 is the
+shipped function *lifted out of the file* — by `awk`, into a subshell with `die`/`ok`/`log`/`warn`
+stubs — and run against the real daemon, plus the stubbed-docker probes in CI. What is not exercised
+is `./deploy-dev.sh up` reaching `preflight` reaching `shared_plane` on a real dev estate, because the
+dev estate is wedged (NEW-31) and starting one is out of scope for this package. The lift is faithful
+in the way that matters — same bytes, same `set -Eeuo pipefail`, real docker — and it is not the same
+as the script having run. D66 was in exactly this position for the same reason and said so.
+
+Part 4's stated reach is unchanged and inherited: the stub answers with a network list, so it catches
+the refusal being **deleted or weakened** and not the Go template being wrong. That direction was
+measured by hand here as it was in D66 — the correct case refuses when the template names a field that
+does not exist — and both functions meet the real daemon on every run of their own script.
+
+One harness limit is worth naming because it is a permanent property of the tool: `expect_red`'s
+absence assertion is a fixed-string grep, so case 14 (the plane function renamed) cannot express
+`^shared_plane() {` and carries no must-be-absent string. A newline-prefixed pattern is worse than
+nothing — `grep -F` splits on newlines and the empty first pattern matches every file, which is how
+that case first reported the mutation as unapplied. What stands in for it is a `sed` that substitutes
+rather than inserts and a presence assertion on the substituted text.
+
+### §9 Verified in this round, by running
+
+The defect reproduced first, at `d3291a5`, by lifting `shared_plane` and pointing `HC_SHARED_NETWORK`
+at a throwaway empty network — **passed, printing `…on hc-market-d69-probe`**; the harness's own
+instrument was checked both ways before that reading was trusted, with a bogus container name refusing
+and the real `hcnet` passing. `docker-compose.dev.yml` rendered with the network variable set, showing
+the key move and all five app services attached. After the change: `hcnet` passes with the new
+one-clause-per-question line, the empty network is refused, and the alias and created-but-stopped arms
+each give their own message — four states, live daemon. `bash -n deploy/deploy-dev.sh`;
+`./deploy/sync-appendices.sh` re-embedded Appendix A and `--check` green afterwards. The extended
+check green on a clean tree under `bash -e`, at **21** assertions, and its test green at **23 ok, 0
+failed** — the twelve D66 states plus the four ambient controls plus **seven new ones**: the dev
+membership refusal deleted, the dev function renamed, `preflight` added to `down`, the dev router
+renamed, a teardown branch deleted, `preflight` never called at all, and the shell stripper absent.
+Trust that list and not its number. Each asserts the mutation
+applied (original gone where a fixed string can say so, mutant present, `bash -n` parses) and that the
+failure came **through the door it was aimed at** by matching the error fragment; the case-13 mutant
+was additionally run outside the harness to confirm the `::error::` names the sandbox file rather than
+the real one, and that the check exits 1. `shared-plane-wiring-test.sh`,
+`quality-pepper-persistence-test.sh` and `outbox-alias-restore-test.sh` all re-run green under
+`bash -e`; `node deploy/demo/extract-seed.mjs` leaving the seed unchanged. No Java changed, so no
+Maven gate was run. **No estate was started, stopped or recreated, the quality stack was not touched,
+the five wedged dev containers were read and left exactly as they are, nothing was published to the
+broker, and the throwaway network and container were removed with a sweep for leftovers.**

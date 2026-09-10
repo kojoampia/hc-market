@@ -1,6 +1,6 @@
 # Backlog — hc-market
 
-Every open item in this repository, folded into work packages. Sources: `docs/decisions.md` D1–D67,
+Every open item in this repository, folded into work packages. Sources: `docs/decisions.md` D1–D69,
 the two code reviews of 2026-09-01, and the verification runs against the quality box.
 
 **This is a derived document.** `decisions.md` holds the reasoning and stays the record; this holds
@@ -2316,7 +2316,24 @@ whoever takes it should ask whether anything else in the project's labels points
 
 ---
 
-## NEW-29 — `deploy-dev.sh`'s preflight cannot tell "running" from "reachable" either · READY
+## NEW-29 — `deploy-dev.sh`'s preflight cannot tell "running" from "reachable" either · DONE (D69)
+
+**Closed by D69.** `shared_plane` now carries D66's whole loop: three outcomes where docker's answer
+has three, and the membership refusal — measured against the live daemon in four states, the empty
+throwaway network among them, where at `d3291a5` the function **passed** and printed
+`…on hc-market-d69-probe`. The success line was rewritten to claim only what it asks. **Fatal**, on an
+argument established for this script rather than carried over: dev's router is a `case` at the foot of
+the file calling `preflight` per branch, and `down`, `status` and `logs` do not call it — so a broken
+plane cannot wedge the teardown or the diagnostic beside it, and part 5 of the check now asserts that
+premise rather than leaving it to a comment. `.github/checks/shared-plane-wiring.sh` was extended
+rather than duplicated: part 4 walks `script:function` pairs (an unliftable function is an error, not
+a skip), part 3 stays quality-only for a reason D69 §4 re-established rather than inherited, and the
+test beside it is green at 23 with seven new mutations. Appendix A re-embedded.
+
+**What is NOT done, and it is the honest limit**: the guard has never run *inside* `deploy-dev.sh`.
+Every measurement is the shipped function lifted out of the file, because the dev estate is still
+wedged — now **NEW-31**, with the five containers' state read off docker and the remedy named. Nothing
+below is stale; it is kept for the reasoning.
 
 Found by **D66** while closing NEW-25 on the quality box, and it is the same blind spot in the dev
 script's own **`shared_plane`** — `deploy/deploy-dev.sh:216`, and note the name: the quality copy is
@@ -2379,6 +2396,37 @@ right lifetime, and compose does not write one that names the checkout; setting 
 `docker volume create` before the first `up`, which a first run has no reason to do. Whoever takes it
 should start by asking whether the answer is a record at all, or whether it is D67 §4's fourth shape
 — stop binding a host path for the seed — which would make the question moot rather than answered.
+
+---
+
+## NEW-31 — nothing can exercise a dev-estate change, and the five containers say why · READY
+
+Opened by **D69 §7**, which named it rather than touching it. It is the reason NEW-29 waited a package
+and the reason D69 could verify its own fix only by lifting the function out of the file: **two
+successive packages have now been unable to run `deploy-dev.sh` at all.**
+
+Read off docker rather than inferred, on 2026-09-10: five containers, `healthconnect-dev-{gateway,
+catalog,booking,messaging,payout}-1`, state **`restarting`** with `RestartPolicy=no`, since
+2026-08-30, on `healthconnect-dev_default` **alone** — not on `hcnet`. Each dies at context startup in
+Hazelcast's discovery, on `I/O error on GET request for "http://consul:8500/v1/health/service/
+healthconnectcatalog"`. That address is this stack's **own bundled Consul**, which D27 removed: they
+are a pre-D27 estate looping against infrastructure this repository stopped declaring, and their
+compose-derived names (rather than the `hc-market-dev-*` `container_name`s) date them the same way.
+
+**The remedy is already written down and has never been run.** `deploy-dev.sh`'s `down` branch says
+`--remove-orphans` "additionally sweeps the pre-2026-08-31 containers — this stack's own broker and
+Consul, and the un-prefixed service containers — which is how you migrate a running estate onto this
+file". So the item is small; what it is not is *free*, and that is why it is an item. A `down` is a
+write to the daemon four products share a plane on, `CLAUDE.md`'s "un-killable" claim about these five
+is **untested** (D69 read them and touched nothing), and the volumes underneath hold the only seeded
+dev data anybody has — `healthconnect-dev_{gateway,catalog,booking,messaging,payout}-data`, which a
+`--clean` would take with it.
+
+Whoever takes it should decide the order deliberately: sweep first and then `up`, or `up` and let
+`--remove-orphans` do it, are not the same act on a stack whose containers are in a state docker
+itself is not moving out of. **And it is the package that can finally run what D66 and D69 could
+not** — `./deploy-dev.sh up --no-build --services catalog`, then the shared-plane preflight against a
+real estate, including the refusal, which no test in CI can reach.
 
 ---
 
