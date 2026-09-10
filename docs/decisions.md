@@ -11349,3 +11349,90 @@ itself — two multi-line must-be-absent strings, which `grep -F` splits so the 
 matches every file (case 14's documented trap, hit twice more), and one fragment whose case did not
 match the message. Counts stand in where a fixed string cannot: two bare `preflight` call lines
 becoming one, seven two-space labels becoming none.
+
+---
+
+## D70 — The record a teardown does not keep, and why none of the three ways to keep it is worth its cost
+
+**Ratified 2026-09-10.** Closes backlog **NEW-30** as `WON'T`. Opened by D67 §9, which named the gap
+rather than widening its own fix into it.
+
+### 1. The gap
+
+D67's guard reads `com.docker.compose.project.config_files` off the project's **containers**. A `down`
+removes the containers and keeps the volumes, so from that instant nothing on the host records which
+checkout the `hc-market-quality` project belongs to, and an `up` from a worktree is indistinguishable
+from a first run.
+
+It is not unguarded. **D65's pepper refusal fires on exactly that state** — volumes present, no
+`quality/.privacy-pepper` in this directory, fatal. But the documented way past that refusal is to copy
+the pepper across, which is what D64 did and what the refusal's own message suggests, and an operator
+who does so passes both guards. What they get is a running stack whose `SEED_DIR` bind mount belongs to
+a directory that will be deleted — D67's harm, reached by `--down` in a worktree, copy the pepper, `up`.
+
+Three ordinary steps, two of them printed by this repository's own error messages.
+
+### 2. What the harm actually is, measured
+
+Bounding it was the first thing done, because every shape below was priced against it. `SEED_DIR` is
+mounted **read-only** at `/app/seed`, holds one file of **296,031 bytes**, and is read **once at
+startup** by the seed loader. So the harm is a stale read-only bind mount on a service that has already
+read what it needed. **No data loss**: the five volumes are untouched by the sequence, and nothing reads
+the seed again after boot.
+
+That is the fact that decided this. A guard is worth a git dependency, a new first-run step, or demo
+data in a production artefact only if what it prevents is worse than what it costs.
+
+### 3. Not a record, and not eliminated either
+
+Three shapes were costed. Each is rejected on its own ground, and **the closest one is rejected on a
+ground D67 did not have**.
+
+**(a) Resolve `SEED_DIR` to the canonical checkout** — `git rev-parse --git-common-dir`, pointing only
+the seed mount at the main checkout and leaving the compose file alone. The smallest change, and it
+needs no record at all: the teardown gap stops mattering rather than being closed.
+
+D67 §4 rejected resolve-to-canonical, and **that objection does not transfer**. It was about silently
+running a *different checkout's compose file and seed*; here the compose file is untouched, and CI
+already asserts the seed regenerates byte-identically from the prototype, so a different checkout's
+seed is provably the same bytes. The rejection here is a trade, not an objection: it adds a git call to
+path resolution plus a fallback branch to decide for the case where git cannot answer, to prevent a
+stale read-only mount. Not worth it against §2.
+
+**(b) Bake the seed into the five images**, via the Jib `extraDirectories` block every pom already
+carries for the OpenTelemetry agent — D67 §4's fourth shape, which makes the question moot rather than
+answered. **D67 called this "a release process, not eight lines" and that was too pessimistic**: the
+mechanism is already present in all five poms, and the payload is 296 KB read once.
+
+It is rejected on a cost D67 did not name. Production runs these same images with
+`HEALTHCONNECT_SEED_ENABLED=false`, so every production artefact would carry **18 invented
+professionals with credentials and association registration numbers** inside it. They would not be
+served — CI asserts the prototype's absence from `market.abofonsa.com`, and that assertion exists
+precisely because the page presents eighteen fabricated practitioners as real people on a public
+health-services domain. Putting the same records inside the production image is not the same act, and
+it is adjacent enough to it that a stale bind mount is the cheaper problem.
+
+**(c) Label the volumes at first run** — `docker volume create` with a label naming the checkout,
+before the first `up`. The only docker object whose lifetime is right, as NEW-30 says. Rejected on
+three counts: it changes the first-run path on a fresh box, which is the path nobody exercises until it
+matters; **docker cannot relabel an existing volume**, so the five live volumes would stay unlabelled
+until a `--clean` that nothing else justifies; and it introduces a record whose only reader is a guard.
+
+### 4. What is kept instead
+
+The trap, written down beside D65 and D67 in `CLAUDE.md` — the sequence, why both guards pass, and what
+the resulting state is. That is the whole deliverable.
+
+**The residual is stated rather than closed**, which is the honest form of a `WON'T`: the path stays
+walkable, and two of its three steps are suggested by this repository's own error messages. If the harm
+ever grows past §2 — a seed read at run time rather than at boot, a writable mount, anything on that
+path that is not idempotent — shape (a) is the one to reach for first, and this section is the argument
+already made for it.
+
+### 5. What this decision is not
+
+It is **not** a finding that D67 was wrong. D67 declined to widen its fix into this and named the gap
+instead, which is why the question arrived costed rather than as a surprise. Two of its own
+characterisations are corrected here — the "release process" estimate in §3(b), and the transferability
+of its resolve-to-canonical objection in §3(a) — and both corrections argue *for* leaving the code
+alone, not against the guard it shipped.
