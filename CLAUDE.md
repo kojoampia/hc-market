@@ -1373,6 +1373,22 @@ time.**
   absent so a regression cannot pass as "some JSON arrived".
   The heartbeat's first tick is at **zero**, not at the interval: WebFlux does not commit a response
   until its first element, so a 20s-away first tick meant no status line and no headers for 20s.
+  **A test may never assert over the WHOLE sink, and the reason is a second Spring context** (D76,
+  backlog NEW-35). The sink is one bean's and carries an estate's events, so
+  `containsExactlyInAnyOrder` over everything a subscription received asserts *"nothing else in this
+  JVM emitted while I was watching"* — which failed one gateway `clean verify` in four. The polluter was
+  **another test class**: `MarketplaceStreamFramingIT` runs earlier in the same JVM on the same static
+  broker, and because the two classes cannot share a context (`MOCK` versus a real port), the fan-out's
+  `@KafkaListener` joins a **fresh `${random.uuid}` group** — which, with `SseKafkaTestContainer`'s
+  deliberate `auto-offset-reset: earliest`, **replays every topic from offset 0** into whichever test
+  method happens to be subscribed. Measured end to end by handing the running container a new group id.
+  So **a new IT that touches the fan-out must scope its assertions to an `aggregateRef` it minted**, and
+  must not wait on `received.size() >= N` — a count cannot say whose N arrived, which is exactly what the
+  flake exploited. `MarketplaceEventFanoutIT` is the pattern: unique reference and unique logins per
+  publication, and a **barrier** event published after the one under test so exactness is sound rather
+  than racing the extra emission it exists to catch. **`@DirtiesContext` is the wrong fix and makes it
+  worse** — a new context is a new group, so per-method isolation turns one possible replay into three
+  certain ones.
 - **Wall-clock times carry their zone.** `Professional.zoneId` and `Booking.zoneId` are IANA names,
   defaulting to `Africa/Accra` (D21). Ghana is UTC+0 all year, so the implicit model was correct —
   just illegible. **Do not convert appointments to `Instant`.** An `Instant` is right for "when did
