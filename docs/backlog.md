@@ -2260,9 +2260,25 @@ the probe against a real daemon on a throwaway project of its own.
 
 ---
 
-## NEW-28 — the quality project's containers were built from two different checkouts · PARTLY DONE
+## NEW-28 — the quality project's containers were built from two different checkouts · DONE (D67)
 
-**Closed as engineering by D67; the live repair is a roll-time step and is not done.** The
+**Both halves are now done — the engineering by D67, the live repair by the roll of `e834137` on
+2026-09-09.** Measured after it, and again on 2026-09-10: `docker compose ls` names **one** config file
+for the project and **all ten** containers carry it; the five volumes survived with unchanged creation
+dates; and every row count came back — `catalog.review` 68, `catalog.professional` 18,
+`booking.booking` 296, `payout.ledger` 261, `messaging.notification` 29, plus D57's founding
+`brokerage_config` row at `1970-01-01` and D65's single `privacy_pepper_witness` row, which are the two
+that would have been quietly unrecoverable. The guard refused the roll first, exactly as designed,
+naming both paths and annotating the missing one on precisely the five `-db` rows; `--down` then `up`
+was the documented way through.
+
+*This line read `PARTLY DONE … the live repair is not done` for a day after the roll had done it, which
+is the `(unmerged)` defect in a new place: a status that was true when written and stopped being true
+without anything changing it.*
+
+The original engineering note follows.
+
+**Closed as engineering by D67; the live repair was a roll-time step.** The
 recurrence is prevented — `quality/startup.sh` asks docker which checkout the project's containers
 were created from and refuses an `up` from anywhere else, with
 `.github/checks/quality-project-checkout-test.sh` green at 28 assertions and red ten ways. What
