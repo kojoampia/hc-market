@@ -846,6 +846,104 @@ jobs:
           fi
           exit "$fail"
 
+      # The SSE fan-out emits from ONE thread into a SERIALIZED sink — decisions.md D79, backlog NEW-37.
+      #
+      # Two halves of one premise, and neither is visible to any test. `Sinks.many()` is the SAFE spec,
+      # which wraps the sink in a SinkManySerialized that DETECTS concurrent access and refuses one
+      # caller with FAIL_NON_SERIALIZED — measured on reactor-core 3.8.6: four threads × 200,000 emits
+      # gives 561,466 refusals, one thread gives none, and the same sink built through Sinks.unsafe()
+      # gives none at 800,000 because the wrapper is the detector. onEstateEvent's failure arm logs
+      # that result at DEBUG and no environment here runs at DEBUG, so a second emitting thread would
+      # DROP LIVE EVENTS in silence — and not the loss the class javadoc accounts for, which is a
+      # subscriber too slow to keep up.
+      #
+      # WHY A GREP AND NOT A TEST, which is the opposite of D76 §6's answer for the same class. The
+      # framework's default concurrency is already 1 (measured off the running KafkaListenerEndpoint-
+      # Registry: `concurrency=1 children=1`), so DELETING the annotation changes nothing observable —
+      # every test stays green, which is exactly the situation D74 met and answered this way. The pin
+      # is what makes the state unreachable rather than merely unlikely: with it in place,
+      # `spring.kafka.listener.concurrency=2` in any yml or environment renders `concurrency=1
+      # children=1`, because an endpoint's concurrency overrides the factory's
+      # (ConcurrentKafkaListenerContainerFactory.initializeContainer). Measured both ways.
+      #
+      # DELIBERATELY NOT GUARDED HERE: the other premise, one partition per topic. That one is
+      # asserted of the BROKER by MarketplaceEventFanoutIT.theBarrierRestsOnOnePartitionPerTopic and
+      # is red when wrong, twice measured — the constant raised to 2, and the topics created with 2
+      # while the constant said 1 — so a grep would add nothing a test does not do better. Deleting
+      # that test is a review obligation, in the same terms D76 §9 recorded for the two methods beside
+      # it, and not something a text match should be asked to notice.
+      #
+      # THE SUBJECT IS DERIVED, NOT NAMED, and that is D52's and D77's lesson rather than tidiness: a
+      # file named in a workflow cannot see a SECOND fan-out appear. Services come from `jdl/*.jdl`,
+      # the model of record; a subject is any main source whose STRIPPED code both declares a
+      # `@KafkaListener` and mentions `Sinks.`. Exactly one exists today, in the gateway. The generated
+      # `broker/KafkaConsumer.java` is deliberately not one — it holds a `unicast()` sink and no
+      # `@KafkaListener`, being a Spring Cloud Function consumer, and it is the orphaned sample of
+      # D59/D62 whose topic has carried nothing in the estate's life.
+      #
+      # The discriminator is `Sinks.` and NOT `Sinks.many(`, which it was for one draft, and the
+      # difference was measured rather than reasoned: a sink switched to `Sinks.unsafe().many()` stops
+      # matching `Sinks.many(`, so the file dropped out of the derivation and the check refused with
+      # "no subject at all" — fail-closed, and naming the wrong cause, which is this family's own
+      # defect one level up. Widened, the same mutation is refused by the sentence about the unsafe
+      # spec. Nothing else in the estate is pulled in by the wider match, because the first
+      # discriminator is the listener.
+      #
+      # The requirement is stated so it survives a second subject: pin the concurrency, and do not
+      # reach for `Sinks.unsafe()`. The negative half is why the shape generalises — a new fan-out may
+      # legitimately want `directAllOrNothing()` or a buffer, and none of that changes the fact that a
+      # listener feeding a sink must arrive on one thread.
+      #
+      # COMMENTS ARE STRIPPED FIRST, and measured rather than assumed, one pattern at a time:
+      #   concurrency = "1"    raw 2, stripped 1   stripper LOAD-BEARING
+      #   Sinks.unsafe(        raw 0, stripped 0   stripper NOT load-bearing today
+      # The first fails open without the stripper: the javadoc argues for the pin and quotes it, so a
+      # deleted annotation still matches the prose that explains it — measured, an unstripped grep
+      # passes the deletion. The second is a negative assertion, so it cannot be satisfied by prose
+      # today and WOULD be the moment somebody writes `Sinks.unsafe()` into a comment explaining why
+      # not to; the discovery grep has the same property, which is why it strips too.
+      - name: A Kafka listener feeding a reactor sink must stay single-threaded
+        run: |
+          fail=0
+          [ -f .github/checks/strip-comments.awk ] || { echo "::error::.github/checks/strip-comments.awk is missing — this check would read the javadoc that argues for the very line it greps for, and pass. See decisions.md D79."; exit 1; }
+          services=$(ls jdl/*.jdl 2>/dev/null | sed -E 's@^jdl/(.+)\.jdl$@\1@' | sort -u)
+          if [ -z "$services" ]; then
+            echo "::error::no jdl/*.jdl — the service list is derived from the model of record and this check would scan nothing. See decisions.md D79."
+            exit 1
+          fi
+          echo "services from jdl/*.jdl: $(echo $services)"
+          subjects=""
+          for svc in $services; do
+            [ -d "$svc/src/main/java" ] || continue
+            for f in $(find "$svc/src/main/java" -name '*.java' -not -path '*/target/*' | sort); do
+              code=$(awk -f .github/checks/strip-comments.awk "$f")
+              printf '%s\n' "$code" | grep -qF '@KafkaListener' || continue
+              printf '%s\n' "$code" | grep -qF 'Sinks.' || continue
+              subjects="$subjects $f"
+            done
+          done
+          if [ -z "$subjects" ]; then
+            echo "::error::no main source declares a @KafkaListener beside a Sinks.many() sink. The gateway's MarketplaceEventFanout is one, so either it has been renamed out of this derivation or the stripper is eating the code — either way this check has no subject and must not report success. See decisions.md D79."
+            exit 1
+          fi
+          echo "listeners feeding a reactor sink:$subjects"
+          for f in $subjects; do
+            code=$(awk -f .github/checks/strip-comments.awk "$f")
+            if ! printf '%s\n' "$code" | grep -qF 'concurrency = "1"'; then
+              echo "::error file=$f::this @KafkaListener feeds a reactor sink and no longer pins concurrency = \"1\". Sinks.many() is the SERIALIZED spec, so a second container thread answers FAIL_NON_SERIALIZED and the emission is DROPPED — in the gateway's fan-out that is a silently lost live event, and not the loss its javadoc accounts for. The framework's default is also 1, so no test in this repository can see this line go. See decisions.md D79."
+              fail=1
+            else
+              echo "ok   $f pins its listener at one consumer thread"
+            fi
+            if printf '%s\n' "$code" | grep -qF 'Sinks.unsafe('; then
+              echo "::error file=$f::this sink is built through Sinks.unsafe(), which removes the SinkManySerialized wrapper that detects concurrent access — measured, 800,000 concurrent emits through the unsafe spec and not one FAIL_NON_SERIALIZED. Concurrent access then stops being refused and becomes an unreported Reactive Streams 1.3 violation on a live client's stream. Single-threaded today, so no test can see this either. See decisions.md D79."
+              fail=1
+            else
+              echo "ok   $f builds its sink through the spec that refuses concurrent access"
+            fi
+          done
+          exit "$fail"
+
       # A filter chain's precedence must be declared where Spring can READ it — decisions.md D77.
       # That is the @Bean METHOD and never the @Configuration class: Spring hands the comparator the
       # factory method and the bean type as order sources and never the declaring class, so
