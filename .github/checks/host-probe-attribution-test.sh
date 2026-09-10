@@ -10,7 +10,7 @@
 #  AIMED AT. "It went red" is not the assertion here: every one of these outcomes stops the deploy
 #  either way, and what is being pinned is which cause the refusal names.
 #
-#  TWENTY-TWO MUTATIONS. Trust the list and not the number — this repository has written such a count
+#  THIRTY MUTATIONS. Trust the list and not the number — this repository has written such a count
 #  wrong four times, twice in the commit that was correcting the same defect elsewhere.
 #
 #    1  the sentinel test deleted            — host_run back to reading a status, which cannot tell
@@ -80,6 +80,38 @@
 #                                              by writing this case; closed with a terminator check
 #   22  the subject does not parse           — the awk lifts do not cross a syntax break, so the
 #                                              check went green over a file nobody could run
+#
+#  Eight more for the HEALTH GATE — decisions.md D78, backlog NEW-36. Its 24 polls fold on purpose
+#  and its exhaustion is fatal by way of `rollback`, so these pull in both directions: 27 is the
+#  cheap "fix" that makes a one-second flake a rolled-back deploy, and the rest are the exhaustion
+#  claiming a cause it cannot establish. Cases 23-28 are covered by part 6 and by nothing else,
+#  measured: with part 6 cut out of a copy of the check this file reports 25 ok, 6 failed.
+#
+#   23  the exhaustion arm back to
+#       warn-and-roll-back                   — NEW-36 itself: five HEALTHY services named as
+#                                              unhealthy and the stack rolled back, whoever the
+#                                              silence belonged to
+#   24  the state probe's remote-status
+#       arm emptied                          — a daemon that could not be asked, reported as services
+#                                              that failed, and rolled back on
+#   25  the no-containers arm removed        — `ps -a` exits 0 with NO output for a project with none
+#                                              (measured), so no status check can see this state
+#   26  the healthy-contradiction arm
+#       removed                              — the blip: docker's own healthcheck says every service
+#                                              is healthy and the deploy reverts it anyway
+#   27  a status check moved INSIDE the poll  — the opposite direction, and the one D71 §5 argues
+#                                              against: a service that fails one poll and answers the
+#                                              next must still pass
+#   28  the log read turned into a refusal    — the evidence is not the decision; unreadiness is
+#                                              already established, and a daemon that goes quiet one
+#                                              round trip later must not stop a correct rollback
+#   29  gate_exhausted renamed                — an unliftable subject is an ERROR, not a green run
+#                                              over nothing (cases 11, 19, 20 one function along)
+#   30  the health column dropped from the
+#       state probe                          — the second opinion itself. Part 5's enumeration is
+#                                              what stands behind this one, and that is stated at
+#                                              the case: the docker stub does not render a format
+#                                              string, so part 6 cannot see the column go
 #
 #      ./.github/checks/host-probe-attribution-test.sh
 # ==============================================================================
@@ -301,6 +333,87 @@ else
   bad "22  the subject does not parse — red, but not through the door it was aimed at"
   grep '::error::' "$f.out" >&2 || true
 fi
+
+printf '\nThe health gate: the polls must keep folding, the exhaustion must not\n'
+# CASE 23 IS THE DEFECT ITSELF, PUT BACK. One line, it parses, and it is exactly what the file said
+# until D78: an exhausted gate warns about five services and falls through to `rollback`, whoever
+# the silence belonged to.
+f="$(fresh m23)"
+sed -i 's|{ gate_exhausted "\$bad"; return 1; }|{ warn "still unhealthy:$bad"; return 1; }|' "$f"
+expect_red "$f" "23  the exhaustion arm back to warn-and-roll-back (NEW-36 itself)" \
+  '{ warn "still unhealthy:$bad"; return 1; }' '{ gate_exhausted "$bad"; return 1; }' \
+  "reported an unreachable host as unhealthy services and fell through to a rollback"
+
+# THE STATE PROBE'S STATUS ARM. Addressed to gate_exhausted's own line range, because `(( HOST_STATUS
+# == 0 ))` appears in `rollback` as well — case 17's subject — and a sed matching both would leave
+# the original-is-gone control failing on a mutation that had applied. Third time in this file that a
+# control has been wider than its subject (cases 8 and 20 are the others).
+f="$(fresh m24)"
+awk '
+  /^gate_exhausted\(\) \{/ { in_fn = 1 }
+  in_fn && /could not then be asked what state the services are in/ { print "    || true # MUTATED-24"; next }
+  /^\}/ && in_fn { in_fn = 0 }
+  { print }' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+expect_red "$f" "24  the state probe's remote-status arm emptied" '|| true # MUTATED-24' \
+  'could not then be asked what state the services are in' \
+  "ROLLED THE STACK BACK over a daemon it could not ask"
+
+# The host answered and knows of nothing. Measured: `ps -a` exits 0 with empty output there, so the
+# status arm above cannot see this state and it is a separate refusal rather than a nicety.
+f="$(fresh m25)"
+# `%` as the delimiter, not `|`: the line being matched IS an `||`, and `sed` reads the second bar
+# as the end of the pattern and then refuses the expression. Caught by running it.
+sed -i 's%^    || die "the health gate timed out after ${HEALTH_TIMEOUT}s and docker compose on $HOST reports NO CONTAINERS.*%    || true ## MUTATED-25%' "$f"
+expect_red "$f" "25  the no-containers arm removed" '|| true ## MUTATED-25' 'NO CONTAINERS AT ALL' \
+  "reported a project with NO CONTAINERS as services that failed to become ready"
+
+# THE BLIP ARM, which is the one that actually stops a healthy estate being rolled back: the polls
+# got nothing and docker's own healthcheck — the same readiness probe, run inside the host — says
+# every service the gate gave up on is healthy.
+f="$(fresh m26)"
+sed -i 's|^  if \[\[ -z "\$unproven" \]\]; then$|  if false; then # MUTATED-26|' "$f"
+expect_red "$f" "26  the healthy-contradiction arm removed" 'if false; then # MUTATED-26' \
+  'if [[ -z "$unproven" ]]; then' \
+  "ROLLED BACK an estate whose every service docker itself reports as running and healthy"
+
+# THE OPPOSITE MUTATION, and the reason part 6 has a transient case at all: the cheap reading of
+# NEW-36 is "check the status" and doing it INSIDE the loop makes one failed poll a rolled-back
+# deploy. D71 §5's rule is that a poll may fold; this is what enforces the half of it that stayed.
+f="$(fresh m27)"
+sed -i 's%        >/dev/null 2>&1 || bad+=" $s"%        >/dev/null 2>\&1 || die "$s did not answer" ## MUTATED-27%' "$f"
+expect_red "$f" "27  a status check moved INSIDE the poll" 'die "$s did not answer" ## MUTATED-27' \
+  '|| bad+=" $s"' "DIED on a service that failed its first poll and answered the next"
+
+# And the same rule the other way: the log read is EVIDENCE, so its failure may not become a
+# refusal. Unreadiness is established by the probe above it, and a daemon that goes quiet one round
+# trip later must not turn a correct rollback into a stopped deploy.
+f="$(fresh m28)"
+sed -i 's|^    warn "  their logs could not be read (exit \$HOST_STATUS): \$HOST_OUTPUT"$|    die "their logs could not be read" # MUTATED-28|' "$f"
+expect_red "$f" "28  the log read turned into a refusal" 'die "their logs could not be read" # MUTATED-28' \
+  'their logs could not be read (exit $HOST_STATUS)' \
+  "DIED because it could not read the failed services' logs"
+
+# AN UNLIFTABLE SUBJECT MUST BE AN ERROR, not a green run over nothing — cases 11, 19 and 20 one
+# function along. Both halves renamed, so the mutant is a script that works perfectly and whose
+# subject this check cannot find.
+f="$(fresh m29)"
+sed -i 's|gate_exhausted|gate_diagnose|g' "$f"
+expect_red "$f" "29  gate_exhausted renamed" 'gate_diagnose() {' 'gate_exhausted' \
+  "declares no 'gate_exhausted'"
+
+# THE SECOND OPINION ITSELF, dropped as a tidy-up. What stands behind this one is part 5's
+# enumeration rather than part 6: the docker stub does not render the format string, so a `ps` that
+# no longer asks for {{.Health}} still ANSWERS with it in the harness. Stated rather than papered
+# over — the textual site is the guard here, which is what it is for.
+f="$(fresh m30)"
+sed -i "s|{{.Service}} {{.State}} {{.Health}}|{{.Service}} {{.State}}|" "$f"
+# The original-is-gone control names the WHOLE format string and not the bare column: the code's own
+# comment argues for {{.Health}} by name, comments are not stripped from the file itself, and the
+# looser spelling therefore failed the control on a mutation that had applied. Fourth time in this
+# file — see cases 8, 20 and 24.
+expect_red "$f" "30  the health column dropped from the state probe" \
+  "ps -a --format '{{.Service}} {{.State}}'" "{{.Service}} {{.State}} {{.Health}}" \
+  "no longer asks the host about what state the services are in once the health gate has timed out"
 
 # THE ONE CASE THAT MUTATES THE CHECK'S OWN INSTRUMENT rather than the subject. Absent the shell
 # stripper, part 3 reads empty text: every `grep -F` finds nothing, so every site is reported

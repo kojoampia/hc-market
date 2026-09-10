@@ -562,21 +562,31 @@ jobs:
       # with the REMOTE command's status, so no expression over the source can establish that the
       # two hops are told apart. The check drives the shipped functions against a stub that RUNS the
       # remote script it is handed — so the sentinel every assertion reads is produced by the code
-      # under test, not by the harness. Its own test constructs twenty-two broken states, including the
+      # under test, not by the harness. Its own test constructs thirty broken states, including the
       # positive controls that a repair collapsing two causes into one would otherwise satisfy.
       #
-      # FIVE PARTS, and parts 3 and 4 are D75's review finding rather than its plan: the first version
+      # SIX PARTS, and parts 3 and 4 are D75's review finding rather than its plan: the first version
       # drove ONE of the six call sites and covered the rest textually, which establishes that they
       # cannot report an ssh failure as a fact about the host and nothing about their REMOTE-STATUS
       # arms. Emptying one of those is one line, and the mutant PASSES preflight on a secrets.env it
       # could not read — the only defect in this family that is not a refusal.
+      #
+      # PART 6 IS THE HEALTH GATE — decisions.md D78, backlog NEW-36 — and it is the one part with two
+      # assertions that pull in opposite directions. The gate's 24 polls MUST keep folding, because a
+      # status check inside the loop makes a one-second flake a rolled-back deploy (D71 §5); its
+      # EXHAUSTION must not, because it is fatal by way of `rollback`, so a host that went away
+      # mid-deploy used to name five healthy services as unhealthy and revert the stack. Only one arm
+      # may return into that rollback: the one where the host answered and docker's own healthcheck
+      # agrees something is unready. Measured with `compose exec` against throwaway containers —
+      # a refused port, a stopped service, an undeclared service and an unanswerable daemon all exit
+      # 1 — which is why no grep and no status check could stand in for driving it.
       #
       # It needs no docker, no network and no host: `deploy-prod.sh` has never been run against one
       # (decisions.md D49) and nothing here changes that.
       - name: A remote probe must say which hop failed
         run: ./.github/checks/host-probe-attribution.sh
 
-      - name: …and that check must fail on each of the twenty-two states it exists to refuse
+      - name: …and that check must fail on each of the thirty states it exists to refuse
         run: ./.github/checks/host-probe-attribution-test.sh
 
       # "The agent must be verified as INSTRUMENTING, not merely loading" has been in CLAUDE.md

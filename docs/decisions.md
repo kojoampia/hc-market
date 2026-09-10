@@ -13727,3 +13727,336 @@ one `grep -rl` along.
 shell script in the shipped parse gate ok, and gateway `clean verify` green for the javadoc change.
 `extract-seed.mjs` re-extracts identically and `sync-appendices.sh --check` is clean. **No production
 code changed in this pass** — the only Java touched is one gateway javadoc paragraph.
+
+---
+
+## D78 — Which of the two silences it was, and the second opinion that answers it
+
+**Ratified 2026-09-10.** Closes backlog **NEW-36**, opened by **D75 §6** as an explicit loser and named
+in D71 §5 as that rule's one stated edge. Opens **NEW-39**. Authorised by **D72 §2**: the production
+path stays halted — no deploy, no `--host`, no credential, no ssh to the production host — and code
+fixes to `deploy-prod.sh` are authorised, verified by lifting functions against stubs, which is how
+D66, D67, D69, D71 and D75 were all done.
+
+**`main` ends at D77, the backlog's highest item is NEW-38, and `gh pr list --state open` answers
+nothing** — all three re-checked at `e1d8ce2` rather than taken from the brief, which is this
+document's rule for its own numbering.
+
+`health_gate` probed each service 24 times at ten-second intervals over
+
+```
+ssh "$HOST" "cd … && $REMOTE_COMPOSE exec -T hc-market-$s bash -c '…/dev/tcp…'" >/dev/null 2>&1 \
+  || bad+=" $s"
+```
+
+and ended in `warn "still unhealthy:$bad"; return 1`, which the router turns into `rollback`. **The
+folding inside the loop is correct and is unchanged**: during a wait an unanswerable daemon or a host
+that blinked must be a retry, and a status check in there makes a one-second flake fatal on the
+estate's slowest gate. What was wrong is only the exhaustion — a host that went away mid-deploy named
+**five healthy services as unhealthy** and reverted the stack.
+
+### §1 What was established, and how — and the cheap fix would not have worked
+
+Every row below was measured on this workstation against throwaway containers and throwaway ssh
+targets. `deploy-prod.sh` was **not run against any host**; the only production-path invocation was
+`--rollback --dry-run` with no `HC_PROD_HOST`, which stops at *"no target host"*.
+
+**`compose exec` cannot attribute anything, which kills the obvious repair before it is written**
+(docker 29.8.0, a two-service throwaway project, one container running and one exited):
+
+| state | rc | output |
+| --- | --- | --- |
+| the command succeeds inside a running container | 0 | — |
+| the port refuses (nothing listening on 8080) | **1** | `bash: connect: Connection refused` |
+| the service is **not running** | **1** | `service "hc-market-gone" is not running` |
+| the service is **not in the compose file** | **1** | `service "hc-market-nosuch" is not running` |
+| the **daemon** cannot be asked (`DOCKER_HOST=unix:///nonexistent`) | **1** | `failed to connect to the docker API at unix:///nonexistent…` |
+| ssh never connected (measured separately, OpenSSH 10.2p1) | **255** | ssh's own sentence |
+
+**Four states, one status.** So "check the status inside the loop" would have bought nothing at all —
+it cannot tell a service that is still starting from a daemon that is gone — and the attribution had
+to come from a **different question**.
+
+**`compose ps -a` is that question, and its status IS honest:**
+
+| state | rc | output |
+| --- | --- | --- |
+| the daemon answered | 0 | one line per container: `hc-market-payout running` |
+| the daemon cannot be asked | **1** | the same `failed to connect…` sentence |
+| the project has **no containers at all** | **0** | **nothing** |
+| a service named that the file does not declare | 1 | `no such service: hc-market-nosuch` |
+| the compose file is not there | 1 | `compose file "…" is invalid: … no such file or directory` |
+| `--format '{{.Health}}'` on a container with a healthcheck | 0 | `hc-market-catalog running unhealthy` |
+
+The third row is a state no status check can see and the sixth is the one this decision turns on.
+
+**And the item's own cost figure was wrong by two orders of magnitude, in the direction that matters.**
+NEW-36 says a host that goes away costs "four minutes". That is true only while ssh fails *fast*.
+Measured here against a blackholed address (192.0.2.1, TEST-NET-1): an ssh with **no `ConnectTimeout`
+takes 136s** to answer, and `-o ConnectTimeout=8` takes **8s**. Twenty-four iterations × five services
+× 136s is **~4.5 hours** to a refusal that then names the wrong cause. That is not a message arriving
+late; it is a message nobody is still watching for.
+
+### §2 Decision one: ONE ATTRIBUTING PROBE, after the loop and never inside it
+
+`gate_exhausted` asks `compose ps -a --format '{{.Service}} {{.State}} {{.Health}}'` **through
+`host_run`** (D75), so the ssh hop is established by the sentinel rather than by a status, and then
+branches on what came back. Six outcomes, each named by evidence:
+
+| outcome | how it is established | rolls back? |
+| --- | --- | --- |
+| ssh never reached a shell | **no sentinel** — `host_run` refuses, with `ssh_hint`'s remedy | **no** |
+| no docker command on the host | `HOST_STATUS == 127` → `no_docker_on_host` | **no** |
+| the daemon could not be asked | any other non-zero status, quoting docker's own sentence | **no** |
+| the project has no containers | status 0 and **empty output** | **no** |
+| every unready service reports `running healthy` | docker's own healthcheck contradicts the polls | **no** |
+| the host answered and agrees something is unready | status 0, and a line that is not `running healthy` | **yes** |
+
+**Only the last arm returns**, and the router rolls the stack back on it exactly as before. Everything
+else is a `die` — the deploy stops, nothing is reverted.
+
+### §3 Decision two: `{{.Health}}` IS A SECOND OPINION, and it is what makes the blip decidable
+
+The interesting failure is not a host that stays away — it is one that is away for the *last poll* and
+back a second later. Then `bad` holds every service while four of them were ready throughout, and a
+repair that only distinguished "ssh answered / did not answer" would answer *"the host answered, so
+this is the services"* and roll a healthy estate back. The whole item exists to prevent that.
+
+What decides it is that **docker's healthcheck is not the same channel as the probe**. Every app
+service in `docker-compose.prod.yml` inherits `*service-base`, whose healthcheck is the *same*
+`/dev/tcp` readiness request the gate makes, run by the daemon **inside the host** every 15s. So
+`Health=healthy` is that question answered without crossing the ssh hop at all — measured populated
+(`unhealthy`, and `starting`/`healthy` by the same mechanism) on a throwaway container carrying that
+exact healthcheck block. If every service the gate gave up on is `running healthy`, what failed is
+**this end of the wire**, and the refusal says so and reverts nothing.
+
+**The tie-break is deliberately asymmetric.** *Every* service in `bad` must be contradicted for that
+arm to fire; one `starting` or one blank `Health` and the ordinary rollback arm runs. A blank health
+column — a compose file edited to drop the healthcheck — is not a contradiction, so it fails towards
+the rollback, where the gate's own 24 polls are then the only evidence and they say unready.
+
+### §4 The decision the item did not anticipate: `ps -a` answers 0 for a project with nothing in it
+
+Measured, and it is a fourth reading rather than a wording: `compose ps -a` on a project with no
+containers exits **0 with no output**. Folded into the ordinary arm it reads as "they never became
+ready" — about five containers that do not exist — and the rollback it triggers cannot help, because
+`up -d` ran through `run` and would have printed its own failure through the ERR trap. What is left is
+a `--path` or a compose project that is not the one just rolled, and **an older tag is not the remedy
+for either**. So it is its own refusal, naming the file and the path, and it reverts nothing.
+
+### §5 What §4.1 was asked to settle: it fails towards NOT reverting, and `rollback` is why
+
+Rolling a healthy estate back because the host went away is the harm; refusing to roll back an estate
+that genuinely failed is the opposite harm. **Where the cause cannot be established, this refuses.**
+
+The argument is not a preference. `rollback` needs the very host the gate has just failed to reach,
+at **four** points — read off the function rather than assumed: a `host_run` for the previous tag, an
+`ssh` to `cp .env.previous .env && pull && up -d`, and then `health_gate` **again**, whose own
+exhaustion lands in `die "rollback to $prev is also unhealthy"`. An estate that cannot be asked
+therefore cannot be reverted either, so the choice is between a refusal that says what is
+unestablished and a rollback that will fail one round trip later having claimed a cause. Each refusal
+names `./deploy-prod.sh --rollback --host …` for the moment the host comes back, which is the same
+command the success path prints.
+
+One consequence is worth stating: on the arms that now `die`, **`deployments.log` records nothing**, so
+a deploy that was in fact fine and unreachable at the gate is un-recorded until somebody re-runs it.
+That is the cheaper of the two errors — a missing line in a log against a reverted production estate.
+
+### §6 Decision three: the evidence a rollback is about to destroy — `deploy-dev.sh`'s shape, demoted
+
+D71 §9's answer in the dev script is a `compose logs --tail=40` on the same line as its `die`, which
+cannot fold. Ported here, with two changes that follow from this file having `host_run` and dev not:
+
+- it is **evidence, not the decision** — the decision is already made by §2's probe, so the logs read
+  happens only on the arm that rolls back;
+- its **remote-status arm is a `warn`**, not a `die`. Unreadiness is established by then, and a daemon
+  that goes quiet one round trip later must not turn a correct rollback into a stopped deploy. An ssh
+  that stops answering between the two still refuses inside `host_run` — and rightly, since the
+  rollback below it needs that hop.
+
+Why it is worth a round trip at all: **`up -d` at the previous tag recreates these containers**, so the
+failed tag's log is readable in this window and in no other. It is read in one call naming only the
+unready services, so the output is bounded by what actually failed.
+
+### §7 Decision four: the eleven bare `ssh` invocations, taken with it
+
+NEW-36 said to. D75 put `SSH_OPTS` on the six *preflight* probes only, and the header's own
+`HC_SSH_TIMEOUT` paragraph claimed it applied to "every remote probe" — true of preflight and false of
+everything after it. All eleven deploy-phase invocations and the one `scp` now go through
+`"${SSH_OPTS[@]}"`: `mkdir -p`, the `.env.next` write, the `.env.previous` rotation, the remote
+`docker login`, `pull`, `up -d`, the health gate's own poll, both `/management/info` probes,
+`rollback`'s restore-and-roll, and `record_success`'s append. **Twelve `ssh` and one `scp`, counted on
+the stripped source** rather than from the prose — this entry's predecessor got that number wrong twice.
+
+It bounds the **connect** and not the remote command, so a long `pull` or a slow readiness probe is
+unaffected; `scp` accepts the same `-o` options (checked). The existing CI assertion that no site
+spells out its own `-o BatchMode=yes` is satisfied by construction, because the array is expanded
+rather than restated.
+
+### §8 What §4.2 was asked to settle: `smoke_test`'s two probes still fold, and that is the decision
+
+The brokerage probe is the same shape one step along — `2>/dev/null || true`, and its `return 1` reaches
+the same `rollback`. It is **left folded**, for two reasons that do not hold for the gate:
+
+- **its message already names both readings** — *"holds NO brokerage terms in force, **or** could not
+  be asked"* — with a remedy paragraph covering both, and D71 §5's rule is about a refusal that asserts
+  **one** cause. The cost of this family has always been the remedy, not the status;
+- **the direction to fail is the opposite one.** The condition it guards is D57's and it is silent: an
+  estate that cannot price a booking passes every other check, then retries the first completed booking
+  for ever and answers 503 to every receipt, both after the customer's money has moved. An
+  unestablished answer there must **not** ship, so it must roll back — which is what the fold already
+  does. Routing it through `host_run` would invert that: `host_run` refuses on the ssh hop, so a link
+  that dropped between the gate and the smoke test would leave a possibly-unpriced estate up.
+
+The gateway version probe below it folds too and decides nothing at all: it `warn`s and the deploy
+proceeds either way. Both arguments are now written **at the site**, so the next reader finds a
+decision rather than an omission.
+
+### §9 What CI can see
+
+`.github/checks/host-probe-attribution.sh` grows a **part 6** and now makes **44 assertions** (was 32).
+It drives the shipped `health_gate` and `gate_exhausted`, lifted as bytes, against the same stub that
+runs the wrapped remote script for real — so the sentinel and the compose status every reading rests on
+are produced by the code under test. `compose_name` and `REMOTE_COMPOSE` are lifted too rather than
+restated: the first decides the prefix the `ps` answer is matched against and the second decides which
+files compose interpolates, and a copy of either in the harness would stay green while the script's own
+copy disagreed with the host.
+
+**Ten readings, and two of them pull the other way from the item.** Ready on the first poll (the
+positive control), a transient that clears on the second poll (the *fold's* control — this must PASS),
+really unready, the blip, no containers, an unanswerable daemon, no docker CLI, an unreachable host,
+logs lost after a successful state probe, and `--dry-run`.
+
+Part 5's enumeration grows the two new sites (`{{.Health}}` and `logs --no-color --tail`), and part 6
+comes **after** part 5 because the numbers are names: four parts' messages cite their own, and
+renumbering them to insert a driving part in the middle is churn for nothing.
+
+`host-probe-attribution-test.sh` grows eight mutations, **thirty** in all, each asserted applied —
+mutant present, original gone, `bash -n` — before its result is believed, and each required to go red
+through the door it was aimed at. It reports `31 ok, 0 failed`.
+
+**The harness's instrument was checked by removing what it tests.** With part 6 cut out of a copy of
+the check, the test reports exactly **25 ok, 6 failed** — cases 23-28, each *"the check PASSED on a
+broken tree"* — while 29 (whose door is the lift guard) and 30 (whose door is part 5) stay green. So
+those six mutations are covered by part 6 and by nothing else.
+
+**Four harness defects were found by running it rather than by reading it**, and three are the same
+shape this family keeps producing:
+
+- **`DIE*` where `*DIE*` was needed**, in all nine of part 6's patterns. The gate prints a `STEP` line
+  first, so a prefix-anchored pattern misses every refusal that follows it — D75 §5's finding, in the
+  part written by whoever had just read it.
+- **The remote command begins `cd '$REMOTE_PATH' &&`**, so pointed at the default `/srv/healthconnect`
+  all ten readings were the `cd` refusing. A correct answer to a question part 6 is not asking, and it
+  looked exactly like the gate refusing everything. Part 6 uses a real fixture directory.
+- **A control wider than its subject, twice.** `(( HOST_STATUS == 0 ))` appears in `rollback` as well —
+  case 17's own subject — so case 24's mutation is addressed to `gate_exhausted`'s line range; and
+  case 30's original-is-gone control names the whole format string, because the code's comment argues
+  for `{{.Health}}` by name and the loose spelling failed the control on a mutation that had applied.
+- **`sed`'s delimiter cannot be `|` when the line being matched is an `||`**, which is how cases 25 and
+  27 first arrived: `unknown option to 's'`, loud rather than silent, and still a case that ran nothing.
+
+**And one defect in this decision's own control**, which is D75 case 21's fail-open one level out: the
+first version of the part-6 control used an awk range whose terminator was a regex containing a real
+newline, so it cut to the **end of the file**, taking the summary and `exit $fail` with it — and the
+gutted check was then red on a clean tree, which reads as "the harness is broken" rather than "the
+control is". Its second version cut correctly and the copy had to live **inside `.github/checks/`**,
+because the check derives `ROOT` from its own path.
+
+### §10 Losers
+
+- **A status check inside the loop.** Rejected on measurement rather than on D71 §5's rule alone:
+  `compose exec` exits 1 for a refused port, a stopped service, an undeclared service *and* an
+  unanswerable daemon (§1), so the status the loop is throwing away could not have attributed anything
+  even if it were read. It would also make a one-second flake a rolled-back deploy. The rule was right
+  and the reason is stronger than the rule.
+- **A `compose logs --tail=40` beside the refusal and nothing else** — `deploy-dev.sh`'s answer,
+  ported straight. Rejected as the *decision*: in dev that command is the only thing in reach that
+  cannot fold, so it carries the diagnosis by accident; here `host_run` exists and attributes properly,
+  and a logs read cannot tell an operator whether to trust the gate's conclusion. Taken as **evidence**
+  instead (§6), which is the half of it that is load-bearing — the rollback destroys those logs.
+- **A bounded consecutive-unreachable count, giving up early on the hop.** Rejected: for the first two
+  minutes of a deploy *every* service legitimately fails every poll (`start_period: 120s`), so
+  "all five bad" is not a hop signal at all, and making it one would need the status reading the loop
+  must not do. The lateness it was aiming at is answered by `SSH_OPTS` (§7, 136s → 8s per probe) and
+  what remains of it is **NEW-39**.
+- **Making the 240s budget a wall clock instead of 24 attempts.** Rejected here and opened as NEW-39
+  rather than taken silently: it would arrive at the diagnosis sooner *by being less patient*, and on a
+  slow-starting estate that is a deploy failing a gate it would previously have passed. `HEALTH_TIMEOUT`
+  is a budget of attempts today and the header says seconds; that mismatch is worth an item and is not
+  worth a change made in passing.
+- **Sub-classifying the daemon arm** ("the daemon is down" versus "the socket is not there"). Rejected
+  for D75 §6's reason, which is D50's rule: those messages are docker's, on a host nothing in this
+  repository has ever run against (D49). The arm quotes docker's own sentence instead.
+- **Routing the two `/management/info` probes through `host_run`.** Rejected in §8, and the reason is
+  the direction to fail rather than tidiness.
+- **Reading `{{.State}}` alone and treating `running` as the contradiction.** Rejected: `running` says
+  the container exists, not that the application answers, and a service stuck in Liquibase is `running`
+  for the whole gate. It is the healthcheck's verdict that is the same question the gate asked, which is
+  the only reason it can contradict it.
+- **Retrying the state probe.** Rejected: a probe whose failure is a refusal that reverts nothing is
+  already failing in the safe direction, and a retry loop around it is the gate's own shape one level
+  down, with the same edge.
+- **A CI check banning a folded `ssh` in `health_gate`.** Rejected for D75 §6's reason — the three
+  deliberate folds in this file are exactly what such a check would refuse, and part 6 asks the honest
+  question instead: what the exhaustion *establishes*.
+
+### §11 What this does not establish
+
+**`deploy-prod.sh` has still never run against a host** (D49) and nothing here changes that. The gate
+and its exhaustion have now been driven against a stub that runs the remote script for real, with a
+real `cd`, real fixtures and a real `docker` on `PATH`; what has not run is a deploy.
+
+**Which of these arms fires on a real production incident is unexercised.** Named, per outcome, rather
+than blurred:
+
+- **measured** — every `compose exec` and `compose ps` status and sentence in §1, the `{{.Health}}`
+  column being populated by that exact healthcheck block, the 136s/8s connect measurement, `scp`
+  accepting the options, and bash's suppression of `set -e` inside a function called from a condition
+  (which is what makes `gate_exhausted`'s return safe today);
+- **driven against the stub** — all six arms of §2, the transient, and `--dry-run`;
+- **reasoned, not exercised** — that a *production* host's docker words the unanswerable state as this
+  workstation's does (D71 §7's fail-closed direction holds: a differently-worded failure has a non-zero
+  status and still refuses), and that the blip arm fires on a real network blip rather than on the
+  docker-layer construction the harness uses for it. The harness's ssh state is fixed for a run, so the
+  blip is built by making `exec` fail while `ps` answers healthy — the same shape from
+  `gate_exhausted`'s point of view, and not the same event.
+
+**One fail-open is structural and stated.** The docker stub does not render `--format`, so part 6 cannot
+see the `{{.Health}}` column removed from the probe; what stands behind that is part 5's textual site
+enumeration, and case 30 exists to watch it do so. A *seventh* remote probe added with a question none
+of part 5's needles matches is still invisible to it — D75 §7's residual, unchanged.
+
+**`HEALTH_TIMEOUT` is still 24 attempts and not 240 seconds** (NEW-39), and against a blackholed host
+the refusal now arrives in ~20 minutes rather than ~4.5 hours. Better by a factor of thirteen, measured,
+and still not what the header implies.
+
+### §12 Verified in this round, by running
+
+`compose exec`/`compose ps`/`compose logs` measured across nine states against two throwaway compose
+projects, which were then removed. The ssh connect timing measured against a blackholed address, both
+bounded and unbounded. Bash's `set -e` suppression inside a condition-called function measured both
+ways, because `gate_exhausted` returning non-zero would otherwise reach the ERR trap and print
+*"failed at line N"* instead of the diagnosis.
+
+`host-probe-attribution.sh` green at **44** assertions; its test at **31 ok, 0 failed**; the harness
+control at **25 ok, 6 failed** with part 6 removed, each failure through its own door. `bash -n` on
+every script `build.yml` parses, including the two touched here. The nine neighbouring checks that read
+these files re-run green (`shared-plane-wiring.sh` and its test, `strip-sh-comments-test.sh`,
+`strip-comments-test.sh`, `outbox-alias-restore-test.sh`, `pepper-wiring.sh`,
+`signing-key-severance.sh`, `observability-claims.sh`, `admin-seed-wiring.sh`), and `build.yml`'s three
+inline matchers over this script re-run by hand with comments stripped and continuations joined: D57's
+`compose_name payout … /management/info` and `termsInForce`, and D13's image-prefix pair.
+
+**Appendix B re-embedded** — `deploy-prod.sh` is it — and `sync-appendices.sh --check` green afterwards.
+`node deploy/demo/extract-seed.mjs` left the seed unchanged. **No Java changed, so no Maven gate was
+run.**
+
+`--rollback --dry-run` with no host stops at *"no target host"*; `--help` still prints the whole
+computed header.
+
+**Nothing was deployed and no host was contacted.** No `--host`, no credential, no ssh to the production
+host. The quality stack was not touched — it is on `fabb959` with the agent attached by hand (D73) and
+is evidence — the dev estate was left empty so its next `up` is still a first run somebody wants to
+observe, nothing was published to the broker, and both throwaway compose projects were removed with
+their containers.

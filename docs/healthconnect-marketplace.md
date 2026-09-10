@@ -1707,12 +1707,19 @@ esac
 #  Optional:
 #     HC_PUBLIC_URL                 what the smoke test asks (default https://market.abofonsa.com)
 #     HC_SMOKE_MIN_PROFESSIONALS    minimum catalogue count the smoke test will accept (default 0)
-#     HC_SSH_TIMEOUT                seconds ssh will spend connecting, per probe (default 8)
+#     HC_SSH_TIMEOUT                seconds ssh will spend connecting, per ssh (default 8)
 #
 #  That last one bounds the CONNECT, not the remote command, and it is the value the ssh check has
-#  always carried — now applied to every remote probe, because an unbounded connect means a refusal
-#  that never arrives, and a message nobody waits for is the same as no message. See host_run and
-#  decisions.md D75.
+#  always carried. An unbounded connect means a refusal that never arrives, and a message nobody waits
+#  for is the same as no message. See host_run and decisions.md D75.
+#
+#  THIS SAID "EVERY REMOTE PROBE" AND MEANT PREFLIGHT'S SIX. D75 put SSH_OPTS on the probes that go
+#  through host_run and deliberately left the deploy phase alone, so every ssh after preflight — the
+#  upload, the login, the pull, the roll, the HEALTH GATE'S OWN POLL, both /management/info probes, the
+#  rollback and the deployments.log append — still hung on the TCP default. Measured against a
+#  blackholed address: 136s per connect unbounded, 8s with the timeout, which is 24 iterations × 5
+#  services × 136s — about four and a half HOURS — before the gate could say anything at all. All
+#  twelve ssh invocations and the one scp carry it now. See decisions.md D78 §7 and backlog NEW-36.
 #
 #  Optional ON THE HOST, in $REMOTE_PATH/secrets.env or .env — the founding brokerage terms
 #  (decisions.md D57, backlog NEW-18). All five may be left unset and an estate that sets none is
@@ -2445,16 +2452,16 @@ EOF
 
 remote_deploy() {
   step "Deploy → $HOST:$REMOTE_PATH"
-  run ssh "$HOST" "mkdir -p '$REMOTE_PATH'"
+  run ssh "${SSH_OPTS[@]}" "$HOST" "mkdir -p '$REMOTE_PATH'"
 
   log "uploading compose stack and env"
   if (( DRY_RUN )); then
     printf '%s  [dry-run] scp %s %s:%s/%s%s\n' "$c_dim" "$COMPOSE_TEMPLATE" "$HOST" "$REMOTE_PATH" "$APP_COMPOSE_FILE" "$c_reset"
     render_env | sed 's/^/    /'
   else
-    scp -q "$COMPOSE_TEMPLATE" "$HOST:$REMOTE_PATH/$APP_COMPOSE_FILE"
-    render_env | ssh "$HOST" "cat > '$REMOTE_PATH/.env.next'"
-    ssh "$HOST" "cd '$REMOTE_PATH' && { [ -f .env ] && cp .env .env.previous || true; } && mv .env.next .env"
+    scp -q "${SSH_OPTS[@]}" "$COMPOSE_TEMPLATE" "$HOST:$REMOTE_PATH/$APP_COMPOSE_FILE"
+    render_env | ssh "${SSH_OPTS[@]}" "$HOST" "cat > '$REMOTE_PATH/.env.next'"
+    ssh "${SSH_OPTS[@]}" "$HOST" "cd '$REMOTE_PATH' && { [ -f .env ] && cp .env .env.previous || true; } && mv .env.next .env"
   fi
 
   if (( DO_PUSH )); then
@@ -2467,16 +2474,33 @@ remote_deploy() {
     else
       log "authenticating the host to $REGISTRY_HOST"
       printf '%s' "$REGISTRY_TOKEN" \
-        | ssh "$HOST" "docker login '$REGISTRY_HOST' -u '$REGISTRY_USER' --password-stdin >/dev/null"
+        | ssh "${SSH_OPTS[@]}" "$HOST" "docker login '$REGISTRY_HOST' -u '$REGISTRY_USER' --password-stdin >/dev/null"
     fi
     log "pulling $TAG"
-    run ssh "$HOST" "cd '$REMOTE_PATH' && $REMOTE_COMPOSE pull $(compose_names)"
+    run ssh "${SSH_OPTS[@]}" "$HOST" "cd '$REMOTE_PATH' && $REMOTE_COMPOSE pull $(compose_names)"
   fi
 
   log "rolling services"
-  run ssh "$HOST" "cd '$REMOTE_PATH' && $REMOTE_COMPOSE up -d --remove-orphans $(compose_names)"
+  run ssh "${SSH_OPTS[@]}" "$HOST" "cd '$REMOTE_PATH' && $REMOTE_COMPOSE up -d --remove-orphans $(compose_names)"
 }
 
+# ---- THE GATE'S POLLS FOLD; ITS EXHAUSTION MAY NOT — decisions.md D78, backlog NEW-36 ------------
+#
+# D71 §5's rule is `a die may not fold; a warn and a poll may`, and its stated edge is a poll whose
+# EXHAUSTION is fatal. This is that edge, and until now it was the one place in either script with
+# nothing standing beside it. The 24 probes below discard both streams and every status DELIBERATELY
+# — during a wait an unanswerable daemon or a host that blinked must be a retry, and a status check
+# inside the loop makes a one-second flake fatal on the estate's slowest gate — but what the loop
+# ends in is `return 1`, and the router at the bottom of this file turns that into a `rollback`. So a
+# host that went away mid-deploy named five HEALTHY services as unhealthy and rolled the stack back.
+#
+# A STATUS CHECK INSIDE THE LOOP WOULD NOT HAVE ATTRIBUTED ANYTHING ANYWAY, which is worth knowing
+# before reaching for the cheap fix. MEASURED, docker 29.8.0, against throwaway containers on this
+# workstation: `compose exec` exits **1** for a service whose port refuses the connection, **1** for
+# a service that is not running, **1** for a service this compose file does not declare, and **1**
+# for a daemon that cannot be asked — four states, one status, and ssh's own 255 on top of them
+# (decisions.md D75 §1). The attribution has to come from a DIFFERENT QUESTION, asked once, after
+# the loop. That is gate_exhausted.
 health_gate() {
   step "Health gate (${HEALTH_TIMEOUT}s)"
   if (( DRY_RUN )); then printf '%s  [dry-run] skipped%s\n' "$c_dim" "$c_reset"; return 0; fi
@@ -2488,15 +2512,103 @@ health_gate() {
       # bash IS present, so readiness is probed over bash's /dev/tcp instead.
       # $REMOTE_COMPOSE, not a bare `docker compose`: interpolation happens on every subcommand,
       # so an `exec` without the secrets file dies on the same `:?` an `up` would.
-      ssh "$HOST" "cd '$REMOTE_PATH' && $REMOTE_COMPOSE exec -T $(compose_name "$s") bash -c \
+      #
+      # SSH_OPTS, because this probe is one of the eleven that had no ConnectTimeout (NEW-36's own
+      # second half). MEASURED here: an ssh with no ConnectTimeout spends **136s** on a blackholed
+      # address before answering, so 24 iterations × 5 services was **4.5 hours** to a refusal, not
+      # the four minutes the header implies. With the timeout it is 8s per probe. It bounds the
+      # CONNECT and not the remote command, so a slow readiness probe is unaffected.
+      ssh "${SSH_OPTS[@]}" "$HOST" "cd '$REMOTE_PATH' && $REMOTE_COMPOSE exec -T $(compose_name "$s") bash -c \
         'exec 3<>/dev/tcp/localhost/8080 && printf \"GET /management/health/readiness HTTP/1.0\\r\\n\\r\\n\" >&3 && grep -q UP <&3'" \
         >/dev/null 2>&1 || bad+=" $s"
     done
     [[ -z "$bad" ]] && { ok "all services report READY"; return 0; }
     (( waited += 10 )); sleep 10
-    (( waited >= HEALTH_TIMEOUT )) && { warn "still unhealthy:$bad"; return 1; }
+    # EVERY ARM OF gate_exhausted EITHER DIES OR RETURNS 0, and the gate's own answer is 1 either
+    # way. That is not tidiness: `health_gate` is only ever called from a condition — `if health_gate
+    # && smoke_test` and `health_gate && ok … || die …` — where bash suppresses `set -e` for the
+    # whole command and every function it calls, so a non-zero return from here is safe today and is
+    # exactly the kind of fact that stops being true when a call site moves.
+    (( waited >= HEALTH_TIMEOUT )) && { gate_exhausted "$bad"; return 1; }
     printf '  waiting%s (%ss)\n' "$bad" "$waited"
   done
+}
+
+# gate_exhausted <the services the loop gave up on>
+#
+# ONE ATTRIBUTING PROBE, AFTER THE LOOP AND NEVER INSIDE IT. `compose ps -a` asks a different
+# question from the readiness probe above, and its status is honest where `exec`'s is not. MEASURED,
+# 29.8.0: **0** with a line per container when the daemon answered, **1** carrying docker's own
+# sentence when it could not be asked, and **0 with nothing at all** when the project has no
+# containers. Routed through host_run, so an ssh that never reached a shell is refused by its own hop
+# (decisions.md D75) instead of being counted as five services that failed.
+#
+# `{{.Health}}` IS A SECOND OPINION AND NOT A REPEAT OF THE QUESTION, which is the only reason the
+# blip case below is decidable at all. Every app service in docker-compose.prod.yml carries the same
+# /dev/tcp readiness healthcheck, run by the daemon INSIDE the host every 15s, so its verdict cannot
+# be affected by the hop the 24 probes cross. If the daemon says the services the gate gave up on are
+# healthy, then what failed is this end of the wire.
+#
+# WHICH WAY IT FAILS, AND WHY (decisions.md D78 §4.1). Rolling a healthy estate back because the host
+# went away is the harm this exists to prevent; a stack that genuinely failed and is NOT rolled back
+# is the opposite harm. So the rollback happens only on the arm where the host ANSWERED and its own
+# answer agrees that something is not ready — everything else is a `die`, which stops the deploy and
+# reverts nothing. Nothing is lost by refusing: `rollback` needs this same host for all four of its
+# steps (a host_run for the previous tag, an ssh to restore .env and roll, and this gate again), so
+# an estate that cannot be asked cannot be reverted either, and the refusal names the by-hand
+# command for the moment the host comes back.
+gate_exhausted() {
+  local bad="$1" svc unproven="" logs_of=""
+  host_run "ask $HOST what state the services are in, now that the gate has timed out" \
+    "cd '$REMOTE_PATH' && $REMOTE_COMPOSE ps -a --format '{{.Service}} {{.State}} {{.Health}}'"
+  (( HOST_STATUS == 127 )) && no_docker_on_host
+  (( HOST_STATUS == 0 )) \
+    || die "the health gate timed out after ${HEALTH_TIMEOUT}s and docker compose on $HOST could not then be asked what state the services are in (exit $HOST_STATUS): $HOST_OUTPUT. So it is NOT established that$bad failed to become ready — the probes above fold a daemon that cannot be asked into the same silence a service that is still starting produces, and they cross a network to do it. NOTHING HAS BEEN ROLLED BACK, deliberately: a rollback needs this same host, and reverting a healthy estate over a daemon nobody could ask is the failure this refusal exists to prevent. Establish what is actually there — \`ssh $HOST 'cd $REMOTE_PATH && $REMOTE_COMPOSE ps -a'\` — then either fix the gate failure and redeploy, or revert by hand with \`./deploy-prod.sh --rollback --host $HOST\`."
+  # THE HOST ANSWERED AND KNOWS OF NOTHING. Measured: `ps -a` exits 0 with empty output for a project
+  # that has no containers. That is not "they never became ready" and it is not this gate's subject —
+  # `up -d` ran through `run`, so a failure there would have printed its own command through the ERR
+  # trap. What is left is a --path or a compose project that is not the one just rolled, and an older
+  # tag cannot fix either.
+  [[ -n "$HOST_OUTPUT" ]] \
+    || die "the health gate timed out after ${HEALTH_TIMEOUT}s and docker compose on $HOST reports NO CONTAINERS AT ALL for $REMOTE_PATH/$APP_COMPOSE_FILE — not stopped ones, none. So$bad was never established to be unready; there is nothing there to be unready. Nothing has been rolled back: an older tag is not the remedy for a stack that is not running under this project. Check --path (currently $REMOTE_PATH) and that $APP_COMPOSE_FILE on the host is the file this deploy uploaded."
+  # THE BLIP, WHICH IS THE ONE CASE ONLY A SECOND OPINION CAN SEE. A host unreachable for the last
+  # poll alone puts every service in $bad while four of them were ready a second earlier; docker's own
+  # healthcheck ran inside the host throughout and is the evidence for that reading.
+  for svc in $bad; do
+    if printf '%s\n' "$HOST_OUTPUT" | grep -qE "^$(compose_name "$svc")[[:space:]]+running[[:space:]]+healthy[[:space:]]*$"; then
+      continue
+    fi
+    unproven+=" $svc"
+    logs_of+=" $(compose_name "$svc")"
+  done
+  if [[ -z "$unproven" ]]; then
+    printf '%s\n' "$HOST_OUTPUT" | sed 's/^/    /'
+    die "the health gate timed out after ${HEALTH_TIMEOUT}s, and docker on $HOST reports every service it gave up on —$bad — as RUNNING and HEALTHY, from the same readiness probe run inside the host (see the table above). So what failed is this end of the wire and not the estate: the deploy's probes cross an ssh, docker's healthcheck does not. NOTHING HAS BEEN ROLLED BACK, which is the whole point of this arm — the stack on $HOST is $TAG and is answering. This deploy is not recorded in deployments.log, so re-run it once the link is steady if you want that record; \`./deploy-prod.sh --rollback --host $HOST\` is there if you want $TAG off the host instead."
+  fi
+  # ESTABLISHED UNREADY: the host answered, and its own answer agrees. This is the one arm that
+  # returns, and the router rolls the stack back on it.
+  warn "the health gate timed out after ${HEALTH_TIMEOUT}s. The host ANSWERED, so this is the services and not the hop:"
+  printf '%s\n' "$HOST_OUTPUT" | sed 's/^/    /'
+  # THE EVIDENCE THE ROLLBACK IS ABOUT TO DESTROY, which is what `deploy-dev.sh` puts on the same line
+  # as its own `die` (decisions.md D71 §9) — ported here as evidence rather than as the decision,
+  # because the decision is already made above. `up -d` at the previous tag RECREATES these
+  # containers, so the failed tag's log is readable in this window and in no other.
+  #
+  # Through host_run for the same reason as the probe above, and its remote-status arm is a `warn`
+  # rather than a `die`: unreadiness is already established, so a daemon that goes quiet between the
+  # two round trips must not turn a correct rollback into a refusal. An ssh that stops answering
+  # between them still dies inside host_run — and rightly, because the rollback below needs it.
+  host_run "read the last log lines of$unproven on $HOST" \
+    "cd '$REMOTE_PATH' && $REMOTE_COMPOSE logs --no-color --tail=40$logs_of"
+  if (( HOST_STATUS == 0 )); then
+    warn "  last 40 log lines from each service that never became ready:"
+    printf '%s\n' "$HOST_OUTPUT" | sed 's/^/    /'
+  else
+    warn "  their logs could not be read (exit $HOST_STATUS): $HOST_OUTPUT"
+    warn "  the rollback below recreates these containers, so read them now or not at all."
+  fi
+  warn "still unhealthy:$unproven — rolling back."
+  return 0
 }
 
 smoke_test() {
@@ -2600,8 +2712,30 @@ smoke_test() {
   #
   # Asked of the CONTAINER over bash's /dev/tcp, exactly as health_gate does: /management is 404 at the
   # public edge on purpose, and the Jib images ship no curl.
+  #
+  # THIS PROBE STILL FOLDS, AND THAT IS A DECISION RATHER THAN AN OMISSION — decisions.md D78 §4.2,
+  # which is where NEW-36 stopped. It is the same shape the health gate had one step along: `2>/dev/null
+  # || true`, five outcomes, and a `return 1` that reaches the same `rollback`. Two things make it a
+  # different call from the gate's.
+  #
+  # The MESSAGE already names both readings — "holds NO brokerage terms in force, or could not be
+  # asked" — with a remedy paragraph that covers both, so nobody is sent to fix the wrong thing, which
+  # is what this whole family is about (D71 §5 permits a `warn` to fold; the cost of NEW-33 was always
+  # the remedy, not the status).
+  #
+  # And the DIRECTION TO FAIL IS THE OPPOSITE ONE. In the gate, an unestablished answer must not roll a
+  # healthy estate back. Here the condition being checked for is D57's, and it is silent: an estate that
+  # cannot price a booking passes every other check, then retries the first completed booking for ever
+  # and answers 503 to every receipt, both after the customer's money has moved. So an unestablished
+  # answer must NOT be allowed to ship — it fails closed, which means rolling back, which means the
+  # fold costs nothing that reversing it would buy. Routing it through host_run would also change the
+  # arm the gate's repair deliberately keeps: host_run refuses on the ssh hop, so a link that dropped
+  # between the gate and here would leave a possibly-unpriced estate up rather than reverted.
+  #
+  # The gateway version probe below folds too and decides nothing at all — it `warn`s and the deploy
+  # proceeds either way.
   local brokerage
-  brokerage="$(ssh "$HOST" "cd '$REMOTE_PATH' && $REMOTE_COMPOSE exec -T $(compose_name payout) bash -c \
+  brokerage="$(ssh "${SSH_OPTS[@]}" "$HOST" "cd '$REMOTE_PATH' && $REMOTE_COMPOSE exec -T $(compose_name payout) bash -c \
     'exec 3<>/dev/tcp/localhost/8080 && printf \"GET /management/info HTTP/1.0\\r\\n\\r\\n\" >&3 && cat <&3'" 2>/dev/null || true)"
   if printf '%s' "$brokerage" | grep -qE '"termsInForce"[[:space:]]*:[[:space:]]*true'; then
     ok "payout holds brokerage terms in force — $(printf '%s' "$brokerage" \
@@ -2626,7 +2760,7 @@ smoke_test() {
   #
   # Strictly better than the old form as well as merely possible: it reports what the DEPLOYED
   # container believes it is, rather than what the edge happens to route.
-  if ssh "$HOST" "cd '$REMOTE_PATH' && $REMOTE_COMPOSE exec -T $(compose_name gateway) bash -c \
+  if ssh "${SSH_OPTS[@]}" "$HOST" "cd '$REMOTE_PATH' && $REMOTE_COMPOSE exec -T $(compose_name gateway) bash -c \
        'exec 3<>/dev/tcp/localhost/8080 && printf \"GET /management/info HTTP/1.0\\r\\n\\r\\n\" >&3 && cat <&3'" \
        2>/dev/null | grep -q "$TAG"; then
     ok "gateway container reports version $TAG"
@@ -2673,14 +2807,14 @@ rollback() {
   # cannot take a secret back to an older value — secrets.env is not deploy state and is not rotated
   # here. Before the split, a secret hand-added to .env survived a rollback but not a deploy, which
   # meant the two paths disagreed about what the stack would come up with.
-  run ssh "$HOST" "cd '$REMOTE_PATH' && cp .env.previous .env && $REMOTE_COMPOSE pull $(compose_names) && $REMOTE_COMPOSE up -d $(compose_names)"
+  run ssh "${SSH_OPTS[@]}" "$HOST" "cd '$REMOTE_PATH' && cp .env.previous .env && $REMOTE_COMPOSE pull $(compose_names) && $REMOTE_COMPOSE up -d $(compose_names)"
   TAG="$prev"
   health_gate && ok "rolled back to $prev" || die "rollback to $prev is also unhealthy — manual intervention required"
 }
 
 record_success() {
   (( DRY_RUN )) && return 0
-  ssh "$HOST" "cd '$REMOTE_PATH' && printf '%s\t%s\t%s\t%s\n' \
+  ssh "${SSH_OPTS[@]}" "$HOST" "cd '$REMOTE_PATH' && printf '%s\t%s\t%s\t%s\n' \
     \"\$(date -u +%FT%TZ)\" '$TAG' '$GIT_SHA' '$CHANNEL' >> deployments.log"
 }
 

@@ -1,6 +1,6 @@
 # Backlog — hc-market
 
-Every open item in this repository, folded into work packages. Sources: `docs/decisions.md` D1–D75,
+Every open item in this repository, folded into work packages. Sources: `docs/decisions.md` D1–D78,
 the two code reviews of 2026-09-01, and the verification runs against the quality box.
 
 **This is a derived document.** `decisions.md` holds the reasoning and stays the record; this holds
@@ -2851,7 +2851,7 @@ optionals taken.
 
 ---
 
-## NEW-36 — the health gate's exhaustion is fatal and rests on 24 folded reads · READY
+## NEW-36 — the health gate's exhaustion is fatal and rests on 24 folded reads · DONE (D78)
 
 Opened by **D75 §6** as an explicit loser, and it is D71 §5's stated poll edge in the one script where
 nothing stands beside it.
@@ -2889,6 +2889,58 @@ claim, and cheapest to settle in whichever shape this item takes.
 Nothing is unsafe: a rollback of a healthy stack is the cost, and on a first deploy it ends in
 *"no previous deployment recorded"* — which, since D75, is at least no longer what an unreachable host
 is told.
+
+**Closed by D78, and the cheap repair the item allowed for would not have worked.** Measured on
+throwaway containers (docker 29.8.0): `compose exec` exits **1** for a port that refuses, **1** for a
+service that is not running, **1** for a service the compose file does not declare and **1** for a
+daemon that cannot be asked — four states, one status, with ssh's own 255 on top. So the status the
+loop discards could not have attributed anything even if it were read, and the attribution had to come
+from a **different question**. `compose ps -a` is that question and its status is honest: 0 with a line
+per container, 1 carrying docker's own sentence, and **0 with nothing at all** for a project that has
+no containers — a fourth state the item did not anticipate and no status check can see.
+
+**The shape taken is the first of the three, with the second demoted to evidence.** One attributing
+probe after the loop, through `host_run`, and six outcomes each named by what came back: ssh never
+reached a shell, no docker CLI (127), the daemon could not be asked, no containers at all, docker
+itself calls every unready service healthy, or the host answered and agrees. **Only the last rolls
+back.** `deploy-dev.sh`'s `compose logs --tail=40` is ported onto that one arm — not as the diagnosis
+but because `up -d` at the previous tag **recreates the containers**, so the failed tag's log is
+readable in that window and no other — and its own failure is a `warn`, since unreadiness is already
+established by then.
+
+**The blip is the case the item was really about, and `{{.Health}}` is what decides it.** A host away
+for the *last poll only* puts every service in the bad list while four were ready throughout. Docker's
+healthcheck is the same `/dev/tcp` readiness request, run by the daemon **inside** the host every 15s,
+so it answers without crossing the hop the polls cross: if every service the gate gave up on reports
+`running healthy`, what failed is this end of the wire, and the refusal says so and reverts nothing.
+Every service must be contradicted for that arm to fire; a blank health column is not a contradiction.
+
+**Where the cause cannot be established it refuses rather than reverts**, and the reason is
+mechanical rather than a preference: `rollback` needs the same host at four points — a `host_run` for
+the previous tag, an `ssh` to restore `.env` and roll, and `health_gate` again — so an estate that
+cannot be asked cannot be reverted either. The cost is a deploy that goes un-recorded in
+`deployments.log` until somebody re-runs it, against a production estate reverted over a link that
+blinked.
+
+**The eleven bare `ssh` invocations came with it**, as the item said they should, and one of the item's
+own figures was wrong by two orders of magnitude in the process: a host that goes away costs "four
+minutes" only while ssh fails fast. Measured against a blackholed address, an unbounded ssh connect
+takes **136s** and `ConnectTimeout=8` takes **8s** — so 24 iterations × 5 services was **~4.5 hours**
+to a refusal naming the wrong cause. All twelve `ssh` and the one `scp` carry `SSH_OPTS` now, counted
+on the stripped source.
+
+**`smoke_test`'s two probes are deliberately left folded** (D78 §8), which the item permitted and asked
+to have said rather than omitted. Its message already names both readings with a remedy covering both,
+and the direction to fail is the **opposite** one: the condition it guards is D57's and it is silent, so
+an unestablished answer must not ship — which is what a rollback does. Both arguments are written at
+the site.
+
+CI sees it as **part 6** of `host-probe-attribution.sh` (**44** assertions, was 32), which drives the
+shipped gate against the stub across ten states — including a **transient that must still PASS**,
+because the cheap reading of this item is a status check inside the loop and that makes a one-second
+flake a rolled-back deploy. Its test carries **thirty** mutations (`31 ok, 0 failed`), and the harness
+control with part 6 removed reports **25 ok, 6 failed**, each through its own door. `deploy-prod.sh` is
+Appendix B, so **Appendix B was re-embedded**. Opens **NEW-39**.
 
 ---
 
@@ -2974,6 +3026,38 @@ produces it. The same treatment fits here, and the shell stripper's callers are 
 copy of D77's expression.
 
 Do it as one line of shell, not as a corrected constant: a number in a comment is what this is.
+
+---
+
+## NEW-39 — `HEALTH_TIMEOUT` is a budget of 24 attempts and the header calls it seconds · READY
+
+Opened by **D78 §10** as an explicit loser, and it is the residual of the lateness that decision
+measured rather than a new reading.
+
+`deploy-prod.sh` declares `HEALTH_TIMEOUT=240`, prints `Health gate (240s)`, and then counts
+`waited += 10` **per iteration** regardless of how long the iteration took. The probes themselves are
+unbounded in that arithmetic, so the gate's real duration is `24 × (probe time + 10s)` and the number
+in the banner is a lower bound rather than a limit.
+
+**Measured in D78 §1**, and this is what makes it worth an item: an ssh connect to a blackholed address
+takes **136s** unbounded and **8s** with `ConnectTimeout=8`. Before D78 put `SSH_OPTS` on the poll, a
+host that dropped packets mid-deploy therefore took `24 × 5 × 136s` — about **4.5 hours** — to reach a
+refusal that then named the wrong cause. With the timeout it is about **20 minutes** to a refusal that
+is now correct. Thirteen times better and still not 240 seconds.
+
+Two shapes, neither costed:
+
+- **bound the loop by a wall clock** (`SECONDS` at entry) so the banner and the behaviour agree. It is
+  one line and it is **not free**: on a healthy estate an iteration is roughly `5 × probe + 10s`, so a
+  240-second wall clock is fewer attempts than 24 and a slow-starting estate could fail a gate it
+  previously passed. Note `start_period: 120s` and `retries: 20` in the compose healthcheck — docker's
+  own patience for the same question is 300s, which is the number to argue against;
+- **keep the attempt budget and rename it** — `HEALTH_ATTEMPTS=24`, with the banner saying attempts.
+  Cheapest, changes no behaviour, and makes the header true.
+
+Nothing is unsafe either way: since D78 the late refusal names the right cause and reverts nothing it
+cannot establish. What is left is an operator waiting twenty minutes for a message about a link that
+went down four minutes in.
 
 ---
 
