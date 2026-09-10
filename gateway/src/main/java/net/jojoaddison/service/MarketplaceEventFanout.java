@@ -66,6 +66,29 @@ import reactor.core.publisher.Sinks;
  * <p>It also means a Kafka listener thread can never block on a stalled HTTP client, which is the
  * failure that would otherwise take consumption down for everybody.
  *
+ * <h2>One thread, and it is ours — {@code decisions.md} D79</h2>
+ *
+ * <p>{@code Sinks.many()} is the <strong>safe</strong> spec, which means the sink is not thread-safe
+ * in the way that phrase suggests: it is wrapped in a {@code SinkManySerialized} that <em>detects</em>
+ * concurrent access and refuses one of the callers with {@link Sinks.EmitResult#FAIL_NON_SERIALIZED}.
+ * Measured on reactor-core 3.8.6 — four threads emitting 200,000 each, 561,466 refusals; one thread,
+ * none.
+ *
+ * <p>So a second listener thread would not corrupt anything, it would <strong>drop live events</strong>,
+ * silently: {@link #onEstateEvent}'s failure arm logs at DEBUG and no environment here runs at DEBUG.
+ * That is a second loss mode, and it is not the one the paragraph above accounts for — "we drop for a
+ * subscriber who cannot keep up" is a statement about a slow client, not about two of our own threads
+ * arriving at once. The durable copy is still messaging's, so the harm is bounded; being unable to tell
+ * the two losses apart is what is not acceptable.
+ *
+ * <p>Hence {@code concurrency = "1"} on the listener, which was the framework's default and is now this
+ * repository's statement. It costs nothing: Spring Kafka's concurrency distributes <em>partitions</em>
+ * across child containers, and the way to serve more connected users is another gateway instance —
+ * each with its own {@code ${random.uuid}} group, each seeing every event — never another consumer
+ * thread inside this one. The failure arm is deliberately left at DEBUG rather than raised: with the
+ * premise pinned the result is unreachable, and a warning for a state that cannot occur is not a
+ * warning. <strong>Pin a premise; do not monitor its violation.</strong>
+ *
  * <h2>The consumer group is unique per instance, which inverts the estate's usual rule</h2>
  *
  * <p>Everywhere else in this estate a shared, explicit group is correct: work is divided, each event
@@ -129,6 +152,11 @@ public class MarketplaceEventFanout {
         // See the class comment: unique per instance, on purpose, and the inverse of what every
         // other consumer in this estate wants.
         groupId = "${healthconnect.sse.group-id:healthconnect-gateway-sse-${random.uuid}}",
+        // ONE consumer thread, stated here rather than inherited — see "one thread, and it is ours"
+        // in the class comment. A literal, deliberately not a placeholder: this is not an estate's
+        // setting to tune, and an endpoint's concurrency overrides the factory's, so no property and
+        // no yml can raise it behind the sink's back.
+        concurrency = "1",
         autoStartup = "${healthconnect.kafka.consumer-enabled:true}"
     )
     public void onEstateEvent(String message) {
