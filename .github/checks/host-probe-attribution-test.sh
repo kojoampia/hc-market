@@ -10,8 +10,13 @@
 #  AIMED AT. "It went red" is not the assertion here: every one of these outcomes stops the deploy
 #  either way, and what is being pinned is which cause the refusal names.
 #
-#  TWENTY-TWO MUTATIONS. Trust the list and not the number — this repository has written such a count
-#  wrong four times, twice in the commit that was correcting the same defect elsewhere.
+#  ONE MUTATION PER ROW OF THE LIST BELOW, and this header states no total — decisions.md D78 §14.
+#  It said THIRTY while thirty-three cases ran, in the commit that had just corrected the same count
+#  in three other files, which is this repository's oldest failure mode and the fifth instance of it
+#  in this package alone. **Two measures are in play** and a single number cannot be either: the
+#  numbered cases (each a named broken state) and the red states asserted (cases 14 and 22 are
+#  hand-rolled rather than `expect_red` calls, and the control is a green assertion). Both are DERIVED
+#  and printed by the run's own summary, so nothing here can go stale; read that line, not a comment.
 #
 #    1  the sentinel test deleted            — host_run back to reading a status, which cannot tell
 #                                              ssh's 255 from the remote command's
@@ -80,6 +85,38 @@
 #                                              by writing this case; closed with a terminator check
 #   22  the subject does not parse           — the awk lifts do not cross a syntax break, so the
 #                                              check went green over a file nobody could run
+#
+#  Eight more for the HEALTH GATE — decisions.md D78, backlog NEW-36. Its 24 polls fold on purpose
+#  and its exhaustion is fatal by way of `rollback`, so these pull in both directions: 27 is the
+#  cheap "fix" that makes a one-second flake a rolled-back deploy, and the rest are the exhaustion
+#  claiming a cause it cannot establish. Cases 23-28 are covered by part 6 and by nothing else,
+#  measured: with part 6 cut out of a copy of the check this file reports 25 ok, 6 failed.
+#
+#   23  the exhaustion arm back to
+#       warn-and-roll-back                   — NEW-36 itself: five HEALTHY services named as
+#                                              unhealthy and the stack rolled back, whoever the
+#                                              silence belonged to
+#   24  the state probe's remote-status
+#       arm emptied                          — a daemon that could not be asked, reported as services
+#                                              that failed, and rolled back on
+#   25  the no-containers arm removed        — `ps -a` exits 0 with NO output for a project with none
+#                                              (measured), so no status check can see this state
+#   26  the healthy-contradiction arm
+#       removed                              — the blip: docker's own healthcheck says every service
+#                                              is healthy and the deploy reverts it anyway
+#   27  a status check moved INSIDE the poll  — the opposite direction, and the one D71 §5 argues
+#                                              against: a service that fails one poll and answers the
+#                                              next must still pass
+#   28  the log read turned into a refusal    — the evidence is not the decision; unreadiness is
+#                                              already established, and a daemon that goes quiet one
+#                                              round trip later must not stop a correct rollback
+#   29  gate_exhausted renamed                — an unliftable subject is an ERROR, not a green run
+#                                              over nothing (cases 11, 19, 20 one function along)
+#   30  the health column dropped from the
+#       state probe                          — the second opinion itself. Part 5's enumeration is
+#                                              what stands behind this one, and that is stated at
+#                                              the case: the docker stub does not render a format
+#                                              string, so part 6 cannot see the column go
 #
 #      ./.github/checks/host-probe-attribution-test.sh
 # ==============================================================================
@@ -302,19 +339,277 @@ else
   grep '::error::' "$f.out" >&2 || true
 fi
 
+printf '\nThe health gate: the polls must keep folding, the exhaustion must not\n'
+# CASE 23 IS THE DEFECT ITSELF, PUT BACK. One line, it parses, and it is exactly what the file said
+# until D78: an exhausted gate warns about five services and falls through to `rollback`, whoever
+# the silence belonged to.
+f="$(fresh m23)"
+sed -i 's|{ gate_exhausted "\$bad" "\$phase"; return 1; }|{ warn "still unhealthy:$bad"; return 1; }|' "$f"
+expect_red "$f" "23  the exhaustion arm back to warn-and-roll-back (NEW-36 itself)" \
+  '{ warn "still unhealthy:$bad"; return 1; }' '{ gate_exhausted "$bad" "$phase"; return 1; }' \
+  "reported an unreachable host as unhealthy services and fell through to a rollback"
+
+# THE STATE PROBE'S STATUS ARM. Addressed to gate_exhausted's own line range, because `(( HOST_STATUS
+# == 0 ))` appears in `rollback` as well — case 17's subject — and a sed matching both would leave
+# the original-is-gone control failing on a mutation that had applied. Third time in this file that a
+# control has been wider than its subject (cases 8 and 20 are the others).
+f="$(fresh m24)"
+awk '
+  /^gate_exhausted\(\) \{/ { in_fn = 1 }
+  in_fn && /could not then be asked what state the services are in/ { print "    || true # MUTATED-24"; next }
+  /^\}/ && in_fn { in_fn = 0 }
+  { print }' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+expect_red "$f" "24  the state probe's remote-status arm emptied" '|| true # MUTATED-24' \
+  'could not then be asked what state the services are in' \
+  "ROLLED THE STACK BACK over a daemon it could not ask"
+
+# The host answered and knows of nothing. Measured: `ps -a` exits 0 with empty output there, so the
+# status arm above cannot see this state and it is a separate refusal rather than a nicety.
+f="$(fresh m25)"
+# `%` as the delimiter, not `|`: the line being matched IS an `||`, and `sed` reads the second bar
+# as the end of the pattern and then refuses the expression. Caught by running it.
+sed -i 's%^    || die "the health gate timed out after ${HEALTH_TIMEOUT}s and docker compose on $HOST reports NO CONTAINERS.*%    || true ## MUTATED-25%' "$f"
+expect_red "$f" "25  the no-containers arm removed" '|| true ## MUTATED-25' 'NO CONTAINERS AT ALL' \
+  "reported a project with NO CONTAINERS as services that failed to become ready"
+
+# THE BLIP ARM, which is the one that actually stops a healthy estate being rolled back: the polls
+# got nothing and docker's own healthcheck — the same readiness probe, run inside the host — says
+# every service the gate gave up on is healthy.
+f="$(fresh m26)"
+sed -i 's|^  if \[\[ -z "\$unproven" \]\]; then$|  if false; then # MUTATED-26|' "$f"
+expect_red "$f" "26  the healthy-contradiction arm removed" 'if false; then # MUTATED-26' \
+  'if [[ -z "$unproven" ]]; then' \
+  "ROLLED BACK an estate whose every service docker itself reports as running and healthy"
+
+# THE OPPOSITE MUTATION, and the reason part 6 has a transient case at all: the cheap reading of
+# NEW-36 is "check the status" and doing it INSIDE the loop makes one failed poll a rolled-back
+# deploy. D71 §5's rule is that a poll may fold; this is what enforces the half of it that stayed.
+f="$(fresh m27)"
+sed -i 's%        >/dev/null 2>&1 || bad+=" $s"%        >/dev/null 2>\&1 || die "$s did not answer" ## MUTATED-27%' "$f"
+expect_red "$f" "27  a status check moved INSIDE the poll" 'die "$s did not answer" ## MUTATED-27' \
+  '|| bad+=" $s"' "DIED on a service that failed its first poll and answered the next"
+
+# And the same rule the other way: the log read is EVIDENCE, so its failure may not become a
+# refusal. Unreadiness is established by the probe above it, and a daemon that goes quiet one round
+# trip later must not turn a correct rollback into a stopped deploy.
+f="$(fresh m28)"
+sed -i 's|^    warn "  their logs could not be read (exit \$HOST_STATUS): \$HOST_OUTPUT"$|    die "their logs could not be read" # MUTATED-28|' "$f"
+expect_red "$f" "28  the log read turned into a refusal" 'die "their logs could not be read" # MUTATED-28' \
+  'their logs could not be read (exit $HOST_STATUS)' \
+  "DIED because it could not read the failed services' logs"
+
+# AN UNLIFTABLE SUBJECT MUST BE AN ERROR, not a green run over nothing — cases 11, 19 and 20 one
+# function along. Both halves renamed, so the mutant is a script that works perfectly and whose
+# subject this check cannot find.
+f="$(fresh m29)"
+sed -i 's|gate_exhausted|gate_diagnose|g' "$f"
+expect_red "$f" "29  gate_exhausted renamed" 'gate_diagnose() {' 'gate_exhausted' \
+  "declares no 'gate_exhausted'"
+
+# THE SECOND OPINION ITSELF, dropped as a tidy-up. What stands behind this one is part 5's
+# enumeration rather than part 6: the docker stub does not render the format string, so a `ps` that
+# no longer asks for {{.Health}} still ANSWERS with it in the harness. Stated rather than papered
+# over — the textual site is the guard here, which is what it is for.
+f="$(fresh m30)"
+sed -i "s|{{.Service}} {{.State}} {{.Health}}|{{.Service}} {{.State}}|" "$f"
+# The original-is-gone control names the WHOLE format string and not the bare column: the code's own
+# comment argues for {{.Health}} by name, comments are not stripped from the file itself, and the
+# looser spelling therefore failed the control on a mutation that had applied. Fourth time in this
+# file — see cases 8, 20 and 24.
+expect_red "$f" "30  the health column dropped from the state probe" \
+  "ps -a --format '{{.Service}} {{.State}}'" "{{.Service}} {{.State}} {{.Health}}" \
+  "no longer asks the host about what state the services are in once the health gate has timed out"
+
+printf '\nSSH_OPTS: lifted by the check, and asserted by nothing until review\n'
+# CASES 31-33 ARE THE REVIEW FINDING ON D78 — every one of them exited 0 against the shipped check.
+# `SSH_OPTS` was lifted into LIFT_GLOBALS with a `|| true` beside it, the function-existence loop did
+# not name it, and only HOST_SENTINEL's value was ever read — so the array could lose the timeout,
+# lose every option, or be renamed out from under the grep, and part 6 stayed green because the stub
+# does not care how many options an `ssh` is handed. That is the half of NEW-36 taken beyond the item
+# (136s per connect against 8s, measured) with nothing behind it, and part 5's own success line
+# already claimed to cover it.
+#
+# THE TIMEOUT, which is the one the measurement is about.
+f="$(fresh m31)"
+sed -i 's|^SSH_OPTS=(-o BatchMode=yes -o "ConnectTimeout=\${HC_SSH_TIMEOUT:-8}")$|SSH_OPTS=(-o BatchMode=yes)|' "$f"
+expect_red "$f" "31  SSH_OPTS loses its ConnectTimeout" 'SSH_OPTS=(-o BatchMode=yes)' \
+  'ConnectTimeout=${HC_SSH_TIMEOUT:-8}' "carries no ConnectTimeout"
+
+# THE WHOLE ARRAY EMPTIED, which also takes BatchMode with it — so the refusal must be about the
+# option part 5's inline ban assumes is here, and the assertions are ordered to say both.
+f="$(fresh m32)"
+sed -i 's|^SSH_OPTS=(-o BatchMode=yes -o "ConnectTimeout=\${HC_SSH_TIMEOUT:-8}")$|SSH_OPTS=()|' "$f"
+expect_red "$f" "32  SSH_OPTS emptied" 'SSH_OPTS=()' 'BatchMode=yes -o "ConnectTimeout' \
+  "carries no ConnectTimeout"
+
+# THE ONE THE EXISTING GUARD WAS SHAPED TO CATCH AND DID NOT. Renaming the array leaves the grep
+# lifting only the HOST_SENTINEL line, so the sentinel guard passes, `LIFT_GLOBALS` is short by one
+# line, and every ssh in the shipped script expands an unset name. Under the stub that is invisible;
+# on a host it is the TCP default on all twelve of them.
+f="$(fresh m33)"
+sed -i 's|SSH_OPTS|SSH_CONNECT_OPTS|g' "$f"
+expect_red "$f" "33  SSH_OPTS renamed" 'SSH_CONNECT_OPTS=(-o BatchMode=yes' 'SSH_OPTS' \
+  "declares no SSH_OPTS at the top level"
+
+# CASE 34 IS THE REVIEW FINDING ON §13's OWN REPAIR, and the house question that found it: *would a
+# comment satisfy this?* It did. The guard read the RAW line and matched by substring, so an array
+# carrying neither option printed "carries both BatchMode and a ConnectTimeout" because the substring
+# landed in the trailing comment — measured at exit 0. Both lines are lifted from the shell stripper's
+# output now, and this case is the only thing standing over that.
+f="$(fresh m34)"
+sed -i 's%^SSH_OPTS=(-o BatchMode=yes -o "ConnectTimeout=${HC_SSH_TIMEOUT:-8}")$%SSH_OPTS=(-o BatchMode=yes) ## keep -o "ConnectTimeout=..." off while debugging slow links%' "$f"
+expect_red "$f" "34  the ConnectTimeout moved into a trailing comment" \
+  'off while debugging slow links' 'SSH_OPTS=(-o BatchMode=yes -o "ConnectTimeout' \
+  "carries no ConnectTimeout"
+
+printf '\nThe two callers, and the claim each refusal makes about the stack\n'
+# CASE 35: the rollback phase's sentences replaced by the deploy phase's, which is what every refusal
+# said before D78 §14 — so a gate reached FROM `rollback` tells the operator nothing has been rolled
+# back, and offers `--rollback` as the remedy, after a rollback has just run.
+f="$(fresh m35)"
+awk '
+  /^    rollback\)$/ { in_rb = 1; print; next }
+  in_rb && /^      left=/ {
+    print "      left=\"NOTHING HAS BEEN ROLLED BACK, deliberately. Revert by hand with ./deploy-prod.sh --rollback --host $HOST once the host answers.\" ## MUTATED-35"
+    next }
+  # The `;;` MUST SURVIVE: without it the arm runs on into the `*)` below and the mutant does not
+  # parse, which expect_red refuses rather than counting as red. Caught by running it.
+  in_rb && /^      rolling=/ { print "      rolling=\"rolling back.\" ;;"; in_rb = 0; next }
+  { print }' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+expect_red "$f" "35  the rollback phase claims nothing was rolled back" '## MUTATED-35' \
+  'THE ROLLBACK TO $TAG HAS ALREADY BEEN APPLIED' \
+  "claims NOTHING HAS BEEN ROLLED BACK when it was called from"
+
+# CASE 36: the premise the blip arm rests on, and it lives in ANOTHER FILE. Drop the healthcheck that
+# makes the same readiness request and docker's health column is blank for every service, so every
+# blip becomes an established-unready rollback — NEW-36's own harm — while the stub answers with a
+# health column regardless, which is exactly why part 6 alone cannot see it.
+f="$(fresh m36)"
+cp "$ROOT/deploy/docker/docker-compose.prod.yml" "$WORK/m36-compose.yml"
+sed -i 's|/management/health/readiness|/management/health|' "$WORK/m36-compose.yml"
+if grep -q '/management/health/readiness' "$WORK/m36-compose.yml"; then
+  bad "36  the prod compose stops healthchecking readiness — the mutation did not apply"
+elif run_check "$f" HC_PROD_COMPOSE="$WORK/m36-compose.yml"; then
+  bad "36  the prod compose stops healthchecking readiness — the check PASSED, so the blip arm's premise is unguarded"
+  sed -n '1,40p' "$f.out" >&2
+elif grep -qF 'declares no healthcheck making the /management/health/readiness request' "$f.out"; then
+  note "36  the prod compose stops healthchecking readiness → red"
+else
+  bad "36  the prod compose stops healthchecking readiness — red, but not through the door it was aimed at"
+  grep '::error::' "$f.out" >&2 || true
+fi
+
+printf '\nThe gate'"'"'s two call sites — the binding nothing was looking at\n'
+# CASES 37 AND 38 ARE THE THIRD REVIEW'S BLOCKING FINDING. Both swaps parse, and against the previous
+# commit BOTH the check and this test exited 0 — the no-default guard sees only an absent argument,
+# case 35 mutates gate_exhausted's own arm, and part 6 drives the function with call strings THIS FILE
+# writes. So the phase mechanism was bound to the program by nothing at all, and case 37 restores
+# finding 2's defect exactly: a gate exhausted from a revert saying "NOTHING HAS BEEN ROLLED BACK" and
+# offering `--rollback` after the rollback has just run.
+f="$(fresh m37)"
+sed -i 's|^  health_gate rollback && ok "rolled back to \$prev"|  health_gate deploy \&\& ok "rolled back to $prev"|' "$f"
+expect_red "$f" "37  rollback() runs the gate in the deploy phase" \
+  'health_gate deploy && ok "rolled back to $prev"' 'health_gate rollback && ok' \
+  "calls the health gate in the WRONG PHASE"
+
+f="$(fresh m38)"
+sed -i 's|^if health_gate deploy && smoke_test; then$|if health_gate rollback \&\& smoke_test; then|' "$f"
+expect_red "$f" "38  the deploy router runs the gate in the rollback phase" \
+  'if health_gate rollback && smoke_test; then' 'if health_gate deploy && smoke_test; then' \
+  "runs the health gate in the ROLLBACK phase"
+
+printf '\nThe value behind the option name, and the assignment bash actually obeys\n'
+# CASE 39: the option's NAME with a zero default behind it — measured green before this round, and
+# printing "bounded" for an array that hands ssh ConnectTimeout=0 whenever the environment is unset.
+# The script's own declaration-time guard cannot see it: that guard validates ${HC_SSH_TIMEOUT:-8},
+# its OWN default, so the two defaults diverge with both green.
+f="$(fresh m39)"
+sed -i 's|ConnectTimeout=${HC_SSH_TIMEOUT:-8}|ConnectTimeout=${HC_SSH_TIMEOUT:-0}|' "$f"
+expect_red "$f" "39  the ConnectTimeout default changed to 0" \
+  'ConnectTimeout=${HC_SSH_TIMEOUT:-0}' 'ConnectTimeout=${HC_SSH_TIMEOUT:-8}' \
+  "names a ConnectTimeout whose value is not"
+
+# CASE 40: a SECOND top-level assignment. This check reads the first with `head -1`; bash obeys the
+# last. Appended immediately after the original, which is where a "temporary" edit goes.
+f="$(fresh m40)"
+awk '
+  /^SSH_OPTS=\(-o BatchMode=yes -o "ConnectTimeout=\$\{HC_SSH_TIMEOUT:-8\}"\)$/ {
+    print; print "SSH_OPTS=(-o BatchMode=yes) ## MUTATED-40"; next }
+  { print }' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+# THE ORIGINAL-IS-GONE CONTROL DOES NOT APPLY HERE and is passed empty deliberately: this mutation
+# ADDS a line rather than replacing one, so the original must still be present — that is the whole
+# point of it. The mutation-applied control is the marker grep.
+expect_red "$f" "40  a second SSH_OPTS assignment, which bash obeys and head -1 never sees" \
+  'SSH_OPTS=(-o BatchMode=yes) ## MUTATED-40' '' \
+  "and this check reads the first while bash obeys the last"
+
+printf '\nThe compose premise, and the comment that satisfied its guard\n'
+# CASE 41: the third comment-satisfies-a-guard on this branch, and the most realistic of them —
+# whoever weakens a healthcheck writes down which path they removed. Measured green before this round.
+f="$(fresh m41)"
+cp "$ROOT/deploy/docker/docker-compose.prod.yml" "$WORK/m41-compose.yml"
+sed -i 's|/management/health/readiness|/management/health|' "$WORK/m41-compose.yml"
+awk '
+  /^ *healthcheck:/ { print; print "    # readiness (/management/health/readiness) dropped: it flapped on slow disks"; next }
+  { print }' "$WORK/m41-compose.yml" > "$WORK/m41-compose.tmp" && mv "$WORK/m41-compose.tmp" "$WORK/m41-compose.yml"
+if ! grep -q '/management/health/readiness' "$WORK/m41-compose.yml"; then
+  bad "41  the readiness path survives only in a comment — the mutation did not apply (the path is gone entirely)"
+elif grep -qE "^ +- 'exec 3<>/dev/tcp.*readiness" "$WORK/m41-compose.yml"; then
+  bad "41  the readiness path survives only in a comment — the mutation did not apply (a real test still requests it)"
+elif run_check "$f" HC_PROD_COMPOSE="$WORK/m41-compose.yml"; then
+  bad "41  the readiness path survives only in a comment — the check PASSED, so a YAML comment satisfies the premise guard"
+  sed -n '1,40p' "$f.out" >&2
+elif grep -qF 'declares no healthcheck making the /management/health/readiness request' "$f.out"; then
+  note "41  the readiness path survives only in a comment → red"
+else
+  bad "41  the readiness path survives only in a comment — red, but not through the door it was aimed at"
+  grep '::error::' "$f.out" >&2 || true
+fi
+
+# CASE 42: the healthcheck disabled per service with the anchor intact — a blank {{.Health}} for that
+# service, which gate_exhausted reads as unproven, so a blink takes it down the rollback arm.
+f="$(fresh m42)"
+cp "$ROOT/deploy/docker/docker-compose.prod.yml" "$WORK/m42-compose.yml"
+awk '
+  /^  hc-market-payout:$/ { print; print "    healthcheck:"; print "      disable: true"; next }
+  { print }' "$WORK/m42-compose.yml" > "$WORK/m42-compose.tmp" && mv "$WORK/m42-compose.tmp" "$WORK/m42-compose.yml"
+if ! grep -qE '^ *disable: *true' "$WORK/m42-compose.yml"; then
+  bad "42  one service's healthcheck disabled — the mutation did not apply"
+elif run_check "$f" HC_PROD_COMPOSE="$WORK/m42-compose.yml"; then
+  bad "42  one service's healthcheck disabled — the check PASSED, so the premise is 'a healthcheck somewhere' rather than 'every service'"
+  sed -n '1,40p' "$f.out" >&2
+elif grep -qF 'disables a healthcheck somewhere' "$f.out"; then
+  note "42  one service's healthcheck disabled → red"
+else
+  bad "42  one service's healthcheck disabled — red, but not through the door it was aimed at"
+  grep '::error::' "$f.out" >&2 || true
+fi
+
 # THE ONE CASE THAT MUTATES THE CHECK'S OWN INSTRUMENT rather than the subject. Absent the shell
-# stripper, part 3 reads empty text: every `grep -F` finds nothing, so every site is reported
+# stripper, part 5 reads empty text: every `grep -F` finds nothing, so every site is reported
 # missing and — before the guard — every count came back 0, which reads as "no bare ssh anywhere".
+# Since D78 §14 the guard is HOISTED and fatal, because the SSH_OPTS value check reads stripped text
+# too and a trailing comment satisfied it otherwise — so the door this case goes through is the early
+# refusal rather than part 5's own branch, which no longer exists.
 f="$(fresh m14)"
 if run_check "$f" HC_STRIP_SH=/nonexistent/strip.awk; then
   bad "14  the shell stripper absent — the check PASSED with no stripper, so part 3 read nothing and called it clean"
   sed -n '1,120p' "$f.out" >&2
-elif grep -qF 'is missing, so part 5 could not strip comments' "$f.out"; then
+elif grep -qF 'is missing, so nothing below could strip comments' "$f.out"; then
   note "14  the shell stripper absent → red"
 else
   bad "14  the shell stripper absent — red, but not through the door it was aimed at"
   grep '::error::' "$f.out" >&2 || true
 fi
 
-printf '\n%s ok, %s failed\n' "$pass" "$fail"
+# THE COUNTS ARE DERIVED, so a case added or removed cannot leave a number behind (D78 §14). `cases`
+# counts the numbered states this file names; `pass` is what actually reported, control included.
+# DISTINCT case numbers, from the naming convention every case follows: a quote, the number, two
+# spaces, then a non-digit. Narrower spellings under-counted (a `[a-z$]` class missed the cases whose
+# names begin `--dry-run` or an escaped `$net_hint`, answering 27 and then 30) and a wider one caught
+# the prose `"127 is just another failure"` in a comment. Derived and printed rather than asserted,
+# because the number in this file's own header was wrong twice.
+cases="$(grep -oE '"[0-9]+  [^"0-9]' "${BASH_SOURCE[0]}" | grep -oE '[0-9]+' | sort -un | wc -l)"
+printf '\n%s ok, %s failed  (%s numbered mutations in this file, plus the green control)\n' \
+  "$pass" "$fail" "$cases"
 (( fail == 0 ))
