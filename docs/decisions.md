@@ -14324,6 +14324,19 @@ program. That is structurally why every round's guard was one step short, and it
 deliberately a separate item, because it is bigger than NEW-36 and because a fourth guard of this
 shape would be the same mistake a fourth time. **This is the last textual round on this branch.**
 
+**AND IT WAS — NEW-42 IS CLOSED BY D80, WHICH DELETED BOTH OF THE GREPS BELOW.** Part 7 of
+`host-probe-attribution.sh` sources the shipped file and calls `main` and `rollback` for real, and
+separately executes the file as a subprocess, against stubbed `ssh`, `scp`, `docker`, `curl` and
+`git`; the phase each caller passes is read off the sentences the phase composes, split at the
+rollback so a sentence is attributed to the **caller** and not merely to the arm. Cases 37 and 38 are
+the same two mutations and their door moved with them. The two assertions §15 added here were kept for
+one commit and are gone: two mechanisms guarding one property is how one of them rots, and the textual
+one is the one that would — it matched a fixed spelling of a branch, so any restructuring of the router
+was red on a correct tree while a swap was green on a broken one. **The router now lives in `main`,
+called under `[[ "${BASH_SOURCE[0]}" == "$0" ]]`, which is also why `. ./deploy-prod.sh` is no longer a
+production deployment.** See D80 §2 for the `awk`-strip loser and D80 §5 for the six instrument
+failures that repair produced.
+
 #### The four findings, and the repair each got
 
 **1 — BLOCKING: nothing looked at what the program passes as the phase.** Reproduced by review at
@@ -14824,3 +14837,206 @@ polluting order; the correspondence assertion watched **red** with a topic remov
 gateway `clean verify` **green**, 127 ITs, `tests="4" failures="0"` off the failsafe XML; all eleven
 stripper-calling steps `rc=0`; `prettier --ignore-path=/dev/null --check` clean with its own control.
 **Production code is byte-identical to `5f5a9b9`** — the only Java that changed is test code.
+
+## D80 — The call sites are executed now, and a sourced deploy script no longer deploys
+
+**Ratified 2026-09-11.** Closes backlog **NEW-42**, opened by **D78 §15** as the conclusion of that
+decision's third review rather than as a defect anybody found in the code. Authorised by **D72 §2**:
+the production path stays halted — no deploy, no `--host` at a real host, no credential, no ssh to the
+production host — and code changes to `deploy-prod.sh` are authorised, verified by driving it against
+stubs, which is how D66, D67, D69, D71, D75 and all of D78 were done.
+
+**`main` ends at D79, `gh pr list --state open` answered nothing at branch time, and the backlog's
+highest item was NEW-41** — all three checked at `d8c7ca0` rather than taken from the brief, which is
+this document's rule for its own numbering. **NEW-43 was filed by another branch while this one was in
+progress** (PR #58, `docs/backlog.md` only); nothing here uses that number, and the next item opened
+from here would be **NEW-44**.
+
+### §1 The item's own subject, restated, because it is a decision about guarding and not about a bug
+
+NEW-36's area returned findings **three rounds running** and each was a fail-open **in the guard added
+to close the round before**:
+
+| round | the fail-open | where it was |
+| --- | --- | --- |
+| D78 §13 | `SSH_OPTS` lifted and asserted about nowhere | in the check just extended for the gate |
+| D78 §14 | that guard satisfied by a **trailing comment** | in the fix for §13 |
+| D78 §15 | the guard asserts the option's **name** on the **first** declaration; the **phase** is bound to its call sites by nothing | in the fix for §14 |
+
+Each guard was exact about the text it had just been burned by and silent about the binding one step
+away — the value behind the option name, the code behind the comment, the caller behind the phase. So
+the wrong decision was not any matcher: **it was guarding this script's call-site binding by reading
+it.** Parts 1-6 of `host-probe-attribution.sh` lift functions with `awk` and drive them with call
+strings the harness itself writes (`GATE='health_gate deploy; …'`), so they verify a *function* and can
+never verify the *program*. §15's repair for its own blocking finding was two stripped-text greps,
+stated as a compromise at the site and pointing here.
+
+### §2 The decision, and the loser argued
+
+**Part 7 sources the shipped file and calls `main` and `rollback` for real, and separately EXECUTES
+the file as a subprocess, against stubbed `ssh`, `scp`, `docker`, `curl` and `git` — then asserts on
+what the stubs were handed.**
+
+The file resisted sourcing in three ways the item costed correctly, and the third needed a decision:
+`cd "$DEPLOY_DIR"` at the top (harmless — the harness uses absolute paths), an `ERR` trap that `die`s
+(harmless inside a subshell, and every post-source statement here is an assignment or a call), and a
+**router that runs on load**, so a naive `source` performs a deploy.
+
+**Taken: the router moves into `main()`, called under `[[ "${BASH_SOURCE[0]}" == "$0" ]]`.**
+
+**Rejected: an `awk` that strips the router before sourcing.** It reintroduces a lift, and with it a
+terminator to get wrong — D75's case 21 is the precedent, where a range whose terminator stopped
+matching printed to the end of the file and the "did it lift anything" guard passed on a lift carrying
+the rest of the script. Worse, it could not have delivered the item's first requirement at all: a
+stripped router is a router the harness cannot execute, so *"the router must pass `deploy`"* would have
+gone back to being asserted about text one more time. This is the fourth textual round refused.
+
+**And the change is a safety property in its own right, which is the stronger of the two arguments.**
+Before it, `. ./deploy-prod.sh` — typed to read one of these functions, or run by anything that sources
+the file it is asked about — **was a production deployment**, with `confirm` the only thing in its way
+and `--yes` in muscle memory. Nothing in this repository sourced it, which is exactly why nobody
+noticed. Argument parsing deliberately **stays at load time**, so a sourced file is configured and
+inert; `exit` inside `main` is kept rather than made `return`, because executed the two are identical
+and a `return` would let a caller carry on past a failed deploy.
+
+**`run` is not stubbed, and does not need to be** — the item costed it as the cheap half that captures
+most sites, and it turned out to be unnecessary: every mutating command goes through it and it ends in
+`"$@"`, so a shell looking up `ssh` finds the stub on PATH. Stubbing it would have replaced the one
+wrapper that decides whether `--dry-run` prints instead of running.
+
+### §3 Why BOTH drivers, and what each is the only way to see
+
+Neither subsumes the other, and the distinction is the whole of §5's new mutation:
+
+- **Sourcing** gives the array `SSH_OPTS` genuinely holds at run time (after the script's own
+  `HC_SSH_TIMEOUT` guard has run), a transcript the harness can split at the rollback, and a way to
+  reach `rollback` on its own. It cannot see whether anything calls `main`.
+- **Executing** is the only reading that can. `main`'s wrapping introduces exactly one new defect:
+  delete the line that calls it and the script parses, defines every function and **exits 0 having
+  deployed nothing** — no output, no host contacted, the quietest failure this script can have. No
+  text matcher and no sourced probe can tell that from a working program.
+
+The executed copy is `cmp`d against the subject before anything is read off it, which is how a reader
+can tell part 7 ran the bytes under test: the staging directory exists only because `COMPOSE_TEMPLATE`
+is derived from the script's own location and cannot be handed in through the environment.
+
+### §4 What is executed now, and what is still asserted as text
+
+**Twenty remote invocation sites**, over four scenarios: a whole deploy that reaches `Done`, an
+exhausted gate that rolls back, a `rollback` invoked on its own, and a gate that cannot ask the daemon.
+Each is classified from the argument vector by an ordered needle list, and **unmatched in either
+direction is an error** — a site that stops being asked is a probe removed under the check's feet, and
+an invocation no entry recognises is a seventh probe growing beside the six, which is precisely what
+parts 1-4 cannot see. The classification is ordered because the rollback's own roll carries `pull` too
+and the data tier's `ps` carries `--format` too.
+
+Three things become executed rather than asserted:
+
+1. **The phase each shipped caller passes.** `health_gate <phase>` composes `$left` and `$rolling` once
+   per phase, so the phase is readable from the transcript — and the transcript is split at
+   `step "Rollback"`, which attributes a sentence to the **caller** that produced it rather than merely
+   to the arm. The deploy gate must say *"rolling back."* and the rollback's own gate *"nothing further
+   to revert to"*, each in its own segment and neither in the other's.
+2. **Which options each individual `ssh` receives.** Asked of the arguments, against the array the
+   running script holds — so an option **added** to `SSH_OPTS` and not reaching a site is red as well
+   as one removed from a site. The preamble's `>= 2` floor is kept for what it still does cheaply (a
+   total collapse, refused before a scenario runs) and its message now says part 7 is what covers the
+   rest.
+3. **Whether a refusal's sentence matches the arm AND the caller.** §15 *removed* the contradictory
+   phase × arm combinations rather than testing them, because it could not reach them. Two of the four
+   are now driven: the unanswerable-daemon arm from the deploy router (which must say nothing was
+   reverted **and revert nothing** — `rollback` is never entered, asserted) and from `rollback` itself
+   (which must say the revert has already been applied and offer no second one).
+
+**The compromise is deleted.** §15's two stripped-text greps are gone from part 5 rather than kept
+beside part 7: two mechanisms guarding one property is how one of them rots unnoticed, and the textual
+one is the one that would — it matched a fixed spelling of a branch, so `if health_gate "$phase" &&
+smoke_test` or any restructuring of the router was **red on a correct tree** while a swap was **green
+on a broken one**. Cases 37 and 38 are the same two mutations, red now through what the program passed.
+
+**What part 6 keeps, and why that is not the same thing.** Its `g_rb_daemon` and `g_rb_unready` stay:
+they drive `gate_exhausted`'s *wording given a phase*, over states part 7 does not construct (no
+containers at all, the blip, logs lost after a successful `ps`). Part 7 drives the *binding* — which
+phase the program passes. The control confirms they are still the sole carrier of case 35.
+
+### §5 Established by running, and the six instrument failures found on the way
+
+Every one of these was found by watching a mutation or a control rather than by reading:
+
+- **Part 7's first version reported `)` as an unrecognised remote invocation, five times.** `host_run`'s
+  wrapped command is deliberately **multi-line** — `($2\n)\nprintf …` — so a logged argument carrying
+  it split into four records. The stubs substitute `\034` for a newline inside an argument now, one
+  physical line per invocation.
+- **7.1's three states were one `case` on the marker, and the order was wrong.** A source that
+  *deployed* and then died inside preflight reached the *"no `main` to call"* arm: true (it never
+  returned) and the wrong cause named — this family's own defect arriving inside its own repair. A
+  source that printed **anything the program prints** is a source that ran the program, whatever it did
+  next, so that is asked first.
+- **`PROD_COMPOSE` was declared inside part 6, and part 7 reads it.** A control copy with part 6 cut
+  out died on an unset variable and reported every case red for the wrong reason — which is what a
+  control is for, and it would have made the part-6 control unreadable. Moved to the preamble.
+- **Case 44's aim control read the raw file and fired on a correct mutation.** The script's own comments
+  quote the old folded `ssh -o BatchMode=yes …` line verbatim six times, so an unstripped control is
+  asserting the length of a paragraph — the reason `strip-sh-comments.awk` exists (D68), one level up.
+  It reads the stripper's output now, exactly as the ban it is aiming away from does.
+- **`expect_red`'s absent-control cannot take a multi-line pattern**, and two of D80's cases need one:
+  `  main` also occurs inside neighbouring comments. `grep -F` splits the pattern on the newline and
+  the empty half then matches every file, so the control **passes on a mutation that did nothing** —
+  measured. A `LINE:` prefix asks for an exact line instead.
+- **Two mutations did not apply at all on the first run** (38 and 48): the router's branch is indented
+  now that it lives in `main`, so their `sed` anchors matched nothing. Reported by the applied-control,
+  not by a green run.
+- **Part 7's own first version reported `)` as a remote invocation five times and was believed** for
+  one run, because the message was plausible. It was not a defect in the subject at all — it is the
+  first entry above — and it is the reason 49 and 50 exist as cases rather than as a paragraph: the
+  arms that refuse an unrecognised or a missing site are the ones a reader will trust without driving.
+
+### §6 Eight new mutations, and the doors that moved
+
+`43` the health gate's own poll loses `SSH_OPTS` — the site the floor's own message concedes it cannot
+see. `44` an option added to the array that one site does not receive, with the order swapped in the
+hand-written site so part 5's inline ban does **not** fire: this case must go red through part 7 or not
+at all. `45` nothing calls `main` — the defect this decision's own change introduces. `46` the guard
+removed, so sourcing deploys. `47` the router's function renamed — an unliftable subject is an error,
+not a green run over nothing (cases 11, 19, 20, 29 at four other names). `48` the router passes no
+phase, which part 7 sees as an executed program that never reached its polls.
+
+**`49` and `50` are part 7.4's derived half in both directions, and they are cases because they were
+first measured by hand.** A measurement nobody can re-run is a claim — this repository's own finding
+about the OTel recipe (D63), applied to itself: 49 removes a site (`record_success` stops appending to
+`deployments.log`, and the refusal must name *which* site stopped being asked rather than passing over
+the nineteen it still sees) and 50 adds a **seventh** probe, which is the direction parts 1-4
+structurally cannot see, because they drive named functions. Both were watched red naming their own
+cause before they were written down.
+
+**Cases 37 and 38 changed door** — from part 5's deleted greps to part 7's executed one — and that is
+recorded at the cases, so a future *"red, but not through the door it was aimed at"* reads as the
+execution having broken rather than as a matcher having drifted.
+
+### §7 Verified, by running
+
+The check green at **64** assertions (51 before: +15 from part 7, −2 from the deleted greps) in 3.3s;
+its test at **51 ok, 0 failed** over **50** numbered mutations, every one asserted applied — original
+gone, mutant present, `bash -n` parsing — before its verdict was believed. **Four controls, each
+verifying as a set and each green on a correct tree first**: part 6 removed **41 ok, 10 failed**
+({23,24,25,26,27,28,35,36,41,42} — the same set D78 measured, so part 7 has taken no case's door from
+it), part 7 removed **41 ok, 10 failed** ({37,38,43,44,45,46,47,48,49,50}), the `SSH_OPTS` value guard
+removed **45 ok, 6 failed** ({31,32,33,34,39,40}), the two-caller assertions removed **50 ok, 1
+failed** ({35}). D78's fourth control — the two call-site greps — is **replaced** by the part-7 one
+rather than added to, because its subject no longer exists; the count of controls is therefore still
+four. Every `ok` total moved with the two new cases, which is why the sets and not the numbers are what
+these controls are read by.
+
+`bash -n` on every tracked shell script; the six neighbouring checks and the three neighbouring test
+harnesses re-run green; `build.yml`'s inline matchers over `deploy-prod.sh` (the signing-key hint, the
+image name in three places, the brokerage probe) re-derived by hand; **Appendix B re-embedded** and
+`--check` clean; the seed regenerated byte-identical. No Java changed, so no Maven was run. The only
+production-path invocation was `--dry-run` with no host, which stops at *"no target host"*.
+
+**D49 is the ceiling and it has not moved.** `deploy-prod.sh` has never been executed against a host.
+What is established here is **what the script passes** — the phase, the options, the order, the
+sequence — and never what a production host answers. Nothing was deployed, no host was contacted, no
+credential exists in this branch, and the quality stack, the emptied dev estate and the parallel
+branch's files were not touched. Four throwaway control copies of the check were created inside
+`.github/checks/` (a copy outside it recomputes `ROOT` and goes red on everything — D78 §15's note) and
+**deleted**; no container, network or volume was created.

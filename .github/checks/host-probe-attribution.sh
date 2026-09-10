@@ -18,7 +18,7 @@
 #  restarts a shared plane four products borrow, or runs ./infra.sh, over a host they cannot reach.
 #  That is D66 §7's cost and D71's subject, and this is the sixth instance of the family.
 #
-#  SIX PARTS — trust the numbered list and not this sentence, which is the smallest instance of the
+#  SEVEN PARTS — trust the numbered list and not this sentence, which is the smallest instance of the
 #  thing D71 is about and has been written wrong in this repository four times.
 #
 #  1. host_run's TWO HOPS, told apart by a sentinel and never by a status. This is the part the
@@ -60,6 +60,16 @@
 #     nothing, because a rollback needs the same host the gate just failed to reach. It comes after
 #     part 5 because the numbers are names — four parts' messages cite their own.
 #
+#  7. THE PROGRAM ITSELF, RUN — decisions.md D80, backlog NEW-42. Parts 1-6 lift functions and drive
+#     them with call strings this file writes, so they verify a function and never the program: three
+#     rounds of findings in this area were each a fail-open in the guard that closed the round before,
+#     and every one was a textual assertion ABOUT a call site. This part sources the shipped file and
+#     calls `main` and `rollback`, and separately EXECUTES it as a subprocess, against stubbed ssh,
+#     scp, docker, curl and git — then asserts on what the stubs were handed. It is what establishes
+#     the phase each caller passes and which options each individual ssh receives, neither of which a
+#     matcher can reach; two greps that stood in for the first are deleted from part 5 rather than
+#     left beside it.
+#
 #  THE STUB RUNS THE SHIPPED WRAPPING FOR REAL, which is the point of building it this way rather
 #  than answering with canned text. A stub that appended the sentinel itself would pass a host_run
 #  that had stopped appending one. So `ssh` here executes the wrapped script it was handed, locally,
@@ -88,6 +98,11 @@ SCRIPT="${HC_PROD_SCRIPT:-deploy/deploy-prod.sh}"
 # missing-stripper branch fire. Absent it, part 5 would read empty text and report every call site
 # as routed — the fail-open D62's review found in two checks at once.
 STRIP_SH="${HC_STRIP_SH:-$ROOT/.github/checks/strip-sh-comments.awk}"
+# The blip arm's premise (part 6) and part 7's staged compose template. Declared here rather than
+# inside part 6, where it was until D80: part 7 reads it too, so a control copy of this file with part
+# 6 cut out died on an unset variable and reported every case red for the wrong reason — which is what
+# a control is FOR, and it would have made the part-6 control unreadable.
+PROD_COMPOSE="${HC_PROD_COMPOSE:-deploy/docker/docker-compose.prod.yml}"
 
 P_NET="hc-ci-probe-net"
 P_HOST="ci-probe-host"
@@ -265,12 +280,14 @@ else
   # two with nothing red, and exactly two is a real collapse to host_run's probe plus one that this
   # passes. It counts LINES carrying the expansion, not invocations, so a future
   # `local opts=("${SSH_OPTS[@]}")` inflates it. Per-site coverage is not available to a text matcher
-  # at all: that is backlog NEW-42, which executes the call sites instead of reading them.
+  # at all, and since D80 it is not this line's job either: PART 7 asks each invocation what it was
+  # handed. The floor is kept for what it still does cheaply — a total collapse, refused before a
+  # single scenario is run.
   ssh_bounded="$(printf '%s\n' "$STRIPPED_SRC" | { grep -cF 'SSH_OPTS[@]}' || true; })"
   (( ssh_bounded >= 2 )) \
-    || err "$SCRIPT expands SSH_OPTS on $ssh_bounded line(s) — a total collapse: host_run's own probe is one of them, so fewer than two means the whole deploy phase (the upload, the pull, the roll, the health gate's poll, the smoke probes, the rollback) has gone back to the TCP default. This floor does NOT establish that any particular one still expands it. See decisions.md D78 §7 and backlog NEW-42."
+    || err "$SCRIPT expands SSH_OPTS on $ssh_bounded line(s) — a total collapse: host_run's own probe is one of them, so fewer than two means the whole deploy phase (the upload, the pull, the roll, the health gate's poll, the smoke probes, the rollback) has gone back to the TCP default. This floor does NOT establish that any particular one still expands it; part 7 is what does. See decisions.md D78 §7 and D80."
   [[ "$SSH_OPTS_VALUE" == *ConnectTimeout* && "$SSH_OPTS_VALUE" == *BatchMode* ]] \
-    && ok "SSH_OPTS carries both BatchMode and a ConnectTimeout, and $ssh_bounded lines expand it (a count, not per-site coverage — see NEW-42)"
+    && ok "SSH_OPTS carries both BatchMode and a ConnectTimeout, and $ssh_bounded lines expand it (a count, not per-site coverage — part 7 has that)"
 fi
 if (( fail )); then printf '\nhost probe attribution: FAILED\n'; exit 1; fi
 
@@ -764,46 +781,22 @@ printf '\n%s: the call sites\n' "$SCRIPT"
   (( batch == 0 )) \
     && ok "no probe builds its own ssh options — SSH_OPTS is the one place BatchMode and the timeout are set" \
     || err "$SCRIPT has $batch ssh invocation(s) spelling out their own '-o BatchMode=yes' rather than going through host_run and SSH_OPTS. Each is a probe whose failure cannot be attributed to a hop, and an ssh with no ConnectTimeout is a refusal that arrives minutes late or never. See decisions.md D75."
-  # ---- THE GATE'S TWO CALLERS, AND WHY THIS IS TEXTUAL -------------------------------------------
+  # ---- THE GATE'S TWO CALLERS WERE ASSERTED HERE, AS TEXT, AND ARE NOT ANY MORE -------------------
   #
-  # BLOCKING FINDING OF THE THIRD REVIEW: swapping `health_gate rollback` for `health_gate deploy` in
-  # `rollback()` parsed and left this check AND its test at exit 0, both blind — so a gate exhausted
-  # from a revert told the operator *"NOTHING HAS BEEN ROLLED BACK, deliberately"* and offered
-  # `--rollback` after the rollback had just run. §14's own defect, through §14's own fix. The
-  # no-default guard sees an ABSENT argument, case 35 mutates `gate_exhausted`'s arm, and part 6
-  # drives the function with call strings THIS HARNESS writes — so nothing anywhere looked at what
-  # the program passes.
+  # decisions.md D80, backlog NEW-42. D78 §15's blocking finding was that swapping `health_gate
+  # rollback` for `health_gate deploy` in `rollback()` parsed and left this check AND its test at exit
+  # 0. Its repair was two stripped-text greps — `rollback()`'s body must contain `health_gate
+  # rollback`, the router must read `if health_gate deploy && smoke_test` — and it said at this spot
+  # that it was a compromise, because part 6 drives the FUNCTION with call strings this harness writes
+  # and can never see what the program passes.
   #
-  # It is asserted as TEXT here, and that is a stated compromise rather than the right answer: part 6
-  # cannot execute a call site at all, because it lifts functions instead of sourcing the script.
-  # Backlog **NEW-42** is that repair — stub `ssh`, `docker` and `run`, source the file, invoke the
-  # real `rollback()` and the real router branch — and it is the structural close for this whole
-  # "exact about the text, silent about the binding one step away" family. Until then: two greps, two
-  # mutation cases, and no claim that the program was run.
-  rb_body="$(printf '%s\n' "$stripped" | awk 'index($0, "rollback() {") == 1, /^\}/')"
-  if [[ -z "$rb_body" ]]; then
-    err "$SCRIPT declares no rollback() this check can read, so nothing establishes which phase it runs the health gate in. See decisions.md D78 §15."
-  else
-    case "$rb_body" in
-      *"health_gate rollback"*)
-        ok "rollback() runs the gate in the rollback phase, so its refusals do not offer a revert that has already happened" ;;
-      *health_gate*)
-        err "$SCRIPT's rollback() calls the health gate in the WRONG PHASE: '$(printf '%s\n' "$rb_body" | { grep -F health_gate || true; } | head -1)'. By the time that gate runs, .env has been restored and the stack rolled — so every refusal in gate_exhausted then says NOTHING HAS BEEN ROLLED BACK and offers \`--rollback\` as the remedy, in the one function every FAILED deploy reaches. The phase is a parameter precisely so this cannot be true, and part 6 drives the function with call strings the harness writes, so it cannot see this. See decisions.md D78 §14, §15 and backlog NEW-42." ;;
-      *)
-        err "$SCRIPT's rollback() no longer checks its own work with the health gate at all, so a revert that comes up broken is reported as a success. See decisions.md D78 §15." ;;
-    esac
-  fi
-  case "$stripped" in
-    *"if health_gate deploy && smoke_test"*)
-      ok "the deploy router runs the gate in the deploy phase" ;;
-    *"health_gate rollback && smoke_test"*)
-      err "$SCRIPT's deploy router runs the health gate in the ROLLBACK phase, so a deployment that fails its gate is told a revert has already been applied and that no further one is available — when in fact nothing has been reverted and \`rollback\` is about to run. See decisions.md D78 §14, §15 and backlog NEW-42." ;;
-    *"health_gate && smoke_test"*)
-      err "$SCRIPT's deploy router calls health_gate with no phase, which it refuses — so every deployment would die at the gate. See decisions.md D78 §14." ;;
-    *)
-      err "$SCRIPT's deploy router no longer reads 'if health_gate deploy && smoke_test', so this check cannot establish which phase a deployment's own gate runs in. Rename or restructure that branch and this check must be told. See decisions.md D78 §15." ;;
-  esac
-
+  # PART 7 EXECUTES BOTH CALLERS NOW, so both greps are gone rather than kept beside it. Two
+  # mechanisms guarding one property is how one of them rots unnoticed, and the textual one is the one
+  # that would: it matched a fixed spelling of a branch, so `if health_gate "$phase" && smoke_test`
+  # or any restructuring of the router was red on a correct tree while a swap was green on a broken
+  # one. Cases 37 and 38 are the same two mutations, red now through what the shipped program passed
+  # rather than through what it says.
+  #
   # Every site preflight asks about, by the question it asks. Enumerated, and that is acceptable
   # only because a site that is missing is an ERROR here rather than a skip: the whole point is that
   # a probe stopping short of host_run is invisible to parts 1 and 2.
@@ -855,7 +848,6 @@ printf '\n%s: the health gate, and what its exhaustion establishes\n' "$SCRIPT"
 # health column goes blank for all five, every blip becomes an established-unready rollback — NEW-36's
 # own harm — and every assertion in this part stays green, because the stub answers with a health
 # column whatever the compose file says. So the premise is asserted here rather than left implied.
-PROD_COMPOSE="${HC_PROD_COMPOSE:-deploy/docker/docker-compose.prod.yml}"
 if [[ ! -f "$PROD_COMPOSE" ]]; then
   err "$PROD_COMPOSE is missing, so the health column the blip arm reads is unestablished. See decisions.md D78 §3."
 # The ten lines FOLLOWING each `healthcheck:`, not an awk range: the obvious terminator
@@ -1044,6 +1036,380 @@ case "$g_dry" in
     esac ;;
   *) err "$SCRIPT's health gate under --dry-run answered '$(one "$g_dry")'; it must skip. See decisions.md D78." ;;
 esac
+
+# ---- 7. The PROGRAM, run: the phase each caller passes, and the options each ssh receives ---------
+#
+# decisions.md D80, backlog NEW-42. Parts 1-6 lift functions with `awk` and drive them with call
+# strings THIS FILE writes — `GATE='health_gate deploy; …'` — so they verify a function and can never
+# verify the program. Three rounds of findings in this area (D78 §13, §14, §15) were each a fail-open
+# in the guard that closed the round before, and every one of them was a textual assertion ABOUT a
+# call site: the value behind the option name, the code behind the comment, the caller behind the
+# phase. §15 wrote the conclusion down — the wrong decision was to guard a call site by reading it —
+# and this part is the repair. Its two subjects are the two the item names: which phase each shipped
+# caller hands the gate, and which options each individual `ssh` is actually handed.
+#
+# TWO DRIVERS, and neither subsumes the other:
+#
+#   7a  the file EXECUTED as a subprocess, against stubbed ssh, scp, docker, curl and git on PATH.
+#       This is the only reading that can see whether `main` is INVOKED at all: delete the
+#       `[[ "${BASH_SOURCE[0]}" == "$0" ]]` line and the script parses, defines every function and
+#       exits 0 having deployed nothing — which no text and no sourced probe can tell apart from a
+#       working program.
+#   7b  the file SOURCED, then `main` and `rollback` called by hand. That is what gives the array
+#       `SSH_OPTS` genuinely holds at run time (after the script's own HC_SSH_TIMEOUT guard has run),
+#       a transcript this file can split at the rollback, and a way to reach `rollback` alone.
+#
+# `run` IS NOT STUBBED and does not need to be, which is the one place this goes further than the
+# item costed: every mutating command already goes through it and it ends in `"$@"`, so a shell
+# looking up `ssh` finds the stub on PATH. Stubbing it would replace the wrapper that decides whether
+# --dry-run prints instead of running.
+#
+# WHAT THE STUBS RECORD IS THE ARGUMENT VECTOR — one line per invocation, `\037` between arguments —
+# so "which options did this site receive" is asked of the arguments and never of a rendered string
+# somebody could quote a fragment of. The expected option list is not written here: it is read out of
+# the running script, so an option ADDED to the array and not reaching a site is red too.
+#
+# WHAT THIS STILL DOES NOT ESTABLISH — decisions.md D49, unchanged and unchangeable from here.
+# `deploy-prod.sh` has never been run against a host. Executing and sourcing it against stubs
+# establishes what the script PASSES; what a production host answers is not measurable from this
+# workstation, and nothing below claims otherwise.
+printf '\n%s: the program, executed\n' "$SCRIPT"
+X7="$(mktemp -d)"
+trap 'rm -rf "$BIN" "$FIX" "$X7"' EXIT
+B7="$X7/bin"; mkdir -p "$B7"
+T7="1.4.0-probe"
+case "$SCRIPT" in /*) SCRIPT_ABS="$SCRIPT" ;; *) SCRIPT_ABS="$ROOT/$SCRIPT" ;; esac
+case "$PROD_COMPOSE" in /*) PROD_COMPOSE_ABS="$PROD_COMPOSE" ;; *) PROD_COMPOSE_ABS="$ROOT/$PROD_COMPOSE" ;; esac
+
+# `${@: -1}` IS THE REMOTE COMMAND at every one of this script's ssh sites, and running it is the
+# same decision part 1's stub made: the sentinel host_run's answers turn on is produced by the
+# shipped code, never by this file. No unreachable-ssh arm here — part 1 owns that state, and an arm
+# nothing drives is a claim rather than a stub.
+# ONE PHYSICAL LINE PER INVOCATION, and the newline substitution is not tidiness: host_run's wrapped
+# command is deliberately MULTI-LINE — `($2\n)\nprintf …` — so a logged argument carrying it splits
+# into four records, and the reader below then reports `)` as an unrecognised remote invocation. Found
+# by running it. \037 separates arguments, \034 stands in for a newline inside one.
+cat > "$B7/ssh" <<'S7'
+#!/usr/bin/env bash
+line="SSH"; for a in "$@"; do line+=$'\037'"$a"; done
+printf '%s\n' "${line//$'\n'/$'\034'}" >> "$HC_SITE_LOG"
+bash -c "${@: -1}"
+S7
+cat > "$B7/scp" <<'S7'
+#!/usr/bin/env bash
+line="SCP"; for a in "$@"; do line+=$'\037'"$a"; done
+printf '%s\n' "${line//$'\n'/$'\034'}" >> "$HC_SITE_LOG"
+S7
+# THE COMPOSE SUBCOMMAND FIRST, exactly as the stub in part 6 does, and `ps` renders in the order the
+# `--format` asked for so a reorder is visible rather than answered around (D78 §14's note).
+#
+# `pull` and `up` SUCCEED in the daemon-gone-after-roll state, and that is the state's name rather
+# than a shortcut: what the rollback-phase gate exists for is a host that answers the roll and then
+# stops answering, and a daemon that refused the roll would take the ERR trap long before the gate.
+cat > "$B7/docker" <<'S7'
+#!/usr/bin/env bash
+argv="$*"
+sub=""
+for a in "$@"; do
+  case "$a" in exec|ps|logs|pull|up|version|login|info|network|manifest) sub="$a"; break ;; esac
+done
+gone='failed to connect to the docker API at unix:///nonexistent; check if the path is correct and if the daemon is running: dial unix /nonexistent: connect: no such file or directory'
+case "$sub" in
+  info|network|manifest|pull|up) exit 0 ;;
+  login)   cat >/dev/null 2>&1; exit 0 ;;
+  version) printf 'Docker Compose version v2.39.4\n'; exit 0 ;;
+  logs)    printf 'hc-market-catalog  | Caused by: org.postgresql.util.PSQLException: Connection refused\n'; exit 0 ;;
+  exec)
+    case "$argv" in
+      *'/management/info'*)
+        case "$argv" in
+          *hc-market-payout*) printf '{"brokerage":{"termsInForce":true,"commissionRate":"0.12"}}\n'; exit 0 ;;
+          *) printf '{"build":{"version":"%s"}}\n' "${HC_FAKE_TAG:-0.0.0}"; exit 0 ;;
+        esac ;;
+    esac
+    # ONE STATUS, TWO SENTENCES, AND THE SENTENCE IS UNOBSERVABLE HERE — measured by D78 §1: `exec`
+    # exits 1 for a port that refuses, a service that is not running, a service the file does not
+    # declare AND a daemon that cannot be asked. The gate discards both streams, so nothing in part 7
+    # can read either line; it is written correctly per state anyway, because a stub that models a
+    # dead daemon with a port refusal is a stub whose next reader believes the wrong thing.
+    case "${HC_FAKE_DOCKER:-ready}" in
+      ready)                  exit 0 ;;
+      daemon-gone-after-roll) printf '%s\n' "$gone" >&2; exit 1 ;;
+      *)                      printf 'bash: line 1: /dev/tcp/localhost/8080: Connection refused\n' >&2; exit 1 ;;
+    esac ;;
+  ps)
+    case "$argv" in
+      *data-compose.yml*)
+        for s in gateway catalog booking messaging payout; do printf 'hc-market-%s-db running\n' "$s"; done
+        exit 0 ;;
+    esac
+    case "${HC_FAKE_DOCKER:-ready}" in
+      daemon-gone-after-roll) printf '%s\n' "$gone" >&2; exit 1 ;;
+    esac
+    fmt=""
+    for a in "$@"; do case "$a" in *'{{.'*) fmt="$a" ;; esac; done
+    for s in gateway catalog booking messaging payout; do
+      out=""
+      for tok in $fmt; do
+        case "$tok" in
+          '{{.Service}}') out+="hc-market-$s " ;;
+          '{{.State}}')   out+="running " ;;
+          '{{.Health}}')  out+="unhealthy " ;;
+          *)              out+="$tok " ;;
+        esac
+      done
+      printf '%s\n' "${out% }"
+    done
+    exit 0 ;;
+esac
+exit 0
+S7
+printf '#!/usr/bin/env bash\nprintf 7\n' > "$B7/curl"
+# NOT A REPO, deliberately: preflight's git probe then takes its warning arm, so the run is the same
+# whatever tree this check is invoked from — and the warning is one of part 7's positive controls
+# that the stub was reached at all.
+printf '#!/usr/bin/env bash\nexit 1\n' > "$B7/git"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$B7/sleep"
+chmod +x "$B7"/*
+
+# A HOST DIRECTORY PER SCENARIO. `remote_deploy` WRITES — .env.next, .env, .env.previous — through
+# the shipped remote commands against a real filesystem, so two scenarios sharing one directory would
+# hand the second whatever the first left. `.env` is seeded so the rotation has something to rotate
+# and `rollback` has a previous tag to find; without it every scenario ends at "no previous
+# deployment recorded" and the rollback-phase gate is never reached at all.
+seed_host7() {
+  mkdir -p "$1"
+  { printf 'JWT_BASE64_SECRET=x\nHC_PRIVACY_PEPPER=x\nHC_GATEWAY_ADMIN_PASSWORD=x\n'
+    printf 'HC_GATEWAY_MONGODB_URI=x\n'
+    for s in CATALOG BOOKING MESSAGING PAYOUT; do printf 'HC_%s_DB_URL=x\nHC_%s_DB_PASSWORD=x\n' "$s" "$s"; done
+  } > "$1/secrets.env"
+  printf 'HC_TAG=1.3.9\n'  > "$1/.env"
+  printf 'HC_TAG=1.3.9\n'  > "$1/.env.previous"
+  printf 'services: {}\n' > "$1/data-compose.yml"
+}
+
+# 7a's staging tree. The subprocess cannot be handed COMPOSE_TEMPLATE through the environment — it is
+# derived from the script's own directory — so the copy sits in a directory shaped like deploy/. The
+# copy is `cmp`d against the subject, which is how a reader can tell this executed the bytes under
+# test and not something that drifted from them.
+mkdir -p "$X7/stage/deploy/docker"
+cp "$SCRIPT_ABS" "$X7/stage/deploy/deploy-prod.sh"; chmod +x "$X7/stage/deploy/deploy-prod.sh"
+if [[ -f "$PROD_COMPOSE_ABS" ]]; then cp "$PROD_COMPOSE_ABS" "$X7/stage/deploy/docker/docker-compose.prod.yml"
+else printf 'services: {}\n' > "$X7/stage/deploy/docker/docker-compose.prod.yml"; fi
+cmp -s "$SCRIPT_ABS" "$X7/stage/deploy/deploy-prod.sh" \
+  || err "the copy of $SCRIPT part 7 executes is not byte-identical to $SCRIPT, so nothing it establishes is about the shipped script. See decisions.md D80."
+
+# --host is a name that does not resolve and HC_PUBLIC_URL is an unroutable address, on purpose: if a
+# stub is ever missed, the real binary fails fast against nothing rather than reaching a host. The
+# registry token is a literal that is not a credential — this repository is public.
+env7=(HC_FAKE_TAG="$T7" HC_REGISTRY_TOKEN=probe-not-a-credential HC_PUBLIC_URL="http://127.0.0.1:1/probe")
+run7_exec() { # run7_exec <site log> <FAKE_DOCKER> — EXECUTES the shipped file
+  : > "$1"
+  timeout 60 env -i PATH="$B7:/usr/bin:/bin" HC_SITE_LOG="$1" HC_FAKE_DOCKER="$2" "${env7[@]}" \
+    bash "$X7/stage/deploy/deploy-prod.sh" \
+    --tag "$T7" --host "$P_HOST" --path "${1%/*}/host-${1##*/}" --yes 2>&1 || true
+}
+run7_source() { # run7_source <site log> <FAKE_DOCKER> <what to run after the source returns>
+  : > "$1"
+  (
+    export PATH="$B7:$PATH" HC_SITE_LOG="$1" HC_FAKE_DOCKER="$2" "${env7[@]}"
+    unset HC_PROD_HOST HC_SSH_TIMEOUT HC_SMOKE_MIN_PROFESSIONALS HC_NETWORK HC_DATA_NETWORK HC_MONITORING_NETWORK
+    # THE SOURCE ITSELF IS UNDER TEST. Nothing may be called here: the router lives in `main` and
+    # `main` is called only when the file is EXECUTED, so a source that deploys is a defect and the
+    # marker below is what says the source returned rather than exited in the middle of one.
+    source "$SCRIPT_ABS" --tag "$T7" --host "$P_HOST" --path "${1%/*}/host-${1##*/}" --yes
+    printf '__hc_source_returned__\n'
+    # Three overrides, and each is the harness's rather than the script's: the compose template moves
+    # because a mutant copy lives in a temp directory with no docker/ beside it, the budget because 24
+    # polls at ten seconds is not a thing a check can wait for, and the service list because two
+    # services make the exhaustion's own table readable in a failure message.
+    COMPOSE_TEMPLATE="$PROD_COMPOSE_ABS"
+    HEALTH_TIMEOUT=10
+    SERVICES=(catalog booking)
+    eval "$3"
+  ) 2>&1 || true
+}
+plain7() { printf '%s\n' "$1" | sed -e "s/$(printf '\033')\[[0-9;]*m//g"; }
+
+for h in s0 s1 s2 s3 s4 opts; do seed_host7 "$X7/host-$h"; done
+r7_inert="$(run7_source "$X7/s0" ready 'declare -F main >/dev/null && printf "HAS_MAIN\n"')"
+r7_opts="$(run7_source "$X7/opts" ready '{ printf "SSHOPTS"; for a in "${SSH_OPTS[@]}"; do printf "\037%s" "$a"; done; printf "\n"; }')"
+r7_deploy="$(run7_exec "$X7/s1" ready)"
+r7_gate="$(plain7 "$(run7_source "$X7/s2" unready main)")"
+r7_rb="$(plain7 "$(run7_source "$X7/s3" daemon-gone-after-roll rollback)")"
+r7_daemon="$(plain7 "$(run7_source "$X7/s4" daemon-gone-after-roll main)")"
+
+# ---- 7.1 sourcing is inert, and `main` is there to be called -------------------------------------
+# THREE STATES, IN THIS ORDER, AND THE ORDER IS A REVIEW FINDING OF ITS OWN. Written as one case on
+# the marker first, a source that DEPLOYED and then died inside preflight reached the "no `main` to
+# call" arm — true (it never returned) and the wrong cause named, which is this whole family's defect
+# arriving inside its own repair. Found by running the mutation. A source that printed ANYTHING the
+# program prints is a source that ran the program, whatever it went on to do.
+sites_at_source="$(wc -l < "$X7/s0" | tr -d ' ')"
+said_at_source="$(printf '%s\n' "$r7_inert" | { grep -vE '^(__hc_source_returned__|HAS_MAIN)$' || true; } | tr -d '[:space:]')"
+if (( sites_at_source > 0 )) || [[ -n "$said_at_source" ]]; then
+  err "sourcing $SCRIPT asked the host $sites_at_source thing(s) and printed '$(one "$r7_inert")' before anything called \`main\`. A sourced deploy script must not deploy: \`. ./deploy-prod.sh\`, typed to read one of its functions, would BE a deployment with \`confirm\` the only thing in its way. The router belongs in \`main\`, called under \`[[ \"\${BASH_SOURCE[0]}\" == \"\$0\" ]]\` — and without that, part 7 cannot drive the router at all. See decisions.md D80 and backlog NEW-42."
+elif [[ "$r7_inert" != *"__hc_source_returned__"* ]]; then
+  err "sourcing $SCRIPT did not return to the sourcing shell, and printed nothing on the way: '$(one "$r7_inert")'. Something above the router refuses at load time — an argument this check passes, or a guard that reads the environment — so part 7 has nothing to call. See decisions.md D80."
+elif [[ "$r7_inert" != *HAS_MAIN* ]]; then
+  err "$SCRIPT sources cleanly and declares no \`main\` for part 7 to call: '$(one "$r7_inert")'. The router must be a function named \`main\`, and this is an ERROR rather than a skip for the reason cases 11, 19, 20 and 29 exist — a subject this harness cannot find would otherwise be a green run over nothing. See decisions.md D80."
+else
+  ok "sourcing $SCRIPT runs no ssh, no scp and no docker, and leaves a \`main\` to call — the router runs only when the file is executed"
+fi
+
+# ---- 7.2 the whole program, executed: every stub reached, and `main` actually invoked -------------
+sites_deploy="$(wc -l < "$X7/s1" | tr -d ' ')"
+printf '  executed, %s remote invocation(s): %s\n' "$sites_deploy" "$(one "$(printf '%s\n' "$r7_deploy" | tail -2)")"
+if (( sites_deploy == 0 )); then
+  err "executing $SCRIPT with a tag, a host and --yes asked the host NOTHING and printed '$(one "$r7_deploy")'. The likeliest cause is that nothing calls \`main\`: the file then parses, defines every function and exits 0 having deployed nothing, which is the quietest failure this script can have and the one thing no text matcher and no sourced probe can see. See decisions.md D80."
+else
+  # THE POSITIVE CONTROLS, one per stub, and each is a fact the run produced rather than a line it
+  # printed for its own reasons: without them every per-site assertion below is satisfied by a
+  # program that stopped early, and a stub nobody called looks exactly like an assertion that passed.
+  for control in \
+    "the git probe:no git repository under" \
+    "the compose upload (scp):uploading compose stack and env" \
+    "the data tier probe (docker ps):data tier up — 5 stores running" \
+    "the health gate's polls:all services report READY" \
+    "the catalogue smoke test (curl):catalogue answering — 7 published professionals" \
+    "payout's brokerage probe:payout holds brokerage terms in force — 0.12 commission" \
+    "the gateway version probe:gateway container reports version $T7" \
+    "the whole deployment:HealthConnect $T7 live on $P_HOST"; do
+    what="${control%%:*}"; needle="${control#*:}"
+    case "$r7_deploy" in
+      *"$needle"*) ok "executed end to end — $what ran" ;;
+      *) err "executing $SCRIPT never got as far as $what (nothing matching '$needle' in its output). Every per-site assertion in part 7 is read off a run that reached the end, so a run that stopped early would satisfy them by never asking. Output: '$(one "$r7_deploy")'. See decisions.md D80." ;;
+    esac
+  done
+  case "$(cat "$X7/s1")" in
+    *SCP*) ok "executed end to end — the compose file went through scp, which carries SSH_OPTS too" ;;
+    *) err "executing $SCRIPT logged no scp invocation at all, so the one non-ssh remote site in the file was never driven. See decisions.md D80." ;;
+  esac
+fi
+
+# ---- 7.3 the phase each caller passes, established from the sentences the phase composes ----------
+#
+# THE BLOCKING FINDING OF D78 §15, now driven. `health_gate <phase>` composes `$left` and `$rolling`
+# once per phase and interpolates them into every refusal, so the phase a caller passed is readable
+# from the transcript — and the transcript is split at `step "Rollback"`, which is what attributes a
+# sentence to the CALLER that produced it rather than merely to the arm. Before this, swapping the two
+# arguments parsed and left the check and its test at exit 0.
+rb_line="$(printf '%s\n' "$r7_gate" | grep -c '^Rollback$' || true)"
+before7="$(printf '%s\n' "$r7_gate" | awk '$0=="Rollback"{exit} {print}')"
+after7="$(printf '%s\n' "$r7_gate" | awk 'f{print} $0=="Rollback"{f=1}')"
+printf '  deploy gate said:    %s\n' "$(one "$(printf '%s\n' "$before7" | grep 'still unhealthy' || printf '«nothing»')")"
+printf '  rollback gate said:  %s\n' "$(one "$(printf '%s\n' "$after7" | grep 'still unhealthy' || printf '«nothing»')")"
+if (( rb_line != 1 )); then
+  err "an exhausted deploy gate against a host that answered did not reach \`rollback\` exactly once ($rb_line): '$(one "$r7_gate")'. That is the one arm that may return, and the router's \`rollback\` is where the second phase is passed — with it unreached, 7.3 establishes nothing about either caller. See decisions.md D78 and D80."
+elif [[ "$before7" != *"Health gate"* || "$after7" != *"Health gate"* ]]; then
+  err "the gate did not run on both sides of the rollback: '$(one "$r7_gate")'. `rollback` re-runs it to check its own work, and that second run is the caller whose phase nothing was looking at. See decisions.md D80."
+else
+  case "$before7" in
+    *"nothing further to revert to"*)
+      err "$SCRIPT's DEPLOY router runs the health gate in the ROLLBACK phase: the gate that fired BEFORE any rollback said '$(one "$(printf '%s\n' "$before7" | grep 'still unhealthy')")'. Nothing has been reverted at that point and \`rollback\` is about to run, so the operator is told a revert has already happened and that none is available. See decisions.md D78 §14, D80." ;;
+    *"rolling back."*) ok "the deploy router passes \`deploy\`, so the refusal before any revert says a rollback is what happens next" ;;
+    *) err "the gate reached from the deploy router said neither of the two things a phase composes: '$(one "$before7")'. See decisions.md D80." ;;
+  esac
+  case "$after7" in
+    *"rolling back."*)
+      err "$SCRIPT's rollback() runs the health gate in the DEPLOY phase: the gate that fired AFTER the revert said '$(one "$(printf '%s\n' "$after7" | grep 'still unhealthy')")'. By then .env is restored and the stack is rolled, its caller refuses on the next line, and no second revert happens — so that sentence describes something nobody is going to do, and its sibling refusals offer \`--rollback\` after the rollback has just run. This is the swap that parsed and left both this check and its test at exit 0. See decisions.md D78 §14, §15 and D80." ;;
+    *"nothing further to revert to"*) ok "rollback() passes \`rollback\`, so the gate checking its own work offers no second revert" ;;
+    *) err "the gate reached from rollback() said neither of the two things a phase composes: '$(one "$after7")'. See decisions.md D80." ;;
+  esac
+fi
+# AND THE OTHER ARM, IN BOTH PHASES — the pairs D78 §15 removed the contradiction from rather than
+# testing, because it could not reach them. A daemon that stops answering between the roll and the
+# gate is a refusal, not a rollback, so this arm must also revert nothing when it is the deploy that
+# reached it: `rollback` is never entered at all.
+printf '  deploy, daemon gone:   %s\n' "$(one "$(printf '%s\n' "$r7_daemon" | tail -1)")"
+case "$r7_daemon" in
+  *"ALREADY BEEN APPLIED"*)
+    err "a DEPLOY whose gate could not ask the daemon at the timeout was told the rollback had already been applied: '$(one "$r7_daemon")'. Nothing had been reverted. See decisions.md D78 §14 and D80." ;;
+  *"NOTHING HAS BEEN ROLLED BACK"*)
+    case "$r7_daemon" in
+      *$'\n'Rollback$'\n'*) err "a deploy whose gate could not ask the daemon reverted the stack anyway: '$(one "$r7_daemon")'. That refusal states that nothing has been rolled back, and a rollback needs the same host that could not be asked. See decisions.md D78." ;;
+      *) ok "a deploy gate that cannot ask the daemon refuses, says nothing was reverted, and reverts nothing" ;;
+    esac ;;
+  *) err "a deploy whose gate could not ask the daemon at the timeout said neither of the two things a phase composes: '$(one "$r7_daemon")'. See decisions.md D80." ;;
+esac
+printf '  rollback, daemon gone: %s\n' "$(one "$(printf '%s\n' "$r7_rb" | tail -1)")"
+case "$r7_rb" in
+  *"NOTHING HAS BEEN ROLLED BACK"*)
+    err "\`rollback\` reached its own gate, could not ask the daemon, and reported that NOTHING HAS BEEN ROLLED BACK: '$(one "$r7_rb")'. It had just restored .env and rolled the stack, and the remedy that refusal prints is the command that has this moment run. See decisions.md D78 §14 and D80." ;;
+  *"ALREADY BEEN APPLIED"*) ok "\`rollback\`'s own gate, unable to ask the daemon, says the revert has already been applied and offers no second one" ;;
+  *) err "\`rollback\`'s own gate, unable to ask the daemon, said neither of the two things a phase composes: '$(one "$r7_rb")'. See decisions.md D80." ;;
+esac
+
+# ---- 7.4 per-site: which options each ssh and the scp actually received ---------------------------
+#
+# THE FLOOR IN THE PREAMBLE COUNTS LINES AND ATTRIBUTES NOTHING (D78 §15's first note): removing the
+# expansion from any eleven of the twelve leaves it green. This asks each invocation what it was
+# handed, and the expected list is the array the RUNNING script holds — so an option added to
+# SSH_OPTS and not reaching a site is red as well as one removed from a site.
+# `sed -n s///p` AND NOT `${r7_opts#*SSHOPTS}`: with the array renamed out from under the sourced
+# probe the parameter form hands back the WHOLE transcript, which is non-empty, and every site then
+# fails to contain it — red, but through a door that says nothing. Absent must read as absent.
+opts7="$(printf '%s\n' "$r7_opts" | sed -n 's/^SSHOPTS//p' | head -1)"
+if [[ -z "$opts7" ]]; then
+  err "part 7 could not read SSH_OPTS out of a sourced $SCRIPT ('$(one "$r7_opts")'), so every per-site assertion below would have compared each invocation against an empty option list and passed. See decisions.md D80."
+else
+  printf '  SSH_OPTS at run time: %s\n' "$(printf '%s' "$opts7" | tr '\037' ' ')"
+  # ONE ENTRY PER REMOTE INVOCATION THIS SCRIPT MAKES, and unmatched in EITHER direction is an error:
+  # a site that stops being asked is a probe removed under this check's feet, and an invocation no
+  # entry recognises is a seventh probe growing beside the six — which is exactly what parts 1-4
+  # cannot see. Ordered, first match wins: the rollback's roll carries `pull` too, and the data
+  # tier's `ps` carries `--format` too.
+  sites7=(
+    "the compose file upload (scp):SCP"
+    "the ssh and compose-v2 gate:docker compose version"
+    "secrets.env being there at all:test -s"
+    "each of the twelve values in secrets.env:grep -qE"
+    "the three host networks:docker network inspect"
+    "the five stores in the data tier:data-compose.yml"
+    "the remote directory:mkdir -p"
+    "the generated .env:cat > "
+    "the .env rotation:mv .env.next .env"
+    "the rollback's own roll:cp .env.previous .env"
+    "the host's registry login:docker login"
+    "the image pull:pull hc-market-"
+    "the roll:up -d --remove-orphans"
+    "the health gate's own poll:/management/health/readiness"
+    "payout's brokerage probe:hc-market-payout bash -c"
+    "the gateway's version probe:/management/info"
+    "the exhaustion's state probe:ps -a --format"
+    "the failed services' logs:logs --no-color --tail"
+    "the previous tag a rollback needs:grep -m1 '^HC_TAG="
+    "the deployments.log append:deployments.log"
+  )
+  declare -A seen7=() bare7=()
+  unknown7=0
+  while IFS= read -r inv; do
+    [[ -n "$inv" ]] || continue
+    label7=""
+    for site in "${sites7[@]}"; do
+      case "$inv" in *"${site#*:}"*) label7="${site%%:*}"; break ;; esac
+    done
+    if [[ -z "$label7" ]]; then
+      unknown7=$(( unknown7 + 1 ))
+      err "$SCRIPT made a remote invocation part 7 does not recognise: '$(printf '%s' "${inv:0:220}" | tr '\037' ' ')'. Every site is enumerated here so that a SEVENTH probe cannot grow beside the six without this check being told — parts 1 to 4 drive named functions and cannot see one. See decisions.md D75 and D80."
+      continue
+    fi
+    seen7[$label7]=1
+    case "$inv" in *"$opts7"*) : ;; *) bare7[$label7]=1 ;; esac
+  done < <(cat "$X7/s1" "$X7/s2" "$X7/s3" "$X7/s4")
+  missing7=""
+  for site in "${sites7[@]}"; do [[ -n "${seen7[${site%%:*}]:-}" ]] || missing7+="; ${site%%:*}"; done
+  if [[ -n "$missing7" ]]; then
+    err "$SCRIPT no longer asks the host${missing7//;/,} — four scenarios were run (a whole deploy, an exhausted gate that rolled back, a rollback on its own, and a gate that could not ask the daemon) and nothing reached those sites. Either a probe was renamed or removed, or the scenarios stopped reaching it; both leave part 7 asserting the options of an invocation that is not there. See decisions.md D80."
+  fi
+  bad7=""
+  for label7 in "${!bare7[@]}"; do bad7+="; $label7"; done
+  if [[ -n "$bad7" ]]; then
+    err "$SCRIPT hands these remote invocations something other than the whole of SSH_OPTS, in order${bad7//;/,}. The array is '$(printf '%s' "$opts7" | tr '\037' ' ')'. An ssh with no ConnectTimeout waits 136s per attempt against a host that drops packets (measured) and the health gate makes 24 × one-per-service of them; one with no BatchMode can stop halfway waiting for a passphrase. The preamble's count cannot see this: removing the expansion from any eleven of the twelve leaves it at two and green. See decisions.md D78 §7, §15 and D80."
+  elif (( unknown7 == 0 )); then
+    ok "all ${#seen7[@]} remote invocation sites received the whole of SSH_OPTS, in order — asked of the arguments each site was handed, per site"
+  fi
+fi
 
 printf '\n'
 if (( fail )); then printf 'host probe attribution: FAILED\n'; else printf 'host probe attribution: ok\n'; fi

@@ -199,13 +199,28 @@ caught by part 5's needle, and a *reorder* was invisible until the stub was taug
 in the order asked for.
 
 **The gate takes its PHASE as a parameter, with no default, and the refusals depend on it** (D78 §14,
-narrowed by §15). **CI asserts both call sites by text** — `rollback()` must call `health_gate
-rollback`, the router must read `if health_gate deploy && smoke_test` — because swapping them parses
-and left the check *and* its test at exit 0, restoring the false claim verbatim. `$left` says only
-whether a revert has already happened; **it makes no claim about the stack**, because four of the eight
-phase × arm pairs are driven by nothing and the arm-specific version contradicted two of them. The
-textual assertion is a stated compromise: part 6 drives the *function* with call strings the harness
-writes and never the program, which is **NEW-42**.
+narrowed by §15, and **executed since D80**). **CI EXECUTES both call sites** — part 7 of
+`host-probe-attribution.sh` sources the shipped script, calls `main` and `rollback` for real against
+stubbed `ssh`, `scp`, `docker`, `curl` and `git`, and reads the phase off the sentences the phase
+composes, **splitting the transcript at `step "Rollback"`** so a sentence is attributed to the *caller*
+that produced it and not merely to the arm. It was two stripped-text greps for one commit
+(`rollback()` must contain `health_gate rollback`, the router must read `if health_gate deploy &&
+smoke_test`) because swapping them parses and left the check *and* its test at exit 0 — and **both are
+deleted** rather than kept beside the execution: two mechanisms for one property is how one of them
+rots, and the textual one matched a fixed spelling of a branch, so any restructuring of the router was
+red on a correct tree while a swap was green on a broken one. `$left` says only whether a revert has
+already happened; **it makes no claim about the stack**, because four of the eight phase × arm pairs
+were driven by nothing and the arm-specific version contradicted two of them — **two of the four are
+driven now** (the unanswerable-daemon arm from each caller), and the deploy-phase one is asserted to
+enter `rollback` not at all.
+
+**The router is in `main()` and runs only when the file is EXECUTED** (D80), which is what makes that
+sourcing possible and is a safety property on its own: `. ./deploy-prod.sh`, typed to read one of its
+functions, **was** a production deployment until then. Argument parsing deliberately stays at load
+time, so a sourced file is configured and inert. That wrapping introduces exactly one defect and it is
+the quietest in the file — delete the `[[ "${BASH_SOURCE[0]}" == "$0" ]]` line and the script parses,
+defines everything and exits 0 having deployed nothing — which is why part 7 also **executes** the file
+as a subprocess and refuses a run that asked the host nothing. No text and no sourced probe can see it.
 `health_gate` has two callers — the deploy router and `rollback` itself — and from the second a revert
 has **already been applied**, so *"NOTHING HAS BEEN ROLLED BACK, deliberately"* with `--rollback` as the
 remedy was false in the one function every failed deploy reaches. `$left` and `$rolling` are composed
@@ -239,8 +254,11 @@ the first and bash obeys the last. Part 5's ban on an inline `-o BatchMode=yes` 
 the one place both are set.
 **The count the check prints is a COUNT AND NOT COVERAGE** — *"13 lines expand it"*, from the preamble
 guard rather than part 5 — and its `>= 2` floor catches only a total collapse: removing the expansion
-from any eleven of the twelve, the health gate's own poll included, leaves it green. Per-site coverage
-needs the call sites executed, which is **NEW-42**.
+from any eleven of the twelve, the health gate's own poll included, leaves it green. **Per-site
+coverage is part 7's, since D80**: it asks each of **twenty** executed remote invocations what it was
+handed, against the array the *running* script holds — so an option **added** to `SSH_OPTS` and not
+reaching a site is red as well as one removed from a site, and the gate's own poll is one of the
+twenty. The floor stays for the one thing it does cheaply, before a scenario runs.
 
 **That guard is read off STRIPPED text, and the reason is the twentieth instance of this family**
 (D78 §14): as first written it greped the raw line, so
@@ -279,16 +297,22 @@ gate 130 lines above, whose message was an explicit *"cannot reach $HOST over ss
 missing"*, and `grep`'s **2** for an unreadable `secrets.env`, the data tier's uncheckable
 `| grep -c … || true`, and `rollback`'s `|| true` were each folding a fact of their own.
 `.github/checks/host-probe-attribution.sh` drives the shipped functions against a stub that **runs**
-the wrapped script it is handed, so the sentinel it reads is the shipped code's; its test constructs
-twenty-two broken states. **`deploy-prod.sh` has still never run against a host** (D49) — what ran
+the wrapped script it is handed, so the sentinel it reads is the shipped code's; its test constructs a
+broken state per numbered case and **prints its own derived count on every run** — read that line
+rather than a number from here, which said *"twenty-two"* from D75 until D80 and was three rounds out
+of date. **`deploy-prod.sh` has still never run against a host** (D49) — what ran
 against a real ssh, a real remote shell and a real daemon is the mechanism, lifted out by `awk`.
 **Routing a probe through `host_run` is not the same as guarding what it does with the answer**, and
 that distinction is D75's review finding: the check drove one of the six sites behaviourally and left
 the other five to a textual assertion, and emptying the secrets loop's remote-status arm — one line —
 made `grep`'s exit **2** match an empty branch, so the loop walked all twelve values and **preflight
 passed on a `secrets.env` it could not read**. The only mutant in this whole family whose result is a
-pass rather than a wrong message. Five parts now, driven against real fixtures, with a **directory**
-standing in for the unreadable file (`test -s` 0, `grep` 2) because `chmod` does not constrain root.
+pass rather than a wrong message. **Seven parts** now — trust the check's own numbered list and not
+this figure, which has been written wrong here before — driven against real fixtures, with a
+**directory** standing in for the unreadable file (`test -s` 0, `grep` 2) because `chmod` does not
+constrain root. **Part 7 is the only one that runs the PROGRAM** rather than a lifted function, and
+that is D80's whole subject: parts 1-6 drive functions with call strings the harness writes, which is
+structurally why three successive guards on the same area were each one step short of the binding.
 
 Only the host mapping moves. Inside the containers every service listens on **8080**, because the
 compose files set `SERVER_PORT: 8080` explicitly — overriding the per-service `serverPort` the JDL

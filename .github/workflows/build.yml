@@ -567,7 +567,7 @@ jobs:
       # satisfy — and PRINTS the count it ran rather than carrying one here, because this comment and
       # the step name below both said thirty against thirty-three (decisions.md D78 §14).
       #
-      # SIX PARTS, and parts 3 and 4 are D75's review finding rather than its plan: the first version
+      # SEVEN PARTS, and parts 3 and 4 are D75's review finding rather than its plan: the first version
       # drove ONE of the six call sites and covered the rest textually, which establishes that they
       # cannot report an ssh failure as a fact about the host and nothing about their REMOTE-STATUS
       # arms. Emptying one of those is one line, and the mutant PASSES preflight on a secrets.env it
@@ -586,8 +586,24 @@ jobs:
       # refusal saying "nothing has been rolled back" is false in the one function every failed deploy
       # reaches, and the phase is a parameter with no default for that reason (D78 §14).
       #
+      # PART 7 IS THE PROGRAM ITSELF — decisions.md D80, backlog NEW-42 — and it exists because parts
+      # 1-6 drive lifted FUNCTIONS with call strings the harness writes, so they can never see what
+      # the script PASSES. That is structurally why three successive rounds of findings here were each
+      # a fail-open in the guard that closed the round before, every one of them a textual assertion
+      # about a call site. It sources the shipped file and calls `main` and `rollback` for real, and
+      # separately EXECUTES the file as a subprocess, against stubbed ssh, scp, docker, curl and git;
+      # it then asserts on the argument vectors the stubs were handed — the phase each caller passes
+      # (split at the rollback, so a sentence is attributed to its caller and not merely to its arm)
+      # and which options each of twenty remote invocations actually receives, against the array the
+      # RUNNING script holds. The two greps that stood in for the first are deleted rather than kept
+      # beside it. Sourcing is possible because the router lives in `main` under
+      # `[[ "${BASH_SOURCE[0]}" == "$0" ]]`, which is also why `. ./deploy-prod.sh` is no longer a
+      # production deployment; the one defect that wrapping introduces — nothing calling `main`, so
+      # the script exits 0 having deployed nothing — is why part 7 executes as well as sources.
+      #
       # It needs no docker, no network and no host: `deploy-prod.sh` has never been run against one
-      # (decisions.md D49) and nothing here changes that.
+      # (decisions.md D49) and nothing here changes that. Part 7 establishes what the script PASSES
+      # and never what a host answers.
       - name: A remote probe must say which hop failed
         run: ./.github/checks/host-probe-attribution.sh
 

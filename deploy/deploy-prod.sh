@@ -1223,27 +1223,69 @@ record_success() {
 }
 
 # --------------------------------------------------------------------- router --
-if (( DO_ROLLBACK )); then
-  HOST="${HOST:-${HC_PROD_HOST:-}}"; [[ -n "$HOST" ]] || die "no target host"
-  rollback; exit 0
-fi
+#
+# IN A FUNCTION, AND CALLED ONLY WHEN THIS FILE IS EXECUTED — decisions.md D80, backlog NEW-42. Two
+# reasons, and the first would justify it on its own.
+#
+# A SOURCED DEPLOY SCRIPT MUST NOT DEPLOY. Until now the whole sequence below ran at LOAD time, so
+# `. ./deploy-prod.sh` — typed to read one of these functions, or run by anything that sources the
+# file it is asked about — WAS a production deployment, with `confirm` the only thing in its way and
+# `--yes` in muscle memory. Nothing in this repository sourced it, which is exactly why nobody
+# noticed; the guard below is one line.
+#
+# AND IT IS WHAT LETS THESE CALL SITES BE EXECUTED RATHER THAN READ. Three rounds of findings in this
+# area were each a fail-open in the guard that closed the round before (decisions.md D78 §15), and
+# every one of them was a textual assertion ABOUT a call site: the phase this router hands the health
+# gate was bound to the program by nothing at all, so swapping `deploy` for `rollback` here parsed and
+# left both the check and its own test at exit 0. Part 7 of
+# .github/checks/host-probe-attribution.sh sources this file, calls `main` and `rollback` for real
+# against stubbed `ssh`, `scp`, `docker` and `curl`, and asserts on what the stubs were handed —
+# which is only possible because sourcing is inert.
+#
+# ARGUMENT PARSING DELIBERATELY STAYS AT LOAD TIME, above. A sourced file is then CONFIGURED and
+# inert, which is what lets a harness — or a person — source it with the flags it means to drive and
+# then choose what to run. `--help` and an unknown option still exit during the source, and that is
+# the right answer to both.
+#
+# `exit` is kept rather than made `return`: executed, the two are identical here, and a `return`
+# would let whatever sourced this file carry on past a failed deploy as though it had not happened.
+main() {
+  if (( DO_ROLLBACK )); then
+    HOST="${HOST:-${HC_PROD_HOST:-}}"; [[ -n "$HOST" ]] || die "no target host"
+    rollback; exit 0
+  fi
 
-resolve_tag
-preflight
-confirm
-if   (( DO_BUILD && DO_PUSH )); then build_and_push
-elif (( DO_BUILD ));            then build_local_only
-else                                 verify_published
-fi
-remote_deploy
+  resolve_tag
+  preflight
+  confirm
+  if   (( DO_BUILD && DO_PUSH )); then build_and_push
+  elif (( DO_BUILD ));            then build_local_only
+  else                                 verify_published
+  fi
+  remote_deploy
 
-if health_gate deploy && smoke_test; then
-  record_success
-  step "Done"
-  ok "HealthConnect $TAG live on $HOST via the '$CHANNEL' channel ($IMAGE_PREFIX)"
-  printf '  rollback with: %s./deploy-prod.sh --rollback --host %s%s\n' "$c_dim" "$HOST" "$c_reset"
-else
-  warn "deployment did not pass its gates"
-  rollback
-  exit 1
+  if health_gate deploy && smoke_test; then
+    record_success
+    step "Done"
+    ok "HealthConnect $TAG live on $HOST via the '$CHANNEL' channel ($IMAGE_PREFIX)"
+    printf '  rollback with: %s./deploy-prod.sh --rollback --host %s%s\n' "$c_dim" "$HOST" "$c_reset"
+  else
+    warn "deployment did not pass its gates"
+    rollback
+    exit 1
+  fi
+}
+
+# THE ONE LINE THAT MAKES THIS A PROGRAM, and the defect the wrapping above introduces. Delete it and
+# `./deploy-prod.sh --tag 1.4.0` parses its arguments, defines every function in this file and exits
+# 0 having done nothing at all — no output, no host contacted, no deployment, and the quietest
+# possible failure. Nothing textual could tell that from a working script, so it is checked by
+# driving: part 7 EXECUTES this file as a subprocess against stubs and refuses a run that asked the
+# host nothing.
+#
+# `$0` IS THE TEST, and no substitute for it works. `${BASH_SOURCE[0]}` is this file whether it was
+# sourced or run; `$0` is the OUTER script's name under `source` and this file's own name under both
+# `bash deploy-prod.sh` and `./deploy-prod.sh`. Do not replace it with a variable somebody can set.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main
 fi

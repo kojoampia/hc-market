@@ -118,6 +118,37 @@
 #                                              the case: the docker stub does not render a format
 #                                              string, so part 6 cannot see the column go
 #
+#  Six more for the EXECUTED call sites — decisions.md D80, backlog NEW-42. Cases 31-42 are the three
+#  earlier rounds and each of those was a fail-open in the guard that closed the round before; these
+#  are the states no matcher could reach at all. 43 and 44 are the per-site half of SSH_OPTS, aimed at
+#  the health gate's own poll because the preamble's line count concedes it cannot see that one; 45
+#  and 46 are the two halves of the sourced-vs-executed guard D80 added, and 45 in particular is the
+#  defect that change INTRODUCES; 47 is the unliftable subject one function along; 48 was one of the
+#  two greps D80 deleted from part 5.
+#
+#   43  the health gate's poll loses
+#       SSH_OPTS                             — the floor counts LINES, so removing the expansion from
+#                                              any eleven of the twelve leaves it green
+#   44  an option added to SSH_OPTS that one
+#       site does not receive                — every text assertion still passes: one assignment, both
+#                                              options, the exact byte string. Order swapped in the
+#                                              hand-written site so part 5's inline ban does NOT fire
+#   45  nothing calls main                   — the script parses, defines everything and exits 0
+#                                              having deployed nothing. THE DEFECT D80's OWN CHANGE
+#                                              INTRODUCES, and invisible to text and to sourcing
+#   46  the sourced-vs-executed guard gone   — sourcing performs a deployment, which is what
+#                                              `. ./deploy-prod.sh` did before D80
+#   47  the router's function renamed        — an unliftable subject is an ERROR, not a green run over
+#                                              nothing (cases 11, 19, 20, 29 at four other names)
+#   48  the deploy router passes no phase    — the gate refuses before a probe is sent, so every
+#                                              deployment dies at it; seen as a program that never
+#                                              reached its polls
+#   49  a remote site stops being asked      — part 7's site list must refuse in BOTH directions, so
+#                                              a probe that goes away is named rather than passed over
+#   50  a seventh remote probe appears       — the direction parts 1-4 structurally cannot see: they
+#                                              drive named functions, so an ssh growing beside the six
+#                                              is invisible to them
+#
 #      ./.github/checks/host-probe-attribution-test.sh
 # ==============================================================================
 set -Eeuo pipefail
@@ -160,9 +191,21 @@ expect_red() {
   if [[ -n "$present" ]] && ! grep -qF -- "$present" "$f"; then
     bad "$name — the mutation did not apply ('$present' is not in the file)"; return
   fi
-  if [[ -n "$absent" ]] && grep -qF -- "$absent" "$f"; then
-    bad "$name — the mutation did not replace the original ('$absent' is still in the file)"; return
-  fi
+  # `LINE:<text>` ASKS FOR AN EXACT LINE, and it exists because two of D80's cases replace a line —
+  # `  main` — whose text also occurs inside neighbouring comments, so the substring control would
+  # fail on a mutation that had applied perfectly. Spelling it as a multi-line `grep -F` pattern is
+  # WORSE than useless and was tried: `-F` splits the pattern on the newline, the empty half then
+  # matches every file, and the control passes on a mutation that did nothing. Measured.
+  case "$absent" in
+    LINE:*)
+      if grep -qx -- "${absent#LINE:}" "$f"; then
+        bad "$name — the mutation did not replace the original (a line reading exactly '${absent#LINE:}' is still in the file)"; return
+      fi ;;
+    ?*)
+      if grep -qF -- "$absent" "$f"; then
+        bad "$name — the mutation did not replace the original ('$absent' is still in the file)"; return
+      fi ;;
+  esac
   if ! bash -n "$f"; then bad "$name — the mutant does not parse, so the check aborted rather than failing"; return; fi
   if run_check "$f"; then
     bad "$name — the check PASSED on a broken tree"
@@ -500,23 +543,30 @@ else
 fi
 
 printf '\nThe gate'"'"'s two call sites — the binding nothing was looking at\n'
-# CASES 37 AND 38 ARE THE THIRD REVIEW'S BLOCKING FINDING. Both swaps parse, and against the previous
-# commit BOTH the check and this test exited 0 — the no-default guard sees only an absent argument,
-# case 35 mutates gate_exhausted's own arm, and part 6 drives the function with call strings THIS FILE
-# writes. So the phase mechanism was bound to the program by nothing at all, and case 37 restores
-# finding 2's defect exactly: a gate exhausted from a revert saying "NOTHING HAS BEEN ROLLED BACK" and
-# offering `--rollback` after the rollback has just run.
+# CASES 37 AND 38 ARE THE THIRD REVIEW'S BLOCKING FINDING. Both swaps parse, and against the commit
+# before D78 §15 BOTH the check and this test exited 0 — the no-default guard sees only an absent
+# argument, case 35 mutates gate_exhausted's own arm, and part 6 drives the function with call strings
+# THIS FILE writes. So the phase mechanism was bound to the program by nothing at all, and case 37
+# restores finding 2's defect exactly: a gate exhausted from a revert saying "NOTHING HAS BEEN ROLLED
+# BACK" and offering `--rollback` after the rollback has just run.
+#
+# THEIR DOOR MOVED IN D80, which is the point of that decision rather than a side effect. §15 repaired
+# them with two stripped-text greps in part 5 and said at the site that it was a compromise; part 7
+# sources the shipped file, calls `main` and `rollback`, and reads the phase off the sentences the
+# phase composes — split at the rollback, so a sentence is attributed to the CALLER that produced it.
+# Both greps are deleted, so these two `want` fragments are now part 7's messages: if either case ever
+# goes "red, but not through the door it was aimed at", the execution is what broke and not a matcher.
 f="$(fresh m37)"
 sed -i 's|^  health_gate rollback && ok "rolled back to \$prev"|  health_gate deploy \&\& ok "rolled back to $prev"|' "$f"
 expect_red "$f" "37  rollback() runs the gate in the deploy phase" \
   'health_gate deploy && ok "rolled back to $prev"' 'health_gate rollback && ok' \
-  "calls the health gate in the WRONG PHASE"
+  "rollback() runs the health gate in the DEPLOY phase"
 
 f="$(fresh m38)"
-sed -i 's|^if health_gate deploy && smoke_test; then$|if health_gate rollback \&\& smoke_test; then|' "$f"
+sed -i 's|^  if health_gate deploy && smoke_test; then$|  if health_gate rollback \&\& smoke_test; then|' "$f"
 expect_red "$f" "38  the deploy router runs the gate in the rollback phase" \
-  'if health_gate rollback && smoke_test; then' 'if health_gate deploy && smoke_test; then' \
-  "runs the health gate in the ROLLBACK phase"
+  '  if health_gate rollback && smoke_test; then' '  if health_gate deploy && smoke_test; then' \
+  "DEPLOY router runs the health gate in the ROLLBACK phase"
 
 printf '\nThe value behind the option name, and the assignment bash actually obeys\n'
 # CASE 39: the option's NAME with a zero default behind it — measured green before this round, and
@@ -584,6 +634,111 @@ else
   bad "42  one service's healthcheck disabled — red, but not through the door it was aimed at"
   grep '::error::' "$f.out" >&2 || true
 fi
+
+printf '\nPer site, and per program — the four states only an executed call site has\n'
+# CASES 43-48 ARE D80's, and each is a state that was green through D78's third round. The first two
+# are the per-site half: the preamble's floor counts LINES carrying the expansion, so removing it from
+# any eleven of the twelve leaves it at two and green, and an option ADDED to the array and not
+# reaching a site was invisible to everything. Both mutations are aimed at the health gate's own poll,
+# which is NEW-36's second half and the site the floor's own message concedes it cannot see.
+#
+# AN awk LINE SWAP, not a `sed`, for case 3's reason: that line is four quoting levels deep and ends
+# in a continuation, and every sed spelling of it either matched nothing or needed escaping nobody
+# could read. The replacement is written out verbatim and swapped in by line.
+f="$(fresh m43)"
+cat > "$WORK/m43.repl" <<'REPL'
+      ssh "$HOST" "cd '$REMOTE_PATH' && $REMOTE_COMPOSE exec -T $(compose_name "$s") bash -c \
+REPL
+awk -v file="$WORK/m43.repl" '
+  /^      ssh "\$\{SSH_OPTS\[@\]\}" "\$HOST" "cd .\$REMOTE_PATH. && \$REMOTE_COMPOSE exec -T/ {
+    while ((getline l < file) > 0) print l; close(file); next }
+  { print }' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+expect_red "$f" "43  the health gate's own poll loses SSH_OPTS" \
+  '      ssh "$HOST" "cd '"'"'$REMOTE_PATH'"'"' && $REMOTE_COMPOSE exec -T' \
+  '      ssh "${SSH_OPTS[@]}" "$HOST" "cd '"'"'$REMOTE_PATH'"'"' && $REMOTE_COMPOSE exec -T' \
+  "in order, the health gate's own poll"
+
+# CASE 44: THE ARRAY GAINS AN OPTION AND ONE SITE HAND-WRITES THE OLD TWO. Every text assertion in the
+# check still passes — one assignment, BatchMode present, the exact ConnectTimeout byte string — and
+# the floor counts one line fewer while staying well over two. The order is swapped so that part 5's
+# ban on a literal `ssh -o BatchMode=yes` does NOT fire: this case must go red through part 7 or not
+# at all, and a red through the neighbour's door would prove nothing about per-site coverage.
+f="$(fresh m44)"
+sed -i 's|^SSH_OPTS=(-o BatchMode=yes -o "ConnectTimeout=\${HC_SSH_TIMEOUT:-8}")$|SSH_OPTS=(-o BatchMode=yes -o "ConnectTimeout=${HC_SSH_TIMEOUT:-8}" -o ServerAliveInterval=15)|' "$f"
+cat > "$WORK/m44.repl" <<'REPL'
+      ssh -o "ConnectTimeout=${HC_SSH_TIMEOUT:-8}" -o BatchMode=yes "$HOST" "cd '$REMOTE_PATH' && $REMOTE_COMPOSE exec -T $(compose_name "$s") bash -c \
+REPL
+awk -v file="$WORK/m44.repl" '
+  /^      ssh "\$\{SSH_OPTS\[@\]\}" "\$HOST" "cd .\$REMOTE_PATH. && \$REMOTE_COMPOSE exec -T/ {
+    while ((getline l < file) > 0) print l; close(file); next }
+  { print }' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+# THE AIM CONTROL READS STRIPPED TEXT, because part 5's ban does. Over the RAW file it fired on a
+# mutation that had applied perfectly: this script's own comments quote the old folded
+# `ssh -o BatchMode=yes …` line verbatim, six times, so an unstripped control is asserting the length
+# of a paragraph — which is the reason the shell stripper exists at all (D68).
+if awk -f "$ROOT/.github/checks/strip-sh-comments.awk" "$f" | grep -qF 'ssh -o BatchMode=yes'; then
+  bad "44  an option in SSH_OPTS that does not reach one site — the mutation is aimed at the wrong door (part 5 bans that spelling)"
+else
+  expect_red "$f" "44  an option in SSH_OPTS that does not reach one site" \
+    '-o ServerAliveInterval=15' \
+    '      ssh "${SSH_OPTS[@]}" "$HOST" "cd '"'"'$REMOTE_PATH'"'"' && $REMOTE_COMPOSE exec -T' \
+    "in order, the health gate's own poll"
+fi
+
+# CASE 45 IS THE DEFECT D80's OWN CHANGE INTRODUCES, and the reason part 7 executes the file as a
+# subprocess as well as sourcing it. With the router in `main`, deleting the one line that calls it
+# leaves a script that parses, defines every function and exits 0 having deployed nothing: no output,
+# no host contacted, and nothing textual or sourced able to tell it from a working program.
+f="$(fresh m45)"
+sed -i 's|^  main$|  : ## MUTATED-45|' "$f"
+expect_red "$f" "45  nothing calls main, so the script deploys nothing and exits 0" \
+  '  : ## MUTATED-45' 'LINE:  main' "asked the host NOTHING"
+
+# CASE 46: THE GUARD REMOVED, so `main` runs on LOAD again — which is the state before D80 and is a
+# defect in its own right: `. ./deploy-prod.sh`, typed to read a function, IS a deployment. Here it
+# also takes part 7's own mechanism away, so the case is aimed at the inertness assertion.
+f="$(fresh m46)"
+sed -i 's|^if \[\[ "\${BASH_SOURCE\[0\]}" == "\$0" \]\]; then$|if true; then ## MUTATED-46|' "$f"
+expect_red "$f" "46  the sourced-vs-executed guard removed, so sourcing deploys" \
+  'if true; then ## MUTATED-46' 'if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then' \
+  "A sourced deploy script must not deploy"
+
+# CASE 47: THE ROUTER MOVED OUT FROM UNDER PART 7 — `main` renamed on both lines, so the program works
+# perfectly and the harness has nothing to call. An unliftable subject must be an ERROR and not a green
+# run over nothing: cases 11, 19, 20 and 29 are the same rule at four other names.
+f="$(fresh m47)"
+sed -i 's|^main() {$|run_all() {|; s|^  main$|  run_all|' "$f"
+expect_red "$f" "47  the router's function renamed" 'run_all() {' 'LINE:main() {' \
+  'declares no `main` for part 7 to call'
+
+# CASE 48: THE ROUTER STOPS PASSING A PHASE AT ALL. `health_gate` refuses before a single probe is
+# sent (part 6's own case, at the function), so every deployment dies at the gate — which part 7 sees
+# as an executed program that never reached its polls. This was one of part 5's deleted greps.
+f="$(fresh m48)"
+sed -i 's|^  if health_gate deploy && smoke_test; then$|  if health_gate \&\& smoke_test; then|' "$f"
+expect_red "$f" "48  the deploy router passes no phase" \
+  '  if health_gate && smoke_test; then' '  if health_gate deploy && smoke_test; then' \
+  "never got as far as the health gate's polls"
+
+# CASES 49 AND 50 ARE PART 7.4's DERIVED HALF, in both directions. They were measured once by hand
+# and that is exactly what this repository keeps finding wrong with itself — a measurement nobody can
+# re-run is a claim — so both are cases. 49 removes a site: `record_success` stops appending, and the
+# check must say WHICH site stopped being asked rather than passing over nineteen it still sees. 50
+# adds a SEVENTH probe, which is the thing parts 1-4 structurally cannot see: they drive named
+# functions, so an ssh that grows beside the six is invisible to them.
+f="$(fresh m49)"
+sed -i 's|>> deployments.log"|> /dev/null"|' "$f"
+expect_red "$f" "49  a remote site stops being asked" '> /dev/null"' '>> deployments.log"' \
+  "no longer asks the host"
+
+f="$(fresh m50)"
+awk '/^  log "rolling services"$/ { print "  ssh \"${SSH_OPTS[@]}\" \"$HOST\" \"uptime\"" } { print }' \
+  "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+# THE ORIGINAL-IS-GONE CONTROL DOES NOT APPLY and is passed empty, as in case 40: this mutation ADDS
+# a probe rather than replacing one, so every original line must still be there.
+expect_red "$f" "50  a seventh remote probe grows beside the six" \
+  'ssh "${SSH_OPTS[@]}" "$HOST" "uptime"' '' \
+  "made a remote invocation part 7 does not recognise"
 
 # THE ONE CASE THAT MUTATES THE CHECK'S OWN INSTRUMENT rather than the subject. Absent the shell
 # stripper, part 5 reads empty text: every `grep -F` finds nothing, so every site is reported
