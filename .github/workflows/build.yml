@@ -739,6 +739,126 @@ jobs:
           done
           exit "$fail"
 
+      # The gateway discloses one customer's email address to booking — decisions.md D72 §3, D74.
+      #
+      # WHY A GREP AND NOT ONLY A TEST. Ten mutations of this package were run and eight are red in
+      # one suite or the other; TWO are green, and they are the two lines below. Measured, not
+      # reasoned:
+      #
+      #   hasAuthority(ContactLookupToken.AUTHORITY) -> authenticated()   green, 14/14 tests pass
+      #   anyExchange().denyAll() deleted                                 green, 14/14 tests pass
+      #
+      # Neither discloses anything today, and that is precisely why nothing goes red. The first is
+      # covered by ContactLookupToken.mayRead in the resource — an ordinary login token's subject is a
+      # person, so mayRead refuses it whatever the chain allowed — and the second by reactive Spring
+      # Security's own default-deny for an exchange no rule matched, which InternalApiPermitIT pins
+      # separately. Both are over-determined, so a test asserting either would be asserting a
+      # coincidence and would go red on a correct change. A grep is the right instrument for a line
+      # whose value is legibility and depth rather than a behaviour, which is the same division of
+      # labour the payment webhook's permit has.
+      #
+      # THE THIRD ASSERTION IS THE LOAD-BEARING ONE. mayRead is what refuses a token an administrator
+      # could actually produce: POST /api/admin/authorities creates an authority by name and
+      # UserResource grants it, so ROLE_CUSTOMER_CONTACT_READ can reach a real account, and its
+      # ordinary 24-hour token then satisfies hasAuthority. Deleting the call IS red — three cases in
+      # InternalCustomerContactResourceIT — and it is greped as well because it costs nothing and this
+      # is the one line in the estate standing between a login token and a person's email address.
+      #
+      # COMMENTS ARE STRIPPED FIRST and the file's own javadoc is why: it quotes `hasAuthority`,
+      # `authenticated()`, `denyAll` and `mayRead` at length, precisely because it explains this
+      # arrangement.
+      #
+      # HOW MUCH THAT BUYS TODAY WAS MEASURED, needle by needle, with each line mutated away and the
+      # RAW file grepped beside the stripped one — because "the stripper is why this works" is the
+      # kind of claim this workflow's history is made of:
+      #
+      #   hasAuthority(ContactLookupToken.AUTHORITY)   raw 0, stripped 0   stripper NOT load-bearing
+      #   .denyAll()                                   raw 1, stripped 0   stripper LOAD-BEARING
+      #   ContactLookupToken.mayRead(jwt, login)       raw 0, stripped 0   stripper NOT load-bearing
+      #
+      # So one of the three would fail open without it, and the other two survive an unstripped grep
+      # only because the javadoc happens to spell them without their argument lists — a property of
+      # prose, which is exactly what must not be relied on. Reword the comment to say
+      # `hasAuthority(ContactLookupToken.AUTHORITY)` and the first becomes load-bearing too. Do not
+      # remove the stripper on the strength of the two zeroes.
+      - name: The gateway's contact lookup must stay behind the estate's own credential
+        run: |
+          fail=0
+          [ -f .github/checks/strip-comments.awk ] || { echo "::error::.github/checks/strip-comments.awk is missing — this check would read the javadoc that discusses every line it greps for, and pass. See decisions.md D74."; exit 1; }
+          chain=gateway/src/main/java/net/jojoaddison/config/InternalApiSecurityConfiguration.java
+          resource=gateway/src/main/java/net/jojoaddison/web/rest/InternalCustomerContactResource.java
+          for f in "$chain" "$resource"; do
+            if [ ! -f "$f" ]; then
+              echo "::error::$f does not exist — this check would grep nothing and pass. See decisions.md D74."
+              fail=1
+            fi
+          done
+          if [ "$fail" = 0 ]; then
+            chain_code=$(awk -f .github/checks/strip-comments.awk "$chain")
+            resource_code=$(awk -f .github/checks/strip-comments.awk "$resource")
+            if ! printf '%s\n' "$chain_code" | grep -qF 'hasAuthority(ContactLookupToken.AUTHORITY)'; then
+              echo "::error file=$chain::the gateway's /internal/** chain no longer requires ContactLookupToken.AUTHORITY. An authority granted by no login is what makes this endpoint reachable by booking and by nothing else; widened to authenticated(), every token the estate accepts reaches the resource and only mayRead stands between a login token and a customer's email address. No test can see this. See decisions.md D74."
+              fail=1
+            else
+              echo "ok   $chain requires the estate's own authority"
+            fi
+            if ! printf '%s\n' "$chain_code" | grep -qF '.denyAll()'; then
+              echo "::error file=$chain::the gateway's /internal/** chain no longer denies everything that is not a GET, so the prefix can acquire a write endpoint without anybody changing this file. It is redundant against the framework's default-deny today, which is why no test can see it go. See decisions.md D74."
+              fail=1
+            else
+              echo "ok   $chain denies everything that is not the one GET"
+            fi
+            if ! printf '%s\n' "$resource_code" | grep -qF 'ContactLookupToken.mayRead(jwt, login)'; then
+              echo "::error file=$resource::the contact lookup no longer checks the token's contract. The filter chain checks the AUTHORITY, and an administrator can grant that to a real account — mayRead is what refuses a person's twenty-four-hour token, and a token naming a second customer. See decisions.md D74."
+              fail=1
+            else
+              echo "ok   $resource checks the token's own contract, not only its authority"
+            fi
+          fi
+          exit "$fail"
+
+      # ContactLookupToken.java is copied byte-identically into booking and the gateway — the FIFTH
+      # verbatim-copy family, decisions.md D74. Booking mints; the gateway accepts and enforces.
+      #
+      # There is no shared library here (five standalone Maven projects, no aggregator pom), and a
+      # claim name, a subject or a lifetime that drifts by one character between the minting service
+      # and the accepting one is a 403 on the path where a customer is trying to pay — which reads as
+      # a permissions problem, in a service nobody would open, on an estate where no payment provider
+      # has ever been enabled.
+      #
+      # THE REFERENCE IS THE GATEWAY'S, deliberately: it is the copy where the contract is enforced
+      # rather than merely promised, so a difference is reported as booking having drifted from the
+      # acceptor. The family is DERIVED with `find` rather than listed, exactly as the runtime-calendar
+      # diff is (D52's review, the sixth fail-open in that family): a third copy dropped into catalog
+      # or messaging the day one of them needs a contact lookup is then checked the moment it exists,
+      # and an unchecked copy cannot be created by copying the file somewhere new. A family of ONE is
+      # refused — one copy means the acceptor or the minter has been deleted.
+      - name: The contact-lookup token contract must be identical in every service that holds one
+        run: |
+          fail=0
+          mapfile -t copies < <(find . -path '*/src/main/java/net/jojoaddison/security/ContactLookupToken.java' | sort)
+          reference=gateway/src/main/java/net/jojoaddison/security/ContactLookupToken.java
+          echo "found ${#copies[@]} copies: ${copies[*]}"
+          if [ "${#copies[@]}" -lt 2 ]; then
+            echo "::error::expected at least two copies of ContactLookupToken.java — booking mints the token and the gateway accepts it, so one copy means one of the two halves is gone. See decisions.md D74."
+            exit 1
+          fi
+          if [ ! -f "$reference" ]; then
+            echo "::error::$reference is missing — it is the accepting side and the reference this family is diffed against. See decisions.md D74."
+            exit 1
+          fi
+          for copy in "${copies[@]}"; do
+            copy=${copy#./}
+            [ "$copy" = "$reference" ] && continue
+            if ! diff -u "$reference" "$copy"; then
+              echo "::error file=$copy::ContactLookupToken.java differs from the gateway's copy. The minting service and the accepting one must agree on the subject, the claim, the authority and the lifetime, comments included — a one-character drift is a 403 on the payment path. See decisions.md D74."
+              fail=1
+            else
+              echo "ok   $copy — identical to $reference"
+            fi
+          done
+          exit "$fail"
+
       # The dev estate's topic prefix is written TWICE: the compose file configures the apps with it
       # and deploy-dev.sh creates the topics with it (decisions.md D29). They must agree.
       #
@@ -766,7 +886,7 @@ jobs:
           fail=0
           for f in quality/compose.yml deploy/docker/docker-compose.dev.yml deploy/docker/docker-compose.prod.yml; do
             for v in HEALTHCONNECT_CATALOG_BASE_URL HEALTHCONNECT_PAYOUT_BASE_URL HEALTHCONNECT_BOOKING_BASE_URL \
-                     HEALTHCONNECT_MESSAGING_BASE_URL; do
+                     HEALTHCONNECT_MESSAGING_BASE_URL HEALTHCONNECT_GATEWAY_BASE_URL; do
               if ! grep -q "$v" "$f"; then
                 echo "::error file=$f::$v is not set — the service falls back to a hostname that resolves nowhere, and the call fails closed at run time with nothing red in CI."
                 fail=1

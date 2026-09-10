@@ -86,14 +86,14 @@ public class PaymentConfiguration {
      * Paystack, when {@code healthconnect.payments.paystack.enabled} is true — {@code decisions.md}
      * D50. The one adapter here that speaks to its provider.
      *
-     * <p>{@code CustomerContacts} is taken through an {@link ObjectProvider} rather than as a
-     * required dependency, and that is the whole of what this estate is missing: nothing here
-     * implements it, so the default is {@link CustomerContacts#unanswered()} and every priced booking
-     * naming Paystack answers 502 without a round trip. Required instead, the bean would fail the
-     * context and take booking down for want of a decision nobody has taken; optional, the day
-     * somebody registers <strong>one</strong> implementation this method needs no edit. See
-     * {@code CustomerContacts} for the three candidate sources and why the account store is the only
-     * defensible one.
+     * <p>{@code CustomerContacts} is taken through an {@link ObjectProvider} rather than as a required
+     * dependency, and until D74 that was the whole of what this estate was missing: nothing
+     * implemented it, so the default was {@link CustomerContacts#unanswered()} and every priced booking
+     * naming Paystack answered 502 without a round trip. <strong>{@code GatewayCustomerContacts}
+     * implements it now</strong> (D72 §3, D74), so this method needed no edit — which was the claim
+     * made when the {@code ObjectProvider} went in, and it held. See {@code CustomerContacts} for the
+     * three candidate sources and why the account store is the only defensible one; the other two are
+     * still refused.
      *
      * <p><strong>One, and exactly one.</strong> Two implementations are not "no edit": {@code
      * getIfAvailable()} answers a {@code NoUniqueBeanDefinitionException} rather than choosing between
@@ -114,15 +114,19 @@ public class PaymentConfiguration {
 
     /**
      * The contacts implementation, and the startup line an operator needs when there is not one —
-     * {@code decisions.md} D50, as reviewed.
+     * {@code decisions.md} D50, as reviewed; D74.
      *
      * <p>The adapter announces at INFO that it "is enabled and implements [authorize, readCallback]",
-     * which is true and reads as "it works". <strong>It does not work on this estate</strong>, and the
-     * reason is not the adapter's: Paystack's initialize needs an email address nobody has decided how
-     * to supply, so every priced booking naming Paystack is a 502 before any round trip. Left to
-     * itself, the first report of that is a customer who could not pay — the same shape as the
-     * {@code pk_} key check, which D50 put at boot for exactly this argument and then did not apply
-     * here.
+     * which is true and used to read as "it works" while it could not. Paystack's initialize needs an
+     * email address, and until D74 nobody had decided how to supply one — so every priced booking
+     * naming Paystack was a 502 before any round trip, and left to itself the first report of that is
+     * a customer who could not pay. The same shape as the {@code pk_} key check, which D50 put at boot
+     * for exactly this argument and then did not apply here.
+     *
+     * <p><strong>This branch is not dead code now that {@code GatewayCustomerContacts} exists.</strong>
+     * It is what fires if that {@code @Component} is deleted, renamed out of the scanned packages, or
+     * lost to a regeneration in some future shape — and the symptom it exists to name is invisible
+     * otherwise: an adapter announcing that it works, and every payment 502.
      *
      * <p>This is the only place that can tell. {@code PaymentProviderProperties} binds properties and
      * cannot see a bean; the adapter is handed a perfectly working {@link CustomerContacts} either way
@@ -139,8 +143,9 @@ public class PaymentConfiguration {
         }
         LOG.warn(
             "payments: the paystack adapter is enabled and this estate implements no CustomerContacts, so it cannot tell Paystack " +
-                "who is paying — every priced booking naming paystack answers 502 without a round trip. It is a decision waiting " +
-                "for somebody, not a fault: one @Component closes it (decisions.md D50)"
+                "who is paying — every priced booking naming paystack answers 502 without a round trip. D74 shipped " +
+                "GatewayCustomerContacts as the one implementation, so seeing this line means it is no longer being found " +
+                "(decisions.md D50, D74)"
         );
         return CustomerContacts.unanswered();
     }

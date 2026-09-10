@@ -25,12 +25,14 @@ package net.jojoaddison.service.payment;
  * @param customerLogin who is paying. Not contact details — a provider that needs a phone number to
  *     raise a mobile-money prompt asks for it at its own boundary, because which identifier a
  *     provider needs is exactly the thing this record must not guess.
- *     <p><strong>That boundary is {@link CustomerContacts}, and it is empty</strong> (D50). The
- *     principle survived meeting a real adapter and the estate did not: Paystack needs an email,
- *     Hubtel and MoMo need a phone number, and the account store that holds either belongs to the
- *     gateway with no endpoint to ask. So the boundary is named and unimplemented rather than
+ *     <p><strong>That boundary is {@link CustomerContacts}</strong> (D50), and since D74 it has one
+ *     implementation. The principle survived meeting a real adapter and the estate did not, for a
+ *     year: Paystack needs an email, Hubtel and MoMo need a phone number, and the account store that
+ *     holds either belongs to the gateway. The boundary was named and unimplemented rather than
  *     answered by widening this record, which would put a contact detail on every payment in the
- *     estate to satisfy whichever provider happened to be configured.
+ *     estate to satisfy whichever provider happened to be configured — and <strong>that is still the
+ *     answer</strong>. {@code GatewayCustomerContacts} asks the gateway for the email at the adapter's
+ *     own boundary; nothing was added here, and nothing should be for the phone number either.
  *     <p>It reaches the provider and stops there. It is deliberately <em>not</em> stored on
  *     {@code payment_attempt}: that row would otherwise become a register of who paid for what,
  *     surviving the erasure that removed the same login from the booking beside it

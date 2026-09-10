@@ -279,6 +279,13 @@ services:
       # with a token it mints from the estate signing key, so a complete erasure is one operator
       # action rather than three that each look successful on their own.
       HEALTHCONNECT_MESSAGING_BASE_URL: http://${HC_MESSAGING_HOST:-hc-market-messaging}:8080
+      # The customer's email address, for a payment provider that needs one — decisions.md D72 §3,
+      # D74. Booking asks the gateway's GET /internal/customers/{login}/email with a second
+      # short-lived token (ContactLookupToken, NOT the erasure one). This is the gateway's own port
+      # rather than a route through it — and note that unlike catalog's /internal/**, the route
+      # predicates are NOT what keeps that path private, because there is no route in front of it
+      # at all. The credential is. See decisions.md D74 §3.
+      HEALTHCONNECT_GATEWAY_BASE_URL: http://${HC_GATEWAY_HOST:-hc-market-gateway}:8080
       # --- Payment providers, and the third estate-wide secret (decisions.md D37/D45/D50) ---------
       #
       # D37 chose Paystack, Hubtel and MTN MoMo, with the customer choosing between them. Each
