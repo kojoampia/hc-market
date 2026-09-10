@@ -6,6 +6,7 @@ import java.util.Map;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.admin.NewTopic;
+import org.apache.kafka.clients.admin.TopicDescription;
 import org.slf4j.LoggerFactory;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -92,22 +93,57 @@ public interface SseKafkaTestContainer {
         return servers;
     }
 
+    /**
+     * The six topics this harness creates, which are <em>meant</em> to be the six
+     * {@link net.jojoaddison.service.MarketplaceEventFanout} subscribes to.
+     *
+     * <p>Named here rather than inside {@link #createTopics} so a test can ask about the set it was
+     * given instead of re-listing it — {@code MarketplaceEventFanoutIT} does, and a list re-typed in a
+     * second file is how one of them goes quietly out of date.
+     *
+     * <p><strong>That correspondence is a second list, and it is checked rather than asserted</strong>
+     * — D79's review finding. The listener names its topics as
+     * {@code ${healthconnect.topics.…:healthconnect.…}} placeholders whose defaults happen to be these
+     * literals, so nothing about the two lists ties them together: a seventh topic on the annotation
+     * would leave this constant stale in silence, the broker would auto-create it at whatever
+     * {@code num.partitions} says, and
+     * {@code MarketplaceEventFanoutIT.theBarrierRestsOnOnePartitionPerTopic} would never look at it —
+     * which is exactly the "a topic nothing here chose" case that method exists to catch. That test now
+     * reads the <strong>resolved</strong> topic set off the running
+     * {@code KafkaListenerEndpointRegistry} and requires it to equal this list.
+     */
+    List<String> TOPICS = List.of(
+        "healthconnect.booking.requested",
+        "healthconnect.booking.accepted",
+        "healthconnect.booking.declined",
+        "healthconnect.booking.cancelled",
+        "healthconnect.booking.completed",
+        "healthconnect.notification.raised"
+    );
+
+    /**
+     * ONE partition per topic, and it is load-bearing rather than a default nobody thought about —
+     * {@code decisions.md} D79.
+     *
+     * <p>Kafka orders records within a partition and makes no promise across them, so
+     * {@code MarketplaceEventFanoutIT}'s barrier — a second event published after the one under test,
+     * whose arrival is taken as proof the earlier one has finished emitting — is sound here <em>only</em>
+     * because the barrier and its event share a partition. Raise this and nothing fails to compile,
+     * no count moves, and that test's exact assertions start racing the emissions they exist to catch.
+     *
+     * <p>Which is why the test asserts the <strong>broker's</strong> answer against a literal 1 and not
+     * against this constant. Changing this number is meant to go red; a test comparing it with itself
+     * would adopt the new value and report success. It would also miss the other way in — a topic that
+     * already existed on a reused broker with a partition count nothing here chose.
+     */
+    int PARTITIONS_PER_TOPIC = 1;
+
     static void createTopics() {
-        try (
-            AdminClient admin = AdminClient.create(Map.of(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers()))
-        ) {
+        try (AdminClient admin = AdminClient.create(Map.of(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers()))) {
             admin
                 .createTopics(
-                    List.of(
-                        "healthconnect.booking.requested",
-                        "healthconnect.booking.accepted",
-                        "healthconnect.booking.declined",
-                        "healthconnect.booking.cancelled",
-                        "healthconnect.booking.completed",
-                        "healthconnect.notification.raised"
-                    )
-                        .stream()
-                        .map(t -> new NewTopic(t, 1, (short) 1))
+                    TOPICS.stream()
+                        .map(t -> new NewTopic(t, PARTITIONS_PER_TOPIC, (short) 1))
                         .toList()
                 )
                 .all()
@@ -115,6 +151,35 @@ public interface SseKafkaTestContainer {
         } catch (Exception e) {
             throw new IllegalStateException("could not create the SSE test topics", e);
         }
+    }
+
+    /**
+     * How many partitions the broker says a topic has — asked of the broker, never of
+     * {@link #PARTITIONS_PER_TOPIC}.
+     *
+     * <p>The distinction is the point: this answers what the running estate is, so it catches a changed
+     * constant, a topic created by somebody else, and a broker-side {@code num.partitions} alike. It
+     * lives here because this interface owns the only {@code AdminClient} in the harness.
+     *
+     * @throws IllegalStateException if the broker cannot be asked, or does not know the topic — an
+     *     unanswered question is never reported as an answer of zero
+     */
+    static int partitionCountOf(String topic) {
+        TopicDescription described;
+        try (AdminClient admin = AdminClient.create(Map.of(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers()))) {
+            described = admin.describeTopics(List.of(topic)).allTopicNames().get().get(topic);
+        } catch (InterruptedException e) {
+            // Restore the flag before the exception leaves: swallowing it would strand a harness
+            // thread that was asked to stop. Broad catch below for everything else, as in createTopics.
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("interrupted while asking the broker about " + topic, e);
+        } catch (Exception e) {
+            throw new IllegalStateException("could not ask the broker how many partitions " + topic + " has", e);
+        }
+        if (described == null) {
+            throw new IllegalStateException("the broker does not know the topic " + topic);
+        }
+        return described.partitions().size();
     }
 
     @DynamicPropertySource

@@ -3001,7 +3001,7 @@ verifying as a set.
 
 ---
 
-## NEW-37 — the fan-out test's barrier rests on a framework default nothing in this repository sets · READY
+## NEW-37 — the fan-out test's barrier rests on a framework default nothing in this repository sets · DONE (D79)
 
 Opened by **D76 §7** as a stated premise rather than a defect. `MarketplaceEventFanoutIT`'s three methods
 wait for a **barrier** event published after the one under test on the same topic, and take that arrival
@@ -3016,6 +3016,16 @@ on three premises, and only two of them are written down anywhere in this reposi
   full run) and **configured nowhere**. `spring.kafka.listener.concurrency` is absent from every yml in
   the gateway, and the `@KafkaListener` sets no `concurrency` attribute, so what holds is Spring Kafka's
   default.
+  **That parenthesis is withdrawn, and it is the whole of what D79 found** (D79 §2). The thread-name grep
+  cannot see a second child container at all: `gateway/src/test/resources/logback.xml` puts
+  `org.springframework` at WARN, so `KafkaMessageListenerContainer` logs nothing at INFO —
+  *"partitions assigned"* appears **0** times in a full run — and a consumer thread that exists produces
+  no line to match. Measured: with `spring.kafka.listener.concurrency=2` set and **two** children
+  demonstrably running, the same grep still answers only `#0-0-C-1`, twelve times, **every one of them
+  from a different JVM** (an earlier test class's `NetworkClient` warnings). So the premise was
+  *unmeasured*, not merely unconfigured, and the instrument that made it look benign could not have said
+  otherwise. The instrument that works is the `KafkaListenerEndpointRegistry`, which needs no log:
+  `concurrency=1 children=1`.
 
 **Only the FIRST of those three is what carries the ordering, and D76 §7 attributed the risk to the
 wrong one** — corrected here at review, because getting a mechanism plausibly wrong is this item's
@@ -3057,6 +3067,45 @@ first draft of this item proposed: it would pin a value that is not load-bearing
 as though it were.
 
 Nothing is wrong today. One premise is the framework's; the other two are already ours.
+
+**Closed by D79, and BOTH shapes were taken — the first one somewhere else.** The emission premise is
+pinned as **`concurrency = "1"` on the `@KafkaListener` itself**, not in the test config this item named:
+the harm is a dropped live event in *production*, where a test-config line reaches nothing and would have
+left the suite green while the estate lost events, and the annotation is the one spelling that **defeats
+the knob** — measured, with `spring.kafka.listener.concurrency=2` set and the annotation present, the
+container still runs `concurrency=1 children=1`, because an endpoint's concurrency overrides the
+factory's. It is a hand-written file, so nothing joins the regeneration table. The ordering premise is
+asserted of the **broker** by `MarketplaceEventFanoutIT.theBarrierRestsOnOnePartitionPerTopic`, against a
+literal 1 rather than against the new `PARTITIONS_PER_TOPIC` constant, and watched red twice: the
+constant raised to 2, and the topics created with 2 while the constant said 1. Both mutations left the
+other three methods green, which is what a silent premise looks like.
+
+The forbidden shape stayed forbidden. What was added beyond the item is a **CI grep** — the opposite of
+D76 §6's answer for the same class, because no test can see the pin's deletion (the default is also 1),
+which is D74's situation exactly. Its subject is derived from `jdl/*.jdl` rather than named, so a second
+fan-out in another service is caught the day it exists; seven states driven, including an unstripped
+positive control that passes the deletion.
+
+**Opens nothing.** The item's third premise — synchronous emission — was confirmed in reactor-core
+3.8.6's source and measured (561,466 `FAIL_NON_SERIALIZED` in 800,000 concurrent emits, none at one
+thread, none at all through `Sinks.unsafe()`), and the `Sinks.unsafe()` hazard it exposed is guarded by
+the same check rather than left as an item.
+
+**Reviewed 2026-09-11: approved, no blocking findings** (D79 §10), with every mechanism claim
+re-established from the framework sources and the two ITs re-run three times in the polluting order,
+4/0 each. One should-fix and two promotions, all taken. The should-fix was this package's own doing:
+naming the harness's topic list turned an anonymous inline list into a **claim about main source**
+("the six topics the fan-out subscribes to") that nothing checked — two independent lists whose
+defaults coincide — so the new method now reads the resolved topic set off the
+`KafkaListenerEndpointRegistry`, requires the constant to equal it, and asks the broker about that
+set; watched red with one topic removed. The promotions were both measured by the reviewer: the
+`Sinks.unsafe(` ban was **evaded by a static import**, and the step exited 0 printing `ok` about a
+file that had just left the safe spec — so there is a **positive** `Sinks.many(` assertion now, which
+no new spelling of the negative can evade, and the ban is widened to the bare word; and the
+empty-subject message named the pre-widening cause, which is the shape D79 §5 criticises in its own
+draft. Chasing the first of those produced one more of this family: the added `emitNext`
+discriminator **matched neither call**, because `tryEmitNext` has a capital E. `[eE]mitNext` now, with
+the case error written into the check.
 
 ---
 

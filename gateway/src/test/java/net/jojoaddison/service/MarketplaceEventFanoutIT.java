@@ -6,6 +6,7 @@ import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import net.jojoaddison.IntegrationTest;
 import net.jojoaddison.config.MongoDbTestContainer;
@@ -20,6 +21,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.testcontainers.context.ImportTestcontainers;
+import org.springframework.kafka.config.KafkaListenerEndpointRegistry;
+import org.springframework.kafka.listener.MessageListenerContainer;
 import reactor.core.Disposable;
 
 /**
@@ -75,7 +78,9 @@ import reactor.core.Disposable;
  *       test, so the barrier's arrival proves every emission the event was ever going to produce has
  *       already been recorded. That is what makes {@code containsExactlyInAnyOrder} sound rather than
  *       merely usually right: without it, an assertion that "nothing else was addressed" races the
- *       extra emission it exists to catch.
+ *       extra emission it exists to catch. The single partition that ordering depends on is asserted
+ *       of the broker by {@link #theBarrierRestsOnOnePartitionPerTopic} — backlog NEW-37, D79 — and
+ *       the sink's serialisation is pinned by {@code concurrency = "1"} on the listener itself.
  * </ul>
  *
  * <p>None of the logins below is shared with another method or with {@code MarketplaceStreamFramingIT},
@@ -107,6 +112,13 @@ class MarketplaceEventFanoutIT {
 
     @Autowired
     private MarketplaceEventFanout fanout;
+
+    /**
+     * Read only by {@link #consumedTopics()}, to establish which topics the listener really subscribes
+     * to. Never read for the container's <em>concurrency</em> — see that method's note on the asymmetry.
+     */
+    @Autowired
+    private KafkaListenerEndpointRegistry registry;
 
     /**
      * An envelope in the estate's shape, addressed to a customer and a professional.
@@ -145,13 +157,22 @@ class MarketplaceEventFanoutIT {
      * A second event on the same topic, published after the one under test, whose only job is to be
      * seen — and the reason the exact assertions in this class are sound rather than lucky.
      *
-     * <p>{@link SseKafkaTestContainer} creates every topic with <strong>one partition</strong>, and
-     * the listener container is single-threaded, so records on a topic are consumed strictly in the
-     * order they were produced. The barrier is produced after the event under test and its
-     * {@code flush} has returned, so by the time its own emission reaches a subscriber, every
-     * {@code tryEmitNext} the earlier record was ever going to make has already returned — on the same
-     * thread, into the same list. That is what lets a method assert that nothing <em>else</em> was
-     * addressed without racing the emission it is looking for.
+     * <p><strong>It rests on ONE partition, and that is the whole of it</strong> — {@code decisions.md}
+     * D79. Kafka orders records within a partition and promises nothing across them, so the barrier is
+     * consumed after the event it follows because {@link SseKafkaTestContainer} creates every topic with
+     * a single partition, which {@link #theBarrierRestsOnOnePartitionPerTopic} asserts of the broker.
+     * The barrier is produced after the event under test and its {@code flush} has returned — so the
+     * broker has acknowledged the append — and {@code Sinks.Many.tryEmitNext} delivers on the calling
+     * thread, so by the time the barrier's own emission reaches a subscriber every {@code tryEmitNext}
+     * the earlier record was ever going to make has already returned into the same list. That is what
+     * lets a method assert that nothing <em>else</em> was addressed without racing the emission it is
+     * looking for.
+     *
+     * <p><strong>The listener's concurrency is not what carries this</strong>, and reading it that way
+     * was D76 §7's error: Spring Kafka distributes <em>partitions</em> across child containers and a
+     * partition has one consumer at a time, so per-partition order survives any concurrency setting.
+     * What a second thread would break is the sink's serialisation, one file over — a dropped emission,
+     * never a reordered one. It is pinned on the {@code @KafkaListener} itself for that reason.
      *
      * <p>It carries a blank professional deliberately, so it emits exactly one event: a blank login is
      * dropped by the fan-out's own {@code add}. Its reference is a {@code b-fanout-barrier-} one, so
@@ -171,16 +192,87 @@ class MarketplaceEventFanoutIT {
      */
     private static void awaitBarrier(List<UserEvent> received, String topic, String tag) {
         publishBarrier(topic, tag);
-        Awaitility.await().atMost(ARRIVAL).until(() -> received.stream().anyMatch(e -> barrierLogin(tag).equals(e.recipientLogin())));
+        Awaitility.await()
+            .atMost(ARRIVAL)
+            .until(() -> received.stream().anyMatch(e -> barrierLogin(tag).equals(e.recipientLogin())));
     }
 
     /** Only the events of one publication, discriminated by the reference this test minted for it. */
     private static List<UserEvent> eventsFor(List<UserEvent> received, String aggregateRef) {
-        return received.stream().filter(event -> aggregateRef.equals(event.aggregateRef())).toList();
+        return received
+            .stream()
+            .filter(event -> aggregateRef.equals(event.aggregateRef()))
+            .toList();
     }
 
     private static List<String> recipientsFor(List<UserEvent> received, String aggregateRef) {
         return eventsFor(received, aggregateRef).stream().map(UserEvent::recipientLogin).toList();
+    }
+
+    /**
+     * The premise every other method in this class leans on, asked of the broker — {@code decisions.md}
+     * D79, backlog NEW-37.
+     *
+     * <p>Every barrier below is sound because its topic has exactly one partition, and until D79 that
+     * was a number in {@link SseKafkaTestContainer} with nothing anywhere reading it back. Raising it
+     * breaks no compile, moves no count and makes the three exact assertions race the emissions they
+     * exist to catch — the kind of change that reads as a harmless harness tweak.
+     *
+     * <p><strong>It asks the LISTENER which topics it consumes, and then asks the broker about those</strong>
+     * — D79's review finding. {@link SseKafkaTestContainer#TOPICS} and the six placeholders on the
+     * {@code @KafkaListener} are two independent lists whose defaults coincide, so a seventh topic added
+     * to the annotation would leave the harness constant stale, the broker would auto-create that topic
+     * at whatever {@code num.partitions} it likes, and a loop over {@code TOPICS} alone would never look
+     * at it. The registry's resolved set is therefore the subject, and the constant is asserted to equal
+     * it: the guarded set is the consumed set by construction rather than by coincidence.
+     *
+     * <p>Two things it deliberately does <em>not</em> do. It does not compare a partition count against
+     * {@code PARTITIONS_PER_TOPIC}, which would adopt a changed constant and report success. And it
+     * asserts nothing about listener <em>concurrency</em>: that value is pinned on the annotation and is
+     * <strong>not</strong> what the ordering rests on, so an assertion here would pin the wrong premise
+     * while reading like the right one — D79 §7.
+     *
+     * <p>Reading the registry to establish the topic set and refusing to read it for the concurrency is
+     * a deliberate asymmetry, and the discriminator is what carries the premise. The topic set decides
+     * <em>which</em> partitions the barrier's ordering has to hold for, so it is load-bearing here;
+     * concurrency decides only whether an emission is dropped, one file over, and pinning it in a test
+     * would make a value look like the ordering's guarantee when it is not.
+     *
+     * <p>It needs no subscription and publishes nothing, so a replay cannot reach it — the answers come
+     * from the registry and from {@code describeTopics}, never from the sink.
+     */
+    @Test
+    @DisplayName("the barrier's ordering rests on one partition per topic, and the broker agrees")
+    void theBarrierRestsOnOnePartitionPerTopic() {
+        assertThat(consumedTopics())
+            .as("the harness must create exactly the topics the listener consumes, or a topic it invented is guarded by nothing")
+            .containsExactlyInAnyOrderElementsOf(SseKafkaTestContainer.TOPICS);
+
+        for (String topic : consumedTopics()) {
+            assertThat(SseKafkaTestContainer.partitionCountOf(topic))
+                .as("%s must have exactly one partition, or this class's barriers order nothing", topic)
+                .isEqualTo(1);
+        }
+    }
+
+    /**
+     * The topics the running listener is actually subscribed to, after placeholder resolution.
+     *
+     * <p>Fails rather than answering an empty set if a container names a pattern or explicit partitions
+     * instead of topics: an unanswerable question must not read as "it consumes nothing", which would
+     * make the assertion above vacuous in the one shape that could hide a topic.
+     */
+    private Set<String> consumedTopics() {
+        Set<String> topics = new java.util.TreeSet<>();
+        for (MessageListenerContainer container : registry.getListenerContainers()) {
+            String[] named = container.getContainerProperties().getTopics();
+            assertThat(named)
+                .as("listener %s names no topics — this test cannot establish what it consumes", container.getListenerId())
+                .isNotNull();
+            topics.addAll(List.of(named));
+        }
+        assertThat(topics).as("no listener container names any topic — the fan-out's own subscription is missing").isNotEmpty();
+        return topics;
     }
 
     /**

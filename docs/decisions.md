@@ -13103,7 +13103,10 @@ only job is to be seen — and waits for that.
 The barrier is what makes the exactness *sound* rather than usually right, and this is the half that a
 ref-scoped count would still have got wrong. `SseKafkaTestContainer` creates every topic with **one
 partition** and the listener container runs at concurrency **1** (measured: only `…#0-0-C-n` consumer
-threads ever appear in a run, and `concurrency` is configured nowhere), so records on a topic are
+threads ever appear in a run, and `concurrency` is configured nowhere — **and that parenthesis is
+withdrawn by D79 §2: the thread-name grep cannot see a second child container at all, so the absence was
+no evidence. It is `concurrency = "1"` on the listener now, and the registry is what reads it back**), so
+records on a topic are
 consumed strictly in produced order on one thread, and `Sinks.Many.tryEmitNext` delivers synchronously
 on that thread. So when the barrier's emission reaches a subscriber, every `tryEmitNext` the earlier
 record was ever going to make has already returned into the same list. Waiting on "my two arrived"
@@ -13232,6 +13235,14 @@ per topic is read from `SseKafkaTestContainer`; synchronous emission is read fro
 `#0-1-C-*` thread appears in a whole run) but not *configured* — `spring.kafka.listener.concurrency` is
 set nowhere in this repository and the `@KafkaListener` names no `concurrency`, so it is the
 framework's 1. That is **NEW-37**.
+
+**"Measured" is wrong there, and D79 §2 is the correction — the instrument could not have failed.** The
+thread-name grep sees only threads that log at WARN or above, because
+`gateway/src/test/resources/logback.xml` puts `org.springframework` at WARN; measured, at concurrency
+**2** with two children running it still answers `#0-0-C-1` twelve times and every one of those lines
+came from a *different JVM*. So the third premise was **unmeasured**, which is a stronger reason to pin it
+than the one this paragraph gives. NEW-37 is closed by D79: `concurrency = "1"` on the listener, and the
+`KafkaListenerEndpointRegistry` — not a log — is what reads a container's concurrency back.
 
 **This paragraph attributed the risk to the wrong premise, and the correction is §9's.** It said a
 higher concurrency default *"would break the ordering the barrier rests on"*. It would not: Spring
@@ -14396,3 +14407,420 @@ checks and `build.yml`'s three inline matchers over this script re-run green; **
 re-embedded** and `--check` clean; the seed unchanged. No Java changed. No host was contacted, nothing
 was deployed, and the quality stack, the empty dev estate and the parallel package's files were not
 touched.
+## D79 — The premise was not merely unconfigured, it was unmeasured
+
+**Ratified 2026-09-10.** Closes backlog **NEW-37**, opened by **D76 §7** and rewritten by D76's review.
+Nothing was wrong before this package and nothing is fixed by it: what changes is that two premises the
+fan-out test rests on are now this repository's statements rather than defaults nobody chose.
+
+**`main` ends at D77 at `e1d8ce2`, the backlog's highest item is NEW-38, and `gh pr list --state open`
+answers nothing** — all three re-checked rather than taken from the brief. **D78 and NEW-39 are reserved
+by a package running in parallel** and are deliberately not taken here.
+
+`MarketplaceEventFanoutIT`'s three methods wait for a **barrier** — a second event published to the same
+topic after the one under test — and take its arrival as proof the earlier record has finished emitting.
+That is sound on three premises: one partition per topic, synchronous emission from `tryEmitNext`, and a
+listener running at concurrency 1. The first two are this repository's. The third was the framework's.
+
+### §1 The mechanism chain, and which parts were confirmed against source rather than accepted
+
+The brief asked for this distinction explicitly, because the neighbouring item's whole story is a
+mechanism got plausibly wrong. Read against **reactor-core 3.8.6**, **spring-kafka 4.0.6** and
+**spring-boot-kafka 4.0.7** — the versions this gateway actually resolves (`dependency:tree`), not the
+ones documented anywhere.
+
+**Confirmed in the framework's source AND measured — `FAIL_NON_SERIALIZED` is real, and the detector is
+not where the item implies.** `Sinks.many()` is the *safe* spec, and `SinksSpecs.DefaultSinksSpecs
+.directBestEffort()` wraps `SinkManyBestEffort.createBestEffort()` in `wrapMany(...)`, which is a
+`SinkManySerialized`. That wrapper's `tryEmitNext` is the whole of the detection:
+
+```java
+Thread currentThread = Thread.currentThread();
+if (!tryAcquire(currentThread)) {
+    return Sinks.EmitResult.FAIL_NON_SERIALIZED;
+}
+```
+
+**`SinkManyBestEffort` itself has no serialisation check at all** — its `tryEmitNext` can answer
+`FAIL_ZERO_SUBSCRIBER`, `FAIL_TERMINATED`, `FAIL_OVERFLOW` or `OK` and nothing else. So the refusal is a
+property of *which spec built the sink*, and that matters: `Sinks.unsafe()` is one word of diff and
+removes it. Measured on a throwaway probe against the real jar, with the single-threaded case as its
+control:
+
+```
+sink class (safe spec)   = reactor.core.publisher.SinkManySerialized
+sink class (unsafe spec) = reactor.core.publisher.SinkManyBestEffort
+safe spec, 1 thread   : OK=200000
+safe spec, 4 threads  : OK=238534 FAIL_NON_SERIALIZED=561466
+unsafe spec, 4 threads: OK=800000
+```
+
+The one-thread row is the instrument's proof: the result the check exists to find cannot appear when it
+should not, so the 561,466 is a measurement and not a matched constant.
+
+**Confirmed in source — concurrency distributes partitions, and the default is 1.**
+`ConcurrentMessageListenerContainer` declares `private int concurrency = 1`, its class javadoc says the
+partitions are "distributed evenly across the instances", `setConcurrency`'s says "Messages from within
+the same partition will be processed sequentially", and `doStart` creates one child
+`KafkaMessageListenerContainer` per unit, each with its own `SimpleAsyncTaskExecutor(beanName + "-C-")`
+where `beanName` carries the child's index — which is where the `#0-<i>-C-<n>` thread names come from.
+So per-partition consumption order survives any concurrency setting, exactly as the item's review
+corrected D76 §7 to say.
+
+**Taken on the framework's word, not measured here**: that a partition has exactly one consumer *within
+a group* at a time. That is the Kafka group protocol rather than Spring's, and this package neither
+reproduced a rebalance nor read the assignor's source. What it did observe is that a second child does
+not receive a *copy*: at concurrency 2 the probe below shows all six partitions on child 0 and none on
+child 1 — distribution, never duplication.
+
+**Confirmed in source and then measured — the property is bound and applied in THIS application.** Boot's
+`ConcurrentKafkaListenerContainerFactoryConfigurer` does `map.from(properties::getConcurrency).to(factory
+::setConcurrency)`, and `spring-boot-kafka` is on the gateway's compile classpath, which is worth stating
+because `CLAUDE.md` says elsewhere that `spring-boot-starter-kafka` is not. Measured off the running
+`KafkaListenerEndpointRegistry`:
+
+```
+PROBE container=…KafkaListenerEndpointContainer#0 concurrency=1 children=1        # nothing set
+PROBE container=…KafkaListenerEndpointContainer#0 concurrency=2 children=2        # listener.concurrency=2
+PROBE   child bean=…#0-0 assigned=[…accepted-0, …cancelled-0, …completed-0, …declined-0, …requested-0, …notification.raised-0]
+PROBE   child bean=…#0-1 assigned=[]
+```
+
+### §2 The decision the item did not anticipate: the measurement that made this benign could not have failed
+
+Both D76 §7 and NEW-37 state the concurrency as **measured** — *"no `#0-1-C-*` consumer thread appears
+anywhere in a full run"*. The brief asked for that to be reproduced. It does not reproduce, and the
+reason is worse than a mistake in the reading:
+
+**With `spring.kafka.listener.concurrency=2` deliberately set and two child containers demonstrably
+running, the same grep still answers only `#0-0-C-1`.** Twelve matches, the identical count as at
+concurrency 1 — and every one of those twelve lines came from **a different JVM**: PID 3184068 at
+22:38:17–19, Kafka `NetworkClient` warnings belonging to an earlier test class, while the fan-out's own
+context was PID 3203086 at 22:39:55. Not one matched line in either run was produced by the container
+under discussion.
+
+The cause is in the harness: `gateway/src/test/resources/logback.xml` sets `org.springframework` to
+**WARN**, so `KafkaMessageListenerContainer` never logs its INFO lines — "partitions assigned" appears
+**0** times in a full run — and a consumer thread that exists produces nothing to match. A thread only
+appears in that log if something on it warns, which in practice means a broker connect problem.
+
+So the premise was **unmeasured**, not merely unconfigured, and the instrument reporting it as fine was
+one that could not have said otherwise. That is this repository's own recurring defect — *"a check whose
+reach depends on prose is not a check"*, and its sibling, an absence taken for evidence — arriving in the
+paragraph that was documenting a premise as safe. It is also the third instrument of this shape found
+here after `grep -c ' ERROR '` against ANSI-coloured logs, and it strengthens rather than weakens the
+case for pinning: an unmeasured premise held by a default is worth less than a measured one.
+
+**The instrument that works is the registry**, and it needs no log at all — §1's `PROBE` lines. Use it
+rather than thread names for anything about listener containers in this repository.
+
+### §3 Decision one: pin the concurrency on the `@KafkaListener`, not in a config file
+
+```java
+concurrency = "1",
+```
+
+on `MarketplaceEventFanout`'s listener, with the argument in the class javadoc under *"One thread, and it
+is ours"*. The item named a line in the gateway's **test** config as "the one to reach for"; this is a
+deliberate departure and the reasons are three.
+
+**The harm is in production, and a test-config line cannot reach it.** What a second emitting thread
+costs is not a flaky test, it is a **dropped live event**: `onEstateEvent`'s failure arm logs the result
+at DEBUG and no environment here runs at DEBUG. A pin in the test config would make the *test's* premise
+local and leave production's the framework's — and, worse, would leave the test green while the estate
+dropped events, which is the exact shape this repository keeps finding in its own guards.
+
+**It defeats the knob that could break it, which no yml line can.** An endpoint's concurrency overrides
+the factory's (`ConcurrentKafkaListenerContainerFactory.initializeContainer`: `conc = endpoint
+.getConcurrency(); if (conc != null) …`). Measured: with the annotation in place *and*
+`spring.kafka.listener.concurrency=2` registered, the container runs `concurrency=1 children=1`. A yml
+line is the same class of thing as the setting it is defending against.
+
+**It answers the regeneration trap by not entering it.** `CLAUDE.md`'s table has a family of rows about
+`src/test/resources/config/application.yml` being generated *and* shadowing the main copy, so a block put
+there is silently lost — and the loss here would be invisible twice over, because the default is also 1.
+`MarketplaceEventFanout` is a hand-written file, so `--force` leaves it alone. **No generated file was
+edited and no regeneration-table row is therefore needed** — which was a criterion for choosing this
+shape, not a lucky consequence.
+
+It is a **literal, not a placeholder**, so no environment can raise it; and it forecloses nothing anybody
+would want. Scaling this fan-out is by **instance**, not by thread: the group is `${random.uuid}` per
+instance and every instance must see every event (D25/D29), so a second consumer thread inside one
+gateway buys no throughput a second gateway does not buy better, and the work per record is a JSON parse
+and an emit.
+
+### §4 Decision two: assert the partition count of the BROKER, and name the constant it comes from
+
+`SseKafkaTestContainer` grows `TOPICS` (the six, named once, so a test can ask about the set it was given
+rather than re-typing it), `PARTITIONS_PER_TOPIC = 1` with the barrier's dependence on it stated, and
+`partitionCountOf(topic)`, which asks the broker through `describeTopics`.
+`MarketplaceEventFanoutIT.theBarrierRestsOnOnePartitionPerTopic` then asserts **1** for every topic in
+`TOPICS`.
+
+**Against a literal 1, never against `PARTITIONS_PER_TOPIC`.** A test comparing the constant with itself
+would adopt a changed value and report success, which is the failure mode the whole item is about. Two
+mutations, both watched:
+
+- the constant raised to 2 — **red**, *"healthconnect.booking.requested must have exactly one partition,
+  or this class's barriers order nothing"*;
+- the constant left at 1 and the topics created with 2 — **red**, same message. This is the load-bearing
+  one: it proves the assertion reads the broker rather than the source, so it also catches a topic that
+  pre-existed with a partition count nothing here chose.
+
+Both mutations left the other three methods **green**, which is the point of the new one: raising the
+partition count does not fail those tests, it makes them race.
+
+The method needs no subscription and publishes nothing, so `auto-offset-reset: earliest` and the
+cross-context replay D76 measured cannot reach it — the answer comes from `describeTopics`, not from the
+sink.
+
+### §5 Decision three, also unanticipated: a CI grep, which is the opposite of D76 §6's answer
+
+D76 §6 refused a CI check for this class on the grounds that *"there is nothing textual to guard that the
+test does not guard better itself"*. That was right about the assertions and is wrong about the pin, and
+the discriminator is worth stating because it decides the next case too: **the framework's default is
+also 1, so deleting the annotation changes nothing any test can observe.** Every suite stays green. That
+is precisely the situation D74 met with two lines in the gateway's `/internal/**` chain, and the answer
+there is the answer here.
+
+*"A Kafka listener feeding a reactor sink must stay single-threaded"* asserts, per subject, that the
+stripped code pins `concurrency = "1"` and does **not** reach for `Sinks.unsafe(`.
+
+**The subject is derived, not named** — D52's and D77's lesson, and the reason is that a file named in a
+workflow cannot see a *second* fan-out appear. Services come from `jdl/*.jdl`; a subject is any main
+source whose stripped code declares a `@KafkaListener` and mentions `Sinks.`. Exactly one exists today.
+The generated `broker/KafkaConsumer.java` is not one — a `unicast()` sink and no `@KafkaListener`, being a
+Spring Cloud Function consumer, and the orphaned sample of D59/D62.
+
+**The discriminator was `Sinks.many(` for one draft and that was measured wrong.** A sink switched to
+`Sinks.unsafe().many()` stops matching it, so the file dropped out of the derivation and the check
+refused with *"no subject at all"* — fail-closed, and naming the wrong cause, which is this family's own
+defect one level up. Widened to `Sinks.`, the same mutation is refused by the sentence about the unsafe
+spec.
+
+**Comments are stripped, and here that is load-bearing rather than a precaution.** Measured per pattern:
+`concurrency = "1"` is **raw 2, stripped 1**, because the javadoc that argues for the pin quotes it — so
+an unstripped check passes the deletion, which was driven and confirmed. `Sinks.unsafe(` is raw 0,
+stripped 0 today, and is a negative assertion, so it would start being satisfiable by prose the moment
+somebody writes the word into a comment explaining why not to.
+
+**No companion test script**, unlike D69's, D71's, D75's and D77's. Those lift shell functions and drive
+them against docker stubs; this is two greps over stripped text, in the same shape as D74's
+contact-lookup check, which has none either. Its seven states are in §9 instead, each driven through
+`bash -e` over the **lifted** `run:` block so what ran is the shipped bytes.
+
+### §6 The DEBUG arm stays, and the production question the item raised is answered
+
+**Is a dropped emission acceptable in production?** As a *class*, yes, and that is D25/D29 rather than a
+new decision: the sink is `directBestEffort`, the channel is documented as lossy, and the durable copy is
+messaging's notification table. What is not acceptable is that `FAIL_NON_SERIALIZED` is a **different**
+loss wearing the same log line — the javadoc accounts for "a subscriber too slow to keep up", which is a
+statement about a client, and says nothing about two of our own threads arriving at once. That
+distinction is now written on the class.
+
+**The failure arm is deliberately left at DEBUG rather than raised to WARN for `FAIL_NON_SERIALIZED`.**
+With the premise pinned the result is unreachable, and a warning for a state that cannot occur is not a
+warning — it is a line people learn to ignore, which is D56's argument about a warning that fires on a
+correct state, one direction over. **Pin a premise; do not monitor its violation.** If anything ever does
+raise the concurrency, the CI check is red before the log could have been read.
+
+### §7 Losers
+
+**`spring.kafka.listener.concurrency: 1` in the gateway's test config** — the item's own first choice.
+Refused on §3: it is generated *and* shadowed, it defends the test rather than the estate, and it is the
+same kind of object as the setting it guards against. It would also have needed a regeneration-table row
+whose symptom is "nothing observable happens", which is a row nobody can act on.
+
+**The same line in `SseKafkaTestContainer`'s `@DynamicPropertySource`**, beside `auto-offset-reset`. The
+strongest loser, and genuinely regeneration-proof — that file is hand-written and already registers a
+harness-only property. Refused because it is still test-only, and because the annotation makes it
+redundant: with the endpoint pinned, this registration would be a line with no effect, which is a worse
+thing to leave behind than nothing.
+
+**The same line in the main `application.yml`.** Generated, shadowed by the test copy, and silent when
+lost — the exact combination `CLAUDE.md`'s table exists to record.
+
+**Asserting the concurrency from `KafkaListenerEndpointRegistry`'s container** — the item's own first
+draft, and named there as the thing not to do. Refused, and now with a second reason: it pins a value
+that is **not** what carries the ordering while reading as though it were, and §2 shows how much
+confusion that specific misattribution already caused. The registry read remains the right *measurement*
+instrument, and that is what it was used for here.
+
+**Raising `FAIL_NON_SERIALIZED` to WARN** — §6.
+
+**A test that publishes concurrently and asserts nothing is dropped.** Considered and refused: it would
+assert the framework's behaviour rather than this estate's, it needs a second listener thread to be
+provoked at all (which the pin now forbids), and a passing run would establish only that the race did not
+happen this time.
+
+**Leaving the partition count as a comment.** The count was already visible in `SseKafkaTestContainer` —
+the item says as much, and says the ordering premise is therefore "already this repository's". True of the
+*number* and not of the *dependence*: nothing read it back, and both mutations in §4 show the change is
+silent in the three tests that need it. A premise nothing asserts is a premise the next edit can take
+away.
+
+### §8 What this does not establish
+
+**Nothing here makes the fan-out safe at a higher concurrency, and it is not meant to.** The pin makes the
+state unreachable; the sink is still the serialized spec and would still refuse. If a future package wants
+concurrency > 1 it needs a different sink or an emission lock, and that is a decision, not a setting.
+
+**The `FAIL_NON_SERIALIZED` drop was never observed in this estate**, in a test or anywhere else, and no
+attempt was made to provoke one through the running container. What is measured is the sink's answer under
+contention, in isolation, and the container's concurrency. The chain between them is read from source.
+
+**One partition per topic is asserted of the TEST broker only.** Nothing here asserts anything about the
+estate's own topic partitioning on the shared broker, which is `hc-infra`'s and was not asked — the
+production fan-out does not depend on cross-record ordering, only the barrier does.
+
+**The 2.9-second fan-out class in a full run is context reuse, not a faster test.** Worth knowing before
+reading a timing as evidence: run alone the class costs ~65–95 s, and in `clean verify` it starts in 2.2 s
+because the context is already built.
+
+**The estate was not asked anything.** No dev estate, no quality stack, no production, no shared broker.
+The only broker addressed was the class's own Testcontainer; nothing was published anywhere else.
+
+### §9 Verified in this round, by running
+
+`JAVA_HOME=/usr/lib/jvm/jdk-25.0.2-oracle-x64` throughout.
+
+| # | What | Result |
+| --- | --- | --- |
+| 1 | Reactor probe: 4 threads × 200,000 `tryEmitNext` on the fan-out's exact sink | `FAIL_NON_SERIALIZED=561466`, `OK=238534` |
+| 2 | Same probe, **1 thread** — the instrument's control | `OK=200000`, no refusals |
+| 3 | Same probe through `Sinks.unsafe()` — the discriminator | `OK=800000`, no refusals; class is `SinkManyBestEffort` |
+| 4 | Registry probe, nothing set | `concurrency=1 children=1` |
+| 5 | Registry probe, `spring.kafka.listener.concurrency=2` | `concurrency=2 children=2`, all six partitions on child 0 |
+| 6 | Registry probe, the property at 2 **and** the annotation pinned | `concurrency=1 children=1` — the pin wins |
+| 7 | Thread-name grep at concurrency 2 — D76 §7's instrument | still only `#0-0-C-1`, ×12, **from another JVM**; `partitions assigned` appears 0 times |
+| 8 | `MarketplaceEventFanoutIT` with the new assertion | 4 tests, green |
+| 9 | Mutation: `PARTITIONS_PER_TOPIC = 2` | **red**, and only the new method — the other three green |
+| 10 | Mutation: topics created with 2, constant left at 1 | **red**, same message — the assertion reads the broker |
+| 11 | The CI check, lifted `run:` block through `bash -e`, as shipped | `rc=0`, one subject derived, two `ok` lines |
+| 12 | …the pin deleted | `rc=1`, names the pin |
+| 13 | …the pin turned into a `${…}` placeholder | `rc=1`, names the pin |
+| 14 | …`Sinks.unsafe()`, pin intact | `rc=1`, names the unsafe spec |
+| 15 | …a second, unpinned listener-with-sink dropped into **messaging** | `rc=1`, names *that* file — the derivation reaches it |
+| 16 | …no subject at all | `rc=1`, refuses rather than passing having read nothing |
+| 17 | …`strip-comments.awk` absent | `rc=1`, names the stripper |
+| 18 | Positive control: state 12 seen by an **unstripped** grep | matches the deleted line's own javadoc — **would have passed** |
+| 19 | `gateway ./mvnw clean verify` on the final tree | **green**, 127 ITs, `tests="4" failures="0"` read off the failsafe XML |
+| 20 | `build.yml` parses (`js-yaml`) and the new step is in it | ok |
+| 21 | Stripper caller count re-derived from `build.yml` | **11**, header updated from ten |
+| 22 | `node deploy/demo/extract-seed.mjs`, `./deploy/sync-appendices.sh --check` | seed unchanged, appendices clean |
+
+**A run was thrown away rather than reported.** The first `clean verify` was backgrounded and overlapped
+the mutation driver, so it may have compiled bytes nobody chose; its `BUILD SUCCESS` is evidence of
+nothing and row 19 is a second, undisturbed run. Every mutation was reverted by copying a pristine file,
+never `git checkout --`, and each restore was confirmed with `cmp`.
+
+**Two hunks in the diff are prettier fixing PRE-EXISTING drift, and they are not this package's edits.**
+`awaitBarrier`'s `Awaitility` chain and `eventsFor`'s stream both got broken across lines. Measured
+rather than assumed: `main`'s copy of `MarketplaceEventFanoutIT.java`, restored in place and checked
+under the pinned `prettier@3.9.5` + `prettier-plugin-java@2.10.2`, reports *"Code style issues found"* —
+so the file was already unformatted before this package touched it, and nothing in CI checks Java
+formatting. They are kept rather than reverted, because reverting them leaves a file that fails
+`prettier --check` and `CLAUDE.md` says to run it after editing.
+**`gateway/` has no committed `package-lock.json`**, so `npm ci` cannot run there and `npm run
+prettier:format` needs an install first; `npm install --no-save prettier@3.9.5 prettier-plugin-java@2.10.2
+prettier-plugin-packagejson@3.0.2` is enough, and `npx -p …` is **not** — the plugins named in
+`.prettierrc` do not resolve from npx's temporary root.
+
+### §10 Review, and what it found — approved, no blocking findings; one should-fix and two promotions taken
+
+**Reviewed on `5f5a9b9`.** Every load-bearing mechanism claim in §1 was re-checked against the real
+framework sources and reproduces — `ConcurrentKafkaListenerContainerFactory.initializeContainer:89–95`
+for the endpoint-wins precedence, `SinksSpecs.wrapMany:211–212` and `SinkManySerialized
+.tryEmitNext:94–97` for the detection, and `logback.xml:33` **plus `:27`** for §2's dead instrument
+(`org.apache` is silenced as well, so kafka-clients' own "partitions assigned" was unavailable too —
+both instruments were dead, which is what §2 says). It also ran the two ITs in the polluting order
+three times: **4/0 every time**. Four findings, all taken.
+
+**Finding 1, the should-fix: `TOPICS`' javadoc asserted a correspondence nothing checked.** This
+package converted an anonymous inline list into a *named claim about main source* — "the six topics
+`MarketplaceEventFanout` subscribes to" — while the listener names its six as
+`${healthconnect.topics.…:healthconnect.…}` placeholders whose defaults merely coincide with those
+literals. Two independent lists, nothing tying them: a seventh topic on the annotation leaves the
+constant stale in silence, the broker auto-creates that topic at whatever `num.partitions` it likes,
+and a loop over `TOPICS` never looks at it — **which is the "a topic nothing here chose" case the new
+method's own javadoc says it exists to catch.**
+
+Answered by checking it rather than weakening the sentence. `theBarrierRestsOnOnePartitionPerTopic`
+now reads the **resolved** topic set off the running `KafkaListenerEndpointRegistry`, requires it to
+equal `TOPICS`, and then asks the broker about *that* set — so the guarded set is the consumed set by
+construction. Watched red: with `notification.raised` removed from the constant, *"the harness must
+create exactly the topics the listener consumes, or a topic it invented is guarded by nothing"*, and
+only that method failing.
+
+**That reads the registry, which §7 refuses as an assertion, and the asymmetry is deliberate.** The
+discriminator is what carries the premise. The topic set decides *which* partitions the barrier's
+ordering has to hold for, so asserting it pins the premise itself; concurrency decides only whether an
+emission is dropped, one file over, and asserting it would make a value look like the ordering's
+guarantee when it is not — which is the confusion §2 documents the cost of. The registry stays the
+right *measurement* instrument for both. Stated on the method, not only here.
+
+**Finding 2, promoted because the reviewer drove it: the `Sinks.unsafe(` ban was evadable and printed
+a false `ok`.** With `import static reactor.core.publisher.Sinks.unsafe;` and `unsafe().many()…`, the
+literal needle occurs **zero** times, the file still matches the discovery grep, and the step exited
+**0** — printing *"builds its sink through the spec that refuses concurrent emission"* about a file
+that had just stopped doing so. The only mutation in this package's history whose result was a pass.
+
+Fixed the way the review suggested, which is better than widening the ban: a **positive** assertion
+that `Sinks.many(` is present, because every way of leaving the safe spec has to remove it and no new
+spelling of the negative can evade it. The ban is kept *and* widened to the bare word `unsafe`, so
+both spellings and any third are refused. Both are now red on the review's mutation.
+
+**Finding 3: the empty-subject message named the pre-widening cause.** It said *"no main source
+declares a `@KafkaListener` beside a `Sinks.many()` sink"* while §5 records deliberately widening the
+discriminator — the exact shape §5 criticises in its own draft, recreated in the message. Reworded to
+name what is actually looked for, and to offer "the emit call has been spelled some way this does not
+match" as one of the three readings.
+
+**Finding 4: `CLAUDE.md`'s capsule inverted the antecedent** — *"none at all through `Sinks.unsafe()`,
+which is where the detection lives"*, literally placing the detection in the spelling that removes it.
+Corrected, and the capsule now also carries the positive-assertion rule, since that file is what the
+next reader quotes.
+
+**And one defect of this round's own, found by insisting on a control.** Fixing finding 2 added
+`emitNext` as a second discovery discriminator, "because a listener that feeds a sink has to call
+`emitNext` or `tryEmitNext`". **It matched neither.** `tryEmitNext` carries a capital E, so the bare
+`emitNext` counted **0** on a probe whose only emit was `sink.tryEmitNext(m)` while `mitNex` counted 1
+— a discriminator that is not there at all. It is `[eE]mitNext` now, and the case error is written
+into the step so the next reader does not repeat it. Two things fell out of chasing it:
+
+- **`/usr/bin/grep` on this workstation is `ugrep 7.5.0`, not GNU grep**, which briefly looked like the
+  cause. It is not: ugrep matched every substring probe GNU grep would (`mitNex`, `tryEmitNe`, `void`),
+  and the zero was the case error. Every pattern this step uses is a plain `-F` substring or an ERE
+  alternation of literals, where the two agree — but anyone re-driving these states locally is driving
+  ugrep, and should say so rather than reporting "grep does not match substrings".
+- **A static import does NOT escape the `Sinks.` discriminator**, which was measured rather than
+  assumed after the first claim: `import static reactor.core.publisher.Sinks.many;` contains the
+  literal `Sinks.` itself, as does every other spelling that touches the type. So `[eE]mitNext` earns
+  its place on a different shape — a listener emitting into a sink **another class constructs** — which
+  was built as a probe (0 `Sinks.`, 1 `[eE]mitNext`) and is discovered and refused for its missing pin.
+  That probe also showed the spec assertions accusing a relay of building the sink wrongly when it
+  builds no sink, so those two are now scoped to files that mention the type, and a relay prints a
+  `note` rather than a false `ok`.
+
+**Two notes taken as stated.** `partitionCountOf` re-interrupts the thread before rethrowing on
+`InterruptedException`. And the pin grep's exact-spacing dependence is now a **named limit** in the
+step, beside two others, because the error message reads as an accusation and `concurrency="1"` is a
+red nobody would otherwise attribute to spacing.
+
+**A caution worth more than this decision, recorded here because a review transcript is not a durable
+place.** `prettier@3.9.5` **silently skips files outside the project's ignore scope**: a deliberately
+mangled control file passed with `rc 0` and *"All matched files use Prettier code style!"*. Only
+`--ignore-path=/dev/null` gives a real answer, and re-verifying §9's formatting claim the naive way
+returns a vacuous pass in **both** directions. Re-measured that way here: the three touched files are
+clean, and a mangled copy of one of them is `[warn]` — instrument proven before the result was
+believed. It is the same defect this repository keeps finding, wearing a tool nobody suspects.
+
+**Re-run after these edits, all against the shipped bytes:** the CI step green as shipped and **red on
+nine states** — pin deleted, pin as a placeholder, pin without spaces, `Sinks.unsafe()` qualified,
+**`unsafe` static-imported**, `many` static-imported, a second unpinned subject in messaging, no
+subject at all, and the stripper absent — plus the relay probe, refused for its pin with a `note`
+instead of a false `ok`; `MarketplaceEventFanoutIT` **4** and `MarketplaceStreamFramingIT` **3** in the
+polluting order; the correspondence assertion watched **red** with a topic removed from the constant;
+gateway `clean verify` **green**, 127 ITs, `tests="4" failures="0"` off the failsafe XML; all eleven
+stripper-calling steps `rc=0`; `prettier --ignore-path=/dev/null --check` clean with its own control.
+**Production code is byte-identical to `5f5a9b9`** — the only Java that changed is test code.

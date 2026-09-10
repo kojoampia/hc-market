@@ -861,6 +861,154 @@ jobs:
           fi
           exit "$fail"
 
+      # The SSE fan-out emits from ONE thread into a SERIALIZED sink — decisions.md D79, backlog NEW-37.
+      #
+      # Two halves of one premise, and neither is visible to any test. `Sinks.many()` is the SAFE spec,
+      # which wraps the sink in a SinkManySerialized that DETECTS concurrent access and refuses one
+      # caller with FAIL_NON_SERIALIZED — measured on reactor-core 3.8.6: four threads × 200,000 emits
+      # gives 561,466 refusals, one thread gives none, and the same sink built through Sinks.unsafe()
+      # gives none at 800,000 because the wrapper is the detector. onEstateEvent's failure arm logs
+      # that result at DEBUG and no environment here runs at DEBUG, so a second emitting thread would
+      # DROP LIVE EVENTS in silence — and not the loss the class javadoc accounts for, which is a
+      # subscriber too slow to keep up.
+      #
+      # WHY A GREP AND NOT A TEST, which is the opposite of D76 §6's answer for the same class. The
+      # framework's default concurrency is already 1 (measured off the running KafkaListenerEndpoint-
+      # Registry: `concurrency=1 children=1`), so DELETING the annotation changes nothing observable —
+      # every test stays green, which is exactly the situation D74 met and answered this way. The pin
+      # is what makes the state unreachable rather than merely unlikely: with it in place,
+      # `spring.kafka.listener.concurrency=2` in any yml or environment renders `concurrency=1
+      # children=1`, because an endpoint's concurrency overrides the factory's
+      # (ConcurrentKafkaListenerContainerFactory.initializeContainer). Measured both ways.
+      #
+      # DELIBERATELY NOT GUARDED HERE: the other premise, one partition per topic. That one is
+      # asserted of the BROKER by MarketplaceEventFanoutIT.theBarrierRestsOnOnePartitionPerTopic and
+      # is red when wrong, twice measured — the constant raised to 2, and the topics created with 2
+      # while the constant said 1 — so a grep would add nothing a test does not do better. Deleting
+      # that test is a review obligation, in the same terms D76 §9 recorded for the two methods beside
+      # it, and not something a text match should be asked to notice.
+      #
+      # THE SUBJECT IS DERIVED, NOT NAMED, and that is D52's and D77's lesson rather than tidiness: a
+      # file named in a workflow cannot see a SECOND fan-out appear. Services come from `jdl/*.jdl`,
+      # the model of record; a subject is any main source whose STRIPPED code declares a
+      # `@KafkaListener` AND either mentions `Sinks.` or calls `emitNext`. Exactly one exists today, in
+      # the gateway. The generated `broker/KafkaConsumer.java` is deliberately not one — it holds a
+      # `unicast()` sink and no `@KafkaListener`, being a Spring Cloud Function consumer, and it is the
+      # orphaned sample of D59/D62 whose topic has carried nothing in the estate's life.
+      #
+      # The discriminator was `Sinks.many(` for one draft and the widening was measured, twice:
+      #   * `Sinks.unsafe().many()` stops matching `Sinks.many(`, so the file dropped OUT of the
+      #     derivation and the check refused with "no subject at all" — fail-closed, and naming the
+      #     wrong cause, which is this family's own defect one level up;
+      #   * a static import does NOT escape the widened `Sinks.`, which was measured rather than
+      #     assumed: `import static reactor.core.publisher.Sinks.many;` contains that literal itself,
+      #     and so does every other spelling that touches the type — the plain import, the nested-type
+      #     import and the wildcard `Sinks.*`. So `Sinks.` is very hard to lose by accident;
+      #   * the `[eE]mitNext` alternative is therefore NOT what catches a static import. What it catches
+      #     is the one shape with no `Sinks.` anywhere: a listener that emits into a sink some OTHER
+      #     class constructs. Driven on such a probe (0 `Sinks.`, 1 `[eE]mitNext`) and it is discovered
+      #     and refused for its missing pin. The character class is not decoration either: written
+      #     `emitNext`, the alternative matched NEITHER call, because `tryEmitNext` carries a capital E
+      #     — measured, a bare `emitNext` counted 0 on a probe whose only emit was `sink.tryEmitNext(m)`
+      #     while `mitNex` counted 1. A discriminator that matches nothing is not there at all, and this
+      #     one was not, for one draft.
+      #
+      # THE REQUIREMENT IS TWO ASSERTIONS, ONE POSITIVE AND ONE NEGATIVE, and the positive one is the
+      # load-bearing half — a review finding, measured. The negative ban read `Sinks.unsafe(`, and
+      # `import static reactor.core.publisher.Sinks.unsafe;` + `unsafe().many()…` evades that literal:
+      # driven, the step exited **0** and printed `ok  …builds its sink through the spec that refuses
+      # concurrent emission` about a file that had just stopped doing so. A test for the PRESENCE of
+      # `Sinks.many(` cannot be evaded that way, because every such mutation has to remove it. Both are
+      # asserted; the ban is kept and widened to the bare word `unsafe`, so the two spellings and any
+      # third one are refused rather than only the one somebody thought of.
+      #
+      # NAMED LIMITS, because the error messages do not imply them and this step's own argument turns
+      # on the discriminator:
+      #   * the pin grep is EXACT-SPACING — `concurrency="1"` is red. Fail-closed, and prettier-java
+      #     normalises to the spaced form in this repository, so it is the `CapturedZone` precedent: if
+      #     you see that red on a correct-looking file, look at the spacing before the check.
+      #   * `unsafe` is banned as a bare, CASE-SENSITIVE substring, so a comment arguing against it
+      #     would trip the ban if comments were not stripped. It is deliberately not case-insensitive
+      #     and does not reach `scanUnsafe` or any other capitalised identifier — an earlier draft of
+      #     this comment claimed it did, from the same case blindness the character class above exists
+      #     for. What it does reach is every lowercase spelling the API actually offers, which is
+      #     `Sinks.unsafe(` and a static import of `unsafe`, and those are the two that matter.
+      #   * the sink construction must be spelled `Sinks.many(`. A static import of `many` is refused
+      #     even though it is correct code — again fail-closed, and stated because the message says
+      #     "no longer built through the SAFE Sinks.many() spec", which reads as an accusation.
+      #
+      # COMMENTS ARE STRIPPED FIRST, and measured rather than assumed, one pattern at a time:
+      #   concurrency = "1"    raw 2, stripped 1   stripper LOAD-BEARING
+      #   Sinks.many(          raw 1, stripped 1   stripper NOT load-bearing today
+      #   unsafe               raw 0, stripped 0   stripper NOT load-bearing today
+      # The first fails open without the stripper: the javadoc argues for the pin and quotes it, so a
+      # deleted annotation still matches the prose that explains it — measured, an unstripped grep
+      # passes the deletion. The second survives only because the class comment spells the sink
+      # `multicast().directBestEffort()` without `Sinks.many()`, which is a property of prose. The
+      # third is a negative assertion, so it cannot be satisfied by prose today and WOULD be the moment
+      # somebody writes the word into a comment explaining why not to; the discovery grep has the same
+      # property, which is why it strips too.
+      - name: A Kafka listener feeding a reactor sink must stay single-threaded
+        run: |
+          fail=0
+          [ -f .github/checks/strip-comments.awk ] || { echo "::error::.github/checks/strip-comments.awk is missing — this check would read the javadoc that argues for the very line it greps for, and pass. See decisions.md D79."; exit 1; }
+          services=$(ls jdl/*.jdl 2>/dev/null | sed -E 's@^jdl/(.+)\.jdl$@\1@' | sort -u)
+          if [ -z "$services" ]; then
+            echo "::error::no jdl/*.jdl — the service list is derived from the model of record and this check would scan nothing. See decisions.md D79."
+            exit 1
+          fi
+          echo "services from jdl/*.jdl: $(echo $services)"
+          subjects=""
+          for svc in $services; do
+            [ -d "$svc/src/main/java" ] || continue
+            for f in $(find "$svc/src/main/java" -name '*.java' -not -path '*/target/*' | sort); do
+              code=$(awk -f .github/checks/strip-comments.awk "$f")
+              printf '%s\n' "$code" | grep -qF '@KafkaListener' || continue
+              printf '%s\n' "$code" | grep -qE 'Sinks\.|[eE]mitNext' || continue
+              subjects="$subjects $f"
+            done
+          done
+          if [ -z "$subjects" ]; then
+            echo "::error::no main source declares a @KafkaListener that mentions Sinks. or calls emitNext. The gateway's MarketplaceEventFanout is one, so either it has been renamed out of this derivation, or the emit call has been spelled some way this does not match, or the stripper is eating the code — either way this check has no subject and must not report success. See decisions.md D79."
+            exit 1
+          fi
+          echo "listeners feeding a reactor sink:$subjects"
+          for f in $subjects; do
+            code=$(awk -f .github/checks/strip-comments.awk "$f")
+            if ! printf '%s\n' "$code" | grep -qF 'concurrency = "1"'; then
+              echo "::error file=$f::this @KafkaListener feeds a reactor sink and no longer pins concurrency = \"1\" (exact spacing). Sinks.many() is the SERIALIZED spec, so a second container thread answers FAIL_NON_SERIALIZED and the emission is DROPPED — in the gateway's fan-out that is a silently lost live event, and not the loss its javadoc accounts for. The framework's default is also 1, so no test in this repository can see this line go. See decisions.md D79."
+              fail=1
+            else
+              echo "ok   $f pins its listener at one consumer thread"
+            fi
+            # The two sink assertions apply to the file that CONSTRUCTS the sink, which is the file that
+            # mentions the type. A listener that only emits into a sink another class holds is still
+            # required to pin its concurrency above — that is the premise — but must not be told it
+            # built the sink wrongly when it did not build one at all.
+            if ! printf '%s\n' "$code" | grep -qF 'Sinks.'; then
+              echo "note $f emits into a sink it does not construct — the spec assertions below belong to whichever file does"
+              continue
+            fi
+            # POSITIVE first, because the ban below can be evaded by a spelling nobody predicted and
+            # this cannot: every way of leaving the safe spec has to remove this literal.
+            if ! printf '%s\n' "$code" | grep -qF 'Sinks.many('; then
+              echo "::error file=$f::this sink is no longer built through the SAFE Sinks.many() spec, spelled exactly that way. Only that spec wraps the sink in a SinkManySerialized, which is what refuses a concurrent caller with FAIL_NON_SERIALIZED — measured, 561,466 refusals in 800,000 four-thread emits through Sinks.many() and NOT ONE through Sinks.unsafe(). Without it, concurrent access stops being refused and becomes an unreported Reactive Streams 1.3 violation on a live client's stream. A static import of many() is refused here too, which is fail-closed and deliberate. Single-threaded today, so no test can see this. See decisions.md D79."
+              fail=1
+            else
+              echo "ok   $f builds its sink through the spec that refuses concurrent emission"
+            fi
+            # The bare word, not `Sinks.unsafe(`: that literal was the whole ban until D79's review
+            # drove `import static reactor.core.publisher.Sinks.unsafe;` past it — exit 0, with the ok
+            # line above printed about a file that had just left the safe spec.
+            if printf '%s\n' "$code" | grep -qF 'unsafe'; then
+              echo "::error file=$f::this file reaches for the UNSAFE sink spec. Sinks.unsafe() drops the SinkManySerialized wrapper, so concurrent emission is no longer detected at all — it becomes an unreported Reactive Streams 1.3 violation rather than a FAIL_NON_SERIALIZED this code can log. The word is banned as a bare, case-sensitive substring, so neither Sinks.unsafe( nor a static import of unsafe can walk past it. See decisions.md D79."
+              fail=1
+            else
+              echo "ok   $f does not reach for the unsafe spec, under any spelling"
+            fi
+          done
+          exit "$fail"
+
       # A filter chain's precedence must be declared where Spring can READ it — decisions.md D77.
       # That is the @Bean METHOD and never the @Configuration class: Spring hands the comparator the
       # factory method and the bean type as order sources and never the declaring class, so

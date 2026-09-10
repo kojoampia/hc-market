@@ -1204,7 +1204,8 @@ awk was the only correct copy and is now the shared file. It **preserves line nu
 line out per comment line in — because three callers quote the original line back by number. Adding a
 text-matching check means calling it, not writing another stripper. **Do not quote a count of callers
 from this file** — the number here was "four" for four decisions after it stopped being four; the
-stripper's own header carries the one-line `awk` that derives it, and today that answers **10**.
+stripper's own header carries the one-line `awk` that derives it, and today that answers **11** (D79
+added one).
 
 **And the stripper itself was the ninth fail-open — D77.** It read `/*` and `//` inside a **string
 literal** as comment openers, and its own header said "nothing in the estate has one" and that the
@@ -1223,7 +1224,9 @@ sources: 36 files differ over 444 lines. Main and test: 56 over 528. Compare the
 check report `ok` for the three chains it had just been written to guard: **a check that cannot see its
 own subject reports success.** The stripper tracks strings, char literals and text blocks now, resetting
 the first two at end of line so an unrecognised construct costs one line rather than the rest of the
-file; six new cases pin it, and all ten callers were re-run against the real tree before and after.
+file; six new cases pin it, and all ten callers **as they then were** were re-run against the real tree
+before and after — there are eleven now, which is why that figure is a record of D77's run and not a
+count to quote.
 
 **There are TWO strippers since D68, and the second is not a private copy of the first.**
 `strip-comments.awk` is a **Java** stripper — `//` and `/* */` — and run over a **shell** script it
@@ -1516,6 +1519,28 @@ time.**
   than racing the extra emission it exists to catch. **`@DirtiesContext` is the wrong fix and makes it
   worse** — a new context is a new group, so per-method isolation turns one possible replay into three
   certain ones.
+  **The barrier rests on ONE PARTITION and on ONE EMITTING THREAD, and both are this repository's
+  statements now** (D79, backlog NEW-37). The ordering is Kafka's per-partition guarantee and nothing
+  else — Spring Kafka's `concurrency` distributes *partitions* across child containers, so raising it
+  cannot reorder anything, and `MarketplaceEventFanoutIT.theBarrierRestsOnOnePartitionPerTopic` asserts
+  the **broker's** partition count against a literal 1 rather than against
+  `SseKafkaTestContainer.PARTITIONS_PER_TOPIC`, so changing that constant is red instead of adopted.
+  What a second thread *would* break is the sink: `Sinks.many()` is the **safe** spec, which wraps
+  `SinkManyBestEffort` in a `SinkManySerialized` that refuses concurrent callers with
+  `FAIL_NON_SERIALIZED` — measured, 561,466 refusals in 800,000 emits from four threads, none from one,
+  and **none at all through `Sinks.unsafe()`**, which is the spelling that *removes* the wrapper the
+  detection lives in. So `Sinks.many(` is asserted **positively** by CI and the word `unsafe` is banned
+  as a bare substring: the FQN ban alone was walked past by a static import, measured, with the check
+  printing `ok` about a file that had just left the safe spec. That refusal is
+  dropped at DEBUG, so in production it is a silently lost live event and *not* the loss the class
+  javadoc accounts for. Hence `concurrency = "1"` **on the `@KafkaListener`**, not in a yml: an
+  endpoint's concurrency overrides the factory's, so the pin defeats
+  `spring.kafka.listener.concurrency` (measured, `concurrency=1 children=1` with the property set to 2),
+  and a hand-written annotation is regeneration-proof where a test-config block is not.
+  **Do not measure a listener's concurrency from thread names** — `gateway/src/test/resources/logback.xml`
+  puts `org.springframework` at WARN, so `KafkaMessageListenerContainer` logs nothing and a `#0-1-C-*`
+  grep answers zero *with two children running*, from another JVM's lines at that. D76 §7 called that
+  absence a measurement; D79 §2 withdraws it. Ask the `KafkaListenerEndpointRegistry`.
 - **Wall-clock times carry their zone.** `Professional.zoneId` and `Booking.zoneId` are IANA names,
   defaulting to `Africa/Accra` (D21). Ghana is UTC+0 all year, so the implicit model was correct —
   just illegible. **Do not convert appointments to `Instant`.** An `Instant` is right for "when did

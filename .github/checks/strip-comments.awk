@@ -1,6 +1,6 @@
 # Remove Java comments from a source file, preserving line numbering.
 #
-# TEN steps in build.yml match against source text and call this — counted with
+# ELEVEN steps in build.yml match against source text and call this — counted with
 # `awk '/^      - name: /{n=$0} /strip-comments\.awk/{print n}' build.yml | sort -u`, because this
 # header said "four" for four decisions after it had stopped being four, and the number in a sentence
 # like this one is the first thing to rot. Every one of them is only as good as this file:
