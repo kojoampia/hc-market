@@ -170,10 +170,19 @@ x-service: &service
     # per-service name genuinely cannot go into one shared variable and the endpoint genuinely can,
     # and writing it in both places is how the two would eventually disagree (D64 §4).
     #
-    # WHETHER THE AGENT IS QUIET AGAINST A LIVE COLLECTOR IS STILL UNMEASURED. D63's 35 ERROR lines
-    # per 150 seconds were measured against a collector that is DOWN, and `monitoring-quality` has
-    # been exited since 2026-09-05. Joining the network does not change that number and does not
-    # answer that question — it removes the second obstacle, not the first.
+    # MEASURED 2026-09-10, and the agent is QUIET against a live collector (D73). D63's 35 ERROR
+    # lines per 150 seconds were a DEAD-endpoint number; with `monitoring-quality` up and
+    # `otel-collector` resolving on `qualitynet`, all five services ran with the agent attached at
+    # **ERROR=0 and zero export failures**, and the collector accepted **73,566 spans** — 1,927 of
+    # them from twenty deliberate requests — forwarding to Tempo and Mimir, where all five
+    # `hc-market-*` service names now appear.
+    #
+    # THE DEFAULT STAYS EMPTY ANYWAY, and that is a decision rather than an oversight (D73 §3).
+    # `monitoring-quality` is another repository's stack: it was exited from 2026-09-05 to
+    # 2026-09-10 and can go down again, and the day it does an attached estate is back to 35 ERROR
+    # lines per 150 seconds per service. An operator setting one variable is the right interface for
+    # a dependency this repository does not control. Turning it on is the line below; leaving it on
+    # across rolls is not something a compose default should decide.
     #
     # TWO variables, not one, copied from docker-compose.prod.yml deliberately. Folding the agent
     # flag into HC_JAVA_OPTS's default would mean an operator raising the heap silently detaches

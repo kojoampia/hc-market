@@ -12042,3 +12042,94 @@ distinguishing feature here is that it reached a *decision document* as a fact a
 away from wasting the architect's time. What caught it was testing the verification against a value
 that must not match — the discipline every CI check in this repository now applies, applied for once
 to a one-liner before it was handed over.
+
+---
+
+## D73 — The agent against a live collector, measured at last; and why the default stays empty
+
+**Ratified 2026-09-10.** Closes the gap D63 and D64 each named as their honest limit, on the
+architect's answer to attach the agent to all five quality services.
+
+### 1. What changed, and it was not ours
+
+`monitoring-quality` came up at 06:38:13Z after being exited since 2026-09-05, and `otel-collector`
+began resolving from inside our containers on `qualitynet` — the network **D64** joined for exactly
+this. D63 left the agent off *because the collector was down*; that reason expired, which is why the
+question was put to the architect rather than decided here.
+
+### 2. The measurement
+
+Attached to all five with the invocation `quality/compose.yml` already documented — **one variable,
+since D64** — at load ~16 with the broker answering and Consul holding a leader:
+
+```
+HC_OTEL_JAVA_OPTS='-javaagent:/app/otel-javaagent.jar -Dotel.exporter.otlp.endpoint=http://otel-collector:4317' \
+  ./quality/startup.sh --local
+```
+
+| | before | after |
+| --- | --- | --- |
+| `-javaagent` on `/proc/1/cmdline` (read inside) | 0 in all five | **1** in all five, `argc` 8 → 10 |
+| health | healthy | **healthy**, all five |
+| ERROR lines, whole log life | 2 / 3 / 2 / 2 / 1 | **0 in all five** |
+| export failures (`Failed to export`, `ConnectException`, `HttpExporter`) | 0 | **0** |
+| `otel`/`opentelemetry` mentions | **0** across ~200,000 lines | 1–3 — the banner, `2.30.0` |
+
+**So D63's 35 ERROR lines per 150 seconds is confirmed as a dead-endpoint number and nothing more.**
+Against a live collector the agent is silent.
+
+**The absence of errors was not taken as success**, because "quiet" and "exporting nothing" are
+indistinguishable from the sending side — the same fail-open this repository has found sixteen times.
+The receiving end was read instead, from inside `qualitynet` (our own Jib images have no `curl`, so a
+throwaway container):
+
+```
+otelcol_receiver_accepted_spans_total          73,566   (71,639 -> 73,566: +1,927 for 20 deliberate requests)
+otelcol_receiver_accepted_metric_points_total  85,688
+otelcol_receiver_accepted_log_records_total    21,151
+otelcol_exporter_sent_spans_total{otlp/tempo}  70,163
+otelcol_exporter_sent_metric_points{mimir}     87,490
+```
+
+And the **attribution**, which an aggregate counter cannot give — Mimir's `service_name` label values
+now include all five: `hc-market-gateway`, `hc-market-catalog`, `hc-market-booking`,
+`hc-market-messaging`, `hc-market-payout`. Telemetry is not merely leaving; it is arriving, labelled,
+in the store the dashboards read.
+
+### 3. The default stays empty, and that is a decision
+
+The obvious next step — flip `HC_OTEL_JAVA_OPTS` on by default now that it demonstrably works — is
+**refused**, and not by inertia.
+
+`monitoring-quality` is **another repository's stack**. It was exited for five days and came up
+without anything here asking; it can go down again the same way. The day it does, an estate with the
+agent defaulted on is back to **35 ERROR lines per 150 seconds per service** — five services filling
+logs about a collector that is nobody here's to start, and the zero-ERROR property that has been a
+load-bearing signal through nine packages spent on a dependency this repository does not control.
+
+So the interface stays as D63 built it: **one variable, set by an operator who knows the collector is
+up**, documented in `quality/compose.yml` beside the measurement. A compose default is the wrong place
+to encode an assumption about somebody else's uptime.
+
+Rejected alternatives: *default it on* (above); *default it on with a preflight check that the
+collector answers* — better, and still wrong, because it makes every `up` depend on another
+repository's stack being reachable, which is precisely what D27 spent its argument keeping out of the
+critical path; *remove the switch and attach unconditionally in the image* — the agent is already in
+every image and D63's whole point is that attaching is an environment decision, not a build one.
+
+### 4. What is now true, and what is still not
+
+**True:** the agent instruments, exports, and is quiet against a live collector; the five alert rules
+in `deploy/observability/hc-market-rules.yaml` have a data source for the first time; `qualitynet`
+(D64) is doing the job it was joined for.
+
+**Still not exercised:** the `NOT-YET-ATTACHED` marker in the rules file and the CI check that holds
+it against what the compose files render — both remain correct, because the compose default is still
+empty and this attach was an operator action rather than a committed change. Whether the rules should
+now be armed is a separate decision and needs the collector's steady state settled first.
+
+**And the estate is attached right now only until the next roll**, since the variable was passed at
+roll time and is not persisted. That is the intended behaviour under §3, not an oversight — but it
+means the current quality stack differs from what a plain `startup.sh --local` would produce, and the
+next roll will silently detach the agent. Anyone reading dashboards should know which of those they
+are looking at.

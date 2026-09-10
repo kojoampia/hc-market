@@ -2446,7 +2446,7 @@ the volumes are untouched and the seed is not read again after startup.
 
 ---
 
-## NEW-31 — nothing can exercise a dev-estate change, and the five containers say why · BLOCKED
+## NEW-31 — nothing can exercise a dev-estate change, and the five containers say why · DONE (D72)
 
 Opened by **D69 §7**, which named it rather than touching it. It is the reason NEW-29 waited a package
 and the reason D69 could verify its own fix only by lifting the function out of the file: **two
@@ -2502,6 +2502,23 @@ nothing and read as a fix, which is worse than a visible failure. What remains:
   records. The only known cure. Bounces **47 running containers**, including three other products'
   only quality environments and the monitoring stack.
 - **Leave them.** No process, no cgroup, no CPU — a daemon record and five volumes.
+
+**CLEARED 2026-09-10.** The architect restarted the daemon; the five records went from `restarting`
+to `Exited (255)`, which is removable. `./deploy/deploy-dev.sh down --clean` then took two runs — the
+first hit a 300-second budget having removed one container, the second removed the rest, the five
+volumes and the network. The four stragglers passed through `Dead` with
+`removal of container … is already in progress` and cleared themselves over about six minutes; that
+is docker finishing the job, not a second wedge.
+
+**Final state, with the controls that make a zero non-vacuous**: dev containers **0**, dev volumes
+**0**, dev networks **0** — while `hc-market-quality` still had **10** containers and **5** volumes
+and the siblings **19**, before and after. Everything the daemon restart bounced came back: quality
+10, monitoring 8, hc-vendor 5, admin/patient/professional 4 each, the shared plane 2.
+
+So `deploy-dev.sh` is exercisable again, and the next `up` there is a **genuine first run** — the
+state D65's "no volumes is a first run and still generates" and D67's "no containers at all is a
+first run and proceeds" branches were written for and which nothing had ever exercised. That was the
+reason this shape beat the containers-only recommendation, and it is now available to be used.
 
 Status is `BLOCKED` rather than `READY` because what remains is a person with root, not engineering.
 Nothing was destroyed by the attempt — five containers and five volumes are exactly as they were.
