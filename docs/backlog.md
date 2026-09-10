@@ -3171,6 +3171,107 @@ went down four minutes in.
 
 ---
 
+## NEW-43 — a dashboard of gateway registrations and logins, on an estate that transports no application metric · READY
+
+**Asked for by the architect on 2026-09-11**: a dashboard monitoring the gateway for **registrations
+aggregated by (activated | not-activated)** and **logins aggregated by (success | failed)**.
+**Priority: take it after NEW-39.**
+
+The screen is a day's work. What makes this an item rather than a ticket is that **three of its four
+layers do not exist, and the missing transport is missing by decision** — so building the panels first
+would produce a dashboard that renders zeros for ever and looks like a broken query.
+
+### What exists, measured
+
+| Layer | State |
+| --- | --- |
+| `micrometer-registry-prometheus` on the gateway | **present** (`gateway/pom.xml:276`) |
+| `prometheus` in `management.endpoints.web.exposure.include` | **present** (`config/application.yml:52`) |
+| `SecurityMetersService` counters | **present**, and they are **not logins** — four counters over `security.authentication.invalid-tokens` tagged `cause=invalid-signature|expired|unsupported|malformed`, incremented from `SecurityJwtConfiguration`'s decoder. That is *token validation on a later request*, so a wrong password increments nothing |
+| a registration counter | **absent** |
+| a login success/failure counter | **absent** |
+| an OTLP **metrics** registry (`micrometer-registry-otlp`) | **absent** — Micrometer meters therefore have no push path of their own |
+| anything scraping `/management/prometheus` | **absent, and deliberately so — see below** |
+| a Grafana dashboard of ours | **absent.** The five `<service>/src/main/docker/grafana/provisioning/dashboards/JVM.json` files are JHipster's, and `src/main/docker` is generated |
+
+### The transport is closed on purpose, in both environments
+
+This is the part to settle before any panel is drawn:
+
+- **quality** — `quality/host-site.conf:116` is `location = /management/prometheus { return 404; }`. The
+  endpoint is blocked at the edge.
+- **production** — `deploy/docker/docker-compose.prod.yml:86` records that the collector *"deliberately
+  has NO application scrape targets"*, which is the estate-wide rule in the parent `CLAUDE.md`:
+  telemetry is **pushed** (OTLP), never scraped.
+- **the push path is off by default** — D63/D64/D73. The OpenTelemetry agent is baked into all five
+  images and attached in **no** environment by default; `HC_OTEL_JAVA_OPTS` turns it on, and D73 §3
+  decided the default stays empty because `monitoring-quality` belongs to another repository.
+
+So there are exactly two honest routes and picking one is a decision:
+
+1. **Push, consistent with the estate.** Establish whether the OTel Java agent's Micrometer
+   instrumentation actually bridges these meters to OTLP **on this agent version and this JDK** — do not
+   assume it; D63 exists because "the agent is present" was mistaken for "the agent instruments", and
+   `./deploy/verify-otel-agent.sh` is the shape of the answer. If it does not bridge, the question becomes
+   whether to add `micrometer-registry-otlp` (a new dependency in five poms' worth of precedent) or to
+   emit through the OTel API directly.
+2. **Reverse a deliberate 404.** Cheaper and it contradicts a written decision in two files plus the
+   parent guide. If this is chosen it needs its own argument, and the argument has to cover why hc-market
+   scrapes when nothing else in the estate does.
+
+### Four things the requested aggregation itself has to settle
+
+**1. One of the two is a gauge and the other is a counter, and treating them alike gives two panels that
+are wrong in different ways.** "Logins by success/failed" is an **event stream** — counters, monotonic,
+nothing to look up later. "Registrations by activated/not-activated" is a **state of the collection**:
+activation happens *after* registration (`UserService:121` writes `setActivated(false)` on register,
+`UserService:52` flips it on `activateAccount`), so a counter incremented at registration can never move
+when the user later activates, and you would be mutating a past bucket. It must be **derived at
+observation time** — a gauge over the user collection — which is also this repository's central rule,
+*derived, never stored*.
+
+**2. "Failed" hides the one thing that links the two panels.** `DomainUserDetailsService:52` throws
+`UserNotActivatedException`, distinct from bad credentials. A registered-but-never-activated user trying
+to log in is *the* failure the registration panel exists to explain, and a single `failed` bucket erases
+it. **At least three buckets**: bad credentials, not activated, and everything else. The parent rule
+applies — a battery that fires as one number cannot tell you which door opened.
+
+**3. No login, email or alias may appear in a metric label.** Two reasons and both are load-bearing here:
+Micrometer tags with per-user values are unbounded cardinality, and a login in a label is a **disclosure
+surface that survives erasure** (D31/D35/D38/D39 — nothing re-keys a metric already scraped or pushed,
+and the erasure sweep does not visit a metrics backend). Aggregate counts only.
+
+**4. Say which mode each figure is true in.** Quality runs `dev,test` and **seeds `admin` and `user`
+with passwords derived from their logins by a rule published in this public repository**, so a
+registration/login dashboard there counts seeded accounts and `verify-cycle.sh` traffic, not real use.
+This is the prototype's *"Sessions brokered"* defect one surface along (D46): a plausible number that
+looks like it works. **Adding a figure means saying which mode it is true in.**
+
+### Where the file can live, and where it cannot
+
+Not `<service>/src/main/docker/grafana/provisioning/dashboards/` — that is generated, so
+`jhipster jdl --force` discards it and the regeneration table would need a row. `deploy/observability/`
+is the precedent: it holds `hc-market-rules.yaml` today.
+
+**And that directory has a live tripwire.** `hc-market-rules.yaml` carries a `NOT-YET-ATTACHED` marker
+(line 51) which `.github/checks/observability-claims.sh` holds against what the compose files render, **in
+both directions**. A dashboard asserting that these metrics arrive is a claim of the same kind the marker
+exists to police, so this item must either satisfy that check or extend it — and two of the five existing
+alerts are `absent()` queries (`HcMarketGatewayDown` and `HcMarketServiceDown`, enumerated rather than
+counted: a raw grep for `absent(` answers **7**, being five occurrences inside those two alerts plus two
+in prose). They fire continuously against a tenant that has never reported. Do not install a panel set
+whose premise is untrue, for the same reason those rules were never installed.
+
+### Done means
+
+A dashboard whose panels are non-zero on an estate that is actually generating registrations and logins,
+with the transport decision argued, the gauge/counter split implemented as such, at least three login
+outcome buckets, no per-user label anywhere, and each figure labelled with the mode it is true in. If the
+transport decision lands on "push", the agent's Micrometer bridge must be **verified instrumenting**, not
+merely loading.
+
+---
+
 ## NEW-41 — the packages table disagrees with three of its own sections, and stopped indexing after NEW-22 · READY
 
 Opened at **D78's review**, which found one row and asked for the whole table to be checked rather than
