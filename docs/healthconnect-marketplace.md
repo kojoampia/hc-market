@@ -2015,6 +2015,13 @@ SSH_OPTS=(-o BatchMode=yes -o "ConnectTimeout=${HC_SSH_TIMEOUT:-8}")
 # nothing in that path has ever run against a host), which is why the remote arms key on a status
 # the remote shell reports, plus D71's already-measured two-literal absence match, and never on
 # prose nobody here has read.
+#
+# ONE STATE BREAKS THAT ASYMMETRY AND IS WORTH KNOWING: a connection dropped after the remote command
+# began writing arrives here with the FAR SIDE's words in `$1` and no sentinel, so a remote `grep:
+# …: Permission denied` would select the "check ssh-add -l" arm. It costs a remedy and never a cause
+# — the cause is the missing sentinel — and the message quotes what actually arrived, so the reader
+# sees the mismatch. Not repaired by parsing harder: telling the two apart needs a channel this has
+# no access to.
 ssh_hint() {
   case "$1" in
     *"Could not resolve hostname"*)
@@ -2057,7 +2064,12 @@ host_run() {
   line="$(printf '%s\n' "$raw" | { grep -F "$HOST_SENTINEL " || true; } | tail -1)"
   if [[ -z "$line" ]]; then
     said="$(printf '%s' "$raw" | tr '\n' ' ')"
-    die "could not $asking — ssh did not reach a shell on $HOST at all, so NOTHING about the stack there was established, least of all that anything is missing. $(ssh_hint "$raw") ssh said: ${said:-«nothing at all»}"
+    # "NO ANSWER ARRIVED" AND NOT "SSH NEVER GOT THERE", because one state reaches this branch with
+    # the remote command having run: a connection dropped after it started writing carries far-side
+    # output and no sentinel. Rare, and the wording is what keeps the sentence true — the cause this
+    # branch can establish is that no answer came back, never that nothing ran. Whatever arrived is
+    # quoted verbatim either way. See decisions.md D75 §7.
+    die "could not $asking — no answer from a shell on $HOST arrived, so NOTHING about the stack there was established, least of all that anything is missing. $(ssh_hint "$raw") ssh said: ${said:-«nothing at all»}"
   fi
   HOST_STATUS="${line##* }"
   # A sentinel whose status is not a number means the far side is not doing what this function
@@ -2180,7 +2192,11 @@ preflight() {
     case "$HOST_STATUS" in
       0)   ok "host reachable — ssh works and docker compose v2 answers there" ;;
       127) no_docker_on_host ;;
-      *)   die "ssh reached $HOST and \`docker compose version\` failed there (exit $HOST_STATUS): $HOST_OUTPUT. The host is reachable and the credential works; what is missing is compose v2 beside the docker CLI. Every remote command below is a \`docker compose\` invocation." ;;
+      # HEDGED, and it is the only residual arm in this file that names a cause at all: the others
+      # quote what the host said and stop. `docker compose version` fails for very few reasons — the
+      # plugin missing is the one worth naming, and measured, it survives an unanswerable daemon — but
+      # the exit status and the output are the evidence and the sentence says which is which.
+      *)   die "ssh reached $HOST and \`docker compose version\` failed there (exit $HOST_STATUS): $HOST_OUTPUT. The host is reachable and the credential works, so this is about docker rather than about the connection; the likeliest cause is compose v2 missing beside the docker CLI, and the status and output above are what the host actually said. Every remote command below is a \`docker compose\` invocation." ;;
     esac
   fi
 

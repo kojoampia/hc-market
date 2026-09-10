@@ -18,7 +18,8 @@
 #  restarts a shared plane four products borrow, or runs ./infra.sh, over a host they cannot reach.
 #  That is D66 §7's cost and D71's subject, and this is the sixth instance of the family.
 #
-#  THREE PARTS.
+#  FIVE PARTS — trust the numbered list and not this sentence, which is the smallest instance of the
+#  thing D71 is about and has been written wrong in this repository four times.
 #
 #  1. host_run's TWO HOPS, told apart by a sentinel and never by a status. This is the part the
 #     taxonomy rests on. MEASURED, OpenSSH 10.2p1: ssh exits 255 when it cannot connect and
@@ -27,13 +28,28 @@
 #     command therefore announces its own status on its own line, and the presence of that line is
 #     what establishes a shell ran anything at all.
 #
-#  2. THE NETWORK ARM, lifted out of preflight and driven through the same stub. Five causes, each
-#     asserted by the words it names, plus the positive control.
+#     Its probes set the remote status with `exit N`, which is deliberate twice over: it is the
+#     cheapest way to name a status, and it is the only thing in this file that would notice the
+#     far-side subshell being removed — without it, `exit` kills the remote shell before the
+#     sentinel is printed and a command that RAN is reported as ssh never arriving.
 #
-#  3. THE OTHER FOUR CALL SITES still go through host_run. A textual part, deliberately: a call site
-#     that stops routing through it goes back to folding, and part 1 cannot see a site it is not
-#     driving. Comments are stripped first with the SHELL stripper — this subject is a shell script
-#     and the Java one removes nothing from it while exiting 0.
+#  2. THE NETWORK ARM, lifted out of preflight and driven through the same stub. Six causes, each
+#     asserted by the words it names, plus the positive control and `--dry-run`.
+#
+#  3. SECRETS.ENV AND ITS TWELVE VALUES, against real fixtures. This part exists because of the one
+#     mutation in this whole family whose result is a PASS rather than a wrong message: empty the
+#     remote-status arm of that loop and `grep`'s exit 2 — a file the account cannot read — matches
+#     nothing, the loop walks all twelve values, and preflight approves a secrets file it never
+#     read. Every other defect here is a refusal naming the wrong cause; this one is not a refusal.
+#
+#  4. THE PREVIOUS TAG A ROLLBACK NEEDS, same treatment. rollback() is where every FAILED deploy
+#     lands, so an unreachable host or a wrong --path reported as "no previous deployment recorded"
+#     sends somebody hunting for a file that is sitting there intact.
+#
+#  5. EVERY CALL SITE still goes through host_run. A textual part, deliberately: a site that stops
+#     routing through it goes back to folding, and parts 1-4 cannot see a SEVENTH probe growing back
+#     beside them. Comments are stripped first with the SHELL stripper — this subject is a shell
+#     script and the Java one removes nothing from it while exiting 0.
 #
 #  THE STUB RUNS THE SHIPPED WRAPPING FOR REAL, which is the point of building it this way rather
 #  than answering with canned text. A stub that appended the sentinel itself would pass a host_run
@@ -60,7 +76,7 @@ cd "$ROOT"
 
 SCRIPT="${HC_PROD_SCRIPT:-deploy/deploy-prod.sh}"
 # Overridable for one reason: so the test beside this file can point it at nothing and watch the
-# missing-stripper branch fire. Absent it, part 3 would read empty text and report every call site
+# missing-stripper branch fire. Absent it, part 5 would read empty text and report every call site
 # as routed — the fail-open D62's review found in two checks at once.
 STRIP_SH="${HC_STRIP_SH:-$ROOT/.github/checks/strip-sh-comments.awk}"
 
@@ -72,6 +88,12 @@ err() { printf '::error::%s\n' "$*"; fail=1; }
 ok()  { printf '  ok   %s\n' "$*"; }
 
 [[ -f "$SCRIPT" ]] || { err "$SCRIPT does not exist, so nothing was established about how a remote probe attributes a failure. See decisions.md D75."; printf '\nhost probe attribution: FAILED\n'; exit 1; }
+# SELF-CONTAINED ON PARSE. The awk lifts do not cross a syntax break, so a subject that does not
+# parse yields functions that look fine in isolation and this check goes green over it. CI's own
+# shell-parse step covers the committed file; this covers HC_PROD_SCRIPT pointed anywhere, which is
+# how the test beside this file drives it.
+bash -n "$SCRIPT" 2>/dev/null \
+  || { err "$SCRIPT does not parse, so nothing below is a statement about a script anybody could run — the awk lifts happily carry pieces out of a broken file. See decisions.md D75."; printf '\nhost probe attribution: FAILED\n'; exit 1; }
 
 # The three functions the whole taxonomy lives in, lifted as SHIPPED BYTES. An awk range that
 # matches nothing evals nothing and every reading below would then be about an absent function, so
@@ -94,6 +116,43 @@ done
 LIFT_NET_ARM="$(awk '/^  log "checking host networks"$/,/^  done$/' "$SCRIPT")"
 [[ -n "$LIFT_NET_ARM" ]] \
   || err "$SCRIPT has no host-network loop this check can read between 'log \"checking host networks\"' and its 'done', so part 2 established nothing about the message an operator gets when a network cannot be confirmed. See decisions.md D75 and backlog NEW-33."
+# PARTS 3 AND 4's SUBJECTS, lifted the same way and for the reason the review found: part 2 drives
+# ONE of the six call sites, and part 5's "routed through host_run" assertion establishes only that a
+# probe cannot report an *ssh* failure as a fact about the host. It says nothing about the
+# REMOTE-STATUS arms, and emptying one of those is a smaller edit than the defect this check was
+# written for — and a worse one. Measured, on the secrets loop: with its `*)` arm gutted, `grep`'s
+# exit 2 (the unreadable-0600 state the code's own comment names as live) matches an empty branch,
+# the loop proceeds past all twelve values, and preflight PASSES on a secrets file it could not read.
+# The original at least died with the wrong message.
+LIFT_SECRETS="$(awk 'index($0, "  log \"checking $REMOTE_PATH/$SECRETS_FILE on $HOST\"") == 1, $0 == "  fi"' "$SCRIPT")"
+[[ -n "$LIFT_SECRETS" ]] \
+  || err "$SCRIPT has no secrets.env block this check can read between 'log \"checking \$REMOTE_PATH/\$SECRETS_FILE on \$HOST\"' and its 'fi', so part 3 established nothing about what an operator is told when the twelve values cannot be read. See decisions.md D75."
+LIFT_ROLLBACK="$(awk '$0 == "  local prev", index($0, "  [[ -n \"$prev\" ]]") == 1' "$SCRIPT")"
+[[ -n "$LIFT_ROLLBACK" ]] \
+  || err "$SCRIPT has no previous-tag read this check can read between 'local prev' and the '[[ -n \"\$prev\" ]]' refusal, so part 4 established nothing about the function every FAILED deploy lands in. See decisions.md D75."
+# EACH RANGE MUST HAVE ENDED WHERE IT WAS TOLD TO, and this is a fail-open found by mutating the END
+# anchor rather than the start one: an `awk` range whose terminator never matches prints to the END
+# OF THE FILE, so the "is the lift empty" guard above passes on a lift that carries the rest of the
+# script — the router included. Loud rather than dangerous (`set -u` on an unset DO_ROLLBACK), and
+# still a part asserting the behaviour of something other than its subject. The terminator is
+# checked, not the length.
+lift_ends_with() { # lift_ends_with <lifted text> <marker the last line must carry> <part> <what>
+  local last; last="$(printf '%s\n' "$1" | tail -1)"
+  [[ "$last" == *"$2"* ]] && return 0
+  err "$SCRIPT's $4 does not end at a line carrying '$2' — the range ran on to '$last'. An awk range whose terminator stops matching prints to the end of the file, so $3 would be driving the rest of the script rather than its own subject. See decisions.md D75."
+}
+lift_ends_with "$LIFT_SECRETS" "fi" "part 3" "secrets.env block"
+lift_ends_with "$LIFT_ROLLBACK" '[[ -n "$prev" ]]' "part 4" "previous-tag read"
+# The real key list and the real hint, so part 3 exercises what a deploy would: twelve values, and
+# the message each one carries. `secret_hint` is called by the not-set arm.
+LIFT_KEYS="$(grep -E '^SECRET_KEYS=\(' "$SCRIPT" || true)"$'\n'"$(awk 'index($0, "CONNECTION_KEYS=(") == 1, $0 == ")"' "$SCRIPT")"
+LIFT_HINT="$(lift secret_hint)"
+case "$LIFT_KEYS" in
+  *"SECRET_KEYS=("*"CONNECTION_KEYS=("*) : ;;
+  *) err "$SCRIPT no longer declares SECRET_KEYS and CONNECTION_KEYS as top-level arrays, so part 3 could not drive the twelve-value loop at all. See decisions.md D75." ;;
+esac
+[[ -n "$LIFT_HINT" ]] \
+  || err "$SCRIPT declares no secret_hint, so part 3's not-set arm would report a message this check cannot distinguish from the others. See decisions.md D75."
 # host_run reads two values declared at the top level beside it, and they are lifted as shipped
 # bytes rather than restated here. A restated sentinel is a second definition of the protocol and
 # would keep every reading below green while the script's own copy was emptied — which is the shape
@@ -160,8 +219,16 @@ probe() {
     set +e
     export FAKE_DOCKER="$fake_docker"
     export PATH="$BIN:$PATH"
-    HOST="$P_HOST"; REMOTE_PATH="/srv/healthconnect"; DRY_RUN=0
-    DATA_COMPOSE_FILE="data-compose.yml"; SECRETS_FILE="secrets.env"; DATA_STORE_COUNT=5
+    # REMOTE_PATH and SECRETS_FILE are overridable so parts 3 and 4 can point the SHIPPED remote
+    # commands at real fixtures — a real file, a file missing a key, a directory, a path that is not
+    # there — and let `test`, `grep`, `cd` and `cut` produce their own statuses rather than have a
+    # shim assert what those statuses are.
+    HOST="$P_HOST"; DRY_RUN=0
+    REMOTE_PATH="${HC_PROBE_PATH:-/srv/healthconnect}"
+    SECRETS_FILE="${HC_PROBE_SECRETS:-secrets.env}"
+    DATA_COMPOSE_FILE="data-compose.yml"; DATA_STORE_COUNT=5
+    # Part 4's first-deploy refusal names the tag that is still running, so `set -u` needs one.
+    TAG="9.9.9-probe"
     HC_NETWORK="$P_NET"; HC_DATA_NETWORK="${HC_DATA_NET_OVERRIDE:-$P_NET-data}"
     HC_MONITORING_NETWORK="$P_NET-mon"
     ok() { printf 'OK %s\n' "$*"; }
@@ -187,6 +254,8 @@ probe() {
       esac
     }
     eval "$LIFT_GLOBALS"
+    eval "$LIFT_KEYS"
+    eval "$LIFT_HINT"
     eval "$LIFT_SSH_HINT"
     eval "$LIFT_NO_DOCKER"
     eval "$LIFT_HOST_RUN"
@@ -232,13 +301,13 @@ esac
 for state in "ssh cannot resolve a name:$r_dns:Could not resolve" "ssh refused the key:$r_key:ssh-add" "ssh refused the host key:$r_hostkey:known_hosts"; do
   what="${state%%:*}"; rest="${state#*:}"; got="${rest%:*}"; want="${rest##*:}"
   case "$got" in
-    DIE*"ssh did not reach a shell"*)
+    DIE*"no answer from a shell"*)
       case "$got" in
         *"$want"*) ok "host_run names ssh, and its remedy, when $what" ;;
         *) err "$SCRIPT's host_run refused for the right cause but the wrong remedy when $what: '$(one "$got")' does not mention '$want'. ssh's own words are the only evidence available for that hop, and they are produced by the LOCAL client, so keying on them is a measurement rather than a guess. See decisions.md D75." ;;
       esac ;;
     DIE*)
-      err "$SCRIPT's host_run refused when $what, but did not say that ssh never reached a shell: '$(one "$got")'. Nothing on the host was asked, so a message about the host's networks, files or containers is a claim about something never looked at — which is backlog NEW-33 exactly. See decisions.md D75." ;;
+      err "$SCRIPT's host_run refused when $what, but did not say that no answer came back from a shell: '$(one "$got")'. Nothing on the host was asked, so a message about the host's networks, files or containers is a claim about something never looked at — which is backlog NEW-33 exactly. See decisions.md D75." ;;
     *)
       err "$SCRIPT's host_run ACCEPTED an ssh that never connected ($what): '$(one "$got")'. Every branch below it then reads an empty answer as a fact about the host. See decisions.md D75." ;;
   esac
@@ -326,7 +395,7 @@ case "$n_relayed" in
     err "$SCRIPT ACCEPTED a network whose daemon answered with an error: '$(one "$n_relayed")'. See decisions.md D75." ;;
 esac
 case "$n_ssh" in
-  DIE*"ssh did not reach a shell"*) ok "an unreachable host is reported as an unreachable host, in the network loop too" ;;
+  DIE*"no answer from a shell"*) ok "an unreachable host is reported as an unreachable host, in the network loop too" ;;
   DIE*"does not exist"*) err "$SCRIPT reports an unreachable host as a missing network: '$(one "$n_ssh")'. This is backlog NEW-33 itself, and it is the likeliest of the outcomes because the probe crosses a network. The remedy printed — create it, or start the owning stack — is for the one cause this is not. See decisions.md D75." ;;
   DIE*) err "$SCRIPT refused when ssh could not reach the host, but named neither hop: '$(one "$n_ssh")'. See decisions.md D75." ;;
   *) err "$SCRIPT ACCEPTED three host networks without reaching the host at all: '$(one "$n_ssh")'. See decisions.md D75." ;;
@@ -340,7 +409,126 @@ case "$n_dry" in
   *) err "$SCRIPT's host-network preflight under --dry-run answered '$(one "$n_dry")'; it must say the host was not contacted. See decisions.md D75." ;;
 esac
 
-# ---- 3. Every remote probe in the file goes through host_run --------------------------------------
+# ---- 3. secrets.env: the twelve-value loop, and the arm that must not be empty --------------------
+#
+# THE FAIL-OPEN IN THIS FILE, and the only assertion here whose mutant PASSES preflight rather than
+# refusing for the wrong reason. Fixtures are real: a file with all twelve values, one missing a key,
+# a path that is not there, and a DIRECTORY — which `test -s` answers 0 for and `grep` answers **2**
+# for, so it constructs the unreadable-file state without `chmod`, which does not constrain root and
+# would make this state unbuildable in a root container (red on a correct tree). Measured both ways.
+printf '\n%s: secrets.env, twelve values\n' "$SCRIPT"
+FIX="$(mktemp -d)"
+trap 'rm -rf "$BIN" "$FIX"' EXIT
+mkdir -p "$FIX/full" "$FIX/short" "$FIX/unreadable/secrets.env"
+{ printf 'JWT_BASE64_SECRET=x\nHC_PRIVACY_PEPPER=x\nHC_GATEWAY_ADMIN_PASSWORD=x\n'
+  printf 'HC_GATEWAY_MONGODB_URI=x\n'
+  for s in CATALOG BOOKING MESSAGING PAYOUT; do printf 'HC_%s_DB_URL=x\nHC_%s_DB_PASSWORD=x\n' "$s" "$s"; done
+} > "$FIX/full/secrets.env"
+grep -v '^HC_PAYOUT_DB_PASSWORD=' "$FIX/full/secrets.env" > "$FIX/short/secrets.env"
+printf 'x\n' > "$FIX/unreadable/secrets.env/decoy"
+
+s_all="$(HC_PROBE_PATH="$FIX/full" probe connected ok "$LIFT_SECRETS")"
+s_short="$(HC_PROBE_PATH="$FIX/short" probe connected ok "$LIFT_SECRETS")"
+s_absent="$(HC_PROBE_PATH="$FIX/nowhere" probe connected ok "$LIFT_SECRETS")"
+s_unread="$(HC_PROBE_PATH="$FIX/unreadable" probe connected ok "$LIFT_SECRETS")"
+s_ssh="$(HC_PROBE_PATH="$FIX/full" probe keyrefused ok "$LIFT_SECRETS")"
+s_dry="$(HC_PROBE_PATH="$FIX/full" probe connected ok "DRY_RUN=1; $LIFT_SECRETS")"
+printf '  all twelve present:  %s\n  one missing:         %s\n' \
+  "$(one "$s_all")" "$(one "$s_short")"
+printf '  file absent:         %s\n  file unreadable:     %s\n  ssh key refused:     %s\n' \
+  "$(one "$s_absent")" "$(one "$s_unread")" "$(one "$s_ssh")"
+
+# `*DIE*` AND NOT `DIE*` IN THIS PART, which is a bug fix rather than a style: the loop prints an
+# `ok` per value it confirms, so a refusal on the twelfth arrives with eleven lines above it and a
+# prefix-anchored pattern misses it entirely. Caught by mutating the not-set arm and watching the
+# check report "ACCEPTED a secrets file missing HC_PAYOUT_DB_PASSWORD" about a refusal it was
+# looking straight at.
+present_count="$(printf '%s\n' "$s_all" | { grep -c ' present$' || true; })"
+case "$s_all" in
+  *DIE*) err "$SCRIPT's secrets check refuses a file that holds all twelve values: '$(one "$s_all")'. A refusal that fires on the correct state is not a check, and every refusal below would then be firing for the wrong reason. See decisions.md D75." ;;
+  *) (( present_count == 12 )) \
+      && ok "the secrets check passes, and confirms all twelve values, when they are all there" \
+      || err "$SCRIPT's secrets check accepted a file holding all twelve values but reported $present_count of them present. Each value is confirmed by name because the receipt of that loop is what an operator reads before a deploy. See decisions.md D75." ;;
+esac
+case "$s_short" in
+  *"DIE HC_PAYOUT_DB_PASSWORD is not set"*) ok "a value that really is absent is still reported as not set, by name" ;;
+  *DIE*) err "$SCRIPT refused a secrets file missing HC_PAYOUT_DB_PASSWORD without saying which value is missing: '$(one "$s_short")'. Twelve values are checked one at a time precisely so the refusal names one. See decisions.md D75." ;;
+  *) err "$SCRIPT ACCEPTED a secrets file missing HC_PAYOUT_DB_PASSWORD ('$(one "$s_short")'). Every one of the twelve is ':?' in docker-compose.prod.yml, so the deploy would die at 'up' with .env already overwritten and .env.previous rotated. See decisions.md D75." ;;
+esac
+case "$s_absent" in
+  *"DIE"*"is missing or empty"*) ok "a secrets.env that is not there is reported as missing" ;;
+  *DIE*) err "$SCRIPT refused an absent secrets.env with something other than 'missing or empty': '$(one "$s_absent")'. See decisions.md D75." ;;
+  *) err "$SCRIPT ACCEPTED a host with no secrets.env at all ('$(one "$s_absent")'). See decisions.md D75." ;;
+esac
+# THE ONE THAT PASSES WHEN IT BREAKS. grep exits 2 for a file it cannot read; with the `*)` arm
+# emptied there is no output at all and the loop walks all twelve values, so this assertion has to
+# be about a refusal ARRIVING, not about which words it used.
+case "$s_unread" in
+  *"could not be read while looking for"*) ok "a secrets.env that cannot be READ is refused, and not reported as a value being unset" ;;
+  *DIE*"is not set"*) err "$SCRIPT reported a secrets.env it could not read as a value being unset: '$(one "$s_unread")'. grep answers 2 for a file it cannot read — a 0600 file owned by another account is the live case — and 'add HC_… to this file' is advice about a file the operator cannot open. See decisions.md D75." ;;
+  *DIE*) err "$SCRIPT refused an unreadable secrets.env but named neither cause: '$(one "$s_unread")'. See decisions.md D75." ;;
+  *) err "$SCRIPT ACCEPTED a secrets.env it could not read, and walked all twelve values past it: '$(one "$s_unread")'. This is WORSE than the message NEW-33 was about: preflight passes, the deploy proceeds, and nothing established that any of the twelve values is there. The remote status arm must refuse anything that is neither 0 nor 1. See decisions.md D75." ;;
+esac
+case "$s_ssh" in
+  *DIE*"no answer from a shell"*) ok "an ssh the host refused is reported as that, not as a missing secrets.env" ;;
+  *DIE*) err "$SCRIPT reported an ssh the host refused as a fact about secrets.env: '$(one "$s_ssh")'. Nothing on the host was read, so neither the file nor any value in it is established. See decisions.md D75." ;;
+  *) err "$SCRIPT ACCEPTED twelve values it never asked about ('$(one "$s_ssh")'). See decisions.md D75." ;;
+esac
+case "$s_dry" in
+  *" present"*) err "$SCRIPT's secrets check reports values present under --dry-run: '$(one "$s_dry")'. It contacted nothing." ;;
+  *"SKIPPED"*"NOT contacted"*) ok "--dry-run says plainly that secrets.env was not read" ;;
+  *) err "$SCRIPT's secrets check under --dry-run answered '$(one "$s_dry")'; it must say the host was not contacted. See decisions.md D75." ;;
+esac
+
+# ---- 4. The previous tag a rollback needs ---------------------------------------------------------
+#
+# rollback() is where every FAILED deploy lands, so it is the worst place in the file to be told to
+# go and look for a .env.previous that is sitting there intact. The status here is `cut`'s — 0 even
+# when grep matched nothing — so the discriminator is the OUTPUT, and what the status arm catches is
+# `cd` refusing the directory: a wrong --path wearing a fact about the estate's deployment history.
+printf '\n%s: the previous tag\n' "$SCRIPT"
+mkdir -p "$FIX/rolled" "$FIX/first"
+# CRLF, deliberately: `cut` hands back the carriage return with the tag, and an untrimmed `1.4.0\r`
+# is a tag no image in either registry carries — so the rollback would pull nothing and say the
+# previous deployment is broken. It is also the only fixture that exercises the trim at all, which is
+# why this file writes one rather than the obvious `\n`. A `.env.previous` edited on Windows, or one
+# written by a shell that echoed a CR, is the live case.
+printf 'HC_TAG=1.4.0\r\nHC_CHANNEL=github\r\n' > "$FIX/rolled/.env.previous"
+printf 'HC_CHANNEL=github\n' > "$FIX/first/.env.previous"
+REPORT_PREV='printf "PREV=[%s]\n" "$prev"'
+p_tag="$(HC_PROBE_PATH="$FIX/rolled" probe connected ok "$LIFT_ROLLBACK"$'\n'"$REPORT_PREV")"
+p_none="$(HC_PROBE_PATH="$FIX/first" probe connected ok "$LIFT_ROLLBACK"$'\n'"$REPORT_PREV")"
+p_path="$(HC_PROBE_PATH="$FIX/nowhere" probe connected ok "$LIFT_ROLLBACK"$'\n'"$REPORT_PREV")"
+p_ssh="$(HC_PROBE_PATH="$FIX/rolled" probe unreachable ok "$LIFT_ROLLBACK"$'\n'"$REPORT_PREV")"
+printf '  a previous deploy:   %s\n  a first deploy:      %s\n' "$(one "$p_tag")" "$(one "$p_none")"
+printf '  a wrong --path:      %s\n  ssh unreachable:     %s\n' "$(one "$p_path")" "$(one "$p_ssh")"
+
+case "$p_tag" in
+  *"PREV=[1.4.0]"*) ok "the previous tag is read off .env.previous and trimmed, CRLF and all" ;;
+  DIE*) err "$SCRIPT refuses to read a previous tag that IS there: '$(one "$p_tag")'. Nothing else in this part means anything if the good state refuses. See decisions.md D75." ;;
+  *) err "$SCRIPT read '$(one "$p_tag")' from a .env.previous holding HC_TAG=1.4.0; the rollback would then target the wrong tag or none. See decisions.md D75." ;;
+esac
+case "$p_none" in
+  *"DIE no previous deployment recorded"*) ok "a first deploy is still reported as having nothing to roll back to" ;;
+  DIE*) err "$SCRIPT refused a first deploy with something other than 'no previous deployment recorded': '$(one "$p_none")'. That message also says the stack is still running what was just rolled onto it, which is the operator's next move. See decisions.md D75." ;;
+  *) err "$SCRIPT ACCEPTED an empty previous tag ('$(one "$p_none")') and would roll the stack onto nothing. See decisions.md D75." ;;
+esac
+# M-b's door. Both readings are fatal; the difference is whether an operator goes hunting for a file
+# or fixes --path.
+case "$p_path" in
+  *"DIE the previous tag could not be read"*) ok "a --path the host has no such directory for is named as that, not as a first deploy" ;;
+  DIE*"no previous deployment recorded"*) err "$SCRIPT reported a wrong --path as a first deploy: '$(one "$p_path")'. \`cd\` refused the directory and the status said so; reported as 'nothing to roll back to' it is a deployment-argument fault wearing a fact about this estate's history, in the function every failed deploy reaches. See decisions.md D75." ;;
+  DIE*) err "$SCRIPT refused an unreadable previous tag but named neither cause: '$(one "$p_path")'. See decisions.md D75." ;;
+  *) err "$SCRIPT ACCEPTED a previous tag it could not read ('$(one "$p_path")'). See decisions.md D75." ;;
+esac
+case "$p_ssh" in
+  DIE*"no answer from a shell"*) ok "an unreachable host is not reported as a first deploy either" ;;
+  DIE*"no previous deployment recorded"*) err "$SCRIPT reported an unreachable host as a first deploy: '$(one "$p_ssh")'. This is the fold NEW-33 was about, in the one function a failed deploy is guaranteed to reach — and the remedy it prints is to stop looking for a .env.previous that was never read. See decisions.md D75." ;;
+  DIE*) err "$SCRIPT refused when ssh could not reach the host, but named neither hop: '$(one "$p_ssh")'. See decisions.md D75." ;;
+  *) err "$SCRIPT ACCEPTED a previous tag from a host it never reached ('$(one "$p_ssh")'). See decisions.md D75." ;;
+esac
+
+# ---- 5. Every remote probe in the file goes through host_run --------------------------------------
 #
 # Part 1 drives host_run and part 2 drives the network arm; neither can see a SIXTH ssh growing back
 # beside them, and every site that stops routing through host_run goes straight back to folding an
@@ -350,7 +538,7 @@ esac
 # (the command is printed), or polls — D71 §5's rule, `a die may not fold; a warn and a poll may`.
 printf '\n%s: the call sites\n' "$SCRIPT"
 if [[ ! -f "$STRIP_SH" ]]; then
-  err "$STRIP_SH is missing, so part 3 could not strip comments and did not run. A check that reads nothing is not a check that found nothing."
+  err "$STRIP_SH is missing, so part 5 could not strip comments and did not run. A check that reads nothing is not a check that found nothing."
 else
   # BACKSLASH-CONTINUED LINES ARE JOINED FIRST, and that is a bug fix rather than a flourish: four
   # of the six calls below are written across two lines, so a line-at-a-time grep for the remote

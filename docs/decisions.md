@@ -12544,6 +12544,13 @@ so a remote command exiting 255 is *indistinguishable by status* from ssh never 
 suspected "status alone conflates less than you might hope"; measured, it conflates exactly the case
 that matters, and no amount of status reading fixes it.
 
+**Provenance, because the two are not the same kind of evidence and the review asked for the
+distinction.** The throwaway-`sshd` run above is the **only measurement** of the connected-ssh rows;
+review could not stand up an `sshd` and re-derived them from OpenSSH 10.2p1's man page — *"ssh exits
+with the exit status of the remote command or with 255 if an error occurred"* — which is
+**documentary corroboration** of a measurement rather than a second one. Everything the design turns
+on rests on the measurement; the man page agrees with it.
+
 **The remote half, through that real ssh, against docker 29.8.0:**
 
 | state | rc | output |
@@ -12679,9 +12686,38 @@ the wrap, at no extra cost, and the test's case 3 watches it go red.
 
 ### §5 What CI can see, and the instrument it rests on
 
-`.github/checks/host-probe-attribution.sh`, in three parts, **22 assertions**. No `run:` grep could do
+`.github/checks/host-probe-attribution.sh`, in five parts, **32 assertions**. No `run:` grep could do
 this: ssh's 255 and the remote's 255 are the same number, so no expression over the source can
 establish that the hops are told apart.
+
+**Parts 3 and 4 exist because of this decision's review, and the finding is the sharpest in the
+entry.** As first written the check drove **one** of the six call sites, and part 5's textual
+"routed through `host_run`" assertion establishes only that a probe cannot report an *ssh* failure as
+a fact about the host — it says nothing about the **remote-status** arms of the other five. The
+reviewer reproduced the consequence, and it is not another wrong message:
+
+```
+delete the secrets loop's `*)` arm  — one line, it parses, the check was 22 ok / exit 0
+  grep exit 2 (a secrets.env the account cannot read — this code's own comment calls it live)
+    -> matches an EMPTY branch
+    -> the loop proceeds past all twelve values
+    -> PREFLIGHT PASSES on a file it could not read, and the deploy proceeds
+```
+
+**That is worse than the defect this package fixed.** The original died with the wrong message; the
+mutant approves twelve values nothing established. Every other member of this family is a refusal
+naming the wrong cause; this one is not a refusal. So the secrets block and the previous-tag read are
+lifted and driven too — against **real fixtures** rather than a shim asserting what `test`, `grep`,
+`cd` and `cut` would answer: a file with all twelve values, one missing a key, a path that is not
+there, and a **directory**, which `test -s` answers 0 for and `grep` answers **2** for. That last one
+constructs the unreadable-file state without `chmod`, which does not constrain root and would make
+the state unbuildable in a root container — red on a correct tree.
+
+Part 4's mutant is worse than the review predicted, which is worth recording rather than smoothing
+over: with `rollback`'s status check removed, `cd`'s error goes to **stderr**, `host_run` captures
+both streams, so `prev` is non-empty — it is the error text — and the emptiness refusal never fires
+either. The mutant rolls the stack back to a tag made of `bash: line 1: cd: /…: No such file or
+directory`. The prediction assumed an empty answer.
 
 **The stub RUNS the wrapped script it is handed**, with `docker` stubbed on `PATH`. A stub that
 appended the sentinel itself would pass a `host_run` that had stopped appending one — so the sentinel
@@ -12713,24 +12749,50 @@ because this file's comments quote the old folded lines verbatim), and **backsla
 joined first** — four of the six calls are written across two lines, so a line-at-a-time grep found the
 continuation and reported a correct call site as unrouted. Watched doing exactly that.
 
-`host-probe-attribution-test.sh` constructs **fourteen** broken states on copies, asserts each
+`host-probe-attribution-test.sh` constructs **twenty-two** broken states on copies, asserts each
 mutation applied (mutant present, original gone, `bash -n` parsing) before believing its result, and
-requires the check to go red **through the door it was aimed at**. It reports `15 ok, 0 failed`.
+requires the check to go red **through the door it was aimed at**. It reports `23 ok, 0 failed`.
 
-**The harness's own instrument was checked by removing what it tests.** With part 2's five cause
-assertions deleted from a copy of the check, the test reports exactly `10 ok, 5 failed` — cases 4–8,
-each *"the check PASSED on a broken tree"* — while the other nine stay green. So those five mutations
-are covered by those five assertions and by nothing else.
+**The harness's own instrument was checked by removing what it tests, twice.** With part 2's five
+cause assertions deleted from a copy of the check, the test reports exactly `10 ok, 5 failed` at
+ratification and `18 ok, 5 failed` after parts 3 and 4 were added — cases 4–8 both times, each *"the
+check PASSED on a broken tree"* — while everything else stays green. So those five mutations are
+covered by those five assertions and by nothing else, and the eight cases added at review are covered
+by their own.
 
-**Three harness defects were found by running it rather than by reading it**, which is the same tally
-D71 reported and for the same reason: a `sed` four quoting levels deep that matched nothing (replaced
-with a quoted here-doc and an `awk` line swap — the mutation-applied control caught it), an address
-restricted to the first of **two** identical `127` branches so the original-is-gone control failed on
-a mutation that had applied, and a guard that read `HOST_SENTINEL`'s **name** rather than its value.
-That last one is worth the sentence: `HOST_SENTINEL=""` satisfies a grep for the assignment *and*
-satisfies `grep -F "$HOST_SENTINEL "` against any line containing a space, so the function still
-refuses and refuses naming **neither** hop. Fails closed, diagnoses nothing — this defect wearing its
-own fix — so the guard reads the value.
+**Six harness defects were found by running it rather than by reading it** — three at ratification
+and three at review, which is the tally D71 reported and then some, for the same reason. At
+ratification: a `sed` four quoting levels deep that matched nothing (replaced with a quoted here-doc
+and an `awk` line swap — the mutation-applied control caught it), an address restricted to the first
+of **two** identical `127` branches so the original-is-gone control failed on a mutation that had
+applied, and a guard that read `HOST_SENTINEL`'s **name** rather than its value. That last one is
+worth the sentence: `HOST_SENTINEL=""` satisfies a grep for the assignment *and* satisfies
+`grep -F "$HOST_SENTINEL "` against any line containing a space, so the function still refuses and
+refuses naming **neither** hop. Fails closed, diagnoses nothing — this defect wearing its own fix — so
+the guard reads the value.
+
+At review, and all three are the same shape one level along, **a control wider than its subject**:
+
+- **`DIE*` where `*DIE*` was needed.** The secrets loop prints an `ok` per value it confirms, so a
+  refusal on the twelfth arrives with eleven lines above it and a prefix-anchored pattern misses it
+  entirely — the check reported *"ACCEPTED a secrets file missing HC_PAYOUT_DB_PASSWORD"* about a
+  refusal it was looking straight at.
+- **`prev` is a prefix of `previous`.** The obvious rename for the "lift anchor renamed" mutation
+  passed the original-is-gone control while having applied. `tag_before` does not.
+- **`tr -d '[:space:]'` occurs twice** in the script — `resolve_tag` has one on the Maven version — so
+  the loose spelling failed the control on a mutation that had applied perfectly.
+
+**And one real fail-open in the check itself, found by writing a mutation for the END anchor rather
+than the start one.** An `awk` range whose terminator stops matching prints to the **end of the
+file**, so the "did it lift anything" guard passes on a lift carrying the rest of the script, router
+included — part 4 would then be asserting the behaviour of something other than its subject. Loud
+rather than dangerous (`set -u` on an unset `DO_ROLLBACK`) and still wrong. Both new lifts check
+their **terminator** now, and case 21 is that mutation.
+
+Two optionals from the review were taken as code and are guarded: the check `bash -n`s its subject
+before lifting anything (the lifts do not cross a syntax break, so it went green over a file nobody
+could run — case 22), and the CRLF fixture in part 4 is the only thing that exercises the tag's trim
+at all, because `cut` hands back the carriage return and `1.4.0\r` is a tag no registry carries.
 
 ### §6 Losers
 
@@ -12802,11 +12864,28 @@ substrings of a message docker is free to reword; the safe direction is stated i
 and the unsafe direction is closed the same way it was there, by requiring the sentence only a daemon
 that *answered* can produce.
 
-**Nothing exercised the twelve-key loop or the data tier against a real answer.** Their statuses were
-measured in isolation (`grep` 2, `cd` 1, `compose ps` shapes) and their branches are driven by the
-stub; what no reading here covers is a real `secrets.env` or a real five-store project, because there
-is no host. Part 3 is what stands behind them: it asserts they are asked through `host_run` and
-therefore cannot report an ssh failure as a missing secret.
+**The twelve-key loop and the previous-tag read are driven against real fixtures; the DATA TIER is
+not.** Since review, parts 3 and 4 run the shipped blocks against a real file, a real directory and a
+real missing path, so `test`, `grep`, `cd` and `cut` produce their own statuses. What no reading here
+covers is a real five-store compose project, because there is no host — part 5 is what stands behind
+that one: it asserts the probe is asked through `host_run` and therefore cannot report an ssh failure
+as a data tier that is down.
+
+**One state reaches the ssh arm with the remote command having RUN, and the wording is what keeps the
+sentence true** (review's first optional, taken). A connection dropped after the far side began
+writing arrives with no sentinel and with the *remote's* output in hand, so the refusal says **"no
+answer from a shell on $HOST arrived"** rather than "ssh did not reach a shell at all". In that state
+`ssh_hint` may also pick its remedy from the far side's prose — a remote `grep: …: Permission denied`
+selects the "check `ssh-add -l`" arm — which is the one path where the asymmetry §2 rests on does not
+hold. It costs a *remedy* and never a *cause*: the cause is the missing sentinel, and whatever
+arrived is quoted verbatim beside it, so the reader sees the mismatch. Telling the two apart needs a
+channel this probe has no access to, so it is stated rather than parsed for.
+
+**One residual arm names a cause rather than quoting one, and it is hedged rather than removed**
+(review's second optional). `docker compose version` failing is the only remote status in the file
+whose failure space is narrow enough to name — measured, it survives an unanswerable daemon — so that
+arm says the likeliest cause *and* that the status and output are what the host actually said. Every
+other residual arm quotes and stops.
 
 **The `--dry-run` path contacted nothing and is the only production-path invocation that was run**; it
 stops at *"no target host"*. Under `--dry-run` the network loop now prints `would ask $HOST whether the
@@ -12814,12 +12893,15 @@ stops at *"no target host"*. Under `--dry-run` the network loop now prints `woul
 command; the check asserts no tick appears there, because a success line for a check that was not
 performed is the false confidence the two `skipped` lines beside it exist to remove.
 
-**One fail-open in part 3 is structural and stated rather than closed.** Its six call sites are
+**One fail-open in part 5 is structural and stated rather than closed.** Its six call sites are
 enumerated, and a *seventh* probe added with a question none of the six needles matches is invisible to
-it. The mitigation is the one the zone-write check relies on: every failure mode that exists today
-exits 1 loudly — a renamed probe is an error, a missing stripper is an error, an unliftable function is
-an error — so it cannot pass having read nothing. There is no derivation available; a remote probe is
-not declared in a model file the way an entity or a `messageBroker` is.
+it — and if it is written as a plain `ssh … || die` with no `-o BatchMode=yes` spelled out, the count
+beside it does not see it either. **Verified at review rather than merely conceded.** The mitigation is
+the one the zone-write check relies on: every failure mode that exists today exits 1 loudly — a renamed
+probe is an error, a missing stripper is an error, an unliftable function is an error, a lift that runs
+past its terminator is an error, a subject that does not parse is an error — so it cannot pass having
+read nothing. There is no derivation available; a remote probe is not declared in a model file the way
+an entity or a `messageBroker` is.
 
 ### §8 Verified in this round, by running
 
@@ -12829,8 +12911,8 @@ fifth state re-measured after the first probe of it was found not to construct i
 and the seven remote states measured directly (§1). The shipped `host_run` and the shipped network arm
 then driven through the same real ssh across all five outcomes, each naming its own cause.
 
-`host-probe-attribution.sh` green at **22** assertions; its test at **15 ok, 0 failed**; the harness
-control at **10 ok, 5 failed** with part 2's five cause assertions removed, each failure through its own
+`host-probe-attribution.sh` green at **32** assertions; its test at **23 ok, 0 failed**; the harness
+control at **18 ok, 5 failed** with part 2's five cause assertions removed, each failure through its own
 door. `bash -n` on every script `build.yml` parses, the two new files included. The other checks that
 read these files re-run green: `shared-plane-wiring.sh` and its test, `pepper-wiring.sh`,
 `signing-key-severance.sh`, `observability-claims.sh`, `admin-seed-wiring.sh`, `strip-comments-test.sh`,
@@ -12843,6 +12925,34 @@ and D13's image-prefix pair. Both renderable compose files still `config`.
 run.**
 
 `--dry-run` with no host stops at *"no target host"*; `--help` still prints the whole computed header.
+
+### §9 Review, and what it found — no blocking findings, one should-fix taken as code
+
+**The whole behavioural surface held** on independent re-derivation: the harness control to the digit,
+every degenerate subject refusing loudly with one error naming the cause, and the sentinel surviving
+direct attack — a remote command that *prints* `__hc_remote_status__ 0` and then exits 5 is answered
+from the **genuine** line, because the sentinel `printf` runs strictly after the subshell and there is
+no concurrency on the far side, so `tail -1` is not "the last liar" but structurally this code's own
+output. One of review's readings was its own instrument rather than the check: *"no `ok` lines"* came
+from a `^ok`-anchored grep against a check that indents them by two.
+
+**The should-fix was reach, not correctness, and it is §5's first three paragraphs**: five of the six
+sites' remote-status arms were guarded by nothing, and the mutant for one of them **passes preflight**
+rather than refusing wrongly. Parts 3 and 4, eight more mutations, real fixtures. Both optionals about
+message honesty were taken as code (§7), and two more besides — the subject is `bash -n`'d before
+anything is lifted, and each new lift checks its own terminator, which closed a fail-open in the check
+that only a mutation of the END anchor could find.
+
+**Two of review's own claims are corrected here rather than adopted.** Its prediction for the rollback
+mutant assumed an empty answer and the mutant is worse than that (§5). And its count of the surviving
+bare `ssh` invocations was taken from this entry's first draft, which said nine; there are **eleven**,
+enumerated in §6 — the house failure mode, in the entry that keeps naming it.
+
+**Verified at review, by running**: the check green at 32 with parts 3 and 4 added; the test at
+`23 ok, 0 failed` with every mutation asserted applied; the control re-run at `18 ok, 5 failed`;
+`bash -n` on every script `build.yml` parses; the eight neighbouring checks and `build.yml`'s three
+inline matchers over this script re-run green; **Appendix B re-embedded** and `--check` green; the seed
+unchanged. No host was contacted, nothing was deployed, and the throwaway `sshd` from §1 stayed down.
 
 **Nothing was deployed and no host was contacted.** No `--host`, no credential, no ssh to the production
 host. The quality stack was not touched — it is on `fabb959` with the agent attached by hand (D73) and

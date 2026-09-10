@@ -207,8 +207,15 @@ missing"*, and `grep`'s **2** for an unreadable `secrets.env`, the data tier's u
 `| grep -c … || true`, and `rollback`'s `|| true` were each folding a fact of their own.
 `.github/checks/host-probe-attribution.sh` drives the shipped functions against a stub that **runs**
 the wrapped script it is handed, so the sentinel it reads is the shipped code's; its test constructs
-fourteen broken states. **`deploy-prod.sh` has still never run against a host** (D49) — what ran against
-a real ssh, a real remote shell and a real daemon is the mechanism, lifted out by `awk`.
+twenty-two broken states. **`deploy-prod.sh` has still never run against a host** (D49) — what ran
+against a real ssh, a real remote shell and a real daemon is the mechanism, lifted out by `awk`.
+**Routing a probe through `host_run` is not the same as guarding what it does with the answer**, and
+that distinction is D75's review finding: the check drove one of the six sites behaviourally and left
+the other five to a textual assertion, and emptying the secrets loop's remote-status arm — one line —
+made `grep`'s exit **2** match an empty branch, so the loop walked all twelve values and **preflight
+passed on a `secrets.env` it could not read**. The only mutant in this whole family whose result is a
+pass rather than a wrong message. Five parts now, driven against real fixtures, with a **directory**
+standing in for the unreadable file (`test -s` 0, `grep` 2) because `chmod` does not constrain root.
 
 Only the host mapping moves. Inside the containers every service listens on **8080**, because the
 compose files set `SERVER_PORT: 8080` explicitly — overriding the per-service `serverPort` the JDL

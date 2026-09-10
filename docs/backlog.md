@@ -2711,11 +2711,22 @@ deploy, in the function every **failed** deploy lands in.
 by reading it — so the probe is wrapped in a subshell on the far side. No shipped probe says `exit`;
 what the wrap buys is that the seventh cannot reintroduce this silently.
 
-CI sees all of it: `host-probe-attribution.sh`, **22** assertions over three parts, driven by a stub
+CI sees all of it: `host-probe-attribution.sh`, **32** assertions over five parts, driven by a stub
 that **runs** the wrapped script it is handed so the sentinel is the shipped code's; its test at
-**15 ok, 0 failed** over fourteen mutations; and the harness's own control at **10 ok, 5 failed** with
+**23 ok, 0 failed** over twenty-two mutations; and the harness's own control at **18 ok, 5 failed** with
 part 2's cause assertions removed. `deploy-prod.sh` is Appendix B, so **Appendix B was re-embedded**.
 Opens **NEW-36**.
+
+**Review added parts 3 and 4, and the finding is worth carrying forward as a rule.** The first version
+drove **one** of the six call sites behaviourally and covered the other five with a textual "routed
+through `host_run`" assertion — which establishes only that they cannot report an *ssh* failure as a
+fact about the host, and says nothing about their **remote-status** arms. Reproduced: with the secrets
+loop's `*)` arm emptied — one line, it parses — `grep`'s exit 2 matches an empty branch, the loop walks
+all twelve values, and **preflight passes on a secrets.env it could not read**. That is the one mutant
+in this whole family whose result is a pass rather than a wrong message, so *routing a probe through
+the right helper is not the same as guarding what it does with the answer*. Both blocks are lifted and
+driven against real fixtures now, including a **directory** as the unreadable file (`test -s` 0, `grep`
+2) so the state does not depend on `chmod`, which root ignores.
 
 ---
 
@@ -2814,6 +2825,13 @@ hop — so the refusal distinguishes "they never became ready" from "we stopped 
 `compose logs --tail=40` beside the timeout, copying dev's answer, which diagnoses without deciding;
 or a bounded consecutive-unreachable count that gives up early on the hop rather than late on the
 services. The first is the one that makes the *message* right, which is what this family is about.
+
+**Take the eleven deploy-phase `ssh` invocations with it.** None carries `BatchMode` or
+`ConnectTimeout` — D75 put `SSH_OPTS` on the six *preflight* probes and deliberately did not touch the
+rest, whose failures are printed by `run` or by the ERR trap. But a host that vanishes between
+preflight and `up` hangs them on the TCP defaults, which is the same "the refusal never arrives"
+problem one phase along, and `health_gate`'s own probe is among them. Pre-existing, outside D75's
+claim, and cheapest to settle in whichever shape this item takes.
 
 Nothing is unsafe: a rollback of a healthy stack is the cost, and on a first deploy it ends in
 *"no previous deployment recorded"* — which, since D75, is at least no longer what an unreachable host

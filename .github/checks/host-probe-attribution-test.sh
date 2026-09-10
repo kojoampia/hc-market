@@ -10,7 +10,7 @@
 #  AIMED AT. "It went red" is not the assertion here: every one of these outcomes stops the deploy
 #  either way, and what is being pinned is which cause the refusal names.
 #
-#  FOURTEEN MUTATIONS. Trust the list and not the number — this repository has written such a count
+#  TWENTY-TWO MUTATIONS. Trust the list and not the number — this repository has written such a count
 #  wrong four times, twice in the commit that was correcting the same defect elsewhere.
 #
 #    1  the sentinel test deleted            — host_run back to reading a status, which cannot tell
@@ -45,8 +45,41 @@
 #   13  a probe renamed out from under
 #       part 3's enumeration                 — the list is enumerated, so it must refuse rather than
 #                                              silently compare against a probe that is not there
-#   14  the shell stripper absent            — one file five checks trust; absent it, part 3 reads
+#   14  the shell stripper absent            — one file five checks trust; absent it, part 5 reads
 #                                              empty text and reports every call site as routed
+#
+#  Eight more from the review of `25566a2`, and the first of them is the reason the others exist: part
+#  2 drives ONE of the six call sites, and part 5's textual assertion says nothing about the
+#  remote-STATUS arms of the other five. Cases 15 and 17 are the two the reviewer reproduced.
+#
+#   15  the secrets loop's remote-status
+#       arm emptied                          — THE FAIL-OPEN, and the only mutation in this file
+#                                              whose result is a PASS. grep's exit 2 matches an empty
+#                                              branch, the loop walks all twelve values, and
+#                                              preflight approves a secrets.env it could not read
+#   16  the not-set refusal stops naming
+#       which value                          — twelve values are asked one at a time so that the
+#                                              refusal can name one
+#   17  rollback stops checking the remote
+#       status                               — a wrong --path was back to a fact about this estate's
+#                                              deployment history. WORSE than the review predicted:
+#                                              `cd`'s error is on stderr, host_run captures both, so
+#                                              `prev` is non-empty and the mutant rolls back to a tag
+#                                              made of an error message
+#   18  the previous tag is no longer
+#       trimmed                              — `cut` hands back the CR of a CRLF file, and `1.4.0\r`
+#                                              is a tag no registry carries
+#   19  part 3's lift anchor renamed         — an unliftable subject must be an ERROR, not a green
+#                                              run over nothing
+#   20  part 4's START anchor renamed        — the same, and `prev` is a PREFIX of `previous`, so the
+#                                              obvious rename passed the original-is-gone control
+#                                              while having applied
+#   21  part 4's END anchor renamed          — a DIFFERENT failure: an awk range whose terminator
+#                                              stops matching prints to the END OF THE FILE, so the
+#                                              lift is non-empty and part 4 drives the router. Found
+#                                              by writing this case; closed with a terminator check
+#   22  the subject does not parse           — the awk lifts do not cross a syntax break, so the
+#                                              check went green over a file nobody could run
 #
 #      ./.github/checks/host-probe-attribution-test.sh
 # ==============================================================================
@@ -114,7 +147,7 @@ if run_check "$f"; then note "green on an unmutated copy"; else bad "the check i
 printf '\nhost_run: the sentinel, which is the whole mechanism\n'
 f="$(fresh m1)"; sed -i 's|  if \[\[ -z "$line" \]\]; then|  if false; then|' "$f"
 expect_red "$f" "1  the sentinel test deleted" 'if false; then' 'if [[ -z "$line" ]]; then' \
-  "did not say that ssh never reached a shell"
+  "did not say that no answer came back from a shell"
 
 f="$(fresh m2)"
 sed -i 's|^  wrapped="($2".*$|  wrapped="$2"|' "$f"
@@ -187,6 +220,88 @@ sed -i "s|\"test -s '\$REMOTE_PATH/\$SECRETS_FILE'\"|\"[ -s '\$REMOTE_PATH/\$SEC
 expect_red "$f" "13  a probe renamed out from under part 3's enumeration" "[ -s '\$REMOTE_PATH/\$SECRETS_FILE' ]" \
   "\"test -s '\$REMOTE_PATH/\$SECRETS_FILE'\"" "no longer asks the host about secrets.env being there at all"
 
+printf '\nsecrets.env and the previous tag — the five other call sites\n'
+# M-c, THE ONLY MUTATION IN THIS FILE WHOSE RESULT IS A PASS RATHER THAN A WRONG MESSAGE. One line,
+# it parses, and before part 3 existed the check was 22 ok / exit 0 on it: `grep`'s exit 2 — the
+# unreadable-0600 state the code's own comment names as live — matches an empty branch, the loop
+# proceeds past all twelve values, and preflight APPROVES a secrets file it could not read. Worse
+# than the defect this package fixed, which at least refused.
+f="$(fresh m15)"
+sed -i 's|^        \*) die "\$HOST:\$REMOTE_PATH/\$SECRETS_FILE could not be read.*|        *) : ;;|' "$f"
+expect_red "$f" "15  the secrets loop's remote-status arm emptied (the FAIL-OPEN)" '        *) : ;;' \
+  'could not be read while looking for' "walked all twelve values past it"
+
+f="$(fresh m16)"
+sed -i 's|1) die "\$v is not set in|1) die "a value is not set in|' "$f"
+expect_red "$f" "16  the not-set refusal stops naming which value" 'die "a value is not set in' \
+  'die "$v is not set in' "without saying which value is missing"
+
+# M-b. THE REVIEW PREDICTED "no previous deployment recorded" AND THE MUTANT IS WORSE THAN THAT,
+# which is worth recording rather than smoothing over: `cd`'s error goes to STDERR, host_run captures
+# both streams, so with the status check gone `prev` is non-empty — it is the error text — and the
+# emptiness refusal never fires either. The mutant rolls the stack back to a tag made of
+# `bash: line 1: cd: /…: No such file or directory`. So the door is the ACCEPTED arm, not the
+# wrong-cause one, and the reviewer's prediction assumed an empty answer.
+f="$(fresh m17)"
+sed -i 's|^  (( HOST_STATUS == 0 )) \\$|  (( 1 == 1 )) \\|' "$f"
+expect_red "$f" "17  rollback stops checking the remote status" '  (( 1 == 1 )) \' \
+  '  (( HOST_STATUS == 0 )) \' "ACCEPTED a previous tag it could not read"
+
+# A quoted here-doc and an awk line swap again, for case 3's reason: that line is three quoting
+# levels deep and every `sed` spelling of it matched nothing, which the mutation-applied control
+# caught rather than letting it read as green.
+f="$(fresh m18)"
+cat > "$WORK/m18.repl" <<'REPL'
+  prev="$(printf '%s' "$HOST_OUTPUT")"
+REPL
+awk -v file="$WORK/m18.repl" '
+  /^  prev="\$\(printf/ { while ((getline l < file) > 0) print l; close(file); next }
+  { print }' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+# The original-is-gone string names the HOST_OUTPUT pipeline and not the bare `tr`: resolve_tag has
+# its own `tr -d '[:space:]'` on the Maven version, so the loose spelling failed the control on a
+# mutation that had applied perfectly. Second time in this file that a substring control was wider
+# than its subject — see case 20.
+expect_red "$f" "18  the previous tag is no longer trimmed" 'prev="$(printf '"'"'%s'"'"' "$HOST_OUTPUT")"' \
+  '"$HOST_OUTPUT" | tr -d' "from a .env.previous holding HC_TAG=1.4.0"
+
+f="$(fresh m19)"
+sed -i 's|^  log "checking \$REMOTE_PATH/\$SECRETS_FILE on \$HOST"$|  log "checking the file $REMOTE_PATH/$SECRETS_FILE on $HOST"|' "$f"
+expect_red "$f" "19  part 3's lift anchor renamed" '  log "checking the file $REMOTE_PATH' \
+  '  log "checking $REMOTE_PATH/$SECRETS_FILE on $HOST"' "has no secrets.env block this check can read"
+
+# `tag_before` and not `prev_tag`: the original-is-gone control is a substring grep, and `prev` is a
+# prefix of `previous`, so the obvious rename passes it while having applied. Watched doing that.
+f="$(fresh m20)"
+sed -i 's|^  local prev$|  local tag_before|' "$f"
+expect_red "$f" "20  part 4's START anchor renamed" '  local tag_before' \
+  '  local prev' "has no previous-tag read this check can read"
+
+# THE END ANCHOR, and it is a different failure from case 20 rather than its mirror. An awk range
+# whose terminator stops matching prints to the END OF THE FILE, so the lift is enormous and
+# non-empty: the "did it lift anything" guard passes and part 4 drives the rest of the script,
+# router included. Found by writing this case, and closed with a terminator check.
+f="$(fresh m21)"
+sed -i 's|^  (( HOST_STATUS == 0 )) \\$|  (( HOST_STATUS == 0 )) \\|; s|^  \[\[ -n "\$prev" \]\] |  [ -n "$prev" ] |' "$f"
+expect_red "$f" "21  part 4's END anchor renamed" '  [ -n "$prev" ] ' \
+  '  [[ -n "$prev" ]] ' "does not end at a line carrying"
+
+# A SUBJECT THAT DOES NOT PARSE, which `expect_red` cannot express — it refuses an unparseable
+# mutant precisely so a syntax error is never mistaken for a red run. The awk lifts do not cross a
+# syntax break, so before the parse guard this check went green over a file nobody could run.
+f="$(fresh m22)"
+printf '\nthis ) is ( not shell\n' >> "$f"
+if bash -n "$f" 2>/dev/null; then
+  bad "22  the subject does not parse — the mutation did not apply (the mutant still parses)"
+elif run_check "$f"; then
+  bad "22  the subject does not parse — the check PASSED over a script nobody could run"
+  sed -n '1,40p' "$f.out" >&2
+elif grep -qF 'does not parse, so nothing below is a statement' "$f.out"; then
+  note "22  the subject does not parse → red"
+else
+  bad "22  the subject does not parse — red, but not through the door it was aimed at"
+  grep '::error::' "$f.out" >&2 || true
+fi
+
 # THE ONE CASE THAT MUTATES THE CHECK'S OWN INSTRUMENT rather than the subject. Absent the shell
 # stripper, part 3 reads empty text: every `grep -F` finds nothing, so every site is reported
 # missing and — before the guard — every count came back 0, which reads as "no bare ssh anywhere".
@@ -194,7 +309,7 @@ f="$(fresh m14)"
 if run_check "$f" HC_STRIP_SH=/nonexistent/strip.awk; then
   bad "14  the shell stripper absent — the check PASSED with no stripper, so part 3 read nothing and called it clean"
   sed -n '1,120p' "$f.out" >&2
-elif grep -qF 'is missing, so part 3 could not strip comments' "$f.out"; then
+elif grep -qF 'is missing, so part 5 could not strip comments' "$f.out"; then
   note "14  the shell stripper absent → red"
 else
   bad "14  the shell stripper absent — red, but not through the door it was aimed at"
