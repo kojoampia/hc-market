@@ -2374,7 +2374,7 @@ differ, so the `awk` range that lifts it out has to be parameterised too.
 
 ---
 
-## NEW-30 — after a `down`, nothing records which checkout the stack came from · READY
+## NEW-30 — after a `down`, nothing records which checkout the stack came from · WON'T (D70)
 
 Opened by **D67 §9**, which named it rather than widening its own fix into it.
 
@@ -2399,6 +2399,34 @@ right lifetime, and compose does not write one that names the checkout; setting 
 `docker volume create` before the first `up`, which a first run has no reason to do. Whoever takes it
 should start by asking whether the answer is a record at all, or whether it is D67 §4's fourth shape
 — stop binding a host path for the seed — which would make the question moot rather than answered.
+
+**Closed as `WON'T` on 2026-09-10, ratified — `decisions.md` D70.** The question above was asked and
+answered: not a record, and not eliminated either. Three shapes were costed and rejected, and the one
+that came closest was rejected on a ground D67 did not have:
+
+- **Resolve `SEED_DIR` to the canonical checkout** (`git rev-parse --git-common-dir`) is the smallest
+  change and needs no record at all, and D67's objection to resolve-to-canonical does not transfer —
+  that was about silently running a *different checkout's compose file*, whereas CI already asserts the
+  seed regenerates byte-identically from the prototype, so a different checkout's seed is provably the
+  same bytes. Rejected as the wrong trade for the harm: it adds a git dependency to path resolution and
+  a fallback branch to decide, to prevent a stale read-only bind mount.
+- **Bake the seed into the five images** via the Jib `extraDirectories` block the poms already use for
+  the OpenTelemetry agent. Measured, and **much cheaper than D67 assumed** — 296,031 bytes, mounted
+  read-only, read once at startup; D67 called this "a release process, not eight lines" and that
+  characterisation was too pessimistic. Rejected on a cost D67 did not name: production runs these same
+  images with `HEALTHCONNECT_SEED_ENABLED=false`, so every production artefact would carry **18
+  invented professionals with credentials and association registration numbers**. Not served — CI
+  asserts the prototype's absence from `market.abofonsa.com` — but present, and adjacent to the reason
+  that assertion exists.
+- **Label the volumes at first run.** The only docker object with the right lifetime, as above. Rejected
+  on three counts: it changes the first-run path on a fresh box; docker cannot relabel an existing
+  volume, so the five live volumes stay unlabelled until a `--clean` that nothing else justifies; and it
+  introduces a record whose only reader is a guard.
+
+**What is kept instead is the trap, written down beside D65 and D67 in `CLAUDE.md`.** The residual is
+honest and stated: the path stays walkable, and two of its three steps are suggested by this
+repository's own error messages. The harm it leads to is a stale read-only bind mount, not data loss —
+the volumes are untouched and the seed is not read again after startup.
 
 ---
 

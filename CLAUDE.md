@@ -1113,6 +1113,27 @@ time.**
   databases have **no bind mounts at all** — project-prefixed named volumes only, which is why the
   stale label on exactly those five has cost nothing. What survives a teardown is **NEW-30**: the
   labels go with the containers, so after a `down` nothing records the checkout at all.
+- **Both guards above pass for the sequence `--down` in a worktree → copy the pepper → `up`, and that
+  is deliberate rather than an oversight** (D70, backlog NEW-30, closed `WON'T`). It is the one path
+  through D65 and D67 that neither refuses, and it is worth knowing before you walk it, because **two
+  of its three steps are suggested by this repository's own error messages**: D67's refusal prints
+  `--down` as the remedy, and D65's prints "copy `quality/.privacy-pepper` across". Do both from a
+  worktree and you get a running stack whose `SEED_DIR` bind mount belongs to a directory that stops
+  existing the moment it is pruned — D67's harm, arrived at with everything green.
+  D67's guard reads a **container** label, so a `down` erases the only record; after that an `up` from
+  a worktree is indistinguishable from a first run, and D65's refusal — the thing that would otherwise
+  stop it — is exactly what the copied pepper satisfies.
+  **What makes it a `WON'T` is the size of the harm, measured rather than assumed**: `SEED_DIR` is
+  mounted **read-only**, holds one 296,031-byte file, and is read **once at startup**. No volume is
+  touched and nothing reads the seed again after boot, so the residue is a stale mount on a service
+  that already has what it needed. Three fixes were costed and each is argued in D70 §3 — resolving
+  `SEED_DIR` to the canonical checkout (smallest, and D67's objection to resolve-to-canonical does
+  **not** transfer, because CI pins the seed byte-identical), baking the seed into the five images (much
+  cheaper than D67 estimated — the Jib `extraDirectories` block is already in every pom — but it would
+  put **18 invented professionals with credentials and association numbers** inside every production
+  artefact), and labelling the volumes at first run (the only object with the right lifetime, but docker
+  cannot relabel an existing volume). **If the harm ever grows past a boot-time read-only mount, reach
+  for the first of those**; the argument for it is already written.
 - **The gateway seeds the FIRST administrator, and production must supply its password** (`decisions.md`
   D61, backlog NEW-22). `HC_GATEWAY_ADMIN_PASSWORD` → the container's `GATEWAY_ADMIN_PASSWORD` →
   `gateway.admin-password`. It joins the signing key and the pepper as a `:?` variable in
