@@ -1,6 +1,6 @@
 # Backlog — hc-market
 
-Every open item in this repository, folded into work packages. Sources: `docs/decisions.md` D1–D67,
+Every open item in this repository, folded into work packages. Sources: `docs/decisions.md` D1–D69,
 the two code reviews of 2026-09-01, and the verification runs against the quality box.
 
 **This is a derived document.** `decisions.md` holds the reasoning and stays the record; this holds
@@ -2316,7 +2316,27 @@ whoever takes it should ask whether anything else in the project's labels points
 
 ---
 
-## NEW-29 — `deploy-dev.sh`'s preflight cannot tell "running" from "reachable" either · READY
+## NEW-29 — `deploy-dev.sh`'s preflight cannot tell "running" from "reachable" either · DONE (D69)
+
+**Closed by D69.** `shared_plane` now carries D66's whole loop: three outcomes where docker's answer
+has three, and the membership refusal — measured against the live daemon in four states, the empty
+throwaway network among them, where at `d3291a5` the function **passed** and printed
+`…on hc-market-d69-probe`. The success line was rewritten to claim only what it asks. **Fatal**, on an
+argument established for this script rather than carried over: dev's router is a `case` at the foot of
+the file calling `preflight` per branch, and `down`, `status` and `logs` do not call it — so a broken
+plane cannot wedge the teardown or the diagnostic beside it, and part 5 of the check now asserts that
+premise rather than leaving it to a comment. `.github/checks/shared-plane-wiring.sh` was extended
+rather than duplicated: part 4 walks `script:function` pairs (an unliftable function is an error, not
+a skip), part 3 stays quality-only for a reason D69 §4 re-established rather than inherited, and part
+5 asserts the **exact set** of router branches that call `preflight` — `{up, reseed, restart}` — after
+review reproduced both holes in the deny-list it replaced: `up` losing its own `preflight` and a new
+`doctor)` branch gaining one were each green (D69 §10). Test green at 26 with ten new mutations.
+Appendix A re-embedded twice.
+
+**What is NOT done, and it is the honest limit**: the guard has never run *inside* `deploy-dev.sh`.
+Every measurement is the shipped function lifted out of the file, because the dev estate is still
+wedged — now **NEW-31**, with the five containers' state read off docker and the remedy named. Nothing
+below is stale; it is kept for the reasoning.
 
 Found by **D66** while closing NEW-25 on the quality box, and it is the same blind spot in the dev
 script's own **`shared_plane`** — `deploy/deploy-dev.sh:216`, and note the name: the quality copy is
@@ -2379,6 +2399,69 @@ right lifetime, and compose does not write one that names the checkout; setting 
 `docker volume create` before the first `up`, which a first run has no reason to do. Whoever takes it
 should start by asking whether the answer is a record at all, or whether it is D67 §4's fourth shape
 — stop binding a host path for the seed — which would make the question moot rather than answered.
+
+---
+
+## NEW-31 — nothing can exercise a dev-estate change, and the five containers say why · READY
+
+Opened by **D69 §7**, which named it rather than touching it. It is the reason NEW-29 waited a package
+and the reason D69 could verify its own fix only by lifting the function out of the file: **two
+successive packages have now been unable to run `deploy-dev.sh` at all.**
+
+Read off docker rather than inferred, on 2026-09-10: five containers, `healthconnect-dev-{gateway,
+catalog,booking,messaging,payout}-1`, state **`restarting`** with `RestartPolicy=no`, since
+2026-08-30, on `healthconnect-dev_default` **alone** — not on `hcnet`. Each dies at context startup in
+Hazelcast's discovery, on `I/O error on GET request for "http://consul:8500/v1/health/service/
+healthconnectcatalog"`. That address is this stack's **own bundled Consul**, which D27 removed: they
+are a pre-D27 estate looping against infrastructure this repository stopped declaring, and their
+compose-derived names (rather than the `hc-market-dev-*` `container_name`s) date them the same way.
+
+**The remedy is already written down and has never been run.** `deploy-dev.sh`'s `down` branch says
+`--remove-orphans` "additionally sweeps the pre-2026-08-31 containers — this stack's own broker and
+Consul, and the un-prefixed service containers — which is how you migrate a running estate onto this
+file". So the item is small; what it is not is *free*, and that is why it is an item. A `down` is a
+write to the daemon four products share a plane on, `CLAUDE.md`'s "un-killable" claim about these five
+is **untested** (D69 read them and touched nothing), and the volumes underneath hold the only seeded
+dev data anybody has — `healthconnect-dev_{gateway,catalog,booking,messaging,payout}-data`, which a
+`--clean` would take with it.
+
+Whoever takes it should decide the order deliberately: sweep first and then `up`, or `up` and let
+`--remove-orphans` do it, are not the same act on a stack whose containers are in a state docker
+itself is not moving out of. **And it is the package that can finally run what D66 and D69 could
+not** — `./deploy-dev.sh up --no-build --services catalog`, then the shared-plane preflight against a
+real estate, including the refusal, which no test in CI can reach.
+
+---
+
+## NEW-32 — `check_shared_plane`'s membership probe cannot tell "not on it" from "could not ask" · READY
+
+Opened by **D69 §10**, which fixed it in `deploy-dev.sh` and left the twin alone rather than editing a
+ratified decision's file from outside its scope. It is **D68's fix 2 for a third docker object**, and
+the third time this exact reading has been found in this repository.
+
+`quality/startup.sh`'s `check_shared_plane` ends each loop iteration with
+
+```
+docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{println $k}}{{end}}' "$c" 2>/dev/null \
+  | grep -Fxq "$SHARED_NETWORK" || die "$c is running but is not on '$SHARED_NETWORK' …"
+```
+
+so a daemon that cannot answer is reported as a broker **on the wrong network** — in the very function
+that grew three separate messages two lines earlier (D66 §7) precisely to stop refusals misdiagnosing
+themselves. **Nothing is unsafe**: both readings are fatal and both stop the `up`, which is why this is
+an item rather than part of D69. What it costs is an operator sent to `hc-infra` to fix a plane that is
+fine, which is the exact cost D66's own optional (3) was taken to remove.
+
+The repair is four lines and is already written in `deploy/deploy-dev.sh`'s copy — capture into a
+variable with `2>&1`, `(( rc == 0 )) || die "docker could not be asked which networks …"`, then
+`printf | grep -Fxq`. Take it verbatim, with the comment, and note that the two copies are **not** a
+verbatim-copy family (D69 §7 argues why they cannot be), so the diff must be read by eye.
+
+Two things whoever takes it should keep. The fail-**closed** direction: an empty template still
+refuses, because the grep finds nothing. And part 4 of `.github/checks/shared-plane-wiring.sh` stubs
+docker with a function that always succeeds, so **no CI mutation can see this either way** — measure it
+with a stub that answers `running` and then fails, which is how D69 measured both readings of the dev
+copy.
 
 ---
 

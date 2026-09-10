@@ -31,6 +31,15 @@
 #     address a different plane from the `up` that made the containers. Asked BEHAVIOURALLY, by
 #     running `env_for_compose` out of the file and reading the environment it leaves.
 #
+#     QUALITY ALONE, and D69 re-established the reason rather than inheriting it. `deploy-dev.sh`
+#     has no `env_for_compose`: it exports the three at the top level, above the router, so every
+#     action carries them. But the property that export buys quality is one dev already has by
+#     construction — dev's SHARED_* are resolved from the environment and nowhere else, and every
+#     way of putting a value there (`export`, a one-shot `HC_X=… ./deploy-dev.sh up`, or
+#     `deploy/.env`, which is sourced under `set -a`) leaves it in the environment compose reads.
+#     Delete dev's export line and compose still renders the same value. A check on a subject that
+#     cannot fail teaches the wrong lesson about the checks beside it, so there is not one.
+#
 #  4. PREFLIGHT REFUSES A PLANE THE BROKER IS NOT ON. "Running" and "on the network this stack
 #     joins" are different questions and nothing asked the second until D66: measured against a
 #     throwaway empty network, the whole of `check_shared_plane` passed and its success line printed
@@ -39,17 +48,57 @@
 #     with `docker` stubbed, including the positive control — a refusal that fires on everything is
 #     not a check.
 #
+#     BOTH SCRIPTS since D69, and the pair is `script:function` rather than a script list because
+#     THE FUNCTION NAMES DIFFER — `check_shared_plane` in quality, `shared_plane` in dev. That
+#     difference is what made this part quality-only: an `awk` range with one name hard-coded lifts
+#     nothing out of the other file, and lifting nothing would have passed. Reproduced against
+#     deploy-dev.sh at d3291a5 before the fix, with a throwaway empty network and the real daemon:
+#     the whole function passed and printed "…on hc-market-d69-probe" (backlog NEW-29).
+#
 #     REACH: the stub answers with a network list, so this catches the refusal being DELETED or
 #     weakened and does not catch the Go template being wrong. That direction was measured by hand
-#     instead (D66 §3): a template naming a field that does not exist yields nothing, the `grep -Fxq`
-#     finds nothing, and preflight refuses — the direction a check about a silent failure has to fail
-#     in. `check_shared_plane` also runs against the real daemon on every `startup.sh --local`.
+#     instead (D66 §3, D69 §2): a template naming a field that does not exist yields nothing, the
+#     `grep -Fxq` finds nothing, and preflight refuses — the direction a check about a silent failure
+#     has to fail in. Both functions also meet the real daemon on every run of their own script.
+#
+#  5. THE EXACT SET OF ACTIONS THAT REACH THE PLANE CHECK. Part 4's refusal is FATAL, and that is
+#     only safe while `down`, `status` and `logs` never call `preflight` — otherwise a broken plane
+#     wedges the one command that takes the stack down and the one that would show you why. In
+#     quality the equivalent is a router that exits before preflight and is pinned by D67's own test;
+#     in dev the router is a `case` at the foot of the file calling `preflight` per branch, so the
+#     assertion is about branches.
+#
+#     AN ALLOW-LIST, `{up, reseed, restart}`, compared as a SET. A per-branch deny-list was written
+#     first and both of its holes were reproduced (D69 §10): deleting the `preflight` line under
+#     `up)` left it green — an `up` that starts the estate with no plane check at all — and a new
+#     `doctor) preflight; compose ps ;;` branch left it green too. It counts, it does not attribute:
+#     the same limitation CLAUDE.md already records for the CRUD gate, recreated in a new check. A
+#     missing branch, an unreadable router, no labels at all and nothing calling preflight anywhere
+#     are each their own error, because every one of them would satisfy a deny-list by reading
+#     nothing.
+#
+#     REACH: what is matched is a DIRECT textual call inside the branch. Indirection is unseen —
+#     `plane_gate() { preflight; }` above the router with `plane_gate` in `down)` is green, measured
+#     — and the exact-set formulation does not close it, so the ok line says "direct calls" rather
+#     than "reaches". Comments are stripped with the SHELL stripper first: this subject is a shell
+#     script, and the Java one removes nothing from it while exiting 0.
+#
+#  TWO LISTS ARE ENUMERATED HERE and neither is derived, which needs its justification stated rather
+#  than assumed — this repository's enumerated lists have gone stale or failed open, and the zone-write
+#  check is the precedent for saying why one is acceptable. `PLANE_FNS` names two `script:function`
+#  pairs and `DEV_PREFLIGHT_BRANCHES` names three actions. Within the files they name, every failure
+#  mode exits 1 loudly: a function that cannot be lifted, a router that cannot be read, a branch that
+#  is missing, and any difference in the gated set. What neither reaches is a THIRD script growing a
+#  plane preflight of its own — there is no derivation available (a shared plane is not declared in a
+#  model file the way an entity or a `messageBroker` is), so that day the pair goes in here by hand.
+#  Both lists are also the seam the test beside this file drives, which is what keeps them exercised.
 #
 #  Inputs are overridable so the test beside this file can construct each broken state and watch this
 #  fail — a check nobody has seen fail is a check of nothing.
 #
 #      ./.github/checks/shared-plane-wiring.sh
 #      HC_PAIRS="quality/compose.yml:quality/startup.sh" ./.github/checks/shared-plane-wiring.sh
+#      HC_PLANE_FNS="quality/startup.sh:check_shared_plane" ./.github/checks/shared-plane-wiring.sh
 # ==============================================================================
 set -Eeuo pipefail
 
@@ -57,10 +106,27 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 # compose-file:script pairs. Both are checked for parts 1 and 2; the quality script alone is checked
-# for parts 3 and 4, because it is the only one that resolves and then hands the values to compose
-# itself — deploy-dev.sh exports them at the top level and has no env_for_compose to run.
+# for part 3, because it is the only one that resolves and then hands the values to compose itself —
+# deploy-dev.sh exports them at the top level and has no env_for_compose to run. See the header for
+# why that is a subject that cannot fail rather than a gap.
 PAIRS="${HC_PAIRS:-quality/compose.yml:quality/startup.sh deploy/docker/docker-compose.dev.yml:deploy/deploy-dev.sh}"
 STARTUP="${HC_STARTUP:-quality/startup.sh}"
+
+# script:function pairs for part 4. The name differs between the two copies and that is exactly what
+# kept dev unguarded until D69 — an `awk` range carrying quality's name lifts nothing out of
+# deploy-dev.sh, and a part 4 that lifted nothing would have gone green. Each entry is checked for
+# both halves below: an unliftable function is an error, never a skip.
+PLANE_FNS="${HC_PLANE_FNS:-quality/startup.sh:check_shared_plane deploy/deploy-dev.sh:shared_plane}"
+
+# Part 5's subject: the dev router, and the EXACT set of actions allowed to reach a fatal preflight.
+# An allow-list rather than a list of teardowns, so an action nobody anticipated is red until it is
+# argued — see part 5's own comment for the two mutations that made that necessary.
+DEV_SCRIPT="${HC_DEV_SCRIPT:-deploy/deploy-dev.sh}"
+DEV_PREFLIGHT_BRANCHES="${HC_DEV_PREFLIGHT_BRANCHES:-up reseed restart}"
+# Overridable for one reason: so the test beside this file can point it at nothing and watch the
+# missing-stripper branch fire. Four checks trust that one file, and absent it two of them once
+# printed `ok` having read nothing (D62's review) — a guard nobody has watched is not a guard.
+STRIP_SH="${HC_STRIP_SH:-$ROOT/.github/checks/strip-sh-comments.awk}"
 
 # The compose key the shared plane is declared under, in both files. Enumerated rather than derived,
 # and that is safe here only because an absent key is REFUSED below rather than skipped: both files
@@ -214,13 +280,20 @@ printf '  exports: %s\n' "$exported"
   || err "$STARTUP's env_for_compose exports '$exported', wanted '$P_NET|$P_CONSUL|$P_KAFKA'. Without all three, the value preflight checked is not the value compose interpolates — and a '--down' can address a different plane from the 'up' that made the containers. See decisions.md D66."
 
 # --- 4. Preflight must refuse a plane the broker and Consul are not on ---------------------------
-printf '\n%s: check_shared_plane\n' "$STARTUP"
-plane() { # plane <networks the stubbed containers are on, space separated>
+#
+# Both copies, each named with its own function — see the header for why a shared name could not be
+# assumed. `lifted` is checked before either state is run: an `awk` range that matches nothing evals
+# nothing, the function is then simply absent, and both probes would report the same thing for a
+# reason that has nothing to do with the plane.
+plane() { # plane <script> <function> <networks the stubbed containers are on, space separated>
   (
     set +e
-    on_networks="$1"
+    script="$1" fn="$2" on_networks="$3"
     ok() { printf 'OK\n'; }
     die() { printf 'DIE %s\n' "$*"; exit 3; }
+    # deploy-dev.sh's shared_plane ends with a note about a running quality stack; these keep it
+    # quiet without answering anything the assertions below read. Quality's copy calls neither.
+    log() { :; }; warn() { :; }; TOPIC_PREFIX="ci."
     # Stands in for the daemon. `inspect -f` is answered by which template it was handed; everything
     # else succeeds, so the ONLY thing that can refuse below is the membership question.
     docker() {
@@ -237,21 +310,117 @@ plane() { # plane <networks the stubbed containers are on, space separated>
     }
     SHARED_NETWORK="$P_NET"; SHARED_CONSUL="$P_CONSUL"; SHARED_KAFKA="$P_KAFKA"
     SHARED_INFRA_DIR=/nowhere
-    eval "$(awk '/^check_shared_plane\(\) \{/,/^\}/' "$STARTUP")"
-    check_shared_plane
+    # deploy-dev.sh's one-line `running()` helper, if this script has one. Harmless where it does
+    # not: the grep matches nothing and evals nothing.
+    eval "$(grep -E '^running\(\) \{.*\}$' "$script" || true)"
+    eval "$(awk -v fn="$fn" 'index($0, fn "() {") == 1, /^\}/' "$script")"
+    "$fn"
   ) 2>&1 || true   # a refusal is one of the two ANSWERS here, not a failure of this script
 }
-member="$(plane "$P_NET other-net")"
-stranger="$(plane "other-net third-net")"
-printf '  on the network:  %s\n  off it:          %s\n' "${member%%$'\n'*}" "${stranger%%$'\n'*}"
-case "$member" in
-  OK*) ok "preflight passes when the broker and Consul are on the network the stack joins" ;;
-  *)   err "$STARTUP's check_shared_plane refuses a shared plane that IS on the network the stack joins: '$member'. A refusal that fires on the correct state is not a check. See decisions.md D66." ;;
-esac
-case "$stranger" in
-  DIE*) ok "preflight refuses a shared plane that is not on the network the stack joins" ;;
-  *)    err "$STARTUP's check_shared_plane accepted a Consul and a broker that are on neither the network the stack joins ('$stranger'). Running is not the same question as reachable: the five services would come up healthy and publish into nowhere, which is decisions.md D27's silence. See decisions.md D66." ;;
-esac
+for entry in $PLANE_FNS; do
+  s_plane="${entry%%:*}"; fn_plane="${entry#*:}"
+  printf '\n%s: %s\n' "$s_plane" "$fn_plane"
+  if [[ ! -f "$s_plane" ]]; then
+    err "$s_plane does not exist, so nothing was established about its shared-plane preflight. See decisions.md D69."
+    continue
+  fi
+  lifted="$(awk -v fn="$fn_plane" 'index($0, fn "() {") == 1, /^\}/' "$s_plane")"
+  if [[ -z "$lifted" ]]; then
+    err "$s_plane declares no function '$fn_plane', so part 4 read nothing about it. The two copies of this preflight are NOT called the same thing (check_shared_plane in quality, shared_plane in dev), and a range that lifts nothing passes both probes below for a reason that has nothing to do with the plane. See decisions.md D69 and backlog NEW-29."
+    continue
+  fi
+  member="$(plane "$s_plane" "$fn_plane" "$P_NET other-net")"
+  stranger="$(plane "$s_plane" "$fn_plane" "other-net third-net")"
+  printf '  on the network:  %s\n  off it:          %s\n' "${member%%$'\n'*}" "${stranger%%$'\n'*}"
+  case "$member" in
+    OK*) ok "$fn_plane passes when the broker and Consul are on the network the stack joins" ;;
+    *)   err "$s_plane's $fn_plane refuses a shared plane that IS on the network the stack joins: '$member'. A refusal that fires on the correct state is not a check. See decisions.md D66." ;;
+  esac
+  case "$stranger" in
+    DIE*) ok "$fn_plane refuses a shared plane that is not on the network the stack joins" ;;
+    *)    err "$s_plane's $fn_plane accepted a Consul and a broker that are on neither the network the stack joins ('$stranger'). Running is not the same question as reachable: the five services would come up healthy and publish into nowhere, which is decisions.md D27's silence. See decisions.md D66 and D69." ;;
+  esac
+done
+
+# --- 5. The EXACT set of actions that reach that refusal ------------------------------------------
+#
+# Part 4's refusal is fatal in both scripts, and in deploy-dev.sh that is safe only because the
+# router's `down`, `status` and `logs` branches never call `preflight` — a broken plane must not be
+# able to wedge the command that takes the stack down, nor the one you would read to find out why.
+# Quality's equivalent is asserted by D67's own test (`router < preflight < call`), which is why only
+# the dev router is asked here.
+#
+# THE EXACT SET, not a deny-list, and both directions were reproduced before this was written
+# (D69 §10). A per-branch "down does not call preflight" loop counted and did not attribute: deleting
+# the one `preflight` line under `up)` left the check GREEN, shipping an `up` that starts the estate
+# with no plane check at all — NEW-29's defect in a stronger form, the question never asked rather
+# than answered wrongly. And a deny-list cannot see an action nobody anticipated: `doctor) preflight;
+# compose ps ;;` added to the router was green too, which is the next diagnostic wedged by the very
+# property this part exists to pin. D67's rule, one guard along: the EXACT set is required, not
+# "the ones we thought to ask about".
+#
+# WHAT THIS MATCHES IS A DIRECT TEXTUAL CALL IN THE BRANCH — say it plainly, because the ok line
+# used to claim "reach". Indirection is invisible: `plane_gate() { preflight; }` above the router with
+# `plane_gate` in `down)` leaves this green (measured), and the exact-set formulation does not close
+# it. Keep the call direct. The error message names the same limit from the other side.
+printf '\n%s: the router\n' "$DEV_SCRIPT"
+if [[ ! -f "$STRIP_SH" ]]; then
+  err "$STRIP_SH is missing, so part 5 could not strip comments and did not run. A check that reads nothing is not a check that found nothing."
+elif [[ ! -f "$DEV_SCRIPT" ]]; then
+  err "$DEV_SCRIPT does not exist, so nothing was established about which of its actions reach preflight. See decisions.md D69."
+else
+  stripped="$(awk -f "$STRIP_SH" "$DEV_SCRIPT")"
+  router="$(printf '%s\n' "$stripped" | awk '/^case "\$COMMAND" in/,/^esac/')"
+  # One pass, attributing each call to the branch it is in. A branch runs from its label to the line
+  # before the next label — never to the first `;;`, which a nested `case` inside a branch would end
+  # early and silently. `preflight` is matched as a CALL and not as the word: it appears in one of
+  # shared_plane's own refusal messages, and a subject-exists control satisfied by a string would
+  # report a subject for a script that has none.
+  branch_calls="$(printf '%s\n' "$router" | awk '
+    function emit() { if (label != "") { print label, has } label = ""; has = 0 }
+    match($0, /^  [A-Za-z_*|.-]+\)/) {
+      emit()
+      label = substr($0, 3, RLENGTH - 3)
+      rest  = substr($0, RLENGTH + 1)
+      if (rest ~ /(^|[^A-Za-z_])preflight([^A-Za-z_]|$)/) has = 1
+      next
+    }
+    /^esac/ { emit(); next }
+    label != "" && $0 ~ /(^|[^A-Za-z_])preflight([^A-Za-z_]|$)/ { has = 1 }
+    END { emit() }
+  ')"
+  labels="$(printf '%s\n' "$branch_calls" | awk 'NF {print $1}' | sort | tr '\n' ' ')"
+  gated="$(printf '%s\n' "$branch_calls" | awk '$2 == 1 {print $1}' | sort | tr '\n' ' ')"
+  want="$(printf '%s\n' $DEV_PREFLIGHT_BRANCHES | sort | tr '\n' ' ')"
+  printf '  router branches: %s\n  calling preflight: %s\n  expected: %s\n' \
+    "${labels:-«none»}" "${gated:-«none»}" "$want"
+
+  if [[ -z "$router" ]]; then
+    err "$DEV_SCRIPT has no 'case \"\$COMMAND\" in' router this check can read, so nothing below was established. See decisions.md D69."
+  elif [[ -z "${labels// /}" ]]; then
+    err "$DEV_SCRIPT's router yielded no branch labels this check can read, so which actions reach the shared-plane refusal was established by reading nothing. An empty subject is not a clean one. See decisions.md D69."
+  elif [[ -z "${gated// /}" ]]; then
+    err "$DEV_SCRIPT never calls preflight from any router branch, so 'the teardown actions do not call it' is true of a script that checks no plane on any action — which is backlog NEW-29's defect in a stronger form: the question never asked rather than answered wrongly. See decisions.md D69."
+  else
+    # Every branch that MUST call it has to exist, or the set comparison is against a ghost: rename
+    # `up)` and both halves of the difference are reported rather than one.
+    missing_branch=""
+    for a in $DEV_PREFLIGHT_BRANCHES; do
+      [[ " $labels " == *" $a "* ]] || missing_branch+="$a "
+    done
+    if [[ -n "$missing_branch" ]]; then
+      err "$DEV_SCRIPT's router has no branch for: ${missing_branch% }— so the set of actions that reach the shared-plane refusal was compared against branches that are not there. Rename an action and this check must be told, not left comparing against a ghost. See decisions.md D69."
+    fi
+    if [[ "$gated" == "$want" ]]; then
+      ok "$DEV_SCRIPT's router calls preflight from exactly {${want% }} — direct calls in the branch; see the header on indirection"
+    else
+      not_gated=""; unexpected=""
+      for a in $want;  do [[ " $gated " == *" $a "* ]] || not_gated+="$a "; done
+      for a in $gated; do [[ " $want "  == *" $a "* ]] || unexpected+="$a "; done
+      err "$DEV_SCRIPT's router calls preflight from {${gated% }}; it must be exactly {${want% }}.${not_gated:+ Must call it and do not: ${not_gated% }.}${unexpected:+ Call it and are not accounted for: ${unexpected% }.} Since decisions.md D69 preflight refuses a shared plane the broker is not on, FATALLY — so an action that gained it can be wedged by a broken plane (a teardown, or the diagnostic you would read to find out why), and an action that lost it starts the estate with no plane check at all. Add it here with an argument, or take it out of the branch."
+    fi
+  fi
+fi
 
 printf '\n'
 if (( fail )); then printf 'shared-plane wiring: FAILED\n'; else printf 'shared-plane wiring: ok\n'; fi

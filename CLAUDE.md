@@ -108,7 +108,37 @@ network this stack joins" are different questions, and `check_shared_plane` aske
 measured against a throwaway empty network the whole function passed and its own success line printed
 `…on hc-market-d66-probe`. Harmless while `quality/compose.yml` hardcoded `hcnet`, live the moment the
 override started moving the join, and what it would have produced is D27's silence — five healthy
-services publishing into nowhere. `deploy-dev.sh`'s copy still has it (backlog **NEW-29**).
+services publishing into nowhere.
+
+**`deploy-dev.sh`'s copy is fixed too, since D69 (backlog NEW-29) — and it is called `shared_plane`,
+not `check_shared_plane`.** The name is the whole reason the fix did not travel with D66: a grep
+carried across finds nothing in `deploy-dev.sh`, and an `awk` range carrying one name lifts nothing out
+of the other file — which is why the CI check's membership part now walks **`script:function` pairs**
+and treats an unliftable function as an error rather than a skip. Both copies are **fatal**, and in dev
+that is safe on its own argument rather than quality's: dev's router is a `case` at the foot of the
+file calling `preflight` per branch, and `down`, `status` and `logs` do not call it, so a broken plane
+cannot wedge the teardown or the diagnostic beside it.
+
+**CI pins that premise as the EXACT SET of branches calling `preflight` — `{up, reseed, restart}` —
+and a deny-list over the teardowns was not enough** (D69 §10). Written that way first, it *counted and
+did not attribute*: deleting `up`'s own `preflight` left CI green, which ships an `up` that starts the
+estate with the plane, the JDK, the seed file and the profile never checked at all, and a new
+`doctor) preflight; …` branch was green too. Both measured. It is the same limitation this file already
+records for the CRUD gate, recreated in a new check — so an action that gains or loses `preflight` is
+red until it is argued in the decision. **What it matches is a DIRECT call in the branch**: a
+`plane_gate() { preflight; }` wrapper is invisible (measured), which is why the success line says
+"direct calls" rather than "reaches". Keep the call direct.
+
+**Verified by lifting the function out of the file against the real daemon, never by
+running `deploy-dev.sh`**: the dev estate is wedged (backlog **NEW-31** — five containers `restarting`
+since 2026-08-30, off `hcnet`, looping on `http://consul:8500`, the Consul D27 removed), so no package
+since D66 has been able to run that script at all.
+
+**Both membership probes fail closed; only dev's says WHY.** `deploy-dev.sh` status-checks the
+`docker inspect` behind its membership question, so an unanswerable daemon is reported as such rather
+than as a broker on the wrong network; `quality/startup.sh`'s copy still folds the two together, which
+is **NEW-32** and cannot be caught by CI either way, because part 4 stubs docker with a function that
+always succeeds.
 
 Only the host mapping moves. Inside the containers every service listens on **8080**, because the
 compose files set `SERVER_PORT: 8080` explicitly — overriding the per-service `serverPort` the JDL
@@ -517,7 +547,10 @@ compose **project** is `name: healthconnect-dev`, and that is what actually deci
   `healthconnect-dev_{gateway,catalog,booking,messaging,payout}-data`, with no `hc-market` anywhere;
 - any container started **before** that directive was added carries the compose-derived
   `healthconnect-dev-<svc>-1`, and five such containers have been sitting in `Restarting` on this
-  workstation since 2026-08-30.
+  workstation since 2026-08-30. **D69 read why**: they are on `healthconnect-dev_default` alone, off
+  `hcnet`, dying in Hazelcast's discovery on `http://consul:8500` — this stack's own bundled Consul,
+  which D27 removed. They are a pre-D27 estate, and while they are there nothing can run
+  `deploy-dev.sh` (backlog **NEW-31**, which also names the remedy the script already documents).
 
 So `docker volume ls | grep -i market` and `docker ps -a | grep -i market` both answer with the
 **quality** stack alone, which reads as "there is no dev estate here" rather than as "you asked the

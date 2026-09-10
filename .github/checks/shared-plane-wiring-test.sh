@@ -22,6 +22,29 @@
 #   11  one service given its own broker    — two planes in one estate, reported as a count
 #   12  the compose file absent             — an unreadable subject, which must not read as clean
 #
+#  Ten more since D69, all about deploy-dev.sh's copy — backlog NEW-29. Trust the list and not the
+#  number; this repository has written that count wrong three times. The first two are cases 9 and
+#  10's shapes one script along; the rest are part 5, which exists because part 4's refusal is FATAL
+#  and that is only safe while a teardown cannot reach it. Cases 20 and 21 are the two that a
+#  per-branch DENY-LIST version of part 5 passed — reproduced at review, which is why it is an exact
+#  set now (D69 §10):
+#
+#   13  the DEV membership refusal deleted  — the defect D69 closed, back again
+#   14  the dev function renamed            — an awk range that lifts nothing must not pass
+#   15  preflight added to `down`           — a broken plane would wedge the teardown
+#   16  the dev router renamed              — part 5's subject gone, which must not read as clean
+#   17  an expected branch renamed          — the set compared against a branch that is not there
+#   18  preflight never called at all       — every teardown assertion true, of a script that checks
+#                                             no plane on any action
+#   19  the shell stripper absent           — one file four checks trust, and two of them once
+#                                             printed `ok` having read nothing without it
+#   20  up's own preflight deleted          — an `up` that starts the estate with NO plane check;
+#                                             the deny-list passed this, and it is the worse half
+#   21  a new branch gains preflight        — `doctor) preflight; …`: the next diagnostic wedged by a
+#                                             broken plane, invisible to a deny-list
+#   22  the branch labels unreadable        — a set comparison over zero labels, which is this
+#                                             family's empty-subject fail-open
+#
 #      ./.github/checks/shared-plane-wiring-test.sh
 # ==============================================================================
 set -Eeuo pipefail
@@ -45,10 +68,32 @@ fresh() { # fresh <case> -> prints the sandbox directory holding a pristine copy
   printf '%s' "$d"
 }
 
+# D69's sandbox: deploy-dev.sh alone. Parts 1 and 2 are left pointed at the REAL dev pair, because
+# every mutation below is inside a function body or the router and neither part reads those — and a
+# copy of the compose file would have to be rendered from a directory its relative paths do not
+# describe. Part 4 and part 5 are pointed at the copy.
+fresh_dev() { # fresh_dev <case> -> prints the sandbox directory holding a pristine deploy-dev.sh
+  local d="$WORK/$1"; mkdir -p "$d"
+  cp "$ROOT/deploy/deploy-dev.sh" "$d/deploy-dev.sh"
+  printf '%s' "$d"
+}
+
+# HC_PLANE_FNS as well as HC_STARTUP, or part 4 would silently walk the REAL scripts while the case
+# mutated a copy — case 9 would then be green for a reason that has nothing to do with the mutation.
 run_check() { # run_check <sandbox> -> exit status of the check over that sandbox only
   ( cd "$ROOT" && HC_PAIRS="$1/compose.yml:$1/startup.sh" HC_STARTUP="$1/startup.sh" \
+      HC_PLANE_FNS="$1/startup.sh:check_shared_plane" HC_DEV_SCRIPT="$ROOT/deploy/deploy-dev.sh" \
       bash -e "$CHECK" >"$1/out.txt" 2>&1 ) && return 0 || return $?
 }
+
+run_dev_check() { # run_dev_check <sandbox holding deploy-dev.sh>
+  ( cd "$ROOT" && HC_PAIRS="deploy/docker/docker-compose.dev.yml:deploy/deploy-dev.sh" \
+      HC_STARTUP="quality/startup.sh" \
+      HC_PLANE_FNS="$1/deploy-dev.sh:shared_plane" HC_DEV_SCRIPT="$1/deploy-dev.sh" \
+      bash -e "$CHECK" >"$1/out.txt" 2>&1 ) && return 0 || return $?
+}
+
+RUNNER=run_check
 
 # expect_red <case> <what changed> <a string the mutant must now contain> — plus the control that
 # the ORIGINAL text is gone, because a sed that matched nothing leaves a green check reading green
@@ -65,7 +110,7 @@ expect_red() { # expect_red <sandbox> <name> <must-be-present> <must-be-absent> 
     bad "$name — the mutation did not replace the original ('$absent' is still in the file)"; return
   fi
   if [[ "$f" == *.sh ]] && ! bash -n "$f"; then bad "$name — the mutant script does not parse, so the check aborted rather than failing"; return; fi
-  if run_check "$d"; then
+  if "$RUNNER" "$d"; then
     bad "$name — the check PASSED on a broken tree"
     sed -n '1,200p' "$d/out.txt" >&2
     return
@@ -141,6 +186,102 @@ expect_red "$d" "11 one service given its own Consul" 'SPRING_CLOUD_CONSUL_HOST:
 
 d="$(fresh m12)"; rm -f "$d/compose.yml"
 if run_check "$d"; then bad "12 the compose file absent — the check PASSED"; else note "12 the compose file absent → red"; fi
+
+# ---------------------------------------------------------------- deploy-dev.sh, D69 / NEW-29 ----
+#
+# The subject changes here, so the runner does too: parts 4 and 5 are pointed at a copy of
+# deploy-dev.sh while parts 1-3 stay on the real files. RUNNER is restored at the end, because a
+# harness that quietly keeps testing the wrong subject is this repository's most repeated defect.
+RUNNER=run_dev_check
+
+printf '\ndeploy-dev.sh: the membership refusal (decisions.md D69)\n'
+d="$(fresh_dev m13)"
+sed -i '/grep -Fxq "\$SHARED_NETWORK"/,+1d;/docker inspect -f .{{range \$k, \$v := \.NetworkSettings\.Networks}}/d' "$d/deploy-dev.sh"
+expect_red "$d" "13 the DEV membership refusal deleted" 'exists but is not running' 'grep -Fxq' "$d/deploy-dev.sh" "accepted a Consul and a broker"
+
+# The function names differ between the two copies, which is precisely what left dev unguarded until
+# D69: a range carrying the other name lifts nothing, and part 4 would then run both probes against
+# an undefined function and could not tell you why.
+#
+# No must-be-absent string on this one, and that is a limit of the harness rather than a shortcut:
+# `expect_red`'s absence test is a fixed-string grep, so the only text that would distinguish the
+# renamed definition from the original is `^shared_plane() {` — an anchor -F cannot express, and a
+# bare `shared_plane() {` is a substring of the mutant itself. A newline-prefixed pattern is worse
+# than useless: grep -F splits on newlines, so the empty first pattern matches every file. What
+# stands in for it is that this `sed` substitutes rather than inserts, and the presence assertion
+# names the substituted text.
+d="$(fresh_dev m14)"; sed -i 's|^shared_plane() {|shared_plane_renamed() {|' "$d/deploy-dev.sh"
+expect_red "$d" "14 the dev plane function renamed" 'shared_plane_renamed() {' '' "$d/deploy-dev.sh" "declares no function 'shared_plane'"
+
+# PART 5 IS AN EXACT SET, so both directions are constructed: an action that GAINED preflight (which
+# a broken plane can then wedge) and one that LOST it (which starts the estate with no plane check at
+# all). Cases 20 and 21 are the two the deny-list version of this part passed, reproduced at review
+# before it was rewritten — 20 is the one the reviewer found first and the more dangerous of the two.
+printf '\ndeploy-dev.sh: the exact set of actions that reach a fatal preflight\n'
+d="$(fresh_dev m15)"; sed -i 's|^  down)$|  down)\n    preflight|' "$d/deploy-dev.sh"
+expect_red "$d" "15 preflight added to the down branch" '  down)
+    preflight' '' "$d/deploy-dev.sh" "are not accounted for: down"
+
+d="$(fresh_dev m16)"; sed -i 's|^case "\$COMMAND" in$|case "${COMMAND}" in|' "$d/deploy-dev.sh"
+expect_red "$d" "16 the dev router renamed" 'case "${COMMAND}" in' 'case "$COMMAND" in' "$d/deploy-dev.sh" "router this check can read"
+
+# An action RENAMED, not deleted: deleting `status)` removes an action and is nobody's defect, while
+# renaming one this check is told about leaves it comparing the set against a branch that is not
+# there. Both halves of the difference must be reported — `up` missing, `start` unaccounted for.
+d="$(fresh_dev m17)"; sed -i 's|^  up)$|  start)|' "$d/deploy-dev.sh"
+expect_red "$d" "17 an expected branch renamed" '  start)' '  up)' "$d/deploy-dev.sh" "has no branch for: up"
+
+d="$(fresh_dev m18)"; sed -i -e 's|^    preflight$|    :|' -e 's|^  restart) preflight$|  restart) :|' "$d/deploy-dev.sh"
+expect_red "$d" "18 preflight never called at all" '  restart) :' '  restart) preflight' "$d/deploy-dev.sh" "never calls preflight from any router branch"
+
+# 20. THE ONE THE DENY-LIST PASSED. `up` is the only action that both joins the plane and is the
+#     estate's entry point, so an `up` with no preflight is NEW-29's defect in a stronger form: not a
+#     plane checked wrongly but a plane, a JDK, a seed file and a profile never checked at all. Two
+#     `    preflight` lines exist (up, reseed); this deletes the FIRST, which is up's.
+#     `sed`'s `n` rather than a first-match `awk`, so the line replaced is provably the one after
+#     `  up)` and a single-line presence assertion is enough to say WHICH branch lost it. A count
+#     assertion stands beside it because a marker's presence cannot say the original went: two
+#     `    preflight` lines must become one, and `expect_red`'s absence test is a fixed-string grep
+#     that cannot count (nor span lines — see case 14).
+d="$(fresh_dev m20)"
+sed -i '/^  up)$/{n;s|^    preflight$|    : # D69 test: up no longer preflights|;}' "$d/deploy-dev.sh"
+n20="$(grep -c '^    preflight$' "$d/deploy-dev.sh" || true)"
+[[ "$n20" == 1 ]] || bad "20 — the mutation did not apply as intended ($n20 bare preflight call lines, wanted 1)"
+expect_red "$d" "20 up's preflight deleted (the deny-list passed this)" ': # D69 test: up no longer preflights' '' "$d/deploy-dev.sh" "Must call it and do not: up"
+
+# 21. THE OTHER ONE. A deny-list cannot see an action nobody anticipated, and the next diagnostic
+#     added to this router is exactly that: wedged by a broken plane, with CI silent.
+d="$(fresh_dev m21)"; sed -i 's|^  status)  compose ps ;;$|  status)  compose ps ;;\n  doctor)  preflight; compose ps ;;|' "$d/deploy-dev.sh"
+expect_red "$d" "21 a new branch gains preflight (the deny-list passed this)" '  doctor)  preflight; compose ps ;;' '' "$d/deploy-dev.sh" "are not accounted for: doctor"
+
+# 22. The router is present and its LABELS are not readable — every branch re-indented. A set
+#     comparison over zero labels is the empty-subject fail-open this family keeps producing, so it
+#     must be its own error rather than "nothing calls preflight".
+#     No absence string: a re-indented `      up)` CONTAINS `  up)`, so a fixed-string absence test
+#     would report the mutation as unapplied. A count stands in for it — seven two-space labels must
+#     become none.
+d="$(fresh_dev m22)"
+sed -i -E 's|^  ([a-z*]+\))|      \1|' "$d/deploy-dev.sh"
+n22="$(grep -cE '^  [a-z*]+\)' "$d/deploy-dev.sh" || true)"
+[[ "$n22" == 0 ]] || bad "22 — the mutation did not apply as intended ($n22 two-space labels remain, wanted 0)"
+expect_red "$d" "22 the router's branch labels unreadable" '      up)' '' "$d/deploy-dev.sh" "yielded no branch labels"
+
+RUNNER=run_check
+
+# 19. THE SHELL STRIPPER IS ONE FILE FOUR CHECKS TRUST, and absent it two of them once printed `ok`
+#     having read nothing (D62's review). Part 5 must exit 1 naming the cause instead — asked by
+#     pointing HC_STRIP_SH at nothing, which is the only failure of that file this harness can
+#     construct without touching a file the other three checks are also reading.
+printf '\ndeploy-dev.sh: the stripper part 5 depends on\n'
+d="$WORK/m19"; mkdir -p "$d"
+if ( cd "$ROOT" && HC_STRIP_SH="$d/does-not-exist.awk" bash -e "$CHECK" >"$d/out.txt" 2>&1 ); then
+  bad "19 the shell stripper absent — the check PASSED"
+elif grep -qF -- "could not strip comments and did not run" "$d/out.txt"; then
+  note "19 the shell stripper absent → red, naming the cause"
+else
+  bad "19 the shell stripper absent — red, but not through the door it was aimed at"
+  grep '::error::' "$d/out.txt" >&2 || true
+fi
 
 printf '\n%d ok, %d failed\n' "$pass" "$fail"
 exit $(( fail > 0 ))

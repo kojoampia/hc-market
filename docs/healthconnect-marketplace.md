@@ -1250,14 +1250,65 @@ preflight() {
 # The broker and Consul are hc-infra's, on a network this stack declares external. Compose's own
 # error for a missing external network names the network and nothing else, and the error for a
 # missing broker is no error at all — the apps start, serve, report healthy, and everything they
-# publish goes nowhere. So all three are checked here, by name, with the fix printed.
+# publish goes nowhere. So the network, both containers, both containers' MEMBERSHIP of it, Consul's
+# leader and the broker's answer are all checked here, by name, with the fix printed.
+#
+# `running` survives this function's rewrite because the quality-stack note at the bottom still asks
+# it a question with only two answers: that container is nobody's configuration, so "not there" and
+# "not running" are the same fact about it and neither is an error.
 running() { [[ "$(docker inspect -f '{{.State.Running}}' "$1" 2>/dev/null)" == "true" ]]; }
 shared_plane() {
   local fix="start it with:  (cd $SHARED_INFRA_DIR && ./startup.sh)"
   docker network inspect "$SHARED_NETWORK" >/dev/null 2>&1 \
     || die "the shared network '$SHARED_NETWORK' does not exist — $fix"
-  running "$SHARED_CONSUL" || die "$SHARED_CONSUL is not running — $fix"
-  running "$SHARED_KAFKA"  || die "$SHARED_KAFKA is not running — $fix"
+  for c in "$SHARED_CONSUL" "$SHARED_KAFKA"; do
+    # THREE OUTCOMES, NOT TWO. This was `running "$c" || die "$c is not running"` for all of them,
+    # and the case it misdescribed is the likeliest wrong value somebody will type: hc-infra's own
+    # compose SERVICE names, `shared-consul` and `shared-kafka`, which resolve perfectly from inside
+    # these containers and are not names `docker inspect` can find. Measured against this very
+    # script: HC_SHARED_CONSUL=shared-consul died with "shared-consul is not running — start it with
+    # (cd hc-infra && ./startup.sh)" while hc-infra was running fine and `getent hosts shared-consul`
+    # from a container on hcnet answered 172.21.0.4.
+    #
+    # `2>&1` and the message, rather than the exit status, because docker uses the same status for
+    # "no such container" and "I could not answer". Matched on `o such object` so the leading N is
+    # not a case assumption about somebody else's error string.
+    local probe rc=0
+    probe="$(docker inspect -f '{{.State.Running}}' "$c" 2>&1)" || rc=$?
+    if (( rc != 0 )); then
+      case "$probe" in
+        *"o such object"*)
+          die "docker knows no container called '$c'. This value must be a CONTAINER name, because preflight execs it — a DNS alias is not enough, and hc-infra publishes its compose service names ('shared-consul', 'shared-kafka') as aliases beside the container names, so those resolve from inside a container and fail here (decisions.md D66 §2). The container names are the defaults: hc-shared-quality-consul and hc-shared-quality-kafka." ;;
+        *)
+          die "docker could not be asked about '$c': $probe" ;;
+      esac
+    fi
+    [[ "$probe" == "true" ]] || die "$c exists but is not running — $fix"
+    # ON THE NETWORK THIS STACK IS ABOUT TO JOIN, which is a different question from "running" and
+    # was asked by nothing here until D69 — D66 closed the same blindness in quality/startup.sh and
+    # left this copy open, as backlog NEW-29. Measured against this file before the fix: with
+    # HC_SHARED_NETWORK naming a throwaway EMPTY network, the whole function passed and the line
+    # below printed "…on hc-market-d69-probe", asserting a membership it had never looked for.
+    # It is live rather than theoretical here, because docker-compose.dev.yml interpolates
+    # HC_SHARED_NETWORK on the five app services: the stack really does join what the variable says.
+    # What it prevents is D27's silence — a service whose broker does not resolve starts, serves and
+    # reports healthy, and everything it publishes goes nowhere.
+    #
+    # The container is asked rather than the network, so this reads the same object the two lines
+    # around it read. A Go template that stops matching yields nothing, the grep finds nothing, and
+    # this refuses — the direction a check about a silent failure has to fail in.
+    #
+    # STATUS-CHECKED, like the three arms above it and for the same reason (D69 §10, and D68 took
+    # this finding one script along). Piping `2>/dev/null` straight into the grep folded "docker
+    # could not be asked" into "is not on the network": a daemon flake at this call misdiagnosed
+    # itself as the very refusal the arms above grew three messages to stop misdiagnosing. Both
+    # readings are fatal, so nothing about the outcome changes — only which cause is named.
+    local nets rc2=0
+    nets="$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{println $k}}{{end}}' "$c" 2>&1)" || rc2=$?
+    (( rc2 == 0 )) || die "docker could not be asked which networks '$c' is on, so whether this stack can reach it is unestablished: $nets"
+    printf '%s\n' "$nets" | grep -Fxq "$SHARED_NETWORK" \
+      || die "$c is running but is not on '$SHARED_NETWORK', which is the network this stack joins — so its name would not resolve from any of these five containers, and every one of them would come up healthy and publish into nowhere (decisions.md D27, D66, D69). $fix"
+  done
 
   # A leader, not merely an answering agent: Consul serves /v1/status/leader and `consul members`
   # before it has elected one, and every KV read fails with "No cluster leader" until it does.
@@ -1266,7 +1317,10 @@ shared_plane() {
   docker exec "$SHARED_KAFKA" /opt/kafka/bin/kafka-broker-api-versions.sh \
     --bootstrap-server localhost:9092 >/dev/null 2>&1 \
     || die "$SHARED_KAFKA is not answering — wait, or $fix"
-  ok "shared plane: $SHARED_CONSUL (leader elected), $SHARED_KAFKA on $SHARED_NETWORK"
+  # Every clause here is something that was just asked. The old line ended "…$SHARED_KAFKA on
+  # $SHARED_NETWORK" while nothing had looked at membership at all, which is the defect above
+  # stated as a claim; and it attributed to the broker alone a fact now established for both.
+  ok "shared plane on $SHARED_NETWORK: $SHARED_CONSUL (leader elected) and $SHARED_KAFKA (answering), both on it"
 
   # One bus, two estates — separated by the topic prefix since decisions.md D29, so events no
   # longer cross. This stays as a note rather than a warning because the separation depends on a
