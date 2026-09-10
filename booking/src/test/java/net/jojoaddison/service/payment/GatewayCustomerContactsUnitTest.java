@@ -163,13 +163,55 @@ class GatewayCustomerContactsUnitTest {
         assertThat(contacts().emailOf(LOGIN)).isEmpty();
     }
 
-    /** Case two: it answered, and there is no such account. Empty, with a WARN rather than an ERROR. */
+    /**
+     * Case two: it answered, and there is no such account. Empty, with a WARN rather than an ERROR.
+     *
+     * <p>The 404 has to <strong>name the login</strong> for that conclusion to be available — see the
+     * three cases below, which are D74's review finding.
+     */
     @Test
-    @DisplayName("a login the account store does not know is empty, not unavailable")
+    @DisplayName("a 404 naming this login is empty, not unavailable")
     void anUnknownLoginIsEmpty() {
-        gateway.willAnswer(404, "{}");
+        gateway.willAnswer(404, """
+            {"login":"%s","email":null}""".formatted(LOGIN));
 
         assertThat(contacts().emailOf(LOGIN)).isEmpty();
+    }
+
+    /**
+     * The two causes of a 404, told apart — D74's review.
+     *
+     * <p>Every Spring service in this estate 404s on a path it does not map, so
+     * {@code HEALTHCONNECT_GATEWAY_BASE_URL} misdeployed to catalog, payout or messaging produces a 404
+     * for <strong>every login on the estate</strong>. Reported as "the account store holds no account
+     * named X" that is a deployment fault wearing a per-account fact — the same wrong diagnosis the
+     * 401/403 arm was caught giving for a 500, one arm along, which is why this is a fix and not a
+     * nicety.
+     *
+     * <p>Three shapes, because a body can fail to identify the answerer in three ways and each is a
+     * separate branch of {@code answersAbout}: no body at all (a bodyless 404, which is what this
+     * endpoint itself answered until the review), a body of the wrong shape entirely, and a body about
+     * somebody else.
+     */
+    @Test
+    @DisplayName("a 404 that does not name this login is unavailable, not a fact about the account")
+    void aFourOhFourFromSomethingElseIsUnavailable() {
+        gateway.willAnswer(404, "");
+        assertThatThrownBy(() -> contacts().emailOf(LOGIN))
+            .as("a bodyless 404 could have come from any service in the estate")
+            .isInstanceOf(CustomerContacts.ContactsUnavailable.class);
+
+        gateway.willAnswer(404, """
+            {"type":"https://www.jhipster.tech/problem/problem-with-message","title":"Not Found","status":404}""");
+        assertThatThrownBy(() -> contacts().emailOf(LOGIN))
+            .as("another Spring service's ProblemDetail is not this endpoint's answer")
+            .isInstanceOf(CustomerContacts.ContactsUnavailable.class);
+
+        gateway.willAnswer(404, """
+            {"login":"kofi.asante","email":null}""");
+        assertThatThrownBy(() -> contacts().emailOf(LOGIN))
+            .as("a 404 about somebody else says nothing about the login that was asked for")
+            .isInstanceOf(CustomerContacts.ContactsUnavailable.class);
     }
 
     /**

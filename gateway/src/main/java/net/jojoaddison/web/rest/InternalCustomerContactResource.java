@@ -47,7 +47,13 @@ import reactor.core.publisher.Mono;
  *       contact-lookup token: a person's subject, another login in {@code contact_subject}, or a
  *       lifetime longer than thirty seconds. The filter chain cannot see any of that; it checks the
  *       authority, and an administrator can grant an authority to a real account.
- *   <li><strong>404</strong> — no account carries that login.
+ *   <li><strong>404, carrying the same record with a null email</strong> — no account has that login.
+ *       <strong>The body is not decoration and must not be dropped as such</strong>: a
+ *       {@code HEALTHCONNECT_GATEWAY_BASE_URL} pointed at any other Spring service in the estate 404s
+ *       on this path too, so a bodyless 404 cannot tell "there is no such account" from "you are not
+ *       talking to the account store". Echoing the login is what makes the first claim positive
+ *       evidence rather than an inference from a status code — {@code GatewayCustomerContacts} refuses
+ *       any 404 that does not name the login it asked about. See D74's review section.
  *   <li><strong>200 with a null email</strong> — the account exists and holds no address. Deliberately
  *       distinct from the 404: {@code email} has no {@code @NotNull} on {@code User} or on
  *       {@code AdminUserDTO}, so it is a reachable state, and "we do not know this person" and "we know
@@ -102,7 +108,11 @@ public class InternalCustomerContactResource {
         return users
             .findOneByLogin(login)
             .map(user -> ResponseEntity.ok(new CustomerContact(user.getLogin(), user.getEmail())))
-            .defaultIfEmpty(ResponseEntity.notFound().build());
+            // The 404 carries the record too, naming the login it was asked about — see the class
+            // comment. Deliberately not `notFound().build()`: a bodyless 404 is indistinguishable from
+            // the one any other Spring service in the estate gives for a path it does not map, and
+            // booking would then report a misdeployed base URL as a fact about somebody's account.
+            .defaultIfEmpty(ResponseEntity.status(HttpStatus.NOT_FOUND).body(new CustomerContact(login, null)));
     }
 
     /**

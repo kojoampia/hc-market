@@ -881,6 +881,18 @@ jobs:
       # client — and nothing was red: the ITs mock CatalogClient, health checks only exercise reads,
       # and the one script that would have caught it needs minted tokens. Found by driving a real
       # booking from the prototype, after the images had already shipped to quality.
+      #
+      # WHAT IT DOES NOT SEE, said here so nobody credits it with more reach — D74's review, on the
+      # occasion of the list growing to five. It greps each FILE for the variable name and never asks
+      # which SERVICE carries it: HEALTHCONNECT_GATEWAY_BASE_URL set on catalog's environment block
+      # instead of booking's passes, and booking then falls back to `http://healthconnectgateway`,
+      # which resolves nowhere. Nor does it check the VALUE — a URL naming the wrong container passes.
+      # That is the shape this check has always had (four variables' worth of it), and it is left
+      # alone rather than deepened here: reading the merged per-service environment means
+      # `docker compose config`, which the pepper check already does and which costs a docker on the
+      # runner. What stands behind it for this fifth variable is that booking fails CLOSED — a 502 and
+      # no booking, with an ERROR naming the base URL by name since the review — rather than guessing
+      # an address.
       - name: Cross-service base URLs must be set wherever the service runs
         run: |
           fail=0

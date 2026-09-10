@@ -12401,3 +12401,93 @@ Said in `quality/compose.yml` beside the variable.
 wide and the shape to widen is obvious; what is not obvious, and is nobody's to decide here, is whether a
 phone number is the same disclosure as an email. D50's rule stands either way: neither adapter gets a
 method that pays the professional, and Act 987 stays a stated blocker with no code behind it (D72 §4).
+
+### 6. Reviewed 2026-09-10 — one should-fix and four optionals, all applied; two of the five inverted their own premise
+
+The verdict was that the endpoint would ship on this evidence, with no blocking finding. What the review
+**verified independently** is worth recording, because two of the claims it checked are stronger than the
+ones this decision made for them:
+
+- **`ROLE_CUSTOMER_CONTACT_READ` is granted by no code path**, grepped across both services' `src/main`:
+  the string exists only in the two `ContactLookupToken` copies. Registration assigns `ROLE_USER`,
+  `PUT /api/account` carries no authorities, and D61's migration seeds only `ROLE_ADMIN`/`ROLE_USER`.
+- **`system:contact-lookup` is unconstructible as a login.** `Constants.LOGIN_REGEX` admits no colon and
+  is enforced by `@Pattern` on `User.login`, `AdminUserDTO.login` and `UserResource`'s path variables. So
+  §3's "matches no user in any store" is enforced by **validation**, not by convention — which is a
+  stronger claim than the one made above, and it is the reason the subject check is the right narrowing
+  to lean on.
+- **The corrected premise in §3 was re-derived independently, two legs**: the generated chain claims
+  everything except four static prefixes and ends at `/management/**` with no `anyExchange()`, and
+  `DelegatingReactiveAuthorizationManager.check` completes **empty** for an unmatched exchange, which
+  `verify` maps to `AccessDeniedException` through `switchIfEmpty`. Denial, not fall-through — matching
+  the measured 401/403 pair exactly.
+- **No single narrowing can be deleted green.** The review's main structural worry was that
+  `aPersonHoldingTheAuthorityIsStillRefused` is over-determined, refused by subject *and* lifetime at
+  once; the unit test isolates each — `aPersonsTokenIsRefused` with an otherwise-valid thirty-second
+  token, `theNamedCustomerIsTheOnlyOne`, `theLifetimeIsChecked`.
+
+#### The fix: a 404 from the wrong host was logged as a fact about the account
+
+`GatewayCustomerContacts`' `NotFound` arm said *"the account store holds no account named X"*. **Every
+Spring service in this estate 404s on a path it does not map**, so a `HEALTHCONNECT_GATEWAY_BASE_URL`
+misdeployed to catalog, payout or messaging produces that line for **every login on the estate** — a
+deployment fault reported as a per-account fact. It is diagnosis rather than disclosure, because the
+money path still fails closed either way; what makes it worth fixing is that the arm immediately below
+it already carries this exact lesson, applied to a 500 and not to this.
+
+**The stronger of the two offered shapes was taken, and it is not the one the review proposed**, because
+that one could not work here: checking the 404 body is "the gateway's own ProblemDetail" fails against
+our own endpoint, which answered `ResponseEntity.notFound().build()` — **no body at all**. Rather than
+reason from an absence, the endpoint now answers its 404 with **the same record, naming the login it was
+asked about**, and booking refuses any 404 that does not carry it. That is the *same* discriminator the
+200 path already used, applied to the refusal: this service establishes who answered from the answer
+naming the question, on both paths, rather than from a status code and a base URL it was configured with.
+
+Three ways a body can fail to identify the answerer are three branches, each with its own case: no body,
+a body of another shape (a real JHipster `ProblemDetail` is the fixture), and a body about somebody else.
+All three are `ContactsUnavailable` with an ERROR naming the variable; a 404 naming the login stays
+`Optional.empty()` with the WARN.
+
+**`RestClientResponseException.getResponseBodyAs` was the load-bearing unknown and it works** — measured,
+not assumed: `RestClient` sets the body-conversion function on the exception it raises. The conversion is
+wrapped anyway, because an exception escaping that arm would land in the caller's
+`catch (RestClientException)` one level up and report a misdeployment as an unreadable answer.
+
+**Residual, stated rather than discovered**: booking and the gateway roll independently (D56's argument),
+so a booking talking to a gateway from before this change sees a bodyless 404 and answers
+`ContactsUnavailable` instead of empty. That is louder for a correct estate, on a path that 502s on every
+estate today because no provider is enabled — and no gateway carrying this endpoint has ever been
+deployed anywhere, so the window is theoretical rather than open.
+
+#### The four optionals, and the two that inverted
+
+- **`withinLifetime` accepted a negative span** — `exp` before `iat` trivially satisfies "no longer than
+  thirty seconds". The term went in, and **the test written for it went red at the fixture rather than
+  the assertion**: `Jwt.Builder.build()` answers `IllegalArgumentException: expiresAt must be after
+  issuedAt`, and "after" is strict, so zero is refused too. Every `Jwt` in existence comes through that
+  builder, `NimbusJwtDecoder`'s included, so such a token cannot reach `mayRead` as a `Jwt` at all. **The
+  term is unreachable**, kept for the reason D60's read-side fallback is kept, and what is pinned instead
+  is *the framework's refusal* — so an upgrade that relaxes it goes red and points at the term.
+  Mutation-checked: deleting the term is **green**, and the javadoc and the test both say so rather than
+  implying coverage.
+- **The wrong-login refusal logs the other login** — free text off another service's wire, which D60
+  declined to do for catalog's zone string. **Kept, with the argument written at the call site.** The
+  distinction: D60's value was headed for a *column* and its refusal named the row to correct, so the
+  string bought nothing; here the value **is** the evidence — "it answered about somebody else" is
+  unactionable without saying who — and it reaches a log line and never a response body or a row. Revisit
+  if a third service ever answers this endpoint, because the argument rests on who is on the other end.
+- **The base-URL check asserts the variable appears somewhere in each file, not that booking carries
+  it.** Pre-existing shape, now extended to a fifth variable, so the limit is written into that step's
+  own header: a value on catalog's block instead of booking's passes, and so does a URL naming the wrong
+  container. Not deepened here — reading the merged per-service environment means `docker compose
+  config`, which costs a docker on the runner; what stands behind it is that booking fails **closed**,
+  with an ERROR naming the variable since this review.
+- **"Thirty seconds" is up to about ninety in practice**: `NimbusJwtDecoder`'s default
+  `JwtTimestampValidator` allows sixty seconds of skew on `exp`, and `mayRead` checks the *span* rather
+  than freshness. Every statement about the span is exact; how long a captured copy remains *usable* is
+  the framework's to say. One javadoc clause, and it names why reading a clock here would be wrong — a
+  second, disagreeing opinion about time in front of the one the whole estate already validates with.
+
+**Fourteen mutations now, and the tally is what the report says rather than a number to trust**: eleven
+red, three green. The three are `hasAuthority` widened, `denyAll` deleted (both §3, guarded by the grep)
+and the negative-span term (unreachable, guarded by nothing and documented as such).

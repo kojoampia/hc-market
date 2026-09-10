@@ -684,8 +684,21 @@ Four things D72 §3 left to the package, each argued in D74:
   unreadable, or the gateway refusing the estate's own token. All end in 502 and no booking; what differs
   is the log, and folding them would print "this estate holds no email" for an estate that holds one.
 
-**Ten mutations were run and eight are red.** The two that are green are named in D74 §3 and guarded by a
-CI grep rather than claimed as covered.
+**Fourteen mutations were run and eleven are red.** The three that are green are named in D74 §3 and §6 —
+two guarded by a CI grep, one unreachable — rather than claimed as covered.
+
+**Reviewed 2026-09-10 — no blocking findings, one should-fix and four optionals, all applied.** Recorded
+in D74 §6. The should-fix was a 404 from a **misdeployed base URL** logged as a fact about somebody's
+account, since every Spring service in the estate 404s on a path it does not map; the endpoint's 404 now
+names the login and booking refuses one that does not. **Two of the five inverted their own premise when
+run**: the review's suggested ProblemDetail check could not work (our own 404 had no body), and the
+negative-span term it asked for turned out to be **unreachable** — `Jwt.Builder` refuses `exp` before
+`iat`, so the test written for it went red at the fixture. The term is kept and the *framework's* refusal
+is pinned instead, with both the javadoc and the test saying plainly that nothing covers the term itself.
+The review also established two claims more strongly than this package had: the authority is granted by
+no code path in either service, and `system:contact-lookup` is unconstructible as a login because
+`LOGIN_REGEX` admits no colon — so "matches no user in any store" is enforced by validation rather than
+by convention.
 
 **Still open:**
 
@@ -2695,6 +2708,42 @@ already found its own reason to re-measure everything it inherited. The fix is l
 the `@Bean` method plus a servlet equivalent of `InternalApiPermitIT`'s precedence assertion — and the
 test is the point, because the grep and the annotation both stay green when the annotation is where Spring
 cannot see it.
+
+---
+
+## NEW-35 — `MarketplaceEventFanoutIT` asserts an exact list over a shared sink, and the neighbour's events land in it · READY
+
+Found during D74's review pass: one gateway `clean verify` out of three went red on
+`MarketplaceEventFanoutIT.recipientsComeFromThePayload`, and the same suite passed either side of it.
+**Nothing in D74 touches the fan-out** — a reactive sink fed by a `@KafkaListener`, against an HTTP
+resource and a token contract — and the failure names its own cause:
+
+```
+Expecting actual:
+  ["kojo.customer", "akosua.mensah", "ama.other", "kwame.trainer"]
+to contain exactly in any order:
+  ["ama.other", "kwame.trainer"]
+but the following elements were unexpected:
+  ["kojo.customer", "akosua.mensah"]
+```
+
+`kojo.customer` and `akosua.mensah` are **the previous test method's payloads**, published to
+`healthconnect.booking.accepted` and `.completed` by `theStreamIsFilteredToTheSubject`. That is what makes
+this pre-existing rather than a regression, and it is stronger evidence than a re-run: the two surplus
+values could only have come from a neighbour.
+
+The shape is the estate's own recurring one, in a test rather than in production code. Each method
+subscribes to `fanout.stream()` — **one sink, shared across the class** — waits on
+`until(() -> received.size() >= 2)`, and then asserts `containsExactlyInAnyOrder` over the whole list. So
+the await is a floor and the assertion is exact: any emission still in flight from the previous method
+arrives between the two and fails it. The consumer group is `${random.uuid}` per instance (D25/D29) but
+the *context* is shared across methods, so the lag is real and unbounded by anything.
+
+**Not fixed in D74, deliberately**: a different subject in a file that package never opened, and the fix
+is a decision rather than a line — filter the subscription to the logins the method published, or assert
+`contains` and drop the exactness, or give the class one context per method. The first keeps what the test
+is for (addressing comes from the payload) while removing the shared-sink coupling, and is the shape to
+reach for.
 
 ---
 

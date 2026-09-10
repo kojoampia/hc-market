@@ -1,6 +1,7 @@
 package net.jojoaddison.security;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -126,6 +127,54 @@ class ContactLookupTokenUnitTest {
             .as("a token with no iat has no stated lifetime, and an unstated one fails closed")
             .isFalse();
         assertThat(ContactLookupToken.mayRead(token().claims(claims -> claims.remove("exp")).build(), LOGIN)).isFalse();
+
+        assertThat(ContactLookupToken.mayRead(lived(now, Duration.ofMillis(1)), LOGIN))
+            .as("the shortest constructible span is well within thirty seconds and passes")
+            .isTrue();
+    }
+
+    /**
+     * Why {@code withinLifetime}'s {@code isNegative()} term cannot be tested, and what is pinned
+     * instead — D74's review.
+     *
+     * <p>The review's optional was that {@code withinLifetime} accepted a negative span: {@code exp}
+     * before {@code iat} trivially satisfies "no longer than thirty seconds". The term went in, and the
+     * test written for it went red <strong>at the fixture rather than at the assertion</strong> —
+     * {@code Jwt.Builder.build()} refuses to construct one:
+     *
+     * <pre>
+     *   java.lang.IllegalArgumentException: expiresAt must be after issuedAt
+     * </pre>
+     *
+     * <p>Every {@code Jwt} in existence comes through that builder, {@code NimbusJwtDecoder}'s included,
+     * so a negative-span token cannot reach {@code mayRead} as a {@code Jwt} at all: the decoder throws
+     * and the request is a 401 before this class is consulted. The term is therefore <strong>unreachable
+     * today</strong>, and it is kept rather than reverted for the reason D60's read-side fallback is
+     * kept — a guard whose premise is somebody else's assertion should not depend on that assertion
+     * silently continuing to hold.
+     *
+     * <p>So what is asserted here is <em>the framework's refusal</em>, which is the real and measurable
+     * fact. If a Spring Security upgrade relaxes it, this goes red and points at the term that then
+     * starts doing work. <strong>Nothing here claims the term is covered</strong>, and this comment
+     * exists so a reader counting green tests does not conclude otherwise.
+     */
+    @Test
+    @DisplayName("a negative-span token is unconstructible, which is why withinLifetime's guard is unreachable")
+    void aNegativeSpanCannotBeBuiltAtAll() {
+        Instant now = Instant.parse("2026-09-10T12:00:00Z");
+
+        assertThatThrownBy(() -> lived(now, Duration.ofSeconds(-1)))
+            .as("if this stops throwing, withinLifetime's isNegative() term becomes reachable and needs a real test")
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("expiresAt must be after issuedAt");
+
+        // Zero as well: "after" is strict, so the constructible range is strictly positive. Found the
+        // same way — an assertion written for a zero span went red at this same fixture.
+        assertThatThrownBy(() -> lived(now, Duration.ZERO)).isInstanceOf(IllegalArgumentException.class);
+
+        // The control: the same fixture with a positive span builds, so the assertions above are about
+        // the sign and not about the fixture being broken.
+        assertThat(lived(now, Duration.ofMillis(1))).isNotNull();
     }
 
     /** The contract's own constants, pinned — a rename here is a 403 in a running estate. */

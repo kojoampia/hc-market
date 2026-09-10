@@ -123,8 +123,22 @@ class InternalCustomerContactResourceIT {
             .doesNotExist();
     }
 
+    /**
+     * The 404 names the login it is about — D74's review, and the body is load-bearing.
+     *
+     * <p>Every Spring service in this estate 404s on a path it does not map, so a
+     * {@code HEALTHCONNECT_GATEWAY_BASE_URL} misdeployed to catalog, payout or messaging produces a 404
+     * for <em>every</em> login. A bodyless one cannot tell booking which it is holding, and booking was
+     * reporting a deployment fault as a per-account fact. Echoing the login is what makes "there is no
+     * such account" positive evidence rather than an inference from a status code —
+     * {@code GatewayCustomerContacts} refuses a 404 that does not carry it.
+     *
+     * <p>Red with {@code notFound().build()} restored: `$.login` does not exist, and the three cases in
+     * {@code GatewayCustomerContactsUnitTest.aFourOhFourFromSomethingElseIsUnavailable} then describe
+     * this endpoint's own answer.
+     */
     @Test
-    @DisplayName("a login this estate holds no account for is 404")
+    @DisplayName("a login this estate holds no account for is 404, and the 404 says which login")
     void anUnknownLoginIsNotFound() {
         client
             .get()
@@ -132,7 +146,12 @@ class InternalCustomerContactResourceIT {
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + contactTokenFor("wp13.stranger"))
             .exchange()
             .expectStatus()
-            .isNotFound();
+            .isNotFound()
+            .expectBody()
+            .jsonPath("$.login")
+            .isEqualTo("wp13.stranger")
+            .jsonPath("$.email")
+            .doesNotExist();
     }
 
     // ---------------------------------------------------------------- the five refusals

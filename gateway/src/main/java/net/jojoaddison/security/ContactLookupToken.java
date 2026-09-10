@@ -172,10 +172,43 @@ public final class ContactLookupToken {
      * the ordinary way the constraint decays — a later caller issuing one of these with a user token's
      * twenty-four hours in it, which every service in the estate would accept for a day and which
      * would look exactly like this one.
+     *
+     * <p><strong>A SPAN, not a freshness check, and the difference is worth a sentence because it
+     * bounds every claim made about "thirty seconds".</strong> This compares {@code exp} against
+     * {@code iat} and never against the clock — the clock is {@code NimbusJwtDecoder}'s business, and
+     * its {@code JwtTimestampValidator} allows **sixty seconds** of skew on {@code exp} by default. So
+     * a captured token is usable for up to about ninety seconds rather than thirty. Every statement
+     * about the *span* here is exact; a statement about how long a copy is *usable* is the framework's
+     * to make. Do not tighten it by reading a clock here: that would be a second, disagreeing opinion
+     * about time in front of the one the whole estate already validates with.
+     *
+     * <p><strong>{@code isNegative()} is checked as well as the upper bound, and it is UNREACHABLE
+     * today.</strong> {@code exp} before {@code iat} is a nonsense token — a negative span trivially
+     * satisfies "no longer than thirty seconds" — so the term went in on D74's review, and the test
+     * written for it went red at the <em>fixture</em>: {@code Jwt.Builder.build()} answers
+     * {@code IllegalArgumentException: expiresAt must be after issuedAt}, and "after" is strict, so
+     * zero is refused too. Every {@code Jwt} in existence comes through that builder,
+     * {@code NimbusJwtDecoder}'s included, so such a token cannot reach this method as a {@code Jwt}
+     * at all — the decoder throws and the request is a 401 before this class is consulted.
+     *
+     * <p>Kept rather than reverted, for the reason D60's read-side fallback is kept: a guard whose
+     * premise is somebody else's assertion should not quietly depend on that assertion continuing to
+     * hold. What is pinned is <em>the framework's refusal</em>, in
+     * {@code ContactLookupTokenUnitTest.aNegativeSpanCannotBeBuiltAtAll} — so an upgrade that relaxes
+     * it goes red and points here. <strong>Nothing claims this term is covered by a test</strong>;
+     * it cannot be, until that day.
+     *
+     * <p>{@code ErasureFanoutToken} has the same unreachable gap and is deliberately not edited: it is
+     * a byte-identical family of three with its own CI diff, and a term that cannot fire is not a
+     * reason to touch three services from this one.
      */
     private static boolean withinLifetime(Jwt jwt) {
         Instant issued = jwt.getIssuedAt();
         Instant expires = jwt.getExpiresAt();
-        return issued != null && expires != null && !Duration.between(issued, expires).minus(LIFETIME).isPositive();
+        if (issued == null || expires == null) {
+            return false;
+        }
+        Duration span = Duration.between(issued, expires);
+        return !span.isNegative() && !span.minus(LIFETIME).isPositive();
     }
 }

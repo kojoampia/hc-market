@@ -52,8 +52,14 @@ import org.springframework.web.client.RestClientResponseException;
  *   <caption>the four cases</caption>
  *   <tr><th>what happened</th><th>answer</th><th>log</th></tr>
  *   <tr><td>the account holds no email</td><td>empty</td><td>INFO — a fact about the account</td></tr>
- *   <tr><td>404, no such login</td><td>empty</td><td>WARN — a booking is being paid for under a login
- *       the account store does not know; nothing is broken here and something is odd there</td></tr>
+ *   <tr><td>404 <em>naming this login</em>, so no such account</td><td>empty</td><td>WARN — a booking is
+ *       being paid for under a login the account store does not know; nothing is broken here and
+ *       something is odd there</td></tr>
+ *   <tr><td>404 naming nothing, so something else answered</td>
+ *       <td>{@link CustomerContacts.ContactsUnavailable}</td><td>ERROR naming the base URL — added by
+ *       D74's review, because every Spring service in this estate 404s on a path it does not map, so a
+ *       misdeployed base URL was being reported as a per-account fact for every login on the
+ *       estate</td></tr>
  *   <tr><td>the gateway cannot be reached, times out, 5xx, or answers something unreadable</td>
  *       <td>{@link CustomerContacts.ContactsUnavailable}</td><td>ERROR</td></tr>
  *   <tr><td>the gateway refuses the estate's own token (401/403)</td>
@@ -121,9 +127,25 @@ public class GatewayCustomerContacts implements CustomerContacts {
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + tokens.forContactLookupOf(customerLogin))
                 .retrieve()
                 .body(CustomerContact.class);
-        } catch (HttpClientErrorException.NotFound noSuchAccount) {
-            // Separated from the arm below rather than folded into it: "there is no such account" is
-            // an answer, and the estate answered it.
+        } catch (HttpClientErrorException.NotFound maybeNoSuchAccount) {
+            // Separated from the arm below rather than folded into it: "there is no such account" is an
+            // answer, and the estate answered it.
+            //
+            // BUT ONLY IF THE ACCOUNT STORE IS WHAT ANSWERED — D74's review. Every Spring service in
+            // this estate 404s on a path it does not map, so a base URL misdeployed to catalog, payout
+            // or messaging produces this arm for EVERY login, and reporting that as a per-account fact
+            // is the same wrong diagnosis the 401/403 arm below was caught giving for a 500. So the
+            // 404 has to name the login it is about, which is why the endpoint answers it with a body
+            // (see InternalCustomerContactResource). A 404 that does not is ContactsUnavailable, not
+            // empty: the answer came from something, and this service cannot say from what.
+            if (!answersAbout(customerLogin, maybeNoSuchAccount)) {
+                LOG.error(
+                    "a 404 for {} did not come from this estate's account store — HEALTHCONNECT_GATEWAY_BASE_URL is " +
+                        "pointed at something that does not serve /internal/customers/../email (decisions.md D74)",
+                    customerLogin
+                );
+                throw new ContactsUnavailable("a 404 that did not come from the account store", maybeNoSuchAccount);
+            }
             LOG.warn("the account store holds no account named {}, so this estate can name no contact details for it", customerLogin);
             return Optional.empty();
         } catch (RestClientResponseException refused) {
@@ -162,6 +184,15 @@ public class GatewayCustomerContacts implements CustomerContacts {
             // echoes the login precisely so that this can be checked, and an address belonging to a
             // different person is the one wrong answer that would go through unnoticed — Paystack would
             // accept it and somebody else would get the payment page.
+            //
+            // IT LOGS THE OTHER LOGIN, which is free text off another service's wire, and D60 declined
+            // to do exactly that for catalog's zone string on this very argument. Kept, and the
+            // distinction is deliberate rather than an inconsistency: D60's value was headed for a
+            // COLUMN and its refusal named the row to correct, so the string bought nothing; here the
+            // value IS the evidence — "it answered about somebody else" is unactionable without saying
+            // who — and it goes to a log line and never to a response body or a row. It is the
+            // gateway's own wire, not a payment provider's. If a third service ever answers this
+            // endpoint, revisit: the argument rests on who is on the other end.
             LOG.error(
                 "the account store answered a contact lookup for {} with an answer about {} — refusing it",
                 customerLogin,
@@ -175,6 +206,28 @@ public class GatewayCustomerContacts implements CustomerContacts {
             return Optional.empty();
         }
         return Optional.of(email);
+    }
+
+    /**
+     * Whether a 404's body identifies it as the account store's own answer about {@code customerLogin}.
+     *
+     * <p>The same comparison the 200 path makes, applied to the refusal — which is the point: this
+     * service establishes who answered from the answer naming the question, on both paths, rather than
+     * from a status code and a base URL it was configured with.
+     *
+     * <p><strong>Fails closed on everything.</strong> No body, a body that is not JSON, a body with no
+     * {@code login}, a body about somebody else, or a conversion this client cannot perform — all
+     * false, all {@code ContactsUnavailable}. The one thing that must not happen here is an exception
+     * escaping into the caller's {@code catch (RestClientException)} arm one level up, which would
+     * report a misdeployment as an unreadable answer; so the conversion is wrapped.
+     */
+    private static boolean answersAbout(String customerLogin, RestClientResponseException answered) {
+        try {
+            CustomerContact body = answered.getResponseBodyAs(CustomerContact.class);
+            return body != null && customerLogin.equals(body.login());
+        } catch (RuntimeException notOurShape) {
+            return false;
+        }
     }
 
     /** The deepest cause's simple name — the one word that tells a timeout from a parse failure. */

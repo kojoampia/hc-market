@@ -1620,6 +1620,15 @@ time.**
   `CatalogUnavailable`/`UnknownOffering`. An answer whose `login` is not the one asked about is **refused**
   rather than used: Paystack accepts whatever email it is given, so it is the one wrong answer that would
   go through unnoticed.
+  **A 404 must NAME the login, and the body is not decoration** (D74's review). Every Spring service in
+  this estate 404s on a path it does not map, so `HEALTHCONNECT_GATEWAY_BASE_URL` misdeployed to catalog,
+  payout or messaging 404s for **every login on the estate** — reported as "the account store holds no
+  account named X", that is a deployment fault wearing a per-account fact. So the endpoint answers its
+  404 with the same record naming the login, and booking refuses any 404 that does not carry it:
+  `ContactsUnavailable` with an ERROR naming the variable. **Do not "tidy" that back to
+  `notFound().build()`** — three unit cases and one IT assertion go red, and the discriminator is the same
+  one the 200 path uses. Establish who answered from the answer naming the question, never from a status
+  code and a configured base URL.
   **The address is never logged, on either side**, and booking stores nothing — so the erasure sweep is
   deliberately unchanged, and that is the sentence to re-read if anything ever caches this answer.
   **It still says so at boot when there is no implementation** (D50, as reviewed).
