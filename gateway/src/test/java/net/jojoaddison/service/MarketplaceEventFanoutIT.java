@@ -65,9 +65,10 @@ import reactor.core.Disposable;
  *   <li><strong>Isolating the methods from each other would not have fixed it</strong>, and restarting
  *       the context per method would have made it worse — a new context is a new group, and a new
  *       group replays everything. So each method discriminates <em>its own</em> events instead, by an
- *       {@code aggregateRef} it mints and nothing else in this JVM uses. Every reference here begins
- *       {@code b-fanout-} for that reason: it has to be unique across the whole run, not just across
- *       this file.
+ *       {@code aggregateRef} it mints and nothing else in this JVM uses. What has to be unique is the
+ *       <strong>whole value</strong>, across the whole run rather than across this file; the shared
+ *       {@code b-fanout-} prefix is a reading aid, and catalog's {@code ErasureFanoutLegIT} — another
+ *       project, another JVM — mints {@code b-fanout-1} without that mattering to anything here.
  *   <li><strong>The wait is a predicate about the events, not a count.</strong> {@code size() >= 2} is
  *       what the flake exploited: it cannot tell whose two arrived. Each method publishes a
  *       {@link #publishBarrier barrier} to the same single-partition topic <em>after</em> the event under
@@ -94,8 +95,11 @@ class MarketplaceEventFanoutIT {
     private static final String CANCELLED = "healthconnect.booking.cancelled";
     private static final String COMPLETED = "healthconnect.booking.completed";
 
-    /* One per publication, never shared between methods, and prefixed so that nothing else in the
-       JVM — this estate's other tests included — can mint the same one. See the class comment. */
+    /* One per publication, never shared between methods, and unique BY FULL VALUE against everything
+       else that publishes into this JVM's sink. The prefix is a reading aid and not the guarantee:
+       catalog's ErasureFanoutLegIT already mints b-fanout-1/2/3, in a different Maven project and so a
+       different JVM, which costs nothing here and is exactly why the uniqueness that matters is the
+       whole string. See the class comment. */
     private static final String BOTH_PARTIES = "b-fanout-both-parties";
     private static final String ADDRESSED = "b-fanout-addressed";
     private static final String SOMEBODY_ELSE = "b-fanout-somebody-else";

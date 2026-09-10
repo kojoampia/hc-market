@@ -2821,6 +2821,14 @@ runs green** after the fix, with the load-bearing evidence being a forced advers
 emissions redden the old file and leave the new one green) and five mutations of `MarketplaceEventFanout`
 that are each red. Opens **NEW-37**.
 
+**Reviewed 2026-09-10: approved, no blocking findings**, with every load-bearing claim reproduced
+rather than accepted — including the adversary re-run with the foreign events on the *same topic*,
+published between the event under test and its barrier so they are guaranteed present at assertion
+time, still **3 green**. One should-fix, docs-only: D76 §7 attributed NEW-37's risk to listener
+concurrency breaking the barrier's ordering, and it does not — only a partition-count change does.
+Corrected in D76 §7, argued in D76 §9, and NEW-37 below is rewritten around the real mechanism. Both
+optionals taken.
+
 ---
 
 ## NEW-36 — the health gate's exhaustion is fatal and rests on 24 folded reads · READY
@@ -2877,20 +2885,49 @@ on three premises, and only two of them are written down anywhere in this reposi
   `directBestEffort` contract and the reason `MarketplaceEventFanout` can never block a listener thread;
 - **listener concurrency 1** — which is **measured** (no `#0-1-C-*` consumer thread appears anywhere in a
   full run) and **configured nowhere**. `spring.kafka.listener.concurrency` is absent from every yml in
-  the gateway, so what holds is Spring Kafka's default.
+  the gateway, and the `@KafkaListener` sets no `concurrency` attribute, so what holds is Spring Kafka's
+  default.
 
-A future version defaulting that higher, or anything giving these topics a second partition, breaks the
-produced-order guarantee the barrier is built on. **The direction is safe** — the barrier would then time
-out or the assertion would print a diff, never a false pass — which is why this is an item and not a fix.
+**Only the FIRST of those three is what carries the ordering, and D76 §7 attributed the risk to the
+wrong one** — corrected here at review, because getting a mechanism plausibly wrong is this item's
+neighbour's whole story. It said a higher concurrency default *"breaks the produced-order guarantee the
+barrier is built on"*, bundled with a second partition. **It does not.** Spring Kafka's concurrency
+distributes **partitions** across child containers, and a partition is owned by exactly one consumer at
+a time, so per-partition consumption order survives any concurrency setting. The barrier and its event
+are on the same topic, therefore the same single partition, therefore the same thread. **Only a change
+to the partition count breaks the ordering** — and that count is in `SseKafkaTestContainer`, which is
+to say the ordering premise is already this repository's.
 
-Two shapes, neither costed: set `spring.kafka.listener.concurrency: 1` in the gateway's **test** config
-and say in the comment that the barrier depends on it, which makes the premise this repository's rather
-than the framework's and is one line; or assert it in the test, from the
-`KafkaListenerEndpointRegistry`'s container, which is the shape that goes red on the day it changes
-rather than on the day it matters. The second is a test asserting its own harness, which this repository
-has not done before — read D76 §3 before choosing.
+What concurrency > 1 actually introduces is a different failure and worth knowing on its own terms:
+two container threads consuming **different** topics would call `tryEmitNext` concurrently on
+`Sinks.many().multicast().directBestEffort()` (`MarketplaceEventFanout:88`), which is the *serialized*
+spec, so it answers **`FAIL_NON_SERIALIZED`** and `onEstateEvent`'s failure arm (`:148`) logs it at
+**DEBUG** and drops the emission. In the test that is a missing element or a barrier timeout. **In
+production it is a silently dropped live event** — and not the loss the class javadoc accounts for,
+which is "drops for a subscriber too slow to keep up". A concurrency raise would add a second loss mode
+that nothing in this estate names.
 
-Nothing is wrong today. The premise is simply not ours.
+**The direction is still safe, and now for a reason that survives the correction.** A dropped emission
+can only make an assertion miss something, never make a negative assertion pass wrongly: the drop
+happens at the sink, *before* `streamFor`'s filter, so it reaches the control assertion — which demands
+both recipients of both of this method's own events, by reference — before it could ever flatter the
+`isEmpty()` beneath it. And the negative assertion is protected by same-partition ordering, which is
+exactly what concurrency cannot disturb.
+
+Two shapes, neither costed, and they no longer aim at the same premise:
+
+- set **`spring.kafka.listener.concurrency: 1`** in the gateway's **test** config, with a comment saying
+  the sink's serialisation depends on it. One line, and it makes the *emission* premise this
+  repository's rather than the framework's. This is the one to reach for.
+- assert the **partition count** in the test, or pin it as a named constant in
+  `SseKafkaTestContainer` — that is the premise the *ordering* rests on, and the only one whose change
+  would break the barrier's logic rather than merely drop a message.
+
+**Do not** assert concurrency from the `KafkaListenerEndpointRegistry`'s container, which is what the
+first draft of this item proposed: it would pin a value that is not load-bearing for ordering, and read
+as though it were.
+
+Nothing is wrong today. One premise is the framework's; the other two are already ours.
 
 ---
 

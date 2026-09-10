@@ -13230,10 +13230,23 @@ depended on knowing every publisher would be the assumption this item exists to 
 per topic is read from `SseKafkaTestContainer`; synchronous emission is read from `Sinks.Many`'s
 `directBestEffort` contract and from the code path; container concurrency 1 is **measured** (no
 `#0-1-C-*` thread appears in a whole run) but not *configured* — `spring.kafka.listener.concurrency` is
-set nowhere in this repository, so it is the framework's 1. A future version defaulting it higher, or a
-second partition, would break the ordering the barrier rests on. The barrier failing that way is a
-timeout or an assertion diff, never a false pass, so the direction is safe; it is written down here
-because the premise is not in this repository's control. That is **NEW-37**.
+set nowhere in this repository and the `@KafkaListener` names no `concurrency`, so it is the
+framework's 1. That is **NEW-37**.
+
+**This paragraph attributed the risk to the wrong premise, and the correction is §9's.** It said a
+higher concurrency default *"would break the ordering the barrier rests on"*. It would not: Spring
+Kafka's concurrency distributes **partitions** across child containers and a partition is owned by one
+consumer at a time, so per-partition order survives any concurrency — and the barrier is on the same
+topic, hence the same single partition, as the event it follows. **Only a partition-count change
+breaks the ordering**, and that count is in `SseKafkaTestContainer`. What concurrency > 1 would
+introduce is concurrent `tryEmitNext` on a *serialized* sink answering `FAIL_NON_SERIALIZED`, which
+`onEstateEvent`'s failure arm logs at DEBUG and **drops** — a missing element or a barrier timeout
+here, and a silently dropped live event in production, which is not the loss the class javadoc
+accounts for. **The safe direction stands and gains a second reason**: a drop happens at the sink,
+before `streamFor`'s filter, so it reaches the *control* assertion — both recipients of both of this
+method's own events, by reference — before it could flatter the `isEmpty()` beneath it. Never a false
+pass. NEW-37 carries the corrected mechanism and two costed shapes aimed at the two different
+premises.
 
 **Nothing here changes the fan-out.** `MarketplaceEventFanout` is byte-identical to `f3557db`; the five
 mutations in §8 were applied, run, and reverted, each verified by `git diff` before its run and each
@@ -13273,3 +13286,63 @@ login nobody addresses.
 Testcontainer and that was confirmed before the first run. The quality stack was not touched — it is on
 `fabb959` with the OTel agent attached by hand (D73) and is evidence — the five wedged dev containers
 were not touched, and the dev estate was left empty so its next `up` is still a first run.
+
+### §9 Review, and what it found — approved, no blocking findings, one should-fix taken as docs
+
+**Reviewed on `454e66c`.** Everything load-bearing was **reproduced rather than accepted**, which is
+the only kind of review this family responds to: mutant 5 re-run (3 failures, 0 errors, **0
+`ConditionTimeout`** — so both halves at once, the scoping failing closed *and* every red being a
+diff, because the barrier awaits on `recipientLogin` and still arrives); the vacuity probe re-run on
+**both** files, red on the new control and **green, 1 test, 0 failures, 0.7 s** on the base file with
+its own publishes deleted; and the forced adversary re-run with the foreign events moved to the *same
+topic*, published **between** the event under test and its barrier so they are guaranteed present at
+assertion time — **3 green**. The scoping holds under the harshest interleaving available, which is
+stronger than what §8 row 5 measured.
+
+It also independently confirmed the two premises §7 leans on: the barrier's ordering is real because
+`flush()` returns only after broker ack, so the barrier's append to the same single partition
+happens-after the event's; and the broker was the Testcontainer alone, with `withReuse` nowhere under
+`gateway/src` and no reuse flag in `~/.testcontainers.properties`. `hc-shared-quality-kafka` was never
+addressed.
+
+**The should-fix was a mechanism this entry got plausibly wrong, which is the failure mode of the item
+it closes.** §7 said a higher listener-concurrency default *"would break the ordering the barrier
+rests on"*, bundled with a second partition. It would not: concurrency distributes **partitions**, a
+partition has one consumer at a time, and the barrier shares its event's partition. **Only a
+partition-count change touches the ordering** — and that count is in `SseKafkaTestContainer`, so the
+ordering premise was already ours and the item was smaller than it claimed. What concurrency > 1
+actually introduces was verified in the code: concurrent `tryEmitNext` on the *serialized*
+`Sinks.many()` spec answers **`FAIL_NON_SERIALIZED`**, which `onEstateEvent:148` logs at **DEBUG** and
+drops — a missing element or a barrier timeout in the test, and in production a **silently dropped
+live event**, which is not the loss the class javadoc accounts for ("drops for a subscriber too slow
+to keep up"). Corrected in §7 and rewritten in NEW-37, whose second costed shape was aimed at the
+wrong premise and is now a **partition-count** assertion; asserting concurrency off the
+`KafkaListenerEndpointRegistry` is named as the thing not to do, because it would pin a value that is
+not load-bearing and read as though it were.
+
+**The safe direction stands and gains a second reason**, which is this entry's own rather than
+review's: a drop happens at the sink, *before* `streamFor`'s filter, so it reaches the control
+assertion — both recipients of both of the method's own events, by reference — before it could flatter
+the `isEmpty()` beneath it. Never a false pass, under drops or under any subscriber ordering.
+
+**Both optionals taken.**
+
+- **The `b-fanout-` prefix was claimed as an estate-unique namespace and is not one.** Catalog's
+  `ErasureFanoutLegIT` already mints `b-fanout-1/2/3` — a different Maven project, so a different JVM,
+  so no live collision and every full value unique today. But §4 makes name-uniqueness the attribution
+  mechanism, and a prefix that reads as the guarantee is the same shape as everything else this entry
+  is about. Both comments now say **unique by full value**, with catalog named so the next reader does
+  not have to find it.
+- **Two of the three methods are one deletion from a vacuous pass**, defended only by a comment:
+  delete `anEventPublishedToKafkaReachesTheFanout`'s exact assertion and the `allSatisfy` beneath it
+  goes vacuous over an empty list; delete `recipientsComeFromThePayload`'s single assertion and it is
+  barrier-only. `aFilteredStreamCarriesOnlyItsOwnersEvents` needs **three** deletions and is the most
+  resistant. §6's refusal of a CI check stands — there is nothing textual a check could reach here
+  that the test does not reach better — so this is recorded as what it is: a **review** obligation
+  rather than an automated one. The residual is named here so that a future reviewer of this file
+  knows which assertion is holding which door.
+
+**Verified at review, by running**: the mechanism claims re-established from source (`:88`, `:148`,
+the absent `concurrency` attribute, catalog's three refs); and after these edits, one further full
+`clean verify` — **green, `tests="3" failures="0"` read from the failsafe XML rather than the console**,
+which is the tenth green full run of this fix. Production code is still byte-identical to `f3557db`.
