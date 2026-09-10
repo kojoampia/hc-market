@@ -1455,7 +1455,10 @@ time.**
   What a second thread *would* break is the sink: `Sinks.many()` is the **safe** spec, which wraps
   `SinkManyBestEffort` in a `SinkManySerialized` that refuses concurrent callers with
   `FAIL_NON_SERIALIZED` — measured, 561,466 refusals in 800,000 emits from four threads, none from one,
-  and **none at all through `Sinks.unsafe()`**, which is where the detection lives. That refusal is
+  and **none at all through `Sinks.unsafe()`**, which is the spelling that *removes* the wrapper the
+  detection lives in. So `Sinks.many(` is asserted **positively** by CI and the word `unsafe` is banned
+  as a bare substring: the FQN ban alone was walked past by a static import, measured, with the check
+  printing `ok` about a file that had just left the safe spec. That refusal is
   dropped at DEBUG, so in production it is a silently lost live event and *not* the loss the class
   javadoc accounts for. Hence `concurrency = "1"` **on the `@KafkaListener`**, not in a yml: an
   endpoint's concurrency overrides the factory's, so the pin defeats

@@ -6,6 +6,7 @@ import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import net.jojoaddison.IntegrationTest;
 import net.jojoaddison.config.MongoDbTestContainer;
@@ -20,6 +21,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.testcontainers.context.ImportTestcontainers;
+import org.springframework.kafka.config.KafkaListenerEndpointRegistry;
+import org.springframework.kafka.listener.MessageListenerContainer;
 import reactor.core.Disposable;
 
 /**
@@ -109,6 +112,13 @@ class MarketplaceEventFanoutIT {
 
     @Autowired
     private MarketplaceEventFanout fanout;
+
+    /**
+     * Read only by {@link #consumedTopics()}, to establish which topics the listener really subscribes
+     * to. Never read for the container's <em>concurrency</em> — see that method's note on the asymmetry.
+     */
+    @Autowired
+    private KafkaListenerEndpointRegistry registry;
 
     /**
      * An envelope in the estate's shape, addressed to a customer and a professional.
@@ -208,25 +218,61 @@ class MarketplaceEventFanoutIT {
      * breaks no compile, moves no count and makes the three exact assertions race the emissions they
      * exist to catch — the kind of change that reads as a harmless harness tweak.
      *
-     * <p>Three things it deliberately does <em>not</em> do. It does not compare against
-     * {@code PARTITIONS_PER_TOPIC}, which would adopt a changed constant and report success. It does not
-     * re-list the topics, which is why {@code TOPICS} is a constant over there. And it asserts nothing
-     * about listener concurrency: that value is pinned on the {@code @KafkaListener} annotation and is
-     * <strong>not</strong> what the ordering rests on, so an assertion here would pin the wrong premise
-     * while reading like the right one.
+     * <p><strong>It asks the LISTENER which topics it consumes, and then asks the broker about those</strong>
+     * — D79's review finding. {@link SseKafkaTestContainer#TOPICS} and the six placeholders on the
+     * {@code @KafkaListener} are two independent lists whose defaults coincide, so a seventh topic added
+     * to the annotation would leave the harness constant stale, the broker would auto-create that topic
+     * at whatever {@code num.partitions} it likes, and a loop over {@code TOPICS} alone would never look
+     * at it. The registry's resolved set is therefore the subject, and the constant is asserted to equal
+     * it: the guarded set is the consumed set by construction rather than by coincidence.
      *
-     * <p>It needs no subscription and publishes nothing, so a replay cannot reach it — the answer comes
-     * from {@code describeTopics}, not from the sink.
+     * <p>Two things it deliberately does <em>not</em> do. It does not compare a partition count against
+     * {@code PARTITIONS_PER_TOPIC}, which would adopt a changed constant and report success. And it
+     * asserts nothing about listener <em>concurrency</em>: that value is pinned on the annotation and is
+     * <strong>not</strong> what the ordering rests on, so an assertion here would pin the wrong premise
+     * while reading like the right one — D79 §7.
+     *
+     * <p>Reading the registry to establish the topic set and refusing to read it for the concurrency is
+     * a deliberate asymmetry, and the discriminator is what carries the premise. The topic set decides
+     * <em>which</em> partitions the barrier's ordering has to hold for, so it is load-bearing here;
+     * concurrency decides only whether an emission is dropped, one file over, and pinning it in a test
+     * would make a value look like the ordering's guarantee when it is not.
+     *
+     * <p>It needs no subscription and publishes nothing, so a replay cannot reach it — the answers come
+     * from the registry and from {@code describeTopics}, never from the sink.
      */
     @Test
     @DisplayName("the barrier's ordering rests on one partition per topic, and the broker agrees")
     void theBarrierRestsOnOnePartitionPerTopic() {
-        assertThat(SseKafkaTestContainer.TOPICS).hasSize(6);
-        for (String topic : SseKafkaTestContainer.TOPICS) {
+        assertThat(consumedTopics())
+            .as("the harness must create exactly the topics the listener consumes, or a topic it invented is guarded by nothing")
+            .containsExactlyInAnyOrderElementsOf(SseKafkaTestContainer.TOPICS);
+
+        for (String topic : consumedTopics()) {
             assertThat(SseKafkaTestContainer.partitionCountOf(topic))
                 .as("%s must have exactly one partition, or this class's barriers order nothing", topic)
                 .isEqualTo(1);
         }
+    }
+
+    /**
+     * The topics the running listener is actually subscribed to, after placeholder resolution.
+     *
+     * <p>Fails rather than answering an empty set if a container names a pattern or explicit partitions
+     * instead of topics: an unanswerable question must not read as "it consumes nothing", which would
+     * make the assertion above vacuous in the one shape that could hide a topic.
+     */
+    private Set<String> consumedTopics() {
+        Set<String> topics = new java.util.TreeSet<>();
+        for (MessageListenerContainer container : registry.getListenerContainers()) {
+            String[] named = container.getContainerProperties().getTopics();
+            assertThat(named)
+                .as("listener %s names no topics — this test cannot establish what it consumes", container.getListenerId())
+                .isNotNull();
+            topics.addAll(List.of(named));
+        }
+        assertThat(topics).as("no listener container names any topic — the fan-out's own subscription is missing").isNotEmpty();
+        return topics;
     }
 
     /**

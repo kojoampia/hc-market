@@ -2982,6 +2982,22 @@ positive control that passes the deletion.
 thread, none at all through `Sinks.unsafe()`), and the `Sinks.unsafe()` hazard it exposed is guarded by
 the same check rather than left as an item.
 
+**Reviewed 2026-09-11: approved, no blocking findings** (D79 §10), with every mechanism claim
+re-established from the framework sources and the two ITs re-run three times in the polluting order,
+4/0 each. One should-fix and two promotions, all taken. The should-fix was this package's own doing:
+naming the harness's topic list turned an anonymous inline list into a **claim about main source**
+("the six topics the fan-out subscribes to") that nothing checked — two independent lists whose
+defaults coincide — so the new method now reads the resolved topic set off the
+`KafkaListenerEndpointRegistry`, requires the constant to equal it, and asks the broker about that
+set; watched red with one topic removed. The promotions were both measured by the reviewer: the
+`Sinks.unsafe(` ban was **evaded by a static import**, and the step exited 0 printing `ok` about a
+file that had just left the safe spec — so there is a **positive** `Sinks.many(` assertion now, which
+no new spelling of the negative can evade, and the ban is widened to the bare word; and the
+empty-subject message named the pre-widening cause, which is the shape D79 §5 criticises in its own
+draft. Chasing the first of those produced one more of this family: the added `emitNext`
+discriminator **matched neither call**, because `tryEmitNext` has a capital E. `[eE]mitNext` now, with
+the case error written into the check.
+
 ---
 
 ## NEW-38 — the SHELL stripper's caller count is stale, in a file that is not its own · READY

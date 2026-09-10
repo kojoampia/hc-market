@@ -94,11 +94,23 @@ public interface SseKafkaTestContainer {
     }
 
     /**
-     * The six topics {@link net.jojoaddison.service.MarketplaceEventFanout} subscribes to.
+     * The six topics this harness creates, which are <em>meant</em> to be the six
+     * {@link net.jojoaddison.service.MarketplaceEventFanout} subscribes to.
      *
      * <p>Named here rather than inside {@link #createTopics} so a test can ask about the set it was
      * given instead of re-listing it — {@code MarketplaceEventFanoutIT} does, and a list re-typed in a
      * second file is how one of them goes quietly out of date.
+     *
+     * <p><strong>That correspondence is a second list, and it is checked rather than asserted</strong>
+     * — D79's review finding. The listener names its topics as
+     * {@code ${healthconnect.topics.…:healthconnect.…}} placeholders whose defaults happen to be these
+     * literals, so nothing about the two lists ties them together: a seventh topic on the annotation
+     * would leave this constant stale in silence, the broker would auto-create it at whatever
+     * {@code num.partitions} says, and
+     * {@code MarketplaceEventFanoutIT.theBarrierRestsOnOnePartitionPerTopic} would never look at it —
+     * which is exactly the "a topic nothing here chose" case that method exists to catch. That test now
+     * reads the <strong>resolved</strong> topic set off the running
+     * {@code KafkaListenerEndpointRegistry} and requires it to equal this list.
      */
     List<String> TOPICS = List.of(
         "healthconnect.booking.requested",
@@ -156,6 +168,11 @@ public interface SseKafkaTestContainer {
         TopicDescription described;
         try (AdminClient admin = AdminClient.create(Map.of(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers()))) {
             described = admin.describeTopics(List.of(topic)).allTopicNames().get().get(topic);
+        } catch (InterruptedException e) {
+            // Restore the flag before the exception leaves: swallowing it would strand a harness
+            // thread that was asked to stop. Broad catch below for everything else, as in createTopics.
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("interrupted while asking the broker about " + topic, e);
         } catch (Exception e) {
             throw new IllegalStateException("could not ask the broker how many partitions " + topic + " has", e);
         }

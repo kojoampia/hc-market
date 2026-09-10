@@ -14059,3 +14059,102 @@ formatting. They are kept rather than reverted, because reverting them leaves a 
 prettier:format` needs an install first; `npm install --no-save prettier@3.9.5 prettier-plugin-java@2.10.2
 prettier-plugin-packagejson@3.0.2` is enough, and `npx -p …` is **not** — the plugins named in
 `.prettierrc` do not resolve from npx's temporary root.
+
+### §10 Review, and what it found — approved, no blocking findings; one should-fix and two promotions taken
+
+**Reviewed on `5f5a9b9`.** Every load-bearing mechanism claim in §1 was re-checked against the real
+framework sources and reproduces — `ConcurrentKafkaListenerContainerFactory.initializeContainer:89–95`
+for the endpoint-wins precedence, `SinksSpecs.wrapMany:211–212` and `SinkManySerialized
+.tryEmitNext:94–97` for the detection, and `logback.xml:33` **plus `:27`** for §2's dead instrument
+(`org.apache` is silenced as well, so kafka-clients' own "partitions assigned" was unavailable too —
+both instruments were dead, which is what §2 says). It also ran the two ITs in the polluting order
+three times: **4/0 every time**. Four findings, all taken.
+
+**Finding 1, the should-fix: `TOPICS`' javadoc asserted a correspondence nothing checked.** This
+package converted an anonymous inline list into a *named claim about main source* — "the six topics
+`MarketplaceEventFanout` subscribes to" — while the listener names its six as
+`${healthconnect.topics.…:healthconnect.…}` placeholders whose defaults merely coincide with those
+literals. Two independent lists, nothing tying them: a seventh topic on the annotation leaves the
+constant stale in silence, the broker auto-creates that topic at whatever `num.partitions` it likes,
+and a loop over `TOPICS` never looks at it — **which is the "a topic nothing here chose" case the new
+method's own javadoc says it exists to catch.**
+
+Answered by checking it rather than weakening the sentence. `theBarrierRestsOnOnePartitionPerTopic`
+now reads the **resolved** topic set off the running `KafkaListenerEndpointRegistry`, requires it to
+equal `TOPICS`, and then asks the broker about *that* set — so the guarded set is the consumed set by
+construction. Watched red: with `notification.raised` removed from the constant, *"the harness must
+create exactly the topics the listener consumes, or a topic it invented is guarded by nothing"*, and
+only that method failing.
+
+**That reads the registry, which §7 refuses as an assertion, and the asymmetry is deliberate.** The
+discriminator is what carries the premise. The topic set decides *which* partitions the barrier's
+ordering has to hold for, so asserting it pins the premise itself; concurrency decides only whether an
+emission is dropped, one file over, and asserting it would make a value look like the ordering's
+guarantee when it is not — which is the confusion §2 documents the cost of. The registry stays the
+right *measurement* instrument for both. Stated on the method, not only here.
+
+**Finding 2, promoted because the reviewer drove it: the `Sinks.unsafe(` ban was evadable and printed
+a false `ok`.** With `import static reactor.core.publisher.Sinks.unsafe;` and `unsafe().many()…`, the
+literal needle occurs **zero** times, the file still matches the discovery grep, and the step exited
+**0** — printing *"builds its sink through the spec that refuses concurrent emission"* about a file
+that had just stopped doing so. The only mutation in this package's history whose result was a pass.
+
+Fixed the way the review suggested, which is better than widening the ban: a **positive** assertion
+that `Sinks.many(` is present, because every way of leaving the safe spec has to remove it and no new
+spelling of the negative can evade it. The ban is kept *and* widened to the bare word `unsafe`, so
+both spellings and any third are refused. Both are now red on the review's mutation.
+
+**Finding 3: the empty-subject message named the pre-widening cause.** It said *"no main source
+declares a `@KafkaListener` beside a `Sinks.many()` sink"* while §5 records deliberately widening the
+discriminator — the exact shape §5 criticises in its own draft, recreated in the message. Reworded to
+name what is actually looked for, and to offer "the emit call has been spelled some way this does not
+match" as one of the three readings.
+
+**Finding 4: `CLAUDE.md`'s capsule inverted the antecedent** — *"none at all through `Sinks.unsafe()`,
+which is where the detection lives"*, literally placing the detection in the spelling that removes it.
+Corrected, and the capsule now also carries the positive-assertion rule, since that file is what the
+next reader quotes.
+
+**And one defect of this round's own, found by insisting on a control.** Fixing finding 2 added
+`emitNext` as a second discovery discriminator, "because a listener that feeds a sink has to call
+`emitNext` or `tryEmitNext`". **It matched neither.** `tryEmitNext` carries a capital E, so the bare
+`emitNext` counted **0** on a probe whose only emit was `sink.tryEmitNext(m)` while `mitNex` counted 1
+— a discriminator that is not there at all. It is `[eE]mitNext` now, and the case error is written
+into the step so the next reader does not repeat it. Two things fell out of chasing it:
+
+- **`/usr/bin/grep` on this workstation is `ugrep 7.5.0`, not GNU grep**, which briefly looked like the
+  cause. It is not: ugrep matched every substring probe GNU grep would (`mitNex`, `tryEmitNe`, `void`),
+  and the zero was the case error. Every pattern this step uses is a plain `-F` substring or an ERE
+  alternation of literals, where the two agree — but anyone re-driving these states locally is driving
+  ugrep, and should say so rather than reporting "grep does not match substrings".
+- **A static import does NOT escape the `Sinks.` discriminator**, which was measured rather than
+  assumed after the first claim: `import static reactor.core.publisher.Sinks.many;` contains the
+  literal `Sinks.` itself, as does every other spelling that touches the type. So `[eE]mitNext` earns
+  its place on a different shape — a listener emitting into a sink **another class constructs** — which
+  was built as a probe (0 `Sinks.`, 1 `[eE]mitNext`) and is discovered and refused for its missing pin.
+  That probe also showed the spec assertions accusing a relay of building the sink wrongly when it
+  builds no sink, so those two are now scoped to files that mention the type, and a relay prints a
+  `note` rather than a false `ok`.
+
+**Two notes taken as stated.** `partitionCountOf` re-interrupts the thread before rethrowing on
+`InterruptedException`. And the pin grep's exact-spacing dependence is now a **named limit** in the
+step, beside two others, because the error message reads as an accusation and `concurrency="1"` is a
+red nobody would otherwise attribute to spacing.
+
+**A caution worth more than this decision, recorded here because a review transcript is not a durable
+place.** `prettier@3.9.5` **silently skips files outside the project's ignore scope**: a deliberately
+mangled control file passed with `rc 0` and *"All matched files use Prettier code style!"*. Only
+`--ignore-path=/dev/null` gives a real answer, and re-verifying §9's formatting claim the naive way
+returns a vacuous pass in **both** directions. Re-measured that way here: the three touched files are
+clean, and a mangled copy of one of them is `[warn]` — instrument proven before the result was
+believed. It is the same defect this repository keeps finding, wearing a tool nobody suspects.
+
+**Re-run after these edits, all against the shipped bytes:** the CI step green as shipped and **red on
+nine states** — pin deleted, pin as a placeholder, pin without spaces, `Sinks.unsafe()` qualified,
+**`unsafe` static-imported**, `many` static-imported, a second unpinned subject in messaging, no
+subject at all, and the stripper absent — plus the relay probe, refused for its pin with a `note`
+instead of a false `ok`; `MarketplaceEventFanoutIT` **4** and `MarketplaceStreamFramingIT` **3** in the
+polluting order; the correspondence assertion watched **red** with a topic removed from the constant;
+gateway `clean verify` **green**, 127 ITs, `tests="4" failures="0"` off the failsafe XML; all eleven
+stripper-calling steps `rc=0`; `prettier --ignore-path=/dev/null --check` clean with its own control.
+**Production code is byte-identical to `5f5a9b9`** — the only Java that changed is test code.
