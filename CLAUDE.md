@@ -162,10 +162,23 @@ is told decides whether they restart a plane with nothing wrong with it.
 **The rule is `a die may not fold; a warn and a poll may`** (D71 §5). Three folded docker reads survive
 in these two scripts deliberately — the otel-collector `warn`, the 90-iteration health wait (where an
 unanswerable daemon must be a retry, not a fatal) and `deploy-dev.sh`'s `running()`, argued in D69 §6.
-The defect is only a defect where a discarded status becomes a **claim of absence in a refusal**. Five
-instances of that shape have now been found here across four docker objects — aliases (D68), a
-container's networks twice (D69, D71) and a network's existence twice (D71) — and a **sixth** is open
-as **NEW-33**, in `deploy-prod.sh`, where one message covers four outcomes across an ssh hop.
+The defect is only a defect where a discarded status becomes a **claim of absence in a refusal**.
+
+**The health wait is the one edge in that rule worth knowing before applying it** (D71 §5, as
+reviewed): folding is right for each of its 90 polls and its **timeout is a `die`**, so a daemon that
+dies mid-`up` costs six minutes and then an absence claim — *"$s did not become healthy"*. What keeps
+the diagnosis honest is not the rule but the `compose logs --tail=40` immediately before it, on the
+same line, which fails loudly against a dead daemon: **measured**, `rc=1` and *"failed to connect to
+the docker API at unix:///nonexistent"*. A poll may fold; **a poll whose exhaustion is fatal needs
+something beside it that cannot**.
+
+Five instances of the shape have now been found here, over **three kinds of docker object** — a
+container's aliases on a network (D68), a container's networks (D69 and D71, one copy each) and a
+network's existence (D71, both copies) — and a **sixth** is open as **NEW-33**, in `deploy-prod.sh`,
+where one message covers four outcomes across an ssh hop. **Count the list, not the number**: this
+sentence read "four docker objects" over that three-kind list, in the very commit whose decision
+corrected the same defect in a CI header (D71 §8) — and the backlog counts the same family a third way
+again, by *instance*, which is why each statement now says which it is counting.
 `quality/startup.sh` stated the rule in `project_volumes`' header and broke it four hundred lines up,
 in the same file.
 

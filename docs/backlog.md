@@ -2507,7 +2507,9 @@ docker with a function that always succeeds, so **no CI mutation can see this ei
 with a stub that answers `running` and then fails, which is how D69 measured both readings of the dev
 copy.
 
-**Closed by D71**, and it was **four** instances rather than one. The membership repair is
+**Closed by D71**, and it was **four instances** rather than one — instances, not object kinds, which
+is the third way this family has been counted in three documents (D71 §5 counts kinds: three; the
+opening paragraph above counts occasions: three). Each statement now says which. The membership repair is
 `deploy-dev.sh`'s four lines verbatim, with the refusal text identical in both copies because that
 sentence names a container, a question and docker's own answer and nothing about which stack is asking
 (D71 §3) — the `ok` line's deliberate divergence, D69 §5, stands for the opposite reason.
@@ -2524,21 +2526,28 @@ means **Appendix A was re-embedded**.
 
 **"No CI mutation can see this" was true and is not any more.** Measured at `466e706` rather than
 accepted: with D69's fix folded back out of `deploy-dev.sh`, part 4 exits **0**. The stub now takes a
-fourth argument naming *which* docker read fails, and part 4 asks **five** states of each copy — on the
-network, off it, the membership `inspect` unanswerable, the `network inspect` unanswerable, and the
-network genuinely absent. The last is the positive control for the fourth: those two differ only in
-docker's words, so a repair collapsing them into "could not be asked" would pass everything else here
-while destroying NEW-25's own sentence. The check is 24 assertions where it was 18, and its test 32 ok
-where it was 26 — six new cases, three per copy, **none** of them about a refusal going missing and all
-of them about which cause it names. Case 26 is D69's fix folded back out, so the copy that already had
-the repair is guarded too.
+fourth argument naming *which* docker read fails, and part 4 asks **six** states of each copy — on the
+network, off it, the membership `inspect` unanswerable, the `network inspect` unanswerable, the network
+genuinely absent, and the docker **CLI** answering `not found` about itself. The fifth is the positive
+control for the fourth: those two differ only in docker's words, so a repair collapsing them into
+"could not be asked" would pass everything else here while destroying NEW-25's own sentence. The sixth
+came at **review**, with the match it guards: `not found` alone is a substring an unanswerable daemon
+carries (`DOCKER_HOST=ssh://…` to a host with no docker), so the absence branch requires
+`Error response from daemon` beside it — NEW-32's own cost, one arm along, and measured to be invisible
+to the other five states. The check is **26** assertions where it was 18, and its test **34 ok** where
+it was 26 — eight new cases, four per copy, **none** of them about a refusal going missing and all of
+them about which cause it names. Case 26 is D69's fix folded back out, so the copy that already had the
+repair is guarded too.
 
 **What did not run is the script.** Everything was measured on the shipped function lifted out by
 `awk`, as in D66, D67 and D69: D65 and D67 both correctly refuse this worktree, and `deploy-dev.sh`
 cannot run at all while NEW-31 stands. Three folded reads survive in the two files deliberately — a
 `warn`, a poll and `running()` — because the rule is *a `die` may not fold; a `warn` and a poll may*
 (D71 §5), and "always check the status" would have made a transient flake fatal in the health-wait
-loop.
+loop. **That poll has an edge, stated at review**: its exhaustion *is* a `die`, so a daemon dying
+mid-`up` costs six minutes and then an absence claim, and what saves the diagnosis is the
+`compose logs --tail=40` beside it — measured at `rc=1` with docker's own connection error. A poll may
+fold; a poll whose exhaustion is fatal needs something beside it that cannot.
 
 ---
 

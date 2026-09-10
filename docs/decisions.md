@@ -11549,8 +11549,8 @@ stub so it can fail, drive the real function against an unreachable daemon, or s
 the second is ruled out by §2: an unreachable daemon never reaches the membership probe, so it can
 only ever exercise the network arm, and only in the state where *everything* fails.
 
-So the stub takes a fourth argument naming **which docker read fails**, and part 4 asks five states of
-each copy instead of two:
+So the stub takes a fourth argument naming **which docker read fails**, and part 4 asks six states of
+each copy instead of two — five as ratified, plus one added at review (§7):
 
 | state | what must be answered |
 | --- | --- |
@@ -11559,13 +11559,14 @@ each copy instead of two:
 | the membership `inspect` fails | refuses, naming **the daemon** — NEW-32 |
 | the `network inspect` fails | refuses, naming **the daemon** — §2 |
 | the network is genuinely absent | refuses, naming **the network** |
+| the docker **CLI** answers `not found` about itself | refuses, naming **the daemon** — added at review, §7 |
 
 The last is the **positive control for the fourth**, and it is not a courtesy: those two states differ
 only in docker's message, so a repair that collapsed them into "could not be asked" would satisfy every
 other assertion in part 4 while destroying NEW-25's own sentence. It is this defect mirrored, and case
 25 constructs it.
 
-Each of the three new assertions has **three** arms, not two — refused naming this cause, refused
+Each of the four new assertions has **three** arms, not two — refused naming this cause, refused
 naming another, accepted — because "it went red" is not the assertion here. Both readings are fatal, so
 what is being pinned is the cause, and a check that could not tell a misnamed refusal from an accepted
 plane would be asserting the thing that was never in doubt.
@@ -11599,6 +11600,19 @@ container it asks about is nobody's configuration, so "not there" and "not runni
 neither is an error. So the rule is **a `die` may not fold; a `warn` and a poll may** — and it is worth
 stating that way, because "always check the status" would have demanded three changes that make nothing
 better and one (the poll) that would make a transient flake fatal.
+
+**The poll has an edge, and the rule is only usable by the next person with it stated** (this
+decision's review). The health wait folds correctly for each of its 90 polls and its **exhaustion is a
+`die`** — *"$s did not become healthy"* — so a daemon that dies mid-`up` costs six minutes and then an
+absence claim, which is this defect's shape arrived at *through* a rule that permits it. What stops the
+misdiagnosis is not the rule: it is the `compose logs --tail=40` immediately before that `die`, on the
+same line, which cannot fold. **Measured rather than assumed** — against
+`DOCKER_HOST=unix:///nonexistent` that command exits **1** printing *"failed to connect to the docker
+API at unix:///nonexistent"*, so whoever reads the timeout reads docker's own refusal above it. The
+rule in full: a poll may fold, and **a poll whose exhaustion is fatal needs something beside it that
+cannot**. The loop is not changed here — a status check inside it would make a one-second flake fatal
+on the estate's slowest gate, and the thing that saves the diagnosis is already in the file, unstated
+until now.
 
 **And the second: a message matched, not a status.** Every one of these five needs docker's *words* to
 tell the two outcomes apart, and in three of them the outcomes share an exit code — measured here for
@@ -11683,11 +11697,29 @@ status; with the capture, `printf` cannot fail and what keeps it closed is the g
 an empty answer. The behaviour is identical and the sentence was not, so it is corrected in place —
 dev's copy never made the claim.
 
-**The `not found` match is a substring of docker's message, and docker's messages are not an API.** A
-future daemon that says "no such network" would send an absent network to the "could not be asked" arm
-— a refusal with the wrong cause, which is this defect in miniature, and fail-**closed**: the `up` still
-stops. It is matched the same way D66 §7 matches `o such object` for containers, for the same reason,
-and the version it was measured against (29.7.2) is written on the line.
+**The absence match is a substring of docker's message, and docker's messages are not an API — and the
+two directions of that are not equally harmless, which is a correction to this section.** It said only
+the safe one: a future daemon wording an absence as "no such network" sends an absent network to the
+"could not be asked" arm, a wrong cause and fail-**closed**, the `up` still stops.
+
+The reverse was unstated and is worse, because it is **NEW-32's own cost resurrected one arm along**:
+an *unanswerable* daemon whose error happens to carry `not found` routes to *"the shared network does
+not exist — start it with (cd hc-infra && ./startup.sh)"*, and the operator is sent to fix a plane that
+is fine. Not hypothetical either — docker natively supports `DOCKER_HOST=ssh://…`, and a reachable host
+with no docker binary on it answers in the `command not found` family through the CLI.
+
+So the match is **tightened rather than annotated** (this decision's review, which offered either):
+the absence branch requires `Error response from daemon` **and** `not found`, in that order — the
+sentence only a daemon that *answered* can produce. Both realistic local states measured clean before
+and after, so nothing here was live; what changes is that the misroute now needs two literals to
+coincide instead of one. The remaining drift is the safe direction only, and it is stated above. It is
+matched the same way D66 §7 matches `o such object` for containers, for the same reason, and the
+version it was measured against (29.7.2) is written on the line.
+
+**The tightening is guarded by a state of its own, because nothing else could see it.** A sixth stub
+state answers with a `not found` an unanswerable CLI produces, and part 4 asserts it routes to "could
+not be asked". Measured: with the loose form back, the **other five states answer identically** and
+only that assertion moves — in both copies — which is precisely why a comment would not have done.
 
 ### §8 Verified in this round, by running
 
@@ -11701,19 +11733,19 @@ sentences. Part 4 at `466e706` measured **green** on a `deploy-dev.sh` with D69'
 the mutation asserted applied (`rc2` gone, the `2>/dev/null` pipeline present, `bash -n` parsing) before
 the reading was believed.
 
-After the change: five states per copy, all five answered correctly, printed by the check itself; the
+After the change: six states per copy, all six answered correctly, printed by the check itself; the
 live plane still passes through the real daemon in both copies; a throwaway empty network still refuses
 for D66's reason; an absent network still says it is absent. `bash -n` on both scripts and on every
-script `build.yml` parses. **The check green at 24 assertions** (18 before) and **its test at 32 ok, 0
-failed** — the 26 inherited states plus six new ones, three per copy, each asserting the mutation applied
-(mutant text present, original text gone as a single-line fixed string, `bash -n` parsing) and each
-matching the error fragment of **the door it was aimed at**, since two of the three new refusals share
+script `build.yml` parses. **The check green at 26 assertions** (18 before) and **its test at 34 ok, 0
+failed** — the 26 inherited states plus eight new ones, four per copy, each asserting the mutation
+applied (mutant text present, original text gone as a single-line fixed string, `bash -n` parsing) and
+each matching the error fragment of **the door it was aimed at**, since two of the new refusals share
 the phrase "named the wrong cause".
 
-**The harness's own instrument was checked by removing the thing it tests**: with part 4's three new
+**The harness's own instrument was checked by removing the thing it tests**: with part 4's four new
 `case` blocks deleted, the check is still green on a clean tree and the test reports exactly
-`26 ok, 6 failed` — cases 23–28, each *"the check PASSED on a broken tree"* — and exits 1. So the six new
-cases are covered by the six new assertions and by nothing else. Two harness defects were found by
+`26 ok, 8 failed` — cases 23–30, each *"the check PASSED on a broken tree"* — and exits 1. So the eight
+new cases are covered by the four new assertions and by nothing else. Two harness defects were found by
 running it rather than by reading it: a `|`-delimited `sed` whose pattern stopped one character short of
 a `||` and became six fields, and an error fragment that matched two doors.
 
@@ -11732,3 +11764,50 @@ left the sentence above it — so a file stated a count about itself that the sa
 **No estate was started, stopped or recreated; `quality/startup.sh` was not run in any mode; the quality
 stack was not touched; the five wedged dev containers were read and left exactly as they are; nothing was
 published to the broker; and the one throwaway network was removed with a sweep for leftovers.**
+
+### §9 Review, and the two things it found — both prose, one of which was worth code
+
+**No blocking findings.** The whole new behavioural surface was re-derived independently and held: the
+harness control to the digit (`26 ok, 6 failed`, every failure through its own door), the collapse
+hazard caught by a mutation other than the one that motivated it, the stub genuinely exercised (a
+function answering `ok` before any docker read produces **four** `::error::` lines, so the
+vacuous-green shape fails closed), all three `sed` targets occurring exactly once per file, both
+realistic unanswerable states carrying no `not found`, and `local nets rc2=0` re-initialising per
+iteration so no status leaks between the Consul and the Kafka probe.
+
+**Finding 1 was a one-directional statement in §7, and the direction it omitted is this defect's own
+cost.** The section reasoned about a daemon wording an absence differently — safe, fail-closed — and
+said nothing about an *unanswerable* daemon whose message carries `not found`, which the loose
+substring routes to "the shared network does not exist — start hc-infra". The review offered a sentence
+or a tightening and preferred the tightening; it is taken, with the sentence as well. §7 carries both
+directions now, the branch requires two literals in order, and — because nothing else could see a
+loosening — a **sixth stub state** and **two more harness cases** came with it. Measured: with the
+loose form restored, the other five states answer identically and only the new assertion moves, in both
+copies. That is the decision's own rule applied to itself: a fix nothing can see is how this shape
+survived twice, and *"a check whose reach depends on prose is not a check"* would have applied to a
+note in §7.
+
+**Finding 2 was a count disagreeing with its list, in the commit whose §8 corrected exactly that.**
+CLAUDE.md's new section said "five instances … across **four** docker objects" over a list of
+**three** kinds — aliases, a container's networks, a network's existence. Five is right; four is not.
+Corrected to name what is being counted, since the backlog counts the same family a third way (by
+instance), and each statement now says which. The notable part is not the digit: `shared-plane-wiring
+.sh`'s "FOUR PARTS" over five was found and fixed in this same commit, so the house rule — *trust the
+list and not the number* — was broken in the act of enforcing it.
+
+**Both optionals taken.** The **poll edge** is now stated in §5: the health wait's exhaustion **is** a
+`die` resting on 90 folded reads, so the rule as written permits a six-minute wait ending in an absence
+claim, and what saves the diagnosis is the `compose logs --tail=40` beside it — **measured** at `rc=1`
+with docker's own connection error, rather than assumed. The rule in full is *a poll may fold, and a
+poll whose exhaustion is fatal needs something beside it that cannot*. And the **full-document capture**
+on the success path is noted on both copies' comment, so nobody optimises it back to a discarded status.
+
+**Verified at review, by running**: the tightened match against the real daemon on all three of its
+states — absent network says absent, unreachable daemon says could-not-be-asked quoting docker's
+sentence, live plane passes; the loosening watched red in **both** copies with the mutation asserted
+applied (mutant present, original gone, `bash -n`) and the other five assertions watched staying green;
+`compose logs` measured against a dead daemon; the check green at **26** assertions and its test at
+**34 ok, 0 failed**; the control re-run at `26 ok, 8 failed` with the four new `case` blocks removed;
+`quality-pepper-persistence-test.sh` 40 and `quality-project-checkout-test.sh` 28 re-run because
+`quality/startup.sh` moved again; **Appendix A re-embedded** and `--check` green. Nothing was started,
+stopped or recreated, and the estate is as the roll left it.

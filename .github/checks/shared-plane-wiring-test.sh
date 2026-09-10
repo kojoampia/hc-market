@@ -63,6 +63,15 @@
 #   27  the dev unaskable-network arm made unreachable
 #   28  the dev "not found" arm removed
 #
+#  Two more from D71's review, one per copy, and they are the only cases here that pin a match
+#  rather than a status check:
+#
+#   29  quality's absence match loosened to the bare `not found` substring — which an unanswerable
+#        docker CLI carries itself, so the loose form routes it to "start hc-infra": NEW-32's cost
+#        resurrected one arm along. Measured: the other five states answer identically, which is
+#        why the sixth stub state exists
+#   30  the same, in deploy-dev.sh
+#
 #      ./.github/checks/shared-plane-wiring-test.sh
 # ==============================================================================
 set -Eeuo pipefail
@@ -219,8 +228,16 @@ expect_red "$d" "24 the unaskable-network arm made unreachable" '*"no docker eve
 # THE POSITIVE CONTROL, and it is red for the opposite reason to everything above: the fix names two
 # outcomes docker separates only by its message, so collapsing them into "could not be asked" keeps
 # every other assertion in part 4 green while losing NEW-25's own sentence.
-d="$(fresh m25)"; sed -i 's|^      \*"not found"\*)$|      *"a network docker will never describe"*)|' "$d/startup.sh"
+d="$(fresh m25)"; sed -i 's|^      \*"Error response from daemon"\*"not found"\*)$|      *"a network docker will never describe"*)|' "$d/startup.sh"
 expect_red "$d" "25 the absent-network arm removed" '*"a network docker will never describe"*)' '*"not found"*)' "$d/startup.sh" "no longer says it is absent"
+
+# 29. THE MATCH LOOSENED, not a status check removed — D71's review. The absence branch requires
+#     "Error response from daemon" AND "not found", because the bare substring is one an unanswerable
+#     docker CLI produces about itself (`DOCKER_HOST=ssh://…` to a host with no docker). Measured
+#     before this case existed: with the loose form the other FIVE states answer identically and only
+#     the sixth moves, which is the whole reason that state was added rather than a comment written.
+d="$(fresh m29)"; sed -i 's|^      \*"Error response from daemon"\*"not found"\*)$|      *"not found"*)|' "$d/startup.sh"
+expect_red "$d" "29 the absence match loosened to a bare substring" '      *"not found"*)' '"Error response from daemon"*"not found"*)' "$d/startup.sh" "blamed the network for a daemon that never answered"
 
 printf '\nSubjects that must be refused rather than skipped\n'
 d="$(fresh m10)"; sed -i -e 's|^  hcnet:$|  sharednet:|' -e 's|networks: \[quality, qualitynet, hcnet\]|networks: [quality, qualitynet, sharednet]|' "$d/compose.yml"
@@ -269,8 +286,11 @@ expect_red "$d" "26 the DEV membership status check made vacuous" '(( rc2 >= 0 )
 d="$(fresh_dev m27)"; sed -i 's|^      \*)$|      *"no docker ever says this"*)|' "$d/deploy-dev.sh"
 expect_red "$d" "27 the dev unaskable-network arm made unreachable" '*"no docker ever says this"*)' '' "$d/deploy-dev.sh" "ACCEPTED a shared network it could not ask about"
 
-d="$(fresh_dev m28)"; sed -i 's|^      \*"not found"\*)$|      *"a network docker will never describe"*)|' "$d/deploy-dev.sh"
+d="$(fresh_dev m28)"; sed -i 's|^      \*"Error response from daemon"\*"not found"\*)$|      *"a network docker will never describe"*)|' "$d/deploy-dev.sh"
 expect_red "$d" "28 the dev absent-network arm removed" '*"a network docker will never describe"*)' '*"not found"*)' "$d/deploy-dev.sh" "no longer says it is absent"
+
+d="$(fresh_dev m30)"; sed -i 's|^      \*"Error response from daemon"\*"not found"\*)$|      *"not found"*)|' "$d/deploy-dev.sh"
+expect_red "$d" "30 the dev absence match loosened to a bare substring" '      *"not found"*)' '"Error response from daemon"*"not found"*)' "$d/deploy-dev.sh" "blamed the network for a daemon that never answered"
 
 # PART 5 IS AN EXACT SET, so both directions are constructed: an action that GAINED preflight (which
 # a broken plane can then wedge) and one that LOST it (which starts the estate with no plane check at

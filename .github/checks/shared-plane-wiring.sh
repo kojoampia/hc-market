@@ -57,7 +57,7 @@
 #     deploy-dev.sh at d3291a5 before the fix, with a throwaway empty network and the real daemon:
 #     the whole function passed and printed "…on hc-market-d69-probe" (backlog NEW-29).
 #
-#     FIVE STATES SINCE D71, and three of them are about WHICH CAUSE the refusal names rather than
+#     SIX STATES SINCE D71, and four of them are about WHICH CAUSE the refusal names rather than
 #     about whether it refuses. Every failure here is fatal either way — what an operator is told
 #     decides whether they go and restart a shared plane with nothing wrong with it, which is the
 #     cost D66 §7 grew three separate messages to remove. So the stub can now be told to FAIL a
@@ -68,7 +68,10 @@
 #
 #     The absent-network state is the POSITIVE CONTROL for the unanswerable-network one: docker
 #     exits 1 for both and prints `[]` for both, so they are told apart only by its message, and a
-#     fix collapsing them into "could not be asked" would pass every other assertion here.
+#     fix collapsing them into "could not be asked" would pass every other assertion here. The
+#     sixth state is that pair's other half — an unanswerable daemon whose OWN words carry
+#     `not found` (docker over ssh to a host with no docker on it) — because the absence branch
+#     matches two literals in order rather than one substring, and loosening it moves nothing else.
 #
 #     REACH: the stub answers with a network list, so this catches the refusal being DELETED or
 #     weakened and does not catch the Go template being wrong. That direction was measured by hand
@@ -336,6 +339,13 @@ plane() { # plane <script> <function> <networks the stubbed containers are on> [
               printf '[]\n'
               printf 'failed to connect to the docker API at unix:///nonexistent; check if the path is correct and if the daemon is running\n' >&2
               return 1 ;;
+            # An unanswerable daemon whose own words contain `not found` and NOT "Error response
+            # from daemon" — docker over `DOCKER_HOST=ssh://…` against a host with no docker on it.
+            # The absence branch must not claim this one (D71 as reviewed): the loose substring
+            # routed it to "the shared network does not exist", which is NEW-32's cost resurrected.
+            net-cli)
+              printf 'bash: line 1: docker: command not found\n' >&2
+              return 1 ;;
             *) return 0 ;;
           esac ;;
         "inspect -f")
@@ -378,12 +388,13 @@ for entry in $PLANE_FNS; do
   no_nets="$(plane "$s_plane" "$fn_plane" "$P_NET other-net" nets)"
   no_net="$(plane "$s_plane" "$fn_plane" "$P_NET other-net" net)"
   gone_net="$(plane "$s_plane" "$fn_plane" "$P_NET other-net" net-absent)"
+  cli_net="$(plane "$s_plane" "$fn_plane" "$P_NET other-net" net-cli)"
   # Newlines COLLAPSED rather than truncated at the first one: docker's own error text is quoted
   # into two of these refusals and `[]` is the first line of it, so a `%%$'\n'*` printed a message
   # that appeared to end there and read as the fix having lost the sentence it exists to quote.
   printf '  on the network:      %s\n  off it:              %s\n' "${member//$'\n'/ }" "${stranger//$'\n'/ }"
-  printf '  networks unaskable:  %s\n  network unaskable:   %s\n  network absent:      %s\n' \
-    "${no_nets//$'\n'/ }" "${no_net//$'\n'/ }" "${gone_net//$'\n'/ }"
+  printf '  networks unaskable:  %s\n  network unaskable:   %s\n  network absent:      %s\n  no docker CLI:       %s\n' \
+    "${no_nets//$'\n'/ }" "${no_net//$'\n'/ }" "${gone_net//$'\n'/ }" "${cli_net//$'\n'/ }"
   case "$member" in
     OK*) ok "$fn_plane passes when the broker and Consul are on the network the stack joins" ;;
     *)   err "$s_plane's $fn_plane refuses a shared plane that IS on the network the stack joins: '$member'. A refusal that fires on the correct state is not a check. See decisions.md D66." ;;
@@ -425,6 +436,19 @@ for entry in $PLANE_FNS; do
       err "$s_plane's $fn_plane refused an absent shared network, but no longer says it is absent: '$gone_net'. 'docker could not be asked' for a network docker answered about is the D71 defect in the other direction — the two are told apart by docker's message, not by its exit status. See decisions.md D71." ;;
     *)
       err "$s_plane's $fn_plane ACCEPTED a shared network that does not exist ('$gone_net'). See decisions.md D66." ;;
+  esac
+  # THE OTHER HALF OF THAT PAIR, and what makes the absence branch's match a decision rather than a
+  # substring: `not found` alone is carried by an unanswerable daemon too (docker over ssh to a host
+  # with no docker on it), so the branch requires "Error response from daemon" beside it. Loosen it
+  # back and this is the only assertion that moves — the other five answer identically, which is why
+  # the tightening needed a state of its own rather than a sentence in a comment.
+  case "$cli_net" in
+    "DIE docker could not be asked whether the shared network"*)
+      ok "$fn_plane does not read an unanswerable daemon's own 'not found' as an absent network" ;;
+    DIE*)
+      err "$s_plane's $fn_plane blamed the network for a daemon that never answered: '$cli_net'. 'not found' is a substring the docker CLI itself produces when there is no daemon behind it — the absence branch must require docker's 'Error response from daemon' beside it, or this is backlog NEW-32's cost resurrected one arm along. See decisions.md D71." ;;
+    *)
+      err "$s_plane's $fn_plane ACCEPTED a plane it could not reach a docker CLI for ('$cli_net'). See decisions.md D71." ;;
   esac
 done
 

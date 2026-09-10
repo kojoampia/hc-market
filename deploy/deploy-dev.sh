@@ -233,12 +233,23 @@ shared_plane() {
   # STDOUT in both cases, so the output cannot tell them apart either. Both streams are captured,
   # like the arms below, which is why that `[]` is in the message: `2>&1 >/dev/null` would quote
   # docker's sentence alone and is one reordering away from quoting nothing at all, which would
-  # make an absent network read as an unanswerable daemon — this defect, mirrored.
+  # make an absent network read as an unanswerable daemon — this defect, mirrored. It also means
+  # `$net_probe` holds the whole network document on the paths that succeed, which nothing reads
+  # and nothing should: keep the capture, and do not "optimise" it back to a discarded status.
+  #
+  # BOTH LITERALS, IN ORDER — "Error response from daemon" *and* "not found", which is D71 as
+  # reviewed. `not found` alone is a substring an unanswerable daemon can carry: docker supports
+  # `DOCKER_HOST=ssh://…`, and a reachable host with no docker on it answers in the
+  # "command not found" family, which the loose form routes to "the shared network does not exist —
+  # start hc-infra". That is NEW-32's own cost resurrected one arm along, so the absence branch now
+  # requires the sentence only a daemon that ANSWERED can produce. It fails closed in the other
+  # direction, which is the direction to fail in: a future daemon wording an absence differently
+  # sends it to "could not be asked", and the `up` still stops.
   local net_probe net_rc=0
   net_probe="$(docker network inspect "$SHARED_NETWORK" 2>&1)" || net_rc=$?
   if (( net_rc != 0 )); then
     case "$net_probe" in
-      *"not found"*)
+      *"Error response from daemon"*"not found"*)
         die "the shared network '$SHARED_NETWORK' does not exist — $fix" ;;
       *)
         die "docker could not be asked whether the shared network '$SHARED_NETWORK' exists, so whether this stack can reach the shared plane is unestablished: $net_probe" ;;
