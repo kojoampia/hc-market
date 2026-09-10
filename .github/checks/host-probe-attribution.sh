@@ -182,7 +182,28 @@ for pair in "health_gate:$LIFT_HEALTH_GATE" "gate_exhausted:$LIFT_GATE_EXHAUSTED
     err "$SCRIPT declares no '${pair%%:*}', so part 6 drove nothing: the health gate's exhaustion is fatal by way of \`rollback\`, and what stands beside it is the only thing telling an operator whether the services never became ready or whether we stopped being able to ask. See decisions.md D78 and backlog NEW-36."
   fi
 done
-LIFT_GLOBALS="$(grep -E '^(HOST_SENTINEL|SSH_OPTS)=' "$SCRIPT" || true)"
+# LIFTED FROM STRIPPED TEXT, WHICH THE FIRST VERSION OF THE SSH_OPTS GUARD BELOW WAS NOT — decisions.md
+# D78 §14, and the house question asked of the guard that had just repaired a fail-open: *would a
+# comment satisfy this?* Measured, it did —
+#
+#     SSH_OPTS=(-o BatchMode=yes) # keep -o "ConnectTimeout=..." off while debugging slow links
+#
+# exits 0 and prints "carries both BatchMode and a ConnectTimeout" for an array carrying NEITHER,
+# because the substring lands in the trailing comment. So the two lines are lifted from the shell
+# stripper's output; `$STRIPPED_SRC` is computed once here and part 5 reuses it.
+#
+# THE ASYMMETRY WITH HOST_SENTINEL IS THE THING TO KNOW BEFORE UNDOING THIS, and it is measured
+# rather than assumed: `HOST_SENTINEL="" # was "__hc_remote_status__"` is refused even by a raw grep,
+# because a blank sentinel breaks host_run's actual BEHAVIOUR and parts 1 and 2 catch it by driving.
+# SSH_OPTS' absence changes nothing the stub can observe — an ssh handed no options answers exactly
+# as before — so this text matcher is the sole line of defence and has to be exact. Do not "simplify"
+# it back to a raw grep on the grounds that the guard beside it uses one.
+if [[ ! -f "$STRIP_SH" ]]; then
+  err "$STRIP_SH is missing, so nothing below could strip comments: part 5 would read empty text and report every call site as routed, and the SSH_OPTS guard would be satisfied by a trailing comment. One file, two parts of this check, and every text-matching check in this repository. A check that reads nothing is not a check that found nothing."
+  printf '\nhost probe attribution: FAILED\n'; exit 1
+fi
+STRIPPED_SRC="$(awk -f "$STRIP_SH" "$SCRIPT")"
+LIFT_GLOBALS="$(printf '%s\n' "$STRIPPED_SRC" | grep -E '^(HOST_SENTINEL|SSH_OPTS)=' || true)"
 # THE VALUE, NOT THE NAME. `HOST_SENTINEL=""` satisfies a grep for the assignment and satisfies
 # `grep -F "$HOST_SENTINEL "` against any line with a space in it — so the function still refuses,
 # and refuses naming NEITHER hop. Measured: every ssh state then answers "answered with a status
@@ -215,8 +236,14 @@ else
     *BatchMode*) : ;;
     *) err "$SCRIPT's SSH_OPTS carries no BatchMode: '$SSH_OPTS_VALUE'. Part 5 bans an inline '-o BatchMode=yes' on the grounds that this array is where it is set, so dropping it here makes that ban a guard over nothing — and a deploy that stops halfway waiting for a passphrase is worse than one that does not start. See decisions.md D75 and D78 §9." ;;
   esac
+  # THE COUNT IS DERIVED AND PRINTED, because the decision that shipped this listed thirteen LINE
+  # NUMBERS and the next commit in the same branch moved every one of them (D78 §7, §14). A number a
+  # tool prints on every run cannot rot; one written into a document can.
+  ssh_bounded="$(printf '%s\n' "$STRIPPED_SRC" | { grep -cF 'SSH_OPTS[@]}' || true; })"
+  (( ssh_bounded >= 2 )) \
+    || err "$SCRIPT expands SSH_OPTS on $ssh_bounded line(s). host_run's own probe is one of them, so anything less than two means the deploy phase — the upload, the pull, the roll, the health gate's poll, the smoke probes, the rollback — has gone back to the TCP default. See decisions.md D78 §7."
   [[ "$SSH_OPTS_VALUE" == *ConnectTimeout* && "$SSH_OPTS_VALUE" == *BatchMode* ]] \
-    && ok "SSH_OPTS carries both BatchMode and a ConnectTimeout, so every ssh that expands it is bounded"
+    && ok "SSH_OPTS carries both BatchMode and a ConnectTimeout, and all $ssh_bounded ssh/scp invocations that expand it are bounded"
 fi
 if (( fail )); then printf '\nhost probe attribution: FAILED\n'; exit 1; fi
 
@@ -243,11 +270,38 @@ cat > "$BIN/docker" <<'DOCKER_STUB'
 # **0 with nothing at all** when the project has no containers.
 sub=""
 for a in "$@"; do case "$a" in exec|ps|logs) sub="$a"; break ;; esac; done
+# `ps` ANSWERS IN THE ORDER THE FORMAT ASKED FOR, which is not decoration: a stub printing a canned
+# `name state health` line stays green while the script's `--format` is REORDERED to
+# '{{.Health}} {{.Service}} {{.State}}', and the shipped regex then matches nothing on a real host —
+# the blip arm silently dead with every assertion passing. Review's note, closed here rather than
+# conceded. render_ps <state1> <health1> <state2> <health2>.
+render_ps() {
+  local fmt="" tok out
+  for a in "$@"; do :; done
+  for a in "${ARGV[@]}"; do case "$a" in *'{{.'*) fmt="$a" ;; esac; done
+  local -a svc=(hc-market-catalog hc-market-booking) st=("$1" "$3") he=("$2" "$4")
+  local i
+  for i in 0 1; do
+    out=""
+    # Walk the format string's tokens in order. An unknown token is printed as itself, so a format
+    # this stub does not understand is visible rather than silently dropped.
+    for tok in $fmt; do
+      case "$tok" in
+        '{{.Service}}') out+="${svc[$i]} " ;;
+        '{{.State}}')   out+="${st[$i]} " ;;
+        '{{.Health}}')  out+="${he[$i]} " ;;
+        *)              out+="$tok " ;;
+      esac
+    done
+    printf '%s\n' "${out% }"
+  done
+}
+ARGV=("$@")
 if [[ -n "$sub" ]]; then
   case "${FAKE_DOCKER:-ok}:$sub" in
     # Ready on the first poll: the positive control for every refusal below it.
     gate-ready:exec) exit 0 ;;
-    gate-ready:ps)   printf 'hc-market-catalog running healthy\nhc-market-booking running healthy\n'; exit 0 ;;
+    gate-ready:ps)   render_ps running healthy running healthy; exit 0 ;;
     # A TRANSIENT. The first poll of each service fails and every later one succeeds, which is the
     # state the folding inside the loop exists for: a status check in there makes this fatal.
     gate-flake:exec)
@@ -255,16 +309,16 @@ if [[ -n "$sub" ]]; then
       printf '%s' "$n" > "${FAKE_COUNTER:-/dev/null}"
       (( n <= 2 )) && { printf 'bash: line 1: /dev/tcp/localhost/8080: Connection refused\n' >&2; exit 1; }
       exit 0 ;;
-    gate-flake:ps)   printf 'hc-market-catalog running healthy\nhc-market-booking running healthy\n'; exit 0 ;;
+    gate-flake:ps)   render_ps running healthy running healthy; exit 0 ;;
     # GENUINELY NOT READY, and the host says so itself. This is the ONE arm that may roll back.
     gate-unready:exec) printf 'bash: line 1: /dev/tcp/localhost/8080: Connection refused\n' >&2; exit 1 ;;
-    gate-unready:ps)   printf 'hc-market-catalog running unhealthy\nhc-market-booking running starting\n'; exit 0 ;;
+    gate-unready:ps)   render_ps running unhealthy running starting; exit 0 ;;
     gate-unready:logs) printf 'hc-market-catalog  | Caused by: org.postgresql.util.PSQLException: Connection refused\n'; exit 0 ;;
     # THE BLIP: the polls got nothing and docker, running the same readiness probe INSIDE the host,
     # says both services are healthy. Constructed at the docker layer rather than the ssh one because
     # this harness's ssh state is fixed for a run; what is under test is the arm, not the blip's cause.
     gate-blip:exec) printf 'bash: line 1: /dev/tcp/localhost/8080: Connection refused\n' >&2; exit 1 ;;
-    gate-blip:ps)   printf 'hc-market-catalog running healthy\nhc-market-booking running healthy\n'; exit 0 ;;
+    gate-blip:ps)   render_ps running healthy running healthy; exit 0 ;;
     # The host answered and knows of no containers at all. Measured: status 0, no output.
     gate-empty:exec) printf 'service "hc-market-catalog" is not running\n' >&2; exit 1 ;;
     gate-empty:ps)   exit 0 ;;
@@ -278,7 +332,7 @@ if [[ -n "$sub" ]]; then
     # The daemon answered `ps` and then went quiet for `logs`: the one state whose remedy is a warn
     # rather than a refusal, because unreadiness is established by then.
     gate-logs-lost:exec) printf 'bash: line 1: /dev/tcp/localhost/8080: Connection refused\n' >&2; exit 1 ;;
-    gate-logs-lost:ps)   printf 'hc-market-catalog running unhealthy\nhc-market-booking running starting\n'; exit 0 ;;
+    gate-logs-lost:ps)   render_ps running unhealthy running starting; exit 0 ;;
     gate-logs-lost:logs)
       printf 'failed to connect to the docker API at unix:///nonexistent; check if the path is correct and if the daemon is running: dial unix /nonexistent: connect: no such file or directory\n' >&2
       exit 1 ;;
@@ -667,14 +721,16 @@ esac
 # and rollback-write phases, which are either `run`-wrapped (the command is printed), ERR-trapped
 # (the command is printed), or polls — D71 §5's rule, `a die may not fold; a warn and a poll may`.
 printf '\n%s: the call sites\n' "$SCRIPT"
-if [[ ! -f "$STRIP_SH" ]]; then
-  err "$STRIP_SH is missing, so part 5 could not strip comments and did not run. A check that reads nothing is not a check that found nothing."
-else
+# THE STRIPPER'S ABSENCE IS FATAL ABOVE, not handled here: it is one file that two parts of this check
+# and every text-matching check in the repository trust, so it is refused once, before anything reads
+# anything. This branch used to carry that guard and would now be unreachable — a dead `else` that
+# reads as covering something.
+{
   # BACKSLASH-CONTINUED LINES ARE JOINED FIRST, and that is a bug fix rather than a flourish: four
   # of the six calls below are written across two lines, so a line-at-a-time grep for the remote
   # command finds the CONTINUATION and reports a perfectly correct call site as unrouted. Watched
   # doing exactly that. Same treatment build.yml's brokerage probe needed for the same reason.
-  stripped="$(awk -f "$STRIP_SH" "$SCRIPT" | sed -e ':a' -e '/\\$/N; s/\\\n//; ta')"
+  stripped="$(printf '%s\n' "$STRIPPED_SRC" | sed -e ':a' -e '/\\$/N; s/\\\n//; ta')"
   # The comments in this file quote the OLD folded lines verbatim, so an unstripped count would be
   # counting a paragraph. Measured on a clean tree: 6 raw, 0 stripped, for `-o BatchMode`.
   batch="$(printf '%s\n' "$stripped" | { grep -c 'ssh -o BatchMode=yes' || true; })"
@@ -705,7 +761,7 @@ else
       err "$SCRIPT asks the host about $what without going through host_run: '$line'. That probe folds ssh not arriving, the host having no docker, and the answer being no into one message — which is backlog NEW-33, at a different door. See decisions.md D75."
     fi
   done
-fi
+}
 
 # ---- 6. The health gate: the polls still fold, and the exhaustion no longer does ------------------
 #
@@ -725,12 +781,36 @@ fi
 # stops the deploy and reverts nothing, because `rollback` needs the same host the gate has just
 # failed to reach and reverting a healthy estate is the harm this exists to prevent.
 printf '\n%s: the health gate, and what its exhaustion establishes\n' "$SCRIPT"
+# THE BLIP ARM'S PREMISE, WHICH LIVES IN ANOTHER FILE — decisions.md D78 §14, review's note. Its
+# decidability rests entirely on `{{.Health}}` meaning something: every app service in
+# docker-compose.prod.yml inherits a healthcheck that makes the SAME /management/health/readiness
+# request the gate makes, run by the daemon inside the host. Drop or rename that block and docker's
+# health column goes blank for all five, every blip becomes an established-unready rollback — NEW-36's
+# own harm — and every assertion in this part stays green, because the stub answers with a health
+# column whatever the compose file says. So the premise is asserted here rather than left implied.
+PROD_COMPOSE="${HC_PROD_COMPOSE:-deploy/docker/docker-compose.prod.yml}"
+if [[ ! -f "$PROD_COMPOSE" ]]; then
+  err "$PROD_COMPOSE is missing, so the health column the blip arm reads is unestablished. See decisions.md D78 §3."
+# The ten lines FOLLOWING each `healthcheck:`, not an awk range: the obvious terminator
+# (`/^ *[a-z_]+:$/`) matches the `healthcheck:` line itself, so the range closed on its own first line
+# and the assertion reported the block missing on a correct tree. Caught by running it.
+elif ! awk '/^ *healthcheck:/ { n = 10; next } n-- > 0' "$PROD_COMPOSE" | grep -q '/management/health/readiness'; then
+  err "$PROD_COMPOSE declares no healthcheck making the /management/health/readiness request, so docker's {{.Health}} column is blank for every service and gate_exhausted's blip arm can never fire. A host that goes away for one poll then reads as five services that failed, and the deploy reverts a healthy estate — which is backlog NEW-36's own harm, arriving through the premise of its fix. Every assertion in part 6 stays green either way, because the stub answers with a health column regardless. See decisions.md D78 §3 and §14."
+else
+  ok "the prod compose still healthchecks readiness, so {{.Health}} is a second opinion rather than a blank column"
+fi
 # A REAL DIRECTORY, because every remote command in this script begins `cd '$REMOTE_PATH' && …` and
 # the shipped `cd` is part of what is being driven. Pointed at the default /srv/healthconnect, all
 # ten readings below are the `cd` refusing — which is a correct answer to a question this part is not
 # asking, and it looked exactly like the gate refusing everything. Found by running it.
 mkdir -p "$FIX/stack"
-GATE='health_gate; printf "GATE_RC=%s\n" "$?"'
+GATE='health_gate deploy; printf "GATE_RC=%s\n" "$?"'
+# THE SECOND CALLER, and the reason the phase is a parameter at all (decisions.md D78 §14):
+# `rollback` calls this gate AFTER it has already restored .env and rolled the stack, so every
+# refusal that says "nothing has been rolled back" is false there — in the one function a failed
+# deploy is guaranteed to reach.
+GATE_RB='health_gate rollback; printf "GATE_RC=%s\n" "$?"'
+GATE_NOPHASE='health_gate; printf "GATE_RC=%s\n" "$?"'
 g_ready="$(HC_PROBE_PATH="$FIX/stack" probe connected gate-ready "$GATE")"
 g_flake="$(HC_PROBE_PATH="$FIX/stack" HC_PROBE_HEALTH_TIMEOUT=20 probe connected gate-flake "$GATE")"
 g_unready="$(HC_PROBE_PATH="$FIX/stack" probe connected gate-unready "$GATE")"
@@ -741,12 +821,17 @@ g_nodocker="$(HC_PROBE_PATH="$FIX/stack" probe connected cli-not-found "$GATE")"
 g_ssh="$(HC_PROBE_PATH="$FIX/stack" probe unreachable gate-unready "$GATE")"
 g_logs="$(HC_PROBE_PATH="$FIX/stack" probe connected gate-logs-lost "$GATE")"
 g_dry="$(HC_PROBE_PATH="$FIX/stack" probe connected gate-unready "DRY_RUN=1; $GATE")"
+g_rb_daemon="$(HC_PROBE_PATH="$FIX/stack" probe connected daemon-down "$GATE_RB")"
+g_rb_unready="$(HC_PROBE_PATH="$FIX/stack" probe connected gate-unready "$GATE_RB")"
+g_nophase="$(HC_PROBE_PATH="$FIX/stack" probe connected gate-unready "$GATE_NOPHASE")"
 printf '  ready first poll:    %s\n  a transient:         %s\n' "$(one "$g_ready")" "$(one "$g_flake")"
 printf '  really unready:      %s\n' "$(one "$g_unready")"
 printf '  a blip, host agrees: %s\n' "$(one "$g_blip")"
 printf '  no containers:       %s\n  daemon unanswerable: %s\n' "$(one "$g_empty")" "$(one "$g_daemon")"
 printf '  no docker on host:   %s\n  ssh unreachable:     %s\n' "$(one "$g_nodocker")" "$(one "$g_ssh")"
 printf '  logs lost after ps:  %s\n  dry run:             %s\n' "$(one "$g_logs")" "$(one "$g_dry")"
+printf '  from rollback, daemon gone: %s\n' "$(one "$g_rb_daemon")"
+printf '  from rollback, unready:     %s\n  no phase at all:            %s\n' "$(one "$g_rb_unready")" "$(one "$g_nophase")"
 
 # THE POSITIVE CONTROL. Without it every refusal below is satisfied by a gate that refuses
 # everything, which is this repository's sixteenth-instance rule applied to the gate itself.
@@ -832,6 +917,35 @@ case "$g_logs" in
     esac ;;
   *DIE*) err "$SCRIPT's health gate DIED because it could not read the failed services' logs: '$(one "$g_logs")'. By then the host has answered and its own healthcheck agrees something is unready, so the diagnosis is complete and the evidence is a bonus — refusing here leaves a broken deploy in place over a second round trip. See decisions.md D78." ;;
   *) err "$SCRIPT's health gate answered '$(one "$g_logs")' when the log read failed after a successful state probe. See decisions.md D78." ;;
+esac
+# CALLED FROM `rollback`, A ROLLBACK HAS ALREADY HAPPENED. Both readings stop the deploy; what changes
+# is whether the operator is told to run a command that has already run.
+case "$g_rb_daemon" in
+  *DIE*"ALREADY BEEN APPLIED"*)
+    case "$g_rb_daemon" in
+      *"NOTHING HAS BEEN ROLLED BACK"*) err "$SCRIPT's health gate says a rollback has already been applied AND that nothing has been rolled back, in one message: '$(one "$g_rb_daemon")'. See decisions.md D78 §14." ;;
+      *"--rollback --host"*) err "$SCRIPT's health gate offers \`--rollback\` as the remedy when called FROM the rollback: '$(one "$g_rb_daemon")'. That command has just run; the remedy there is a person. See decisions.md D78 §14." ;;
+      *) ok "a refusal reached from the rollback says the rollback was already applied, and offers no second one" ;;
+    esac ;;
+  *DIE*"NOTHING HAS BEEN ROLLED BACK"*)
+    err "$SCRIPT's health gate claims NOTHING HAS BEEN ROLLED BACK when it was called from \`rollback\`, which had already restored .env and rolled the stack: '$(one "$g_rb_daemon")'. Both readings are fatal; the difference is that this one sends an operator to run the command that has just run, in the one function every FAILED deploy reaches. A refusal asserting a state it has not established is this family's own defect. See decisions.md D78 §14." ;;
+  *DIE*) err "$SCRIPT's health gate refused from the rollback without saying what state the stack is in: '$(one "$g_rb_daemon")'. See decisions.md D78 §14." ;;
+  *) err "$SCRIPT's health gate answered '$(one "$g_rb_daemon")' from the rollback with a daemon that could not be asked. See decisions.md D78 §14." ;;
+esac
+case "$g_rb_unready" in
+  *"GATE_RC=1"*)
+    case "$g_rb_unready" in
+      *"rolling back."*) err "$SCRIPT's health gate says it is rolling back when it was called FROM the rollback: '$(one "$g_rb_unready")'. Its caller refuses on the next line and no second revert happens, so that sentence describes something nobody is going to do. See decisions.md D78 §14." ;;
+      *"nothing further to revert to"*) ok "an unready stack reached from the rollback says there is nothing further to revert to" ;;
+      *) err "$SCRIPT's health gate returned from the rollback without saying what happens next: '$(one "$g_rb_unready")'. See decisions.md D78 §14." ;;
+    esac ;;
+  *) err "$SCRIPT's health gate answered '$(one "$g_rb_unready")' for an unready stack reached from the rollback; it must return 1 so its caller can refuse. See decisions.md D78 §14." ;;
+esac
+# AND NO DEFAULT. A third caller that forgets the argument would otherwise inherit whichever context
+# was written first, which is the same wrong claim arriving silently.
+case "$g_nophase" in
+  *DIE*"called with no phase"*) ok "a gate called with no phase refuses rather than guessing which claim to make" ;;
+  *) err "$SCRIPT's health gate accepted a call with NO phase: '$(one "$g_nophase")'. Both of its refusals state whether the stack was left alone or already reverted, so a caller that does not say which gets one of them wrong — silently, and in a message an operator acts on. See decisions.md D78 §14." ;;
 esac
 case "$g_dry" in
   *"[dry-run] skipped"*)

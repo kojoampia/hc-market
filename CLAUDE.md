@@ -190,9 +190,22 @@ points, so an estate that cannot be asked cannot be reverted either.
 blip — a host away for the last poll alone — is decidable: every app service inherits the same
 `/dev/tcp` readiness healthcheck, run by the daemon *inside* the host every 15s, so it answers without
 crossing the hop the polls cross. If every service the gate gave up on reports `running healthy`, the
-refusal says the wire failed and leaves the estate alone. **Do not "tidy" that column out of the
-`--format`**; part 5 of `host-probe-attribution.sh` is what goes red if you do, because the check's
-docker stub does not render a format string and part 6 cannot see it go.
+refusal says the wire failed and leaves the estate alone. **That premise lives in
+`docker-compose.prod.yml` and part 6 now asserts it** (D78 §14): drop or rename the healthcheck and
+docker's health column is blank for all five, so every blip becomes an established-unready rollback —
+NEW-36's own harm — while every assertion stays green, because the stub answers with a health column
+regardless. **Do not "tidy" the column out of the `--format` and do not reorder it either**: removal is
+caught by part 5's needle, and a *reorder* was invisible until the stub was taught to render the fields
+in the order asked for.
+
+**The gate takes its PHASE as a parameter, with no default, and the refusals depend on it** (D78 §14).
+`health_gate` has two callers — the deploy router and `rollback` itself — and from the second a revert
+has **already been applied**, so *"NOTHING HAS BEEN ROLLED BACK, deliberately"* with `--rollback` as the
+remedy was false in the one function every failed deploy reaches. `$left` and `$rolling` are composed
+once per phase and interpolated into every refusal, so a new arm cannot make the wrong claim; a caller
+that omits the phase is refused before a probe is sent, because a default would inherit whichever
+context was written first. `HC_SSH_TIMEOUT=0` is refused at declaration time for the same reason —
+`ConnectTimeout=0` is unbounded, measured, and is the one well-formed value that undoes §7.
 
 **`smoke_test`'s two `/management/info` probes still fold, as a decision** (D78 §8, argued at the
 site): the brokerage one already names both readings with a remedy covering both, and the direction to
@@ -212,6 +225,15 @@ it: the check lifted `SSH_OPTS` beside `HOST_SENTINEL` and read only the sentine
 the array, dropping its `ConnectTimeout` or renaming it left all 44 assertions green — measured, three
 ways. It carries `BatchMode` **and** `ConnectTimeout` or the check refuses, because part 5's ban on an
 inline `-o BatchMode=yes` rests on this being the one place both are set.
+**That guard is read off STRIPPED text, and the reason is the twentieth instance of this family**
+(D78 §14): as first written it greped the raw line, so
+`SSH_OPTS=(-o BatchMode=yes) # keep -o "ConnectTimeout=..." off` printed *"carries both"* for an array
+carrying neither — a comment satisfying the guard that had just repaired a fail-open. `HOST_SENTINEL`
+beside it survives a raw grep for a different reason and not a better one: a blank sentinel breaks
+`host_run`'s behaviour, so parts 1-2 catch it by **driving**, while `SSH_OPTS`' absence is invisible to
+the stub. Do not make the two consistent. And **prefer a record an edit cannot invalidate**: §7's
+thirteen line numbers were stale one commit later, so the enumeration names what each invocation *does*
+and the count is printed by the check.
 
 Instances of the shape have been found here over **three kinds of docker object** — a container's
 aliases on a network (D68), a container's networks (D69 and D71, one copy each) and a network's

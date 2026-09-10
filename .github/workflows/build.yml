@@ -562,8 +562,10 @@ jobs:
       # with the REMOTE command's status, so no expression over the source can establish that the
       # two hops are told apart. The check drives the shipped functions against a stub that RUNS the
       # remote script it is handed — so the sentinel every assertion reads is produced by the code
-      # under test, not by the harness. Its own test constructs thirty broken states, including the
-      # positive controls that a repair collapsing two causes into one would otherwise satisfy.
+      # under test, not by the harness. Its own test constructs one broken state per row of its own
+      # list — including the positive controls a repair collapsing two causes into one would otherwise
+      # satisfy — and PRINTS the count it ran rather than carrying one here, because this comment and
+      # the step name below both said thirty against thirty-three (decisions.md D78 §14).
       #
       # SIX PARTS, and parts 3 and 4 are D75's review finding rather than its plan: the first version
       # drove ONE of the six call sites and covered the rest textually, which establishes that they
@@ -579,14 +581,17 @@ jobs:
       # may return into that rollback: the one where the host answered and docker's own healthcheck
       # agrees something is unready. Measured with `compose exec` against throwaway containers —
       # a refused port, a stopped service, an undeclared service and an unanswerable daemon all exit
-      # 1 — which is why no grep and no status check could stand in for driving it.
+      # 1 — which is why no grep and no status check could stand in for driving it. It drives BOTH of
+      # the gate's callers too: `rollback` calls it after a revert has already been applied, so a
+      # refusal saying "nothing has been rolled back" is false in the one function every failed deploy
+      # reaches, and the phase is a parameter with no default for that reason (D78 §14).
       #
       # It needs no docker, no network and no host: `deploy-prod.sh` has never been run against one
       # (decisions.md D49) and nothing here changes that.
       - name: A remote probe must say which hop failed
         run: ./.github/checks/host-probe-attribution.sh
 
-      - name: …and that check must fail on each of the thirty states it exists to refuse
+      - name: …and that check must fail on each of the states it exists to refuse
         run: ./.github/checks/host-probe-attribution-test.sh
 
       # "The agent must be verified as INSTRUMENTING, not merely loading" has been in CLAUDE.md

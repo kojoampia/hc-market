@@ -2017,6 +2017,15 @@ HOST_OUTPUT=""
 # halfway waiting for a passphrase is worse than one that does not start. The timeout is the value
 # the ssh check has always carried, now applied to every probe — an unbounded connect means the
 # refusal never arrives, and a message nobody waits for is the same as no message.
+# HC_SSH_TIMEOUT=0 REINSTATES THE UNBOUNDED CONNECT, and ssh takes it without complaint —
+# `-o ConnectTimeout=0` measured still connecting at 25s against 8.1s for `=8` (review's measurement,
+# D78 §14). Empty is safe, because `:-8` covers it; garbage fails loudly inside ssh; **zero is the one
+# value that is well-formed, accepted, and exactly the defect NEW-36's second half removed**. So it is
+# refused here, at declaration time, on D57's rule: a value that is set and wrong refuses to start
+# rather than being quietly honoured. The CI guard reads this array's DECLARATION and cannot see an
+# environment, which is why this belongs in the script.
+[[ "${HC_SSH_TIMEOUT:-8}" =~ ^[1-9][0-9]*$ ]] \
+  || die "HC_SSH_TIMEOUT must be a positive whole number of seconds; it is '${HC_SSH_TIMEOUT}'. Zero means an UNBOUNDED connect — measured at 136s per attempt against a host that drops packets, which the health gate multiplies by 24 iterations and five services before it can say anything at all (decisions.md D78 §7). Leave it unset for the default of 8."
 SSH_OPTS=(-o BatchMode=yes -o "ConnectTimeout=${HC_SSH_TIMEOUT:-8}")
 # What to tell an operator whose ssh never reached a shell. The CAUSE is established by the missing
 # sentinel; this only chooses the remedy, from ssh's own stderr — and it degrades to the generic arm
@@ -2509,7 +2518,25 @@ remote_deploy() {
 # for a daemon that cannot be asked — four states, one status, and ssh's own 255 on top of them
 # (decisions.md D75 §1). The attribution has to come from a DIFFERENT QUESTION, asked once, after
 # the loop. That is gate_exhausted.
+# health_gate <deploy|rollback>
+#
+# THE PHASE IS A PARAMETER BECAUSE THE REFUSALS MAKE A CLAIM ABOUT IT — decisions.md D78 §14, found at
+# review. This function has TWO callers: the deploy router at the foot of this file, and `rollback`
+# itself. From the second one a rollback has ALREADY been applied by the time the gate runs, so
+# gate_exhausted's *"NOTHING HAS BEEN ROLLED BACK, deliberately"* — with `--rollback` offered as the
+# remedy — was false in exactly the place a failed deploy is guaranteed to reach. The actions were
+# right in both contexts; the sentences were not, which is this family's own defect (a refusal
+# asserting a state it has not established) arriving inside the package closing an instance of it.
+#
+# There is deliberately NO DEFAULT: a third caller that forgets the argument would otherwise silently
+# claim whichever context happened to be written first, and that is the defect again. An unknown phase
+# refuses, loudly, before a single probe is sent.
 health_gate() {
+  local phase="${1:-}"
+  case "$phase" in
+    deploy|rollback) : ;;
+    *) die "health_gate was called with no phase ('$phase'), so it cannot say whether a refusal means the stack was left alone or that a rollback has already been applied — and both of its refusals make that claim. Call it as \`health_gate deploy\` from a deployment or \`health_gate rollback\` from a revert. See decisions.md D78 §14." ;;
+  esac
   step "Health gate (${HEALTH_TIMEOUT}s)"
   if (( DRY_RUN )); then printf '%s  [dry-run] skipped%s\n' "$c_dim" "$c_reset"; return 0; fi
   local waited=0 bad
@@ -2540,7 +2567,7 @@ health_gate() {
     # && smoke_test` and `health_gate && ok … || die …` — where bash suppresses `set -e` for the
     # whole command and every function it calls, so a non-zero return from here is safe today and is
     # exactly the kind of fact that stops being true when a call site moves.
-    (( waited >= HEALTH_TIMEOUT )) && { gate_exhausted "$bad"; return 1; }
+    (( waited >= HEALTH_TIMEOUT )) && { gate_exhausted "$bad" "$phase"; return 1; }
     printf '  waiting%s (%ss)\n' "$bad" "$waited"
   done
 }
@@ -2569,19 +2596,32 @@ health_gate() {
 # an estate that cannot be asked cannot be reverted either, and the refusal names the by-hand
 # command for the moment the host comes back.
 gate_exhausted() {
-  local bad="$1" svc unproven="" logs_of=""
+  local bad="$1" phase="$2" svc unproven="" logs_of="" left rolling
+  # WHAT IS TRUE ABOUT THE STACK, PER CALLER — decisions.md D78 §14. Composed once and interpolated
+  # into every refusal below, so a fifth arm cannot be written that claims the wrong one, and a third
+  # phase has to answer this question before it can reach any of them.
+  case "$phase" in
+    deploy)
+      left="NOTHING HAS BEEN ROLLED BACK, deliberately: a rollback needs this same host, and reverting a healthy estate over a hop nobody could ask is the failure this refusal exists to prevent. Revert by hand with \`./deploy-prod.sh --rollback --host $HOST\` once the host answers."
+      rolling="rolling back." ;;
+    rollback)
+      left="THE ROLLBACK TO $TAG HAS ALREADY BEEN APPLIED — this gate is what was checking it — so there is nothing further to revert to and no rollback is being attempted: the stack on $HOST is running $TAG and its state is now unestablished. This needs a person, not another deploy command."
+      rolling="and this WAS the rollback, so there is nothing further to revert to." ;;
+    *)
+      die "gate_exhausted was called with phase '$phase', so it cannot say what state the stack is in — and every refusal below makes that claim. See decisions.md D78 §14." ;;
+  esac
   host_run "ask $HOST what state the services are in, now that the gate has timed out" \
     "cd '$REMOTE_PATH' && $REMOTE_COMPOSE ps -a --format '{{.Service}} {{.State}} {{.Health}}'"
   (( HOST_STATUS == 127 )) && no_docker_on_host
   (( HOST_STATUS == 0 )) \
-    || die "the health gate timed out after ${HEALTH_TIMEOUT}s and docker compose on $HOST could not then be asked what state the services are in (exit $HOST_STATUS): $HOST_OUTPUT. So it is NOT established that$bad failed to become ready — the probes above fold a daemon that cannot be asked into the same silence a service that is still starting produces, and they cross a network to do it. NOTHING HAS BEEN ROLLED BACK, deliberately: a rollback needs this same host, and reverting a healthy estate over a daemon nobody could ask is the failure this refusal exists to prevent. Establish what is actually there — \`ssh $HOST 'cd $REMOTE_PATH && $REMOTE_COMPOSE ps -a'\` — then either fix the gate failure and redeploy, or revert by hand with \`./deploy-prod.sh --rollback --host $HOST\`."
+    || die "the health gate timed out after ${HEALTH_TIMEOUT}s and docker compose on $HOST could not then be asked what state the services are in (exit $HOST_STATUS): $HOST_OUTPUT. So it is NOT established that$bad failed to become ready — the probes above fold a daemon that cannot be asked into the same silence a service that is still starting produces, and they cross a network to do it. $left Establish what is actually there — \`ssh $HOST 'cd $REMOTE_PATH && $REMOTE_COMPOSE ps -a'\`."
   # THE HOST ANSWERED AND KNOWS OF NOTHING. Measured: `ps -a` exits 0 with empty output for a project
   # that has no containers. That is not "they never became ready" and it is not this gate's subject —
   # `up -d` ran through `run`, so a failure there would have printed its own command through the ERR
   # trap. What is left is a --path or a compose project that is not the one just rolled, and an older
   # tag cannot fix either.
   [[ -n "$HOST_OUTPUT" ]] \
-    || die "the health gate timed out after ${HEALTH_TIMEOUT}s and docker compose on $HOST reports NO CONTAINERS AT ALL for $REMOTE_PATH/$APP_COMPOSE_FILE — not stopped ones, none. So$bad was never established to be unready; there is nothing there to be unready. Nothing has been rolled back: an older tag is not the remedy for a stack that is not running under this project. Check --path (currently $REMOTE_PATH) and that $APP_COMPOSE_FILE on the host is the file this deploy uploaded."
+    || die "the health gate timed out after ${HEALTH_TIMEOUT}s and docker compose on $HOST reports NO CONTAINERS AT ALL for $REMOTE_PATH/$APP_COMPOSE_FILE — not stopped ones, none. So$bad was never established to be unready; there is nothing there to be unready. $left An older tag is not the remedy for a stack that is not running under this project: check --path (currently $REMOTE_PATH) and that $APP_COMPOSE_FILE on the host is the file this deploy uploaded."
   # THE BLIP, WHICH IS THE ONE CASE ONLY A SECOND OPINION CAN SEE. A host unreachable for the last
   # poll alone puts every service in $bad while four of them were ready a second earlier; docker's own
   # healthcheck ran inside the host throughout and is the evidence for that reading.
@@ -2594,11 +2634,14 @@ gate_exhausted() {
   done
   if [[ -z "$unproven" ]]; then
     printf '%s\n' "$HOST_OUTPUT" | sed 's/^/    /'
-    die "the health gate timed out after ${HEALTH_TIMEOUT}s, and docker on $HOST reports every service it gave up on —$bad — as RUNNING and HEALTHY, from the same readiness probe run inside the host (see the table above). So what failed is this end of the wire and not the estate: the deploy's probes cross an ssh, docker's healthcheck does not. NOTHING HAS BEEN ROLLED BACK, which is the whole point of this arm — the stack on $HOST is $TAG and is answering. This deploy is not recorded in deployments.log, so re-run it once the link is steady if you want that record; \`./deploy-prod.sh --rollback --host $HOST\` is there if you want $TAG off the host instead."
+    die "the health gate timed out after ${HEALTH_TIMEOUT}s, and docker on $HOST reports every service it gave up on —$bad — as RUNNING and HEALTHY, from the same readiness probe run inside the host (see the table above). So what failed is this end of the wire and not the estate: the deploy's probes cross an ssh, docker's healthcheck does not. The stack on $HOST is $TAG and is answering, and nothing about it has been changed by this refusal — which is the whole point of this arm. $left Nothing was recorded in deployments.log either way."
   fi
   # ESTABLISHED UNREADY: the host answered, and its own answer agrees. This is the one arm that
   # returns, and the router rolls the stack back on it.
-  warn "the health gate timed out after ${HEALTH_TIMEOUT}s. The host ANSWERED, so this is the services and not the hop:"
+  # "THE HOP IS UP" IS ALL THIS ESTABLISHES, which is less than the first wording claimed (D78 §14).
+  # Where docker's health column is blank — a service whose compose entry carries no healthcheck — the
+  # 24 polls are the only evidence there is, and §3 says so while the message did not.
+  warn "the health gate timed out after ${HEALTH_TIMEOUT}s. The host ANSWERED, so the hop is up; below is docker's own account of the services, and where its health column is blank the polls above are the only evidence:"
   printf '%s\n' "$HOST_OUTPUT" | sed 's/^/    /'
   # THE EVIDENCE THE ROLLBACK IS ABOUT TO DESTROY, which is what `deploy-dev.sh` puts on the same line
   # as its own `die` (decisions.md D71 §9) — ported here as evidence rather than as the decision,
@@ -2618,7 +2661,7 @@ gate_exhausted() {
     warn "  their logs could not be read (exit $HOST_STATUS): $HOST_OUTPUT"
     warn "  the rollback below recreates these containers, so read them now or not at all."
   fi
-  warn "still unhealthy:$unproven — rolling back."
+  warn "still unhealthy:$unproven — $rolling"
   return 0
 }
 
@@ -2739,9 +2782,13 @@ smoke_test() {
   # cannot price a booking passes every other check, then retries the first completed booking for ever
   # and answers 503 to every receipt, both after the customer's money has moved. So an unestablished
   # answer must NOT be allowed to ship — it fails closed, which means rolling back, which means the
-  # fold costs nothing that reversing it would buy. Routing it through host_run would also change the
-  # arm the gate's repair deliberately keeps: host_run refuses on the ssh hop, so a link that dropped
-  # between the gate and here would leave a possibly-unpriced estate up rather than reverted.
+  # fold costs nothing that reversing it would buy.
+  #
+  # THE COUNTERFACTUAL ABOVE ONCE READ that routing this through host_run "would leave a possibly-
+  # unpriced estate up rather than reverted", and that overstated it (D78 §14): with the fold, a
+  # dropped link also leaves the estate up, because `rollback`'s own `run ssh` then fails through the
+  # ERR trap. The distinction only bites where the daemon is unanswerable while ssh is fine. The
+  # decision stands on the direction to fail, which is the argument above, and not on that.
   #
   # The gateway version probe below folds too and decides nothing at all — it `warn`s and the deploy
   # proceeds either way.
@@ -2820,7 +2867,7 @@ rollback() {
   # meant the two paths disagreed about what the stack would come up with.
   run ssh "${SSH_OPTS[@]}" "$HOST" "cd '$REMOTE_PATH' && cp .env.previous .env && $REMOTE_COMPOSE pull $(compose_names) && $REMOTE_COMPOSE up -d $(compose_names)"
   TAG="$prev"
-  health_gate && ok "rolled back to $prev" || die "rollback to $prev is also unhealthy — manual intervention required"
+  health_gate rollback && ok "rolled back to $prev" || die "rollback to $prev is also unhealthy — manual intervention required"
 }
 
 record_success() {
@@ -2844,7 +2891,7 @@ else                                 verify_published
 fi
 remote_deploy
 
-if health_gate && smoke_test; then
+if health_gate deploy && smoke_test; then
   record_success
   step "Done"
   ok "HealthConnect $TAG live on $HOST via the '$CHANNEL' channel ($IMAGE_PREFIX)"

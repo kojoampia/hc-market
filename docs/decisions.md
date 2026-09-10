@@ -13896,14 +13896,26 @@ same property, all measured over the comment-stripped, continuation-joined file,
 | **lines carrying** `"${SSH_OPTS[@]}"` | **13** | equal to the first, which is how you know none was missed |
 | invocations **anchored at line start** (optionally after `run`) | **7 `ssh` + 1 `scp` = 8** | five are written inside `$( )`, after a pipe, or after `if` |
 
-Enumerated rather than counted, by line in the stripped file: **404** (`host_run`), **779** `mkdir`,
-**786** `scp`, **787** `.env.next`, **788** the rotation, **800** `docker login`, **803** `pull`,
-**807** `up -d`, **844** the health gate's poll, **1055** the brokerage probe, **1078** the version
-probe, **1121** `rollback`, **1128** `record_success`. A per-line control confirms every one of the
-thirteen carries the expansion. Re-derive before quoting; the first version of this section said
-"twelve `ssh` and one `scp`, counted on the stripped source" without naming which of the three
-measures that was, and review — measuring the anchored one — read it as wrong. CLAUDE.md's rule is
-*count the list, not the number*, and the list is above.
+**Enumerated by WHAT EACH ONE IS, not by line number** — `host_run`'s probe, `mkdir -p`, the `scp` of
+the compose file, the `.env.next` write, the `.env.previous` rotation, the remote `docker login`,
+`pull`, `up -d`, the health gate's poll, the brokerage probe, the version probe, `rollback`'s
+restore-and-roll, and `record_success`'s append. **Thirteen, and every one carries the expansion.**
+
+The first version of this paragraph listed the thirteen **line numbers**, and they were exact at the
+ratification commit and wrong at the next one in the same branch — eleven added lines above them
+shifted every single one, in the commit whose own §13 said *"§7 now carries the thirteen line
+numbers"* (review's finding 4). A line number is the least stable name a thing can have, and
+*"the enumeration is the record and the number is derived from it"* is only true if the enumeration
+survives an edit. So the record is what each invocation *does*, which no reformatting moves, and the
+current count is **printed by the check** rather than restated here: part 5's success line reads
+*"all 13 ssh/scp invocations that expand it are bounded"*, derived from the stripped source on every
+run. Re-derive with
+`awk -f .github/checks/strip-sh-comments.awk deploy/deploy-prod.sh | grep -cF 'SSH_OPTS[@]}'`.
+
+Review, measuring invocations **anchored at the start of a line**, read the first version's 12+1 as
+wrong; both were right and neither said which measure it was, which is the whole of the correction.
+CLAUDE.md's rule is *count the list, not the number* — and D78 §14 adds the half this package
+learned: **name the measure, and prefer a record an edit cannot invalidate.**
 
 It bounds the **connect** and not the remote command, so a long `pull` or a slow readiness probe is
 unaffected; `scp` accepts the same `-o` options (checked). The existing CI assertion that no site
@@ -13932,7 +13944,7 @@ decision rather than an omission.
 
 ### §9 What CI can see
 
-`.github/checks/host-probe-attribution.sh` grows a **part 6** and now makes **45 assertions** (was 32 — 44 at ratification, plus §13's `SSH_OPTS` guard).
+`.github/checks/host-probe-attribution.sh` grows a **part 6** and now makes **49 assertions** (was 32 — 44 at ratification, 45 with §13's `SSH_OPTS` guard, 49 with §14's two-caller readings, the blip premise and the derived count).
 It drives the shipped `health_gate` and `gate_exhausted`, lifted as bytes, against the same stub that
 runs the wrapped remote script for real — so the sentinel and the compose status every reading rests on
 are produced by the code under test. `compose_name` and `REMOTE_COMPOSE` are lifted too rather than
@@ -13949,16 +13961,18 @@ Part 5's enumeration grows the two new sites (`{{.Health}}` and `logs --no-color
 comes **after** part 5 because the numbers are names: four parts' messages cite their own, and
 renumbering them to insert a driving part in the middle is churn for nothing.
 
-`host-probe-attribution-test.sh` grows eight mutations at ratification and three more at review,
-**thirty-three** in all, each asserted applied — mutant present, original gone, `bash -n` — before its
-result is believed, and each required to go red through the door it was aimed at. It reports
-`34 ok, 0 failed`.
+`host-probe-attribution-test.sh` grows eight mutations at ratification, three at the first review and
+three at the second, each asserted applied — mutant present, original gone, `bash -n` — before its
+result is believed, and each required to go red through the door it was aimed at. **It states no total
+and derives two**, because a single number is neither (§14): `37 ok, 0 failed (36 numbered mutations in
+this file, plus the green control)`.
 
-**The harness's instrument was checked by removing what it tests, twice.** With part 6 cut out of a
-copy of the check, the test reports exactly **28 ok, 6 failed** — cases 23-28, each *"the check PASSED
-on a broken tree"* — while 29 (whose door is the lift guard) and 30 (whose door is part 5) stay green.
-With §13's `SSH_OPTS` guard cut out instead, it reports **31 ok, 3 failed**, exactly cases 31-33. So
-each group of mutations is covered by its own assertions and by nothing else.
+**The harness's instrument was checked by removing what it tests, three times** (§14 adds the third).
+Part 6 cut out of a copy of the check: **29 ok, 8 failed** — cases 23-28 plus 35 and 36, which live
+there — each *"the check PASSED on a broken tree"*, while 29 (whose door is the lift guard) and 30
+(whose door is part 5) stay green. The `SSH_OPTS` value guard cut out: **33 ok, 4 failed**, exactly
+31-34. The two-caller assertions cut out: **36 ok, 1 failed**, case 35 alone. So each group is covered
+by its own assertions and by nothing else.
 
 **Four harness defects were found by running it rather than by reading it**, and three are the same
 shape this family keeps producing:
@@ -14059,9 +14073,10 @@ bounded and unbounded. Bash's `set -e` suppression inside a condition-called fun
 ways, because `gate_exhausted` returning non-zero would otherwise reach the ERR trap and print
 *"failed at line N"* instead of the diagnosis.
 
-`host-probe-attribution.sh` green at **45** assertions (44 at ratification, +1 at review); its test at
-**34 ok, 0 failed** over thirty-three mutations; the two harness controls at **28 ok, 6 failed** with
-part 6 removed and **31 ok, 3 failed** with the SSH_OPTS guard removed, each failure through its own
+`host-probe-attribution.sh` green at **49** assertions (44 at ratification, 45 after the first review,
+49 after the second); its test at **37 ok, 0 failed** over thirty-six numbered mutations; three harness
+controls — **29 ok, 8 failed** with part 6 removed, **33 ok, 4 failed** with the SSH_OPTS value guard
+removed, **36 ok, 1 failed** with the two-caller assertions removed — each failure through its own
 door. `bash -n` on
 every script `build.yml` parses, including the two touched here. The nine neighbouring checks that read
 these files re-run green (`shared-plane-wiring.sh` and its test, `strip-sh-comments-test.sh`,
@@ -14119,7 +14134,7 @@ package closing an instance of it.
 `HOST_SENTINEL`'s guard says so in capitals and the argument transfers unchanged. The new guard requires
 a non-empty `SSH_OPTS=` line carrying **both** `ConnectTimeout` (the measurement's subject) and
 `BatchMode` (because part 5's inline ban rests on this array supplying it), with a separate refusal
-naming each, and it prints one `ok` when both are there — 45 assertions. Cases **31, 32 and 33** carry
+naming each, and it prints one `ok` when both are there — 45 assertions at that point, and 49 after §14. Cases **31, 32 and 33** carry
 the reviewer's three states rather than leaving them in a shell history, and the second harness control
 confirms they are covered by the new guard and by nothing else: **31 ok, 3 failed** with it removed.
 
@@ -14152,10 +14167,120 @@ subject line of the shipped script beyond the two count paragraphs and one comme
 reviewer's own note about `grep -F` eating a leading `--` in a mutation control is recorded rather than
 acted on: this file's `expect_red` compares with `grep -qF --` for exactly that reason, checked.
 
-**Verified at review, by running**: the check green at **45**; its test at **34 ok, 0 failed** with every
+**Verified at review, by running** — the numbers below are that review's and §14 moved them: the check green at **45**; its test at **34 ok, 0 failed** with every
 mutation asserted applied; both controls (**28 ok, 6 failed**; **31 ok, 3 failed**), each failure through
 its own door; the three-measure count reconciled with a per-line control; `bash -n` on every script
 `build.yml` parses; the nine neighbouring checks and `build.yml`'s three inline matchers over this script
 re-run green; **Appendix B re-embedded** and `--check` clean; the seed unchanged. No Java changed. No
 host was contacted, nothing was deployed, and the quality stack, the empty dev estate and the parallel
 package's files were not touched.
+
+### §14 Second review, and what it found — nothing blocking, four should-fix, all four taken as code
+
+**The repair itself was attacked and endorsed.** No state was found in which `gate_exhausted` reverts
+an estate it should not: a service with no healthcheck reads as established-unready and rolls back
+(§3's decision, not an accident), and a service still inside `start_period: 120s` does too, which is
+NEW-39's subject rather than this one's. The `SSH_OPTS` guard was re-driven across four states —
+timeout removed, array emptied, array renamed, `BatchMode` removed — each red, each naming its own
+cause. §7's three measures reconcile: 13 lines carry the expansion, 12 `ssh` + 1 `scp` in command
+position, **0** command-position invocations without it.
+
+**Finding 1, and it is this decision's own subject one spelling along: the guard added by §13 was
+satisfied by a trailing comment.** Measured by review, mutation asserted applied:
+
+```
+SSH_OPTS=(-o BatchMode=yes) # keep -o "ConnectTimeout=..." off while debugging slow links
+→ CHECK_EXIT=0
+  ok   SSH_OPTS carries both BatchMode and a ConnectTimeout, …
+```
+
+The lift greps the **raw** file and matches by substring, so the sentence printed for an array
+carrying *neither* option, because both substrings land in the comment. It was the one text matcher
+in the package that did not route through `strip-sh-comments.awk`, which blanks exactly that shape —
+**the twentieth instance of this family, arriving inside the fix for the nineteenth.** `LIFT_GLOBALS`
+is taken from the stripper's output now, `$STRIPPED_SRC` is computed once and part 5 reuses it, and
+the stripper's absence is refused **before** anything reads anything rather than in part 5's own
+branch (which would have been unreachable, so it is gone).
+
+**The asymmetry that decides the fix is review's, and it is measured rather than argued.**
+`HOST_SENTINEL="" # was "__hc_remote_status__"` is refused *even by a raw grep* — but not because its
+matcher is better: a blank sentinel breaks `host_run`'s behaviour, so parts 1 and 2 catch it by
+**driving**. `SSH_OPTS`' absence changes nothing the stub can observe, so its text matcher is the
+**sole** line of defence and has to be exact. That is written at the guard, because the next reader's
+instinct will be to make the two consistent.
+
+**Finding 2: the refusals asserted a false state when the gate is called from `rollback`.** Traced in
+the shipped code rather than hypothesised — `health_gate` has two callers, the deploy router and
+`rollback` itself, and from the second a revert has *already been applied* by the time the gate runs.
+So *"NOTHING HAS BEEN ROLLED BACK, deliberately"*, with `--rollback` offered as the remedy, was false
+in the one function every failed deploy reaches; and the established-unready arm's *"rolling back."*
+was contradicted by its caller's `die` on the next line. **The actions were right in both contexts
+and the claims were not**, which is D71 §5's subject — a refusal asserting a state it has not
+established — in the package closing an instance of it.
+
+**Taken as a parameter rather than as wording**, which review said would be a decision and is:
+`health_gate <deploy|rollback>` passes the phase to `gate_exhausted`, which composes `$left` and
+`$rolling` **once** per phase and interpolates them into every refusal, so a fifth arm cannot make
+the wrong claim and a third phase has to answer the question before it can reach any of them. **There
+is no default**: a caller that forgets the argument is refused before a single probe is sent, because
+a default would silently inherit whichever context was written first — the same wrong claim arriving
+quietly. Part 6 drives both phases and the missing one; case 35 is the collapse back to one branch,
+and control C confirms nothing else covers it.
+
+**Finding 3: three stale "thirty"s, and the fix is a derivation rather than an edit.** The test
+header, `build.yml`'s comment and — worse — the **step name** a CI log reader sees all said thirty
+against thirty-three cases. The header now states **no total** and says why, and the run prints two
+**derived** measures, because review is right that there are two: `37 ok, 0 failed (36 numbered
+mutations in this file, plus the green control)`. The step name carries no number at all. Deriving the
+case count took three attempts, each measured — `[a-z$]` after the number missed the cases named
+`--dry-run` and `\$net_hint` (27, then 30), and a wider class swallowed the prose *"127 is just
+another failure"* — which is the same lesson as everything else here: a count is only as good as the
+expression that produced it, and the expression has to be watched.
+
+**Finding 4: §7's thirteen line numbers were stale at the commit that shipped them.** Eleven lines
+added above them in the same branch moved every one, in the commit whose §13 said §7 "now carries the
+thirteen line numbers". §7 is rewritten to enumerate **what each invocation is**, which no
+reformatting moves, and the *number* is now printed by the check on every run — part 5's success line
+reads *"all 13 ssh/scp invocations that expand it are bounded"*, derived from the stripped source. A
+tool's number cannot rot; a document's can.
+
+**Five notes folded in, four as code and one as an item.**
+
+- **`HC_SSH_TIMEOUT=0` reinstated the unbounded connect**, measured by review at 25s and still
+  connecting against 8.1s for `=8`. Empty is safe (`:-8` covers it) and garbage fails inside ssh, so
+  zero is the one value that is well-formed, accepted, and exactly the defect §7 removed. **Refused at
+  declaration time** on D57's rule — a value that is set and wrong refuses to start — because the CI
+  guard reads the array's declaration and cannot see an environment.
+- **The blip arm's premise lives in another file and nothing asserted it.** Its decidability rests
+  entirely on the readiness healthcheck in `docker-compose.prod.yml`; drop or rename it and docker's
+  health column is blank for all five services, every blip becomes an established-unready rollback —
+  NEW-36's own harm — with every assertion in part 6 green, because the stub answers with a health
+  column regardless. Part 6 asserts the block, `HC_PROD_COMPOSE` makes it drivable, and case 36 is the
+  mutation. Its own first version was red on a correct tree: the obvious awk range terminator
+  (`/^ *[a-z_]+:$/`) matches the `healthcheck:` line itself, so the range closed on its own first
+  line. Found by running it.
+- **Format drift is not format removal**, and part 5's needle could not see it: reorder to
+  `'{{.Health}} {{.Service}} {{.State}}'` and the needle is still present while the shipped regex
+  matches nothing on a real host. Closed at the cheapest point review named — the stub **renders the
+  three fields in the order the format asked for**, so a reorder is red in part 6 rather than green
+  everywhere.
+- **The warn arm overstated for a blank health column.** *"The host ANSWERED, so this is the services
+  and not the hop"* — §3 itself concedes the 24 polls are the only evidence in that case, so the
+  decision was more honest than the message. It now says the hop is up, that what follows is docker's
+  own account, and that where the health column is blank the polls above are all there is.
+- **§8's counterfactual overstated its case** and is corrected at the site: with the fold, a dropped
+  link also leaves the estate up, because `rollback`'s own `run ssh` fails through the ERR trap. The
+  distinction only bites where the daemon is unanswerable while ssh is fine. The decision stands on
+  the direction to fail, which is the argument that was always carrying it.
+- **NEW-39 gains a fact**: `sleep 10` runs on the final iteration too, before the exhaustion check, so
+  the real budget is 24 × (probes + 10s) with one sleep spent on nothing.
+
+**Verified at review-two, by running**: the check green at **49** assertions; its test at
+**37 ok, 0 failed** over 36 numbered mutations; **three** harness controls, each failure through its
+own door — part 6 removed **29 ok, 8 failed** (cases 23-28 plus 35 and 36, which live there), the
+`SSH_OPTS` value guard removed **33 ok, 4 failed** (31-34), and the two-caller assertions removed
+**36 ok, 1 failed** (35 alone). `bash -n` on every script `build.yml` parses; the nine neighbouring
+checks and `build.yml`'s three inline matchers over this script re-run green; `HC_SSH_TIMEOUT=0`
+refused and `=8` accepted, both run; **Appendix B re-embedded** and `--check` clean; the seed
+unchanged. No Java changed. No host was contacted, nothing was deployed, and the quality stack, the
+empty dev estate and the parallel package's files were not touched.

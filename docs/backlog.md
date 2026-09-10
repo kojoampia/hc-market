@@ -2957,6 +2957,32 @@ inside the package closing an instance of that. Fixed on the `HOST_SENTINEL` gua
 the value, not the declaration — with both options required separately, and the reviewer's three states
 carried as cases 31-33.
 
+**A second review found four should-fix and no blocking state** (D78 §14), and the first of them is
+this family arriving *inside* §13's repair: the new guard read the **raw** line, so
+`SSH_OPTS=(-o BatchMode=yes) # keep -o "ConnectTimeout=..." off` printed *"carries both BatchMode and a
+ConnectTimeout"* for an array carrying neither. Measured. Both lines are lifted from
+`strip-sh-comments.awk`'s output now, and the asymmetry is written at the guard: `HOST_SENTINEL`
+survives a raw grep only because a blank sentinel breaks behaviour parts 1-2 *drive*, while
+`SSH_OPTS`' absence is invisible to the stub, so its text matcher is the sole defence.
+
+The second is the same shape in the shipped script: `health_gate` has **two** callers, and from
+`rollback` a revert has already been applied — so *"NOTHING HAS BEEN ROLLED BACK, deliberately"*, with
+`--rollback` as the remedy, was false in the one function every failed deploy reaches. **The phase is a
+parameter now, with no default**, composed once per caller and interpolated into every refusal; a
+caller that omits it is refused before a probe is sent. Third: three stale "thirty"s, including a CI
+**step name**, replaced by a derived count the run prints. Fourth: §7's thirteen **line numbers** were
+stale at the commit that shipped them, so the record is what each invocation *is* and the number is
+printed by the check.
+
+Five notes folded in: `HC_SSH_TIMEOUT=0` reinstated the unbounded connect (measured at 25s against
+8.1s) and is refused at declaration time; the blip arm's premise — the readiness healthcheck in
+`docker-compose.prod.yml` — is asserted by part 6 with `HC_PROD_COMPOSE` making it drivable, because
+dropping it makes every blip an established-unready rollback with all assertions green; the docker stub
+renders `--format` **in order**, so a reordered format is red rather than silently dead; the warn arm no
+longer claims more than a blank health column supports; and §8's counterfactual is corrected to the
+direction-to-fail argument that was always carrying it. Final: **49** assertions, **37 ok / 0 failed**
+over 36 numbered mutations, and **three** harness controls (29/8, 33/4, 36/1).
+
 ---
 
 ## NEW-37 — the fan-out test's barrier rests on a framework default nothing in this repository sets · READY
@@ -3061,6 +3087,10 @@ refusal that then named the wrong cause. With the timeout it is about **20 minut
 is now correct. Thirteen times better and still not 240 seconds.
 
 Two shapes, neither costed:
+
+One more fact for whoever takes it, from D78 §14's review: **`sleep 10` runs on the final iteration
+too**, before the exhaustion check, so the real budget is `24 × (probes + 10s)` with one sleep spent on
+nothing at all — ten seconds added to every failing gate for no probe.
 
 - **bound the loop by a wall clock** (`SECONDS` at entry) so the banner and the behaviour agree. It is
   one line and it is **not free**: on a healthy estate an iteration is roughly `5 × probe + 10s`, so a
