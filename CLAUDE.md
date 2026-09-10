@@ -712,10 +712,21 @@ stack traces every 150 seconds** at its own default intervals, and all five qual
 at the top and carries a `NOT-YET-ATTACHED` marker that CI holds against what the compose files
 render, in both directions.
 
-**Nobody has measured it against a LIVE collector, and D64 did not either.** The whole case for
-leaving the agent off rests on that 35, and 35 is a number about a *dead* endpoint. Joining the
-network removed the second obstacle, not the first. Starting `monitoring-quality` is another
-repository's business.
+**That was measured on 2026-09-10 and the agent is QUIET against a live collector** (D73). The
+sentence here used to read "nobody has measured it against a LIVE collector, and D64 did not either",
+and the 35 was correctly flagged as a *dead*-endpoint number. With `monitoring-quality` up and
+`otel-collector` resolving on `qualitynet`, all five services ran attached at **ERROR=0 and zero
+export failures**; the collector accepted **73,566 spans**, 1,927 of them from twenty deliberate
+requests, and forwarded to Tempo and Mimir, where all five `hc-market-*` service names now appear.
+The absence of errors was not taken as success on its own — the receiving end was read, because
+"quiet" and "exporting nothing" look identical from the sending side.
+
+**The default stays empty regardless, and that is D73 §3's decision rather than an oversight.**
+`monitoring-quality` belongs to another repository: it was exited from 2026-09-05 to 2026-09-10 and
+can go down again, and the day it does an attached estate is back to 35 ERROR lines per 150 seconds
+per service. One variable set by an operator is the right interface for a dependency this repository
+does not control — so the switch is documented in `quality/compose.yml` and **not** defaulted on.
+Starting `monitoring-quality` remains another repository's business.
 
 ### Jib images have no `curl` and no `wget`
 

@@ -11945,17 +11945,14 @@ Error response from daemon: cannot stop container: …:
   tried to kill container, but did not receive an exit event
 ```
 
-`docker rm -f` fails identically, and `docker update --restart=no` succeeds without helping. The cause
-is established rather than guessed: each of the five has **exactly one orphaned `containerd-shim`**
-while its own process is gone — `State.Pid=0`, `Restarting=true`, `Dead=false`. Ten days of
-restart-looping left the daemon holding a record it cannot reap. Docker 29.8.0, containerd v2.3.5.
+`docker rm -f` fails identically, and `docker update --restart=no` succeeds without helping. **This paragraph originally recorded a cause that was wrong, and the correction is §7.** It claimed
+each of the five had exactly one orphaned `containerd-shim`, "established rather than guessed". It was
+guessed, by a probe that could not tell one from zero. What is true: `State.Pid=0`, `Restarting=true`,
+`Dead=false`, ten days of restart-looping, Docker 29.8.0, containerd v2.3.5.
 
-Two remedies, and the narrow one was chosen: kill the five shims as root, then the daemon reaps them
-and the clean completes. The broad one — `systemctl restart docker` — would bounce **47 running
-containers** including three other products' only quality environments and the monitoring stack. That
-is why it was not taken. **Neither is available to this workspace**: there is no passwordless sudo
-here, so the shim kill is the architect's to run. Nothing was destroyed by the attempt; five
-containers and five volumes remain exactly as they were.
+On that wrong cause, two remedies were offered and the narrow one was chosen: kill the five shims as
+root. **That remedy does not exist** — see §7. Nothing was destroyed by the attempt; five containers
+and five volumes remain exactly as they were.
 
 **The OTel attach was refused by D66's own preflight, correctly.** With the documented invocation from
 `quality/compose.yml:163` — one variable, since D64 —
@@ -11989,3 +11986,150 @@ inside our containers at `172.24.0.19` on `qualitynet` — the network D64 joine
 is what expired D63's reason for leaving the agent off, and it is why the question was asked. It is
 another repository's stack, so it may go down again; `quality/compose.yml`'s note that a live collector
 is **unmeasured** stays true until the attach actually runs.
+
+### 7. Correction to §6: there are no orphaned shims, and the narrow remedy does not exist
+
+**Recorded 2026-09-10, within the hour, before the architect ran the command §6 recommended.**
+
+§6 stated that each of the five wedged `healthconnect-dev-*` containers held **exactly one orphaned
+`containerd-shim`**, and called that "established rather than guessed". It was guessed. The probe was
+
+```bash
+n=$(ps -eo args | grep -c "$full_container_id"); echo $((n>0?n-1:0))
+```
+
+which subtracts one for the `grep`'s own command line and reports the remainder. For a container with
+no shim at all that arithmetic returns **1**, not 0 — the residual was the self-match, not a shim.
+`pgrep -fc "containerd-shim.*$id"` has the same defect and returns **1 for an id that does not
+exist**, which is how it was caught: the verification one-liner was tested against a fabricated id
+before being handed over, and the fabricated id reported a shim.
+
+**CLAUDE.md names this exact trap** — *"Don't `pkill -f` on a pattern that appears in your own command
+line — it matches the shell running it"* — and it was written into a decision as an established fact
+anyway.
+
+**What is actually true**, established three independent ways with a healthy container as the positive
+control:
+
+| | the five dev containers | `hc-market-quality-catalog` (control) |
+| --- | --- | --- |
+| `docker inspect .State.Pid` | **0** | 2433102 |
+| processes whose cmdline contains the full 64-hex id | **0** | **1** |
+| `/sys/fs/cgroup/system.slice/docker-<id>.scope` | **absent** | **present** |
+| appears among the 38 shim-backed ids parsed from every shim's own `-id` argument | **no** | — |
+
+The containers are gone at the OS level: no process, no cgroup, no shim. **Only docker's in-memory
+record still says `restarting`**, which is why `stop`, `rm -f` and `down -v` all fail with *"tried to
+kill container, but did not receive an exit event"* — the daemon is waiting for an exit from something
+that no longer exists.
+
+**So the option the architect chose is void.** There is nothing to kill, and killing nothing would
+have been a harmless no-op that read as a fix — which is worse than a visible failure, because the
+next `down --clean` would have failed for a reason everybody believed was already addressed.
+
+The remedies that remain are the two §1 rejected or did not have:
+
+- **`systemctl restart docker`** — reloads the daemon's container state from disk and clears the stale
+  records. Bounces **47 running containers**, including three other products' only quality
+  environments and the monitoring stack that came up at 06:38Z. Still the only known cure.
+- **Leave them.** They consume no process, no cgroup and no CPU — a daemon record and five volumes.
+  The cost is unchanged: `deploy-dev.sh` stays unexercisable, and D65's and D67's first-run branches
+  stay untested against a real estate.
+
+**The general lesson is the one this repository keeps paying for, and this is its sixteenth instance
+in a fortnight**: a probe whose subject can go vacuous, answering vacuously, and being believed. The
+distinguishing feature here is that it reached a *decision document* as a fact and was one command
+away from wasting the architect's time. What caught it was testing the verification against a value
+that must not match — the discipline every CI check in this repository now applies, applied for once
+to a one-liner before it was handed over.
+
+---
+
+## D73 — The agent against a live collector, measured at last; and why the default stays empty
+
+**Ratified 2026-09-10.** Closes the gap D63 and D64 each named as their honest limit, on the
+architect's answer to attach the agent to all five quality services.
+
+### 1. What changed, and it was not ours
+
+`monitoring-quality` came up at 06:38:13Z after being exited since 2026-09-05, and `otel-collector`
+began resolving from inside our containers on `qualitynet` — the network **D64** joined for exactly
+this. D63 left the agent off *because the collector was down*; that reason expired, which is why the
+question was put to the architect rather than decided here.
+
+### 2. The measurement
+
+Attached to all five with the invocation `quality/compose.yml` already documented — **one variable,
+since D64** — at load ~16 with the broker answering and Consul holding a leader:
+
+```
+HC_OTEL_JAVA_OPTS='-javaagent:/app/otel-javaagent.jar -Dotel.exporter.otlp.endpoint=http://otel-collector:4317' \
+  ./quality/startup.sh --local
+```
+
+| | before | after |
+| --- | --- | --- |
+| `-javaagent` on `/proc/1/cmdline` (read inside) | 0 in all five | **1** in all five, `argc` 8 → 10 |
+| health | healthy | **healthy**, all five |
+| ERROR lines, whole log life | 2 / 3 / 2 / 2 / 1 | **0 in all five** |
+| export failures (`Failed to export`, `ConnectException`, `HttpExporter`) | 0 | **0** |
+| `otel`/`opentelemetry` mentions | **0** across ~200,000 lines | 1–3 — the banner, `2.30.0` |
+
+**So D63's 35 ERROR lines per 150 seconds is confirmed as a dead-endpoint number and nothing more.**
+Against a live collector the agent is silent.
+
+**The absence of errors was not taken as success**, because "quiet" and "exporting nothing" are
+indistinguishable from the sending side — the same fail-open this repository has found sixteen times.
+The receiving end was read instead, from inside `qualitynet` (our own Jib images have no `curl`, so a
+throwaway container):
+
+```
+otelcol_receiver_accepted_spans_total          73,566   (71,639 -> 73,566: +1,927 for 20 deliberate requests)
+otelcol_receiver_accepted_metric_points_total  85,688
+otelcol_receiver_accepted_log_records_total    21,151
+otelcol_exporter_sent_spans_total{otlp/tempo}  70,163
+otelcol_exporter_sent_metric_points{mimir}     87,490
+```
+
+And the **attribution**, which an aggregate counter cannot give — Mimir's `service_name` label values
+now include all five: `hc-market-gateway`, `hc-market-catalog`, `hc-market-booking`,
+`hc-market-messaging`, `hc-market-payout`. Telemetry is not merely leaving; it is arriving, labelled,
+in the store the dashboards read.
+
+### 3. The default stays empty, and that is a decision
+
+The obvious next step — flip `HC_OTEL_JAVA_OPTS` on by default now that it demonstrably works — is
+**refused**, and not by inertia.
+
+`monitoring-quality` is **another repository's stack**. It was exited for five days and came up
+without anything here asking; it can go down again the same way. The day it does, an estate with the
+agent defaulted on is back to **35 ERROR lines per 150 seconds per service** — five services filling
+logs about a collector that is nobody here's to start, and the zero-ERROR property that has been a
+load-bearing signal through nine packages spent on a dependency this repository does not control.
+
+So the interface stays as D63 built it: **one variable, set by an operator who knows the collector is
+up**, documented in `quality/compose.yml` beside the measurement. A compose default is the wrong place
+to encode an assumption about somebody else's uptime.
+
+Rejected alternatives: *default it on* (above); *default it on with a preflight check that the
+collector answers* — better, and still wrong, because it makes every `up` depend on another
+repository's stack being reachable, which is precisely what D27 spent its argument keeping out of the
+critical path; *remove the switch and attach unconditionally in the image* — the agent is already in
+every image and D63's whole point is that attaching is an environment decision, not a build one.
+
+### 4. What is now true, and what is still not
+
+**True:** the agent instruments, exports, and is quiet against a live collector; the five alert rules
+in `deploy/observability/hc-market-rules.yaml` have a data source for the first time; `qualitynet`
+(D64) is doing the job it was joined for.
+
+**Still not exercised:** the `NOT-YET-ATTACHED` marker in the rules file and the CI check that holds
+it against what the compose files render — both remain correct, because the compose default is still
+empty and this attach was an operator action rather than a committed change. Whether the rules should
+now be armed is a separate decision and needs the collector's steady state settled first.
+
+**And the estate is attached right now only until the next roll**, since the variable was passed at
+roll time and is not persisted. That is the intended behaviour under §3, not an oversight — but it
+means the current quality stack differs from what a plain `startup.sh --local` would produce, and the
+next roll will silently detach the agent. Anyone reading dashboards should know which of those they
+are looking at.

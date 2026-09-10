@@ -2446,7 +2446,7 @@ the volumes are untouched and the seed is not read again after startup.
 
 ---
 
-## NEW-31 — nothing can exercise a dev-estate change, and the five containers say why · BLOCKED
+## NEW-31 — nothing can exercise a dev-estate change, and the five containers say why · DONE (D72)
 
 Opened by **D69 §7**, which named it rather than touching it. It is the reason NEW-29 waited a package
 and the reason D69 could verify its own fix only by lifting the function out of the file: **two
@@ -2479,21 +2479,46 @@ real estate, including the refusal, which no test in CI can reach.
 compose.** `down --clean` fails on all five with `tried to kill container, but did not receive an exit
 event`; `docker rm -f` fails identically; `docker update --restart=no` succeeds and does not help.
 
-**The cause is established, not guessed:** each of the five holds **exactly one orphaned
-`containerd-shim`** while its own process is gone — `State.Pid=0`, `Restarting=true`, `Dead=false`.
-Docker 29.8.0, containerd v2.3.5.
+**The cause recorded here was wrong for one hour on 2026-09-10 and is corrected in `decisions.md`
+D72 §7.** It claimed one orphaned `containerd-shim` per container; the probe behind that claim
+subtracted one for its own `grep` and reported the remainder, which returns 1 for a container with no
+shim at all. `pgrep -fc "containerd-shim.*<id>"` returns **1 for an id that does not exist**, which is
+how it was caught — the verification one-liner was tested against a fabricated id before being handed
+over, and the fabricated id reported a shim. CLAUDE.md names that trap.
 
-**What it needs is one root command**, which this workspace cannot run (no passwordless sudo):
+**What is actually true**, three ways with a healthy container as the positive control: `State.Pid=0`,
+**zero** processes carrying the full 64-hex id, **no** `/sys/fs/cgroup/.../docker-<id>.scope`, and
+absent from the 38 shim-backed ids parsed out of every shim's own `-id` argument. The control shows
+pid 2433102, one process, and a cgroup — so the method can find what exists.
 
-```bash
-for id in 0b7a0b100587 a5de9d671558 59560b782b59 883df00b0289 4e84382e3101; do
-  sudo pkill -f "containerd-shim.*$id"
-done
-```
+The containers are gone at the OS level. **Only docker's in-memory record still says `restarting`**,
+which is why `stop`, `rm -f` and `down -v` all fail with *"tried to kill container, but did not receive
+an exit event"*: the daemon is waiting for an exit from something that no longer exists.
 
-then `./deploy/deploy-dev.sh down --clean` completes normally. The alternative,
-`systemctl restart docker`, was rejected in D72 §1: it bounces **47 running containers**, including
-three other products' only quality environments.
+**There is no narrow remedy.** The shim-kill this item recommended for an hour would have killed
+nothing and read as a fix, which is worse than a visible failure. What remains:
+
+- **`sudo systemctl restart docker`** — reloads the daemon's container state and clears the stale
+  records. The only known cure. Bounces **47 running containers**, including three other products'
+  only quality environments and the monitoring stack.
+- **Leave them.** No process, no cgroup, no CPU — a daemon record and five volumes.
+
+**CLEARED 2026-09-10.** The architect restarted the daemon; the five records went from `restarting`
+to `Exited (255)`, which is removable. `./deploy/deploy-dev.sh down --clean` then took two runs — the
+first hit a 300-second budget having removed one container, the second removed the rest, the five
+volumes and the network. The four stragglers passed through `Dead` with
+`removal of container … is already in progress` and cleared themselves over about six minutes; that
+is docker finishing the job, not a second wedge.
+
+**Final state, with the controls that make a zero non-vacuous**: dev containers **0**, dev volumes
+**0**, dev networks **0** — while `hc-market-quality` still had **10** containers and **5** volumes
+and the siblings **19**, before and after. Everything the daemon restart bounced came back: quality
+10, monitoring 8, hc-vendor 5, admin/patient/professional 4 each, the shared plane 2.
+
+So `deploy-dev.sh` is exercisable again, and the next `up` there is a **genuine first run** — the
+state D65's "no volumes is a first run and still generates" and D67's "no containers at all is a
+first run and proceeds" branches were written for and which nothing had ever exercised. That was the
+reason this shape beat the containers-only recommendation, and it is now available to be used.
 
 Status is `BLOCKED` rather than `READY` because what remains is a person with root, not engineering.
 Nothing was destroyed by the attempt — five containers and five volumes are exactly as they were.
