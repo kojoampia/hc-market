@@ -75,7 +75,6 @@ x-service-base: &service-base
     # but because it is not ours to publish on the organisation's behalf.
     HC_RETENTION_FINANCIAL_DAYS: ${HC_RETENTION_FINANCIAL_DAYS:-2190}
     HC_RETENTION_OPERATIONAL_DAYS: ${HC_RETENTION_OPERATIONAL_DAYS:-365}
-    HC_RETENTION_CARE_SUMMARY_DAYS: ${HC_RETENTION_CARE_SUMMARY_DAYS:-90}
     HC_DPC_REGISTRATION: ${HC_DPC_REGISTRATION:-}
     # The seed loader is unreachable under prod regardless; this is the second, explicit lock.
     HEALTHCONNECT_SEED_ENABLED: ${HEALTHCONNECT_SEED_ENABLED:-false}

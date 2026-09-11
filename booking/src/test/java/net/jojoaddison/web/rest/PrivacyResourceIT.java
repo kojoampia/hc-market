@@ -38,7 +38,7 @@ class PrivacyResourceIT {
      * adjust them in passing.
      */
     @Test
-    @DisplayName("the desk reports counsel's three retention periods")
+    @DisplayName("the desk reports counsel's two retention periods, and no third")
     @WithMockUser(username = "desk", authorities = "ROLE_BROKERAGE")
     void reportsTheRatifiedPeriods() throws Exception {
         mvc
@@ -46,7 +46,12 @@ class PrivacyResourceIT {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.retention.financialDays").value(2190))
             .andExpect(jsonPath("$.retention.operationalDays").value(365))
-            .andExpect(jsonPath("$.retention.careSummaryDays").value(90));
+            // THE THIRD IS GONE AND ITS ABSENCE IS ASSERTED — decisions.md D88. It governed nothing:
+            // Booking.careSummaryShared is a Boolean and no field in this estate has ever held a
+            // condition, an allergy or a medication. Asserted absent rather than dropped from this
+            // test, because a period coming back null would read as "kept for ever" and a test that
+            // stopped mentioning it could not tell the two apart.
+            .andExpect(jsonPath("$.retention.careSummaryDays").doesNotExist());
     }
 
     /**
@@ -75,10 +80,16 @@ class PrivacyResourceIT {
      * that passes the blank through.
      */
     @Test
-    @DisplayName("an unset registration number is null, not blank")
+    @DisplayName("the desk reports the committed registration number")
     @WithMockUser(username = "desk", authorities = "ROLE_BROKERAGE")
-    void reportsAnAbsentRegistrationAsNull() throws Exception {
-        mvc.perform(get(URL)).andExpect(status().isOk()).andExpect(jsonPath("$.controllerRegistration").doesNotExist());
+    void reportsTheRegistrationNumber() throws Exception {
+        // D42 LEFT THIS UNSET AND D88 SET IT. The real number arrived and a DPC registration is a
+        // public registry identifier, not a secret — and `null` had stopped meaning "not configured"
+        // and started asserting "not registered", which is false. The "blank counts as absent, and the
+        // desk reports null rather than an empty string" half of D42's rule moved to
+        // PrivacyPropertiesRegistrationUnitTest, where no config file can make it vacuous: it cannot
+        // be asserted from here any more, because the shared test config now carries a value.
+        mvc.perform(get(URL)).andExpect(status().isOk()).andExpect(jsonPath("$.controllerRegistration").value("P0021484082"));
     }
 
     /** The policy and the registration number are the desk's, not the public's. */

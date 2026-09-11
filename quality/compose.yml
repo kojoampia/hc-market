@@ -132,7 +132,6 @@ x-service: &service
     # organisation and quality has no business asserting one. The desk reporting null is correct.
     HC_RETENTION_FINANCIAL_DAYS: ${HC_RETENTION_FINANCIAL_DAYS:-2190}
     HC_RETENTION_OPERATIONAL_DAYS: ${HC_RETENTION_OPERATIONAL_DAYS:-365}
-    HC_RETENTION_CARE_SUMMARY_DAYS: ${HC_RETENTION_CARE_SUMMARY_DAYS:-90}
     HC_DPC_REGISTRATION: ${HC_DPC_REGISTRATION:-}
     # --- OpenTelemetry: the agent is IN the image and is NOT attached here ----------------------
     #

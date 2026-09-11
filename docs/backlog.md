@@ -362,18 +362,38 @@ runs the ratified policy rather than none. `HC_DPC_REGISTRATION` is read the sam
 fallback: blank counts as absent, the desk reports `null`, and a placeholder would be a false claim
 about a real organisation. `GET /api/desk/privacy` reports all of it beside `enforced: false`.
 
+**D88 SUPPLIED THE NUMBER AND DRAFTED THE THREE DOCUMENTS.** `P0021484082`, committed as the fallback
+in `application.yml` — D42 decided the opposite and D88 says why: both of D42's grounds hold for a
+*placeholder* and neither holds for the real number, and with no fallback an unconfigured estate
+reported `null`, which stopped meaning "not configured" and started asserting **"not registered"**.
+Quality still reports null, because the compose files define the variable as *empty* and Spring applies
+a `:default` only to an *undefined* property.
+
+**And the care-summary retention category is removed, because it governed nothing.**
+`Booking.careSummaryShared` is a `Boolean`; zero field-shaped matches for a condition, an allergy or a
+medication across every service's main source, the JDL and the changelogs. The words were only ever in
+comments. D42 ratified a 90-day period and a lawful-basis position for data the platform does not hold.
+**The cost, chosen with it stated:** counsel's figure is gone, so a future care-summary field needs the
+period asked again.
+
+**Three drafts, all marked DRAFT and NOT APPROVED, none served by anything here:**
+`docs/privacy-notice.md` (the organisation, with a verified hc-market annex),
+`docs/processing-record.md` and `docs/data-transfer-basis.md` (hc-market alone). Every factual claim was
+read off source and each says where.
+
 **Still open, and none of it is engineering:**
 
-- the **registration number itself** — answered "registered", but the number was not supplied, and the
-  privacy notice and processing record cannot be published without it;
+- the **registration number itself** — ANSWERED. `P0021484082`, D88;
 - the **privacy notice and processing record**, following from the lawful-basis answer;
 - the **data-residency transfer basis** — a written document, and a decision about whether the estate
   needs one or six, since `webserver` hosts all six products.
 
 **Watch two things.** The retention numbers were authored in the question and ratified rather than
 independently proposed, so they are provisional in origin even though they are live in configuration.
-And `care-summary-days` is load-bearing: counsel's position that the care summary is ordinary contract
-data rests partly on it being held briefly, so lengthening it is a legal change and not a tuning one.
+And `care-summary-days` **is gone — D88.** It was described here as load-bearing, on counsel's position
+that the care summary is ordinary contract data resting partly on it being held briefly. It governed no
+data at all: `careSummaryShared` is a boolean and nothing in this estate has ever stored a condition, an
+allergy or a medication.
 
 The two coded judgements D37 ratified — the **review body** is not erased (public speech about a
 professional) and `Dispute.resolution` is kept (the brokerage's record of a financial decision,
