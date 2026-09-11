@@ -118,8 +118,8 @@ management:
 healthconnect:
   privacy:
     pepper: hc-market-test-pepper-not-a-real-one
-    # The retention periods are repeated here, and they must stay equal to the main config's
-    # fallbacks — decisions.md D42.
+    # The retention periods AND the controller registration are repeated here, and they must stay
+    # equal to the main config's fallbacks — decisions.md D42, D88.
     #
     # THIS FILE SHADOWS src/main/resources/config/application.yml RATHER THAN MERGING WITH IT. Both
     # sit at `config/application.yml` on the classpath and test resources come first, so the main
@@ -135,6 +135,10 @@ healthconnect:
     retention:
       financial-days: 2190
       operational-days: 365
-      care-summary-days: 90
+    # THE COMMITTED REGISTRATION, repeated for the same reason the periods are: this file shadows the
+    # main one, so without this line the desk reports null under test and an IT asserting the number
+    # would be asserting a fiction. The MAIN config's fallback is what production and a bare `./mvnw`
+    # run read, and CI asserts it separately — a test here cannot see it removed there.
+    controller-registration: P0021484082
     # controller-registration is deliberately UNSET. PrivacyResourceIT asserts the desk reports null
     # for it, and a real registration number has no business in a public repository — see D42.

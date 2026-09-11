@@ -18,12 +18,12 @@ import org.springframework.stereotype.Component;
  * inventing a claim about Ghanaian law, which is the only thing the old comment was guarding against.
  *
  * <p>What survives from that reasoning is the shape. The figures are <strong>read from the
- * environment</strong> at startup — {@code HC_RETENTION_FINANCIAL_DAYS},
- * {@code HC_RETENTION_OPERATIONAL_DAYS}, {@code HC_RETENTION_CARE_SUMMARY_DAYS} — with counsel's
- * values as the committed fallback, so a deployment can be corrected without a release and the
- * ratified numbers are still what runs if nobody sets anything.
+ * environment</strong> at startup — {@code HC_RETENTION_FINANCIAL_DAYS} and
+ * {@code HC_RETENTION_OPERATIONAL_DAYS} — with counsel's values as the committed fallback, so a
+ * deployment can be corrected without a release and the ratified numbers are still what runs if nobody
+ * sets anything.
  *
- * <h2>Three categories, because one clock cannot be right for all of them</h2>
+ * <h2>Two categories, because one clock cannot be right for both of them</h2>
  *
  * <p>A single period short enough for a message body is far too short for a ledger row the platform is
  * required to keep, and one long enough for the ledger holds health data for six years. Splitting them
@@ -33,13 +33,21 @@ import org.springframework.stereotype.Component;
  * <ul>
  *   <li><strong>financial</strong> — bookings, ledger entries, disputes. The statutory clock.
  *   <li><strong>operational</strong> — message bodies, notifications, conversations.
- *   <li><strong>care summary</strong> — conditions, allergies, medications. The shortest on purpose.
  * </ul>
  *
- * <p><strong>The care-summary period is load-bearing and is not a tuning knob.</strong> D42 records
- * counsel's position that the care summary is ordinary contract data rather than special-category,
- * partly because it is held briefly. Shortening it is safe; lengthening it changes what that position
- * rests on, and is a question for counsel rather than for whoever is editing the environment file.
+ * <h2>There was a third, and it governed nothing</h2>
+ *
+ * <p><strong>{@code care-summary-days} is removed — {@code decisions.md} D88.</strong> D42 ratified a
+ * 90-day period and a lawful-basis position for conditions, allergies and medications, and
+ * <strong>this estate has never stored any</strong>: {@code Booking.careSummaryShared} is a
+ * {@code Boolean} recording that a summary was shared out of band, and no field, column or entity
+ * anywhere holds its content. The three words appeared only in comments — including the ones that used
+ * to be here.
+ *
+ * <p>The cost was stated when it was chosen and is recorded rather than smoothed over: counsel's
+ * ratified figure is gone, so the day a care summary is genuinely stored the period has to be asked
+ * again. Keeping it as a forward-looking default was the alternative.
+ *
  *
  * <h2>The registration number has no default, and that is not an oversight</h2>
  *
@@ -83,11 +91,10 @@ public class PrivacyProperties {
     @PostConstruct
     void announce() {
         LOG.info(
-            "privacy: retention is financial={}d operational={}d careSummary={}d (decisions.md D42), " +
+            "privacy: retention is financial={}d operational={}d (decisions.md D42, D88), " +
             "but NOTHING SCHEDULES A SWEEP — these are a stated policy, not an applied one",
             retention.getFinancialDays(),
-            retention.getOperationalDays(),
-            retention.getCareSummaryDays()
+            retention.getOperationalDays()
         );
         if (registrationIsAbsent()) {
             LOG.warn(
@@ -131,8 +138,6 @@ public class PrivacyProperties {
         /** Message bodies, notifications, conversations. */
         private Integer operationalDays;
 
-        /** Conditions, allergies, medications. See the class comment before changing this one. */
-        private Integer careSummaryDays;
 
         public Integer getFinancialDays() {
             return financialDays;
@@ -150,12 +155,6 @@ public class PrivacyProperties {
             this.operationalDays = operationalDays;
         }
 
-        public Integer getCareSummaryDays() {
-            return careSummaryDays;
-        }
 
-        public void setCareSummaryDays(Integer careSummaryDays) {
-            this.careSummaryDays = careSummaryDays;
-        }
     }
 }

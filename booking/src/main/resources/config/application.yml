@@ -342,20 +342,36 @@ healthconnect:
   # ledger holds health data for six years. The split makes financial rows survive an operational
   # sweep by construction rather than by a condition somebody has to remember to write.
   #
-  # care-summary-days is LOAD-BEARING. D42 records counsel's position that the care summary is
-  # ordinary contract data rather than special-category, and that rests partly on it being held
-  # briefly. Shortening it is safe; lengthening it is a question for counsel, not for whoever is
-  # editing the environment file.
+  # THERE WERE THREE CATEGORIES AND THERE ARE NOW TWO -- decisions.md D88. `care-summary-days` is
+  # removed because it governed nothing: `Booking.careSummaryShared` is a BOOLEAN, and no field,
+  # column or entity in this estate has ever held a condition, an allergy or a medication. The words
+  # appeared only in comments, including this one. D42 ratified a period and a lawful-basis position
+  # for data the platform does not hold.
+  #
+  # THE COST, recorded because it was chosen with it stated: counsel's ratified 90 days is gone, so the
+  # day a care summary is actually stored the period has to be asked again. The alternative was to keep
+  # it as a forward-looking default, and removing it was the architect's call.
   #
   # NOTHING SWEEPS ON ANY OF THIS. There is no scheduler in this estate, and three populated
   # categories look far more like a working retention regime than one unset integer did -- which is
   # why GET /api/desk/privacy reports `enforced: false` beside them.
   #
-  # controller-registration has NO fallback, unlike the periods. It is a real identifier belonging to
-  # a real organisation: a wrong one is a false claim about a regulatory relationship and a
-  # plausible-looking placeholder is worse than an absent value, because it stops anyone asking.
-  # Blank counts as absent. This repository is public, which is the second reason it lives in the
-  # gitignored environment file rather than here.
+  # controller-registration NOW HAS A FALLBACK, and D42 decided the opposite -- decisions.md D88.
+  # D42's argument was that a wrong number is a false claim about a regulatory relationship and a
+  # placeholder is worse than absence. Both remain true of a PLACEHOLDER. What changed is that the real
+  # number arrived (P0021484082), and a DPC registration is a PUBLIC registry identifier: registration
+  # exists so a data subject can verify a controller, and the privacy notice cannot be published
+  # without it. With no fallback an unconfigured estate reported `null`, which now asserts "not
+  # registered" -- a false claim in the other direction, and the one D42 could not have foreseen.
+  #
+  # Treated exactly as counsel's retention figures are: committed as the default, overridable by the
+  # environment, so a correction needs no release.
+  #
+  # QUALITY STILL REPORTS null, and that is not an accident of this change. All three compose files set
+  # `HC_DPC_REGISTRATION: ${HC_DPC_REGISTRATION:-}`, which makes the property DEFINED AND EMPTY -- and
+  # Spring applies a `:default` only to an UNDEFINED property, never to an empty one. So the fallback
+  # reaches a bare `./mvnw` run and the tests, production sets it explicitly, and quality keeps D42's
+  # intent: it has no business asserting a real registration. Blank still counts as absent.
   #
   # `pepper` is absent for a third reason -- decisions.md D35. It keys the HMAC that turns an
   # erased customer's login into the alias their rows carry, and this repository is public, so a
@@ -369,8 +385,7 @@ healthconnect:
     retention:
       financial-days: ${HC_RETENTION_FINANCIAL_DAYS:2190}
       operational-days: ${HC_RETENTION_OPERATIONAL_DAYS:365}
-      care-summary-days: ${HC_RETENTION_CARE_SUMMARY_DAYS:90}
-    controller-registration: ${HC_DPC_REGISTRATION:}
+    controller-registration: ${HC_DPC_REGISTRATION:P0021484082}
   #   pepper: injected, never written here
 
 # ===================================================================

@@ -15956,3 +15956,135 @@ believing it.
 - **No estate has a booking with a link in it.** Quality's 298 bookings and dev's seed both predate the
   column, so every one reads `null`, and the reveal rule has been exercised against constructed
   bookings rather than against seeded data.
+
+## D88 — The registration arrived, and the category it was asked beside governs nothing
+
+**Ratified 2026-09-11.** Advances backlog **WP-09**. Supersedes two of D42's decisions and leaves the
+rest standing.
+
+### §1 The number
+
+**Data Protection Commission registration: `P0021484082`**, Jojo Addison Consultancy. Supplied by the
+architect on 2026-09-11. D42 obtained the answer *"registered"* without the number, and it has blocked
+the privacy notice and the processing record since.
+
+### §2 It is committed, and D42 decided the opposite
+
+D42 gave `HC_DPC_REGISTRATION` **no fallback**, on two grounds: a wrong number is a false claim about a
+real organisation's relationship with a regulator, and *"the number is not ours to publish on the
+organisation's behalf"* in a public repository.
+
+**Both grounds hold for a placeholder and neither holds for the real number.** A DPC registration is a
+**public registry identifier** — registration exists so a data subject can verify a controller, and the
+privacy notice cannot be published without it. And with no fallback an unconfigured estate reported
+`null`, which *stopped* meaning "not configured" the moment registration became a fact and started
+asserting **"not registered"** — a false claim in the other direction, and the one D42 could not have
+foreseen because it only appears once the answer is yes.
+
+So it is treated exactly as counsel's ratified retention figures are: committed as the default,
+overridable by the environment, so a correction needs no release.
+
+**Quality still reports `null`, and not by accident.** All three compose files set
+`HC_DPC_REGISTRATION: ${HC_DPC_REGISTRATION:-}`, which makes the property **defined and empty** — and
+Spring applies a `:default` only to an **undefined** property, never to an empty one. So the fallback
+reaches a bare `./mvnw` run and the tests; production sets it explicitly; and quality keeps D42's intent
+that it *"has no business asserting a real registration"*. Blank still counts as absent.
+
+### §3 The care-summary retention category governed nothing, and is removed
+
+**`Booking.careSummaryShared` is a `Boolean`.** No field, column or entity in any of the five services
+has ever held a condition, an allergy or a medication — searched across every service's main source,
+the JDL and the changelogs: **zero field-shaped matches**. The three words occur only in comments,
+including the ones in `PrivacyProperties` that described the category.
+
+So D42 ratified a 90-day period, and a lawful-basis position, for data the platform does not hold.
+`care-summary-days` is deleted from `PrivacyProperties`, `PrivacyResource.RetentionView`, the main and
+test configs, and all three compose files. Two categories remain: financial 2,190 and operational 365.
+
+**The cost was stated before it was chosen and is recorded rather than smoothed over**: counsel's
+ratified figure is gone, so the day a care summary is genuinely stored the period must be asked again.
+Keeping it as a forward-looking default was the alternative offered; removing it was the architect's
+call.
+
+**The absence is asserted, not merely dropped.** `PrivacyResourceIT` requires
+`$.retention.careSummaryDays` to **not exist**, and a unit test requires `RetentionView` to have
+exactly two record components. A period coming back `null` would read as "kept for ever", and a test
+that simply stopped mentioning it could not tell the two apart.
+
+### §4 Three documents drafted, for counsel and not for publication
+
+- **`docs/privacy-notice.md`** — Abofonsa BridgeCare as a whole, with a verified hc-market annex.
+- **`docs/processing-record.md`** — hc-market's record of processing activities.
+- **`docs/data-transfer-basis.md`** — hc-market's cross-border transfer basis.
+
+**Every one is marked DRAFT and NOT APPROVED in its first six lines**, and nothing in this repository
+serves any of them. They are committed so they can be corrected in the open.
+
+**Scope was the architect's decision and the two answers differ on purpose.** The notice speaks for the
+**organisation**, because the registration does and because a customer experiences one brand; the
+transfer basis speaks for **hc-market alone**, because engineering can only verify this product's data
+flows. Both documents say which they are and what the choice costs — the transfer basis notes that a
+regulator reading six near-identical bases for one server may reasonably ask why there are six.
+
+**Every factual claim is read off source, and each says where.** Verified before committing: no
+condition/allergy/medication field anywhere; the review body surviving erasure; the gateway binding
+`127.0.0.1` in the production compose; bcrypt; and the two retention figures.
+
+**The notice and the transfer basis disagreed with each other in the first draft** and that is worth
+recording, because it is the failure mode of writing three documents at once: §10 asserted *"traffic to
+our services is encrypted in transit"* while the transfer basis said *"configured, unexercised"* — and
+hc-market has never been deployed. The notice now says the same thing in the same words.
+
+### §5 What the drafts could not state, and who holds it
+
+Each is a fact about the organisation, not about the code, and each is listed in the document that needs
+it:
+
+1. **A data protection contact** — an address a data subject writes to. The notice has a placeholder
+   and cannot be published with one.
+2. **The hosting provider's identity, country and contractual terms.** The transfer basis names an IP
+   address. Naming the wrong company in a document a regulator may read is worse than the gap.
+3. **Which condition under Act 843 the transfer relies on.** D42 recorded that the conditions are met
+   and not which one. *A transfer basis that does not name its own ground is not a basis.*
+4. **Whether the registration covers all six services**, which decides the notice's scope.
+5. **Whether the notice covers all six services** — five have no annex and none is verified.
+6. **Whether counsel wishes to revisit the lawful-basis position** now that §3 is established. Their
+   position was taken on the assumption that conditions, allergies and medications were held.
+
+### §6 Two gaps the drafting found, which are engineering's
+
+- **Accounts and published reviews have no retention category.** An account is neither a financial
+  record nor operational data; a review is published indefinitely by design. Recorded in the processing
+  record §6.1.
+- **No audit log of staff access.** A member of the brokerage desk can read any customer's records. The
+  **erasure** is recorded; a **read** is not. Recorded as §6.3 and it needs a decision before launch.
+
+Neither is opened as a backlog item, deliberately: the first needs counsel's answer before it can be
+built, and the second is a decision about launch posture rather than a specified piece of work.
+
+### §7 Verified by running
+
+`booking ./mvnw clean verify` — **130 ITs, 0 failures, BUILD SUCCESS** · `PrivacyResourceIT` **4 tests**,
+all four preserved · `PrivacyPropertiesRegistrationUnitTest` **4 new tests** · the three documents
+cross-checked for agreement on the registration, the retention figures, the host address and the
+never-deployed statement.
+
+**I deleted three tests with a careless regex and restored them.** Rewriting `PrivacyResourceIT`'s
+registration case, a `[\s\S]*?` swallowed `reportsTheRatifiedPeriods`, `doesNotClaimToEnforceAnything`
+and `reportsAnAbsentRegistrationAsNull` — and `doesNotClaimToEnforceAnything`'s own javadoc calls itself
+*"the assertion that matters most and the one most likely to be quietly broken"*. Restored from `HEAD`
+and redone with three exact anchors. Caught because the suite reported 1 test where it had reported 5.
+
+**And D42's "reports null when absent" assertion moved rather than went.** It could be made from an IT
+only while the shared test config left the value unset; with the number committed there, an IT
+asserting absence would assert the ambient config instead of the mechanism, and the two tests would
+contradict each other. It is a unit test now, where no config file can make it vacuous.
+
+### §8 What is unchanged
+
+D42's retention model, its lawful-basis answer for everything the platform actually holds, its
+registration answer, and its data-residency answer all stand. The two coded judgements D37 ratified —
+the review body is not erased, `Dispute.resolution` is kept — are untouched.
+
+**Nothing here enforces retention.** There is still no scheduler, `GET /api/desk/privacy` still reports
+`enforced: false`, and both the notice and the processing record say so in terms.
