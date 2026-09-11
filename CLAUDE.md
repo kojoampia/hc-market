@@ -363,7 +363,12 @@ all, and `verify` runs both. Unlike the sibling products, naming the wrong one *
 so the workspace guide's warning about that trap does not apply to hc-market.
 
 It logs Kafka `MessageDeliveryException` errors on a timer with no broker present. Noisy, harmless,
-and **not** the cause of any startup failure you are debugging. Startup takes ~2 minutes. It is also
+and **not** the cause of any startup failure you are debugging. Startup takes **~2 minutes without the agent and 8 to 11 minutes with it** — measured on the roll to
+`4b18ac6` (D89, NEW-46): container start to Spring's "Started" line was 492s for catalog and **641s** for
+payout, of which only 321-410s is Spring's own figure. The rest is the JVM and the agent rewriting
+classes before Spring's clock starts. Two ceilings were below that and are raised: `quality/compose.yml`'s
+`start_period` 60s → 300s, and `quality/startup.sh`'s gate 90 → **200 polls** (800s), which is deliberately
+**above** docker's own 700s so the daemon decides first — D81's rule one script along. It is also
 the *only* signal that a service has no broker — everything else about it stays green — so their
 absence is worth checking after any change to how the broker is addressed.
 

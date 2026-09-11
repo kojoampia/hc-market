@@ -217,7 +217,20 @@ x-service: &service
     interval: 10s
     timeout: 5s
     retries: 40
-    start_period: 60s
+    # start_period COVERS THE JVM AND AGENT PHASE, and 60s did not -- decisions.md D89, backlog NEW-46.
+    #
+    # MEASURED on the roll to 4b18ac6, container start to Spring's own "Started" line: gateway 528s,
+    # catalog 492s, messaging 561s, booking 592s, payout 641s. Spring's own figure is only 321-410s of
+    # that, so 170-230s goes on the JVM and on the agent rewriting classes before Spring's clock starts
+    # -- which is exactly the phase start_period exists for and exactly what nothing had budgeted.
+    #
+    # docker's ceiling was start_period + retries x interval = 60 + 400 = 460s, BELOW the 641s payout
+    # actually took. Failures inside start_period do not count at all, so widening it is the right knob:
+    # it buys time for a slow start without making a genuinely broken service look healthy for longer.
+    # 300 + 400 = 700s now, above the measured worst case with headroom.
+    #
+    # CLAUDE.md said "startup takes ~2 minutes" and that was true before the agent was attached.
+    start_period: 300s
   logging:
     driver: json-file
     options: { max-size: "10m", max-file: "3" }

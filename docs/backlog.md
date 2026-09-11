@@ -3552,6 +3552,54 @@ customer having to ask.
 
 ---
 
+## NEW-46 — the roll gate gives up before docker does, so a successful roll exits 1 · DONE (D89)
+
+Found by rolling quality to `4b18ac6` on 2026-09-11. **The roll succeeded and `startup.sh` exited 1**,
+dying at its own health gate with `✗ gateway did not become healthy` — and therefore never reaching its
+own `verify`. The stack was healthy; the gate was short.
+
+**Measured**, container start to Spring's own "Started" line, with the OpenTelemetry agent attached:
+
+| | gateway | catalog | messaging | booking | payout |
+| --- | --- | --- | --- | --- | --- |
+| wall clock | 528s | 492s | 561s | 592s | **641s** |
+| Spring's own figure | 321s | 404s | 400s | 406s | 410s |
+
+The gap — 170 to 230 seconds — is the JVM plus the agent rewriting classes **before Spring's clock
+starts**, which is exactly the phase nothing had budgeted for.
+
+**Three ceilings, and two of them were below reality:**
+
+| bound | was | measured need |
+| --- | --- | --- |
+| `startup.sh`'s gate — 90 polls × 4s | **360s** | 641s |
+| docker's own patience — `start_period` + `retries` × `interval` | **460s** | 641s |
+| the roll | — | all five breached both |
+
+**It is D81's finding one script along.** A gate below the daemon's own ceiling overrules a verdict the
+daemon has not reached — D81 argued that for `deploy-prod.sh` and chose 600s against docker's 420s
+there. Here the script was *below* docker and docker was below reality.
+
+**Fixed by raising both, anchored rather than guessed.** `start_period` 60s → **300s**, because failures
+inside it do not count at all, so widening it buys time for a slow start without making a genuinely
+broken service look healthy for longer: docker's ceiling becomes 300 + 400 = **700s**. And the gate
+becomes `HEALTH_POLLS=200` × 4s = **800s**, above docker so the daemon decides first, and above the
+measured worst case with headroom. The refusal names its own budget now.
+
+**One defect introduced and caught while fixing it**: `[[ $i == HEALTH_POLLS ]]` compares against the
+literal string, so the timeout arm would have been dead and the loop would have ended silently after
+200 polls. Proven both ways before and after — `i=200` fires with `"$HEALTH_POLLS"` and never fires
+without it.
+
+**Unexercised**: the new gate has not been driven by a real roll. Its arithmetic is measured and its
+comparison is proven, but the stack is healthy and re-rolling it to test a timeout that should not fire
+would cost a ten-minute restart to observe nothing. The `start_period` change takes effect on the next
+container recreate.
+
+**CLAUDE.md's "startup takes ~2 minutes" was true before the agent was attached** and is corrected.
+
+---
+
 ## NEW-41 — the packages table disagrees with three of its own sections, and stopped indexing after NEW-22 · DONE (D83)
 
 Opened at **D78's review**, which found one row and asked for the whole table to be checked rather than
