@@ -3321,7 +3321,7 @@ Cost it against the third option, which removes the pairing rather than guarding
 
 ---
 
-## NEW-42 — part 6 asserts TEXT about `deploy-prod.sh`'s call sites instead of executing them · READY
+## NEW-42 — part 6 asserts TEXT about `deploy-prod.sh`'s call sites instead of executing them · DONE (D80)
 
 Opened by **D78 §15**, and it is the item the cycle discipline produced rather than a defect anybody
 found in the code: NEW-36's area returned findings three rounds running, each one a fail-open **in the
@@ -3375,6 +3375,43 @@ host *answers*.
 
 **Do not close it with a fourth textual guard.** D78 §15 is explicitly the last textual round on that
 branch; if a fifth guard of this shape looks necessary, that is this item.
+
+**CLOSED by D80, and no fourth textual guard was written — the two that existed are deleted.** Part 7
+of `host-probe-attribution.sh` sources the shipped file and calls `main` and `rollback` for real, and
+separately **executes** it as a subprocess, against stubbed `ssh`, `scp`, `docker`, `curl` and `git`;
+it then asserts on the argument vectors the stubs were handed. **Twenty** remote invocation sites over
+four scenarios, classified from the arguments, with unmatched in **either** direction an error — a site
+that stops being asked and a seventh probe growing beside the six are both refusals.
+
+Three things are executed rather than read: the **phase each shipped caller passes** (read off the
+sentences the phase composes, split at `step "Rollback"` so a sentence is attributed to the caller and
+not merely to the arm), **which options each individual `ssh` receives** (against the array the running
+script holds, so an option *added* and not reaching a site is red too), and **two of the four phase ×
+arm pairs D78 §15 removed rather than tested**. §15's two greps are gone; cases 37 and 38 are the same
+two mutations through the executed door.
+
+**The router moved into `main()`, called under `[[ "${BASH_SOURCE[0]}" == "$0" ]]`** — the `awk`-strip
+alternative was refused as a fourth lift (D75 case 21's terminator trap) and because a stripped router
+cannot be executed at all. It is a safety property in its own right: before it, `. ./deploy-prod.sh`
+**was** a production deployment. That change introduces exactly one defect — nothing calling `main`
+leaves a script that parses and exits 0 having deployed nothing — which is why part 7 executes the file
+as well as sourcing it, and which is case **45**.
+
+Measured: the check at **65** assertions, its test at **51 ok / 0 failed** over **50** mutations, and
+**four** controls each verifying as a set — part 6 removed {23,24,25,26,27,28,35,36,41,42} (D78's set,
+unchanged, so part 7 took no case's door from it), part 7 removed
+{37,38,43,44,45,46,47,48,49,50}, the `SSH_OPTS` value guard removed {31,32,33,34,39,40}, the two-caller
+assertions removed {35}. D78's fourth control was the two greps this deleted, so it is replaced rather
+than added to. **D49 still bounds all of it**: this establishes what the script *passes*, never what a
+host answers.
+
+**Review took one should-fix as code** (D80 §6b). The sourced driver was `( source …; eval … ) || true`,
+and **a compound whose status is tested disregards errexit and the ERR trap for everything inside it** —
+including the trap the sourced subject installs. So the driver let the shipped script walk past a failed
+command the executed program dies on, and printed `✓ rolled back to 1.3.9` for a rollback whose roll the
+host refused. It is a **child process** now (`bash -c 'source …; main'`), and the `refused` scenario is
+a permanent assertion that the trap fires there — with a fifth throwaway control confirming that
+assertion is its sole carrier.
 
 ---
 
