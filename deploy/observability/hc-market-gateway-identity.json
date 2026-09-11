@@ -1,0 +1,163 @@
+{
+  "__comment": [
+    "hc-market — gateway identity: registrations by activation state, logins by outcome.",
+    "decisions.md D84, backlog NEW-43. Asked for by the architect on 2026-09-11.",
+    "",
+    "NOT-YET-TRANSPORTED: the gateway emits every series below, and NO ENVIRONMENT IN THIS REPOSITORY",
+    "CARRIES THEM ANYWHERE. That is the same marker hc-market-rules.yaml carries and for the same reason",
+    "(D63): telemetry here is PUSHED over OTLP and never scraped, the OpenTelemetry agent that would push",
+    "it is attached in no environment by default (D73 §3), and /management/prometheus is deliberately 404'd",
+    "at quality's edge and unscraped in production. So installing this against Grafana today gives six",
+    "panels of 'No data' — which is a true answer, not a broken dashboard, and is why this file says so",
+    "at the top rather than leaving someone to find out. The transport decision is NEW-44.",
+    "",
+    "THE TWO HALVES ARE DIFFERENT KINDS OF MEASUREMENT and the panels are built accordingly. Logins are",
+    "an event stream, so they are counters and every login panel uses rate() or increase(). Registrations",
+    "by activation state are the state of a collection, so they are gauges and their panels read the",
+    "number directly — activation happens AFTER registration, so a counter incremented at registration",
+    "could never move when the user later activates.",
+    "",
+    "WHICH MODE EACH FIGURE IS TRUE IN is on the dashboard itself, in the text panel, because it is not a",
+    "footnote: quality runs dev,test and seeds `admin` and `user` with passwords derived from their logins",
+    "by a rule published in this public repository, so every number here on quality counts seeded accounts",
+    "and verify-cycle.sh traffic. Production has never been deployed. Adding a panel means saying which",
+    "mode it is true in — the prototype's 'Sessions brokered' defect (D46) one surface along.",
+    "",
+    "The series names are asserted by GatewayIdentityMetersNamingUnitTest against a real",
+    "PrometheusMeterRegistry, because the PromQL below is a claim about Micrometer's renaming and not",
+    "about the constants in GatewayIdentityMeters. Derived on paper it was one plausible guess away from",
+    "gateway_identity_logins_total, which would have been six empty panels with nothing disagreeing."
+  ],
+  "title": "hc-market — gateway identity",
+  "uid": "hc-market-gateway-identity",
+  "tags": ["hc-market", "gateway", "identity", "not-yet-transported"],
+  "timezone": "Africa/Accra",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": { "from": "now-24h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "env",
+        "label": "Environment",
+        "type": "custom",
+        "query": "quality,production",
+        "current": { "text": "quality", "value": "quality" },
+        "options": [
+          { "text": "quality", "value": "quality", "selected": true },
+          { "text": "production", "value": "production", "selected": false }
+        ]
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "text",
+      "title": "What these numbers are true of",
+      "gridPos": { "h": 5, "w": 24, "x": 0, "y": 0 },
+      "options": {
+        "mode": "markdown",
+        "content": "**No environment in this repository transports these series yet** — the gateway emits all of them and nothing collects them (`decisions.md` D84, backlog **NEW-44**). Empty panels here are a true answer.\n\n**On quality these are demo figures.** It runs `dev,test` and seeds `admin` and `user` with passwords derived from their own logins by a rule published in a public repository, so registrations and logins here count seeded accounts and `verify-cycle.sh` traffic — not use. **Production has never been deployed.**\n\n**`not-activated` logins are the link between the two halves:** an account that registered and never activated cannot log in, and that refusal is counted separately from a wrong password on purpose. If the *accounts / not-activated* gauge is high and *logins / not-activated* is rising, people are registering and not completing it."
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Accounts by activation state",
+      "description": "A gauge over the user collection, refreshed on a timer — not a count of registration events. Activation happens after registration, so this is the only measurement that can be right. -1 means no refresh has answered yet; it is not zero, because a dashboard cannot tell a real zero from a reading that has not happened.",
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 5 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "gateway_identity_accounts{state=\"activated\"}",
+          "legendFormat": "activated"
+        },
+        {
+          "refId": "B",
+          "expr": "gateway_identity_accounts{state=\"not-activated\"}",
+          "legendFormat": "not activated"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 0 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "textMode": "value_and_name" }
+    },
+    {
+      "type": "timeseries",
+      "title": "Accounts by activation state, over time",
+      "description": "The same two gauges as a series. A not-activated line that climbs and never falls is registrations nobody completes.",
+      "gridPos": { "h": 6, "w": 16, "x": 8, "y": 5 },
+      "targets": [
+        { "refId": "A", "expr": "gateway_identity_accounts{state=\"activated\"}", "legendFormat": "activated" },
+        { "refId": "B", "expr": "gateway_identity_accounts{state=\"not-activated\"}", "legendFormat": "not activated" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "fillOpacity": 10 } }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Logins by outcome",
+      "description": "Counters, so this is a rate. FOUR outcomes and not two: the request asked for success|failed, and 'failed' is the sum of bad-credentials, not-activated and error. Keeping them apart is what makes the panel below possible.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 11 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (outcome) (rate(gateway_identity_logins_attempts_total[5m]))",
+          "legendFormat": "{{outcome}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "custom": { "fillOpacity": 25, "stacking": { "mode": "normal" } } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "success" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }] },
+          { "matcher": { "id": "byName", "options": "bad-credentials" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }] },
+          { "matcher": { "id": "byName", "options": "not-activated" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } }] },
+          { "matcher": { "id": "byName", "options": "error" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }] }
+        ]
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Login success share",
+      "description": "success / all attempts. Deliberately not 'failure rate': the interesting question is which failure, and that is the panel to its left. A flat 100% with no traffic is what an estate nobody uses looks like.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 11 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(gateway_identity_logins_attempts_total{outcome=\"success\"}[15m])) / clamp_min(sum(rate(gateway_identity_logins_attempts_total[15m])), 0.0000001)",
+          "legendFormat": "success share"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "custom": { "fillOpacity": 10 } }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Registered but never activated, refused at login",
+      "description": "THE PANEL THE TWO HALVES MEET IN. A rising line here beside a rising not-activated gauge is people registering and never completing it — and it is invisible on any dashboard that folds all refusals into one 'failed'. `DomainUserDetailsService` throws UserNotActivatedException for exactly this case, and an IT asserts it survives Spring's authentication manager to be counted separately.",
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 19 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(gateway_identity_logins_attempts_total{outcome=\"not-activated\"}[1h]))",
+          "legendFormat": "refused as not activated (1h)"
+        },
+        {
+          "refId": "B",
+          "expr": "gateway_identity_accounts{state=\"not-activated\"}",
+          "legendFormat": "accounts awaiting activation"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "fillOpacity": 10 } }, "overrides": [] }
+    }
+  ]
+}

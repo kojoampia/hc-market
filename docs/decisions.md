@@ -15393,3 +15393,157 @@ item, and it reported WP-17 and WP-18 as already agreeing when they did not.
 This is a documentation change plus a text check; no code path is affected. The check reads
 `docs/backlog.md` only, and it does not read the `NEW-*` sections at all — after §2 they have no second
 copy to disagree with, and giving them one here would reintroduce what the decision removed.
+
+## D84 — Two panels, two different kinds of measurement
+
+**Ratified 2026-09-11.** Closes backlog **NEW-43**, asked for by the architect the same day. Opens
+**NEW-44**.
+
+### §1 What was asked, and what the asking did not settle
+
+*"A dashboard that monitors the gateway for registrations aggregated by (activated | not-activated) and
+logins aggregated by (success | failed)."*
+
+Four things had to be decided before a panel could be drawn, and NEW-43 names all four. This decides
+them.
+
+### §2 One is a gauge and the other a counter, and treating them alike gives two wrong panels
+
+**Logins are an event stream** — counters, monotonic, nothing to look up afterwards.
+
+**Registrations by activation state are the state of a collection.** Activation happens *after*
+registration (`UserService` writes `setActivated(false)` on register and flips it on
+`activateAccount`), so a counter incremented at registration can never move when the user later
+activates: it would describe a bucket that had already closed. It must be **derived at observation
+time**, which is also this repository's central rule.
+
+So `gateway.identity.accounts` is a pair of gauges and `gateway.identity.logins` is a set of counters,
+and every login panel uses `rate()`/`increase()` while every account panel reads the number.
+
+### §3 "Failed" is four buckets, and the request's own answer is why
+
+`DomainUserDetailsService` throws `UserNotActivatedException` for an account that exists and was never
+activated — **which is exactly the outcome the registration panel exists to explain.** Folding it in
+with a wrong password erases the one number that connects the two halves of the dashboard.
+
+`Outcome` therefore has four values: `success`, `bad-credentials`, `not-activated`, `error`. The
+"failed" of the request is their sum. `error` is separate from `bad-credentials` deliberately — an
+outage must not read as a password-guessing spike.
+
+**And whether that distinction survives was the open question a mock could not answer.** Spring's
+`UserDetailsRepositoryReactiveAuthenticationManager` converts `UsernameNotFoundException` to
+`BadCredentialsException` to prevent user enumeration, and it could have done the same here.
+**Measured, in `GatewayIdentityMetricsIT` against the running container: it does not.**
+`UserNotActivatedException` reaches the classifier and is counted separately. Had it not, the panel
+would have read zero for ever and looked fine.
+
+### §4 The seam is the authentication manager, decorated and not edited
+
+Every refusal at `/api/authenticate` is a 401, so a `WebFilter` could count successes and failures and
+could **never** tell a wrong password from a dormant account. The authentication manager is the one
+place the distinction still exists as a type.
+
+It is a `@Bean` in the **generated** `SecurityConfiguration`, so `IdentityMetricsConfiguration` supplies
+a `@Primary` decorator in front of it — the same move as `MarketplacePublicSecurityConfiguration` and
+`InternalApiSecurityConfiguration`, and all four new classes are new files that a regeneration leaves
+alone. The delegate is injected **by name**, because without the qualifier the method's own return type
+makes it a candidate for its own parameter.
+
+**It counts logins and only logins**, because the generated chain authenticates requests with
+`oauth2ResourceServer(jwt)`, which never touches a `ReactiveAuthenticationManager`. An IT asserts the
+decorator is what the container injects, so the wiring silently lapsing is a red test rather than a
+dashboard of zeros.
+
+### §5 No login, email or alias is ever a tag
+
+Two independent reasons, both load-bearing: a per-user tag is unbounded cardinality, and **a login in a
+metric label is a disclosure surface that survives erasure** — nothing re-keys a metric already scraped
+or pushed, and the sweep (D31/D35/D38/D39) does not visit a metrics backend. The tag sets are closed,
+every value is a constant, and an IT asserts over the **registry's own meters** that no other tag key
+exists. The refresher reads two counts and no identifier, which is what keeps this off the sweep's list
+entirely rather than on it and handled.
+
+### §6 The gauges are refreshed on a timer, not queried by the gauge
+
+Micrometer calls a gauge's supplier synchronously from whoever is reading the registry, and this
+gateway's Mongo access is reactive — a supplier that blocked would block a scrape or an export **on the
+event loop**. `IdentityMetricsRefresher` counts on a schedule instead and publishes into `AtomicLong`s.
+
+Three details that are decisions rather than details:
+
+- **Both numbers come from one observation.** Two counts taken moments apart describe no single moment,
+  and a dashboard adding them would show an account that existed twice or not at all.
+- **The query is `ne(true)`, not `is(false)`**, so the two gauges partition the collection. A document
+  with no `activated` field would be counted by neither under `is(false)` and the pair would silently
+  not add up. An IT asserts the partition against `userRepository.count()`.
+- **A failed refresh leaves the previous reading and warns.** Writing zero would turn a database blip
+  into a dashboard claiming every account had vanished. The gauges start at **-1**, not 0, because a
+  dashboard cannot tell a real zero from a refresh that has not run.
+
+### §7 The transport is NOT decided here, and the dashboard says so on itself
+
+The estate pushes OTLP and scrapes nothing: `/management/prometheus` is deliberately 404'd at quality's
+edge and unscraped in production, and the agent that would push is attached in no environment by default
+(D73 §3). **So nothing carries these series anywhere today**, and the dashboard carries a
+`NOT-YET-TRANSPORTED` marker held against that measured fact by `observability-claims.sh` part 5 — the
+same relationship D63 established for `hc-market-rules.yaml`, whose marker is `NOT-YET-ATTACHED`
+because what is missing there is one step nearer.
+
+Deciding the transport needs a measurement nobody has taken: **whether the OpenTelemetry agent's
+Micrometer instrumentation actually bridges these meters to OTLP on this agent version and this JDK.**
+D63 exists because "the agent is present" was mistaken for "the agent instruments", so that is
+**NEW-44** and not a guess here. The alternative — reversing a written 404 — needs its own argument for
+why hc-market scrapes when nothing else in the estate does.
+
+### §8 Which mode each figure is true in, on the dashboard itself
+
+Quality runs `dev,test` and seeds `admin` and `user` with passwords derived from their own logins by a
+rule published in this public repository, so every number there counts seeded accounts and
+`verify-cycle.sh` traffic. Production has never been deployed. That is a **text panel on the
+dashboard**, not a footnote, because the prototype's "Sessions brokered" (D46) rendered a plausible 269
+in a browser for as long as the figure existed.
+
+### §9 Losers
+
+- **A field on the registration form, or a counter tagged by activation at registration time.** §2.
+- **A `WebFilter` on the endpoint.** Cannot distinguish the refusals; §4.
+- **Editing the generated `SecurityConfiguration`.** Discarded by the next regeneration.
+- **`@Scheduled` for the refresh.** Needs `@EnableScheduling` on a generated application class, which a
+  regeneration would drop silently, freezing the gauges at -1 with nothing failing.
+- **A gauge that queries Mongo in its supplier.** §6 — it would block the event loop.
+- **Shipping the dashboard with no marker**, or not shipping it until the transport exists. The first is
+  the defect D63 found; the second leaves the request undelivered when three of its four decisions are
+  independent of transport.
+- **An enable flag for the meters.** Four counters and two gauges cost nothing, and a flag adds a state
+  in which the dashboard is blank for a reason invisible from the dashboard.
+
+### §10 Verified by running
+
+`gateway ./mvnw clean verify` — see §11 · `GatewayIdentityMetricsIT` **6 tests**, including the
+decorator being what the container injects, all three login outcomes moving their own bucket against the
+real manager, the gauges partitioning the collection, and no meter carrying a per-user tag ·
+`CountingReactiveAuthenticationManagerUnitTest` **7 tests** over the classification, including the
+ordering that would misfile `not-activated` and the empty-`Mono` case ·
+`GatewayIdentityMetersNamingUnitTest` asserts the **exposition strings** the dashboard's PromQL uses,
+against a real `PrometheusMeterRegistry`, because derived on paper they were one plausible guess away
+from `gateway_identity_logins_total` · `TechnicalStructureTest` green, so the four new classes sit in
+layers permitted to reach what they reach · `observability-claims.sh` part 5 green with **four controls
+each red through its own cause**: a series nothing emits, the marker removed, the dashboard gone, the
+meters file gone.
+
+**Every login assertion is a delta, never a total**, because the counters are the container's and
+`AuthenticateControllerIT` logs in three times in the same JVM — an absolute would be asserting that
+nothing else authenticated while the test watched, which is the flake D76 removed from the fan-out IT.
+
+**One control of my own did not apply and read as a fail-open**: the "queries a series nothing emits"
+mutation used nested escaped quotes inside a double-quoted shell string and never landed, so the check
+reported green. Re-applied from a file it is red. An invalid control is indistinguishable from a check
+that holds — and this is the eighth time that has happened in this session.
+
+### §11 Not exercised
+
+- **Nothing collects these series in any environment** (§7). They are emitted and verified in-process;
+  no Grafana has rendered this dashboard, and no Mimir holds these names.
+- **The 60-second refresh timer** is driven once by a test rather than waited out; what is asserted is
+  one observation, not the schedule.
+- **Production has never been deployed**, so on the only estate that runs, every figure is demo data.

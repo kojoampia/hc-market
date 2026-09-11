@@ -558,6 +558,46 @@ The third and fourth are D74's contact lookup, and the third does the *opposite*
 it opens a path the generated chain **denies** rather than one it authenticates. See the D74 entry
 under "Working here"; do not read it as a third instance of the same gap.
 
+**That count is four route-and-security files and is NOT the number of hand-written files in the
+gateway** — D84 added four more and they are a different subject. **Enumerate rather than quoting
+either number**: `config/`, `web/rest/`, `management/`, `security/` and `service/` all hold
+hand-written classes now, and this file has had a count of them wrong before.
+
+**The gateway counts registrations and logins, and the seam is the authentication manager** (D84,
+backlog NEW-43). `GatewayIdentityMeters` (management), `CountingReactiveAuthenticationManager`
+(security), `IdentityMetricsConfiguration` (config) and `IdentityMetricsRefresher` (service) — four new
+files, so regeneration leaves them alone, and the decorator is supplied `@Primary` in front of the
+generated `reactiveAuthenticationManager` rather than editing the generated `SecurityConfiguration`.
+Three things about it are worth knowing before touching any of them:
+
+- **Logins are counters and accounts are gauges, and that is not a style choice.** Activation happens
+  *after* registration, so a counter incremented at registration can never move when the user activates
+  — the split has to be derived at observation time, which is this repository's central rule. The
+  gauges are refreshed on a timer into `AtomicLong`s because a Micrometer gauge supplier is called
+  synchronously and this gateway's Mongo access is reactive; a supplier that blocked would block a
+  scrape **on the event loop**. They start at `-1`, not 0, so a dashboard can tell "no refresh yet"
+  from "no accounts".
+- **"Failed" is four buckets and the fourth is the point.** `DomainUserDetailsService` throws
+  `UserNotActivatedException` for a registered-but-never-activated account, which is exactly the
+  outcome the registration gauge explains — and **it survives Spring's authentication manager**, unlike
+  `UsernameNotFoundException`, which is converted to `BadCredentialsException` to prevent enumeration.
+  That asymmetry is measured by `GatewayIdentityMetricsIT` against the running container, not reasoned:
+  had it gone the other way the panel would have read zero for ever.
+- **No login, email or alias may ever become a tag.** Unbounded cardinality, and a login in a metric
+  label is a disclosure surface that **survives erasure** — nothing re-keys a metric already pushed and
+  the sweep does not visit a metrics backend. An IT asserts over the registry's own meters that no other
+  tag key exists.
+
+**Nothing transports those series anywhere, and the dashboard says so on itself** (D84 §7, open as
+**NEW-44**). `deploy/observability/hc-market-gateway-identity.json` carries a `NOT-YET-TRANSPORTED`
+marker which `observability-claims.sh` **part 5** holds against the same measured fact part 4 uses, and
+it also derives the series it may query from `GatewayIdentityMeters` rather than trusting the PromQL.
+The exposition strings are asserted separately by `GatewayIdentityMetersNamingUnitTest` against a real
+`PrometheusMeterRegistry`, because Micrometer's renaming is a transformation and
+`gateway_identity_logins_attempts_total` was one plausible guess away from
+`gateway_identity_logins_total` — which would have been six panels of "No data" with nothing
+disagreeing.
+
 **Every hand-written chain in the estate carries its `@Order` on the `@Bean` method, and it has to
 stay there.** On the `@Configuration` class — where the gateway's first two had it until WP-13's
 review, and where **catalog's two and booking's one** had it until D77 — Spring never reads it: the
