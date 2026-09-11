@@ -175,7 +175,24 @@ DO_ROLLBACK=0
 DRY_RUN=0
 ASSUME_YES=0
 COMPOSE_TEMPLATE="$DEPLOY_DIR/docker/docker-compose.prod.yml"
-HEALTH_TIMEOUT=240
+# TWO BOUNDS, and the gate stops at whichever comes first (decisions.md D81, backlog NEW-39).
+#
+# `HEALTH_ATTEMPTS` is the one that used to be called `HEALTH_TIMEOUT=240` while the banner printed
+# "240s": the loop counted ten per iteration regardless of how long the iteration took, so the number
+# was a lower bound on the wait and never a limit on it. Renaming it is most of the fix — the count is
+# what the loop has always enforced, and 24 is what it has always been.
+#
+# `HEALTH_DEADLINE` is the half that changes behaviour, and it exists for the operator rather than for
+# the estate: with the probes bounded at `ConnectTimeout=8` (NEW-36's second half), a host that drops
+# packets costs 24 × (5 × 8s + 10s) — about twenty minutes to a refusal about a link that died in the
+# first one. It is set ABOVE docker's own patience for the same question on purpose: the compose
+# healthcheck is `start_period: 120s` with `retries: 20` at `interval: 15s`, so docker itself waits up
+# to 420s before calling a service unhealthy, and a ceiling below that would let this gate overrule a
+# verdict docker had not reached yet. At 600s it can only fire when the PROBES are slow, which is the
+# broken-link case and not the slow-estate case — a healthy estate whose probes answer promptly spends
+# ~15s an iteration and exhausts its attempts at ~360s, well inside it.
+HEALTH_ATTEMPTS=24
+HEALTH_DEADLINE=600
 # The host's long-lived secrets, beside the generated .env and deliberately not part of it. See the
 # header. Never read, written or printed by this script — its whole contribution is to insist the
 # file is there and to hand its name to compose.
@@ -874,9 +891,10 @@ health_gate() {
     deploy|rollback) : ;;
     *) die "health_gate was called with no phase ('$phase'), so it cannot say whether a refusal means the stack was left alone or that a rollback has already been applied — and both of its refusals make that claim. Call it as \`health_gate deploy\` from a deployment or \`health_gate rollback\` from a revert. See decisions.md D78 §14." ;;
   esac
-  step "Health gate (${HEALTH_TIMEOUT}s)"
+  # Both bounds in the banner, because the previous one printed a number the loop did not enforce.
+  step "Health gate (${HEALTH_ATTEMPTS} attempts, ${HEALTH_DEADLINE}s ceiling)"
   if (( DRY_RUN )); then printf '%s  [dry-run] skipped%s\n' "$c_dim" "$c_reset"; return 0; fi
-  local waited=0 bad
+  local attempt=0 started=$SECONDS elapsed bad
   while :; do
     bad=""
     for s in "${SERVICES[@]}"; do
@@ -898,14 +916,25 @@ health_gate() {
         >/dev/null 2>&1 || bad+=" $s"
     done
     [[ -z "$bad" ]] && { ok "all services report READY"; return 0; }
-    (( waited += 10 )); sleep 10
+    (( attempt += 1 )); elapsed=$(( SECONDS - started ))
     # EVERY ARM OF gate_exhausted EITHER DIES OR RETURNS 0, and the gate's own answer is 1 either
     # way. That is not tidiness: `health_gate` is only ever called from a condition — `if health_gate
     # && smoke_test` and `health_gate && ok … || die …` — where bash suppresses `set -e` for the
     # whole command and every function it calls, so a non-zero return from here is safe today and is
     # exactly the kind of fact that stops being true when a call site moves.
-    (( waited >= HEALTH_TIMEOUT )) && { gate_exhausted "$bad" "$phase"; return 1; }
-    printf '  waiting%s (%ss)\n' "$bad" "$waited"
+    #
+    # BOTH BOUNDS ARE TESTED BEFORE THE SLEEP, and that ordering is the smaller half of NEW-39. The
+    # sleep used to come first, so an exhausted gate spent a final ten seconds waiting for a probe it
+    # had already decided not to make — ten seconds added to every failing gate for nothing. Checking
+    # first also makes `attempt` mean what it says: the number of rounds of probes actually performed.
+    #
+    # The bound that fired is passed on, because the two refusals are different sentences: an estate
+    # that used its attempts was asked 24 times, and one that hit the ceiling was cut off with attempts
+    # to spare because each round was slow — which is a statement about the LINK, not about readiness.
+    (( attempt >= HEALTH_ATTEMPTS )) && { gate_exhausted "$bad" "$phase" attempts; return 1; }
+    (( elapsed >= HEALTH_DEADLINE )) && { gate_exhausted "$bad" "$phase" deadline; return 1; }
+    printf '  waiting%s (attempt %s/%s, %ss elapsed)\n' "$bad" "$attempt" "$HEALTH_ATTEMPTS" "$elapsed"
+    sleep 10
   done
 }
 
@@ -933,7 +962,17 @@ health_gate() {
 # an estate that cannot be asked cannot be reverted either, and the refusal names the by-hand
 # command for the moment the host comes back.
 gate_exhausted() {
-  local bad="$1" phase="$2" svc unproven="" logs_of="" left rolling
+  local bad="$1" phase="$2" why="${3:-}" svc unproven="" logs_of="" left rolling spent
+  # WHICH BOUND ENDED THE GATE — decisions.md D81, backlog NEW-39. The old refusals all said "timed out
+  # after ${HEALTH_TIMEOUT}s", which was the one number the loop never enforced. There is no default:
+  # a caller that omits it is refused before a probe is sent, for the same reason `phase` has none —
+  # a default silently inherits whichever bound was written first, and these two say different things
+  # about where the fault is.
+  case "$why" in
+    attempts) spent="after ${HEALTH_ATTEMPTS} attempts" ;;
+    deadline) spent="after ${HEALTH_DEADLINE}s, with attempts still unspent — each round of probes was slow, which is a statement about the link to $HOST and not about readiness" ;;
+    *) die "gate_exhausted was called with no bound ('$why'), so it cannot say whether the gate used up its attempts or was cut off by its ceiling — and those are different faults. Call it as \`gate_exhausted \"\$bad\" \"\$phase\" attempts\` or \`… deadline\`. See decisions.md D81." ;;
+  esac
   # WHAT IS TRUE ABOUT THE REVERT, PER CALLER — decisions.md D78 §14, narrowed by §15. Composed once
   # and interpolated into every refusal below, so a fifth arm cannot be written that claims the wrong
   # one, and a third phase has to answer this question before it can reach any of them.
@@ -960,14 +999,14 @@ gate_exhausted() {
     "cd '$REMOTE_PATH' && $REMOTE_COMPOSE ps -a --format '{{.Service}} {{.State}} {{.Health}}'"
   (( HOST_STATUS == 127 )) && no_docker_on_host
   (( HOST_STATUS == 0 )) \
-    || die "the health gate timed out after ${HEALTH_TIMEOUT}s and docker compose on $HOST could not then be asked what state the services are in (exit $HOST_STATUS): $HOST_OUTPUT. So it is NOT established that$bad failed to become ready — the probes above fold a daemon that cannot be asked into the same silence a service that is still starting produces, and they cross a network to do it. $left Establish what is actually there — \`ssh $HOST 'cd $REMOTE_PATH && $REMOTE_COMPOSE ps -a'\`."
+    || die "the health gate gave up $spent and docker compose on $HOST could not then be asked what state the services are in (exit $HOST_STATUS): $HOST_OUTPUT. So it is NOT established that$bad failed to become ready — the probes above fold a daemon that cannot be asked into the same silence a service that is still starting produces, and they cross a network to do it. $left Establish what is actually there — \`ssh $HOST 'cd $REMOTE_PATH && $REMOTE_COMPOSE ps -a'\`."
   # THE HOST ANSWERED AND KNOWS OF NOTHING. Measured: `ps -a` exits 0 with empty output for a project
   # that has no containers. That is not "they never became ready" and it is not this gate's subject —
   # `up -d` ran through `run`, so a failure there would have printed its own command through the ERR
   # trap. What is left is a --path or a compose project that is not the one just rolled, and an older
   # tag cannot fix either.
   [[ -n "$HOST_OUTPUT" ]] \
-    || die "the health gate timed out after ${HEALTH_TIMEOUT}s and docker compose on $HOST reports NO CONTAINERS AT ALL for $REMOTE_PATH/$APP_COMPOSE_FILE — not stopped ones, none. So$bad was never established to be unready; there is nothing there to be unready. $left An older tag is not the remedy for a stack that is not running under this project: check --path (currently $REMOTE_PATH) and that $APP_COMPOSE_FILE on the host is the file this deploy uploaded."
+    || die "the health gate gave up $spent and docker compose on $HOST reports NO CONTAINERS AT ALL for $REMOTE_PATH/$APP_COMPOSE_FILE — not stopped ones, none. So$bad was never established to be unready; there is nothing there to be unready. $left An older tag is not the remedy for a stack that is not running under this project: check --path (currently $REMOTE_PATH) and that $APP_COMPOSE_FILE on the host is the file this deploy uploaded."
   # THE BLIP, WHICH IS THE ONE CASE ONLY A SECOND OPINION CAN SEE. A host unreachable for the last
   # poll alone puts every service in $bad while four of them were ready a second earlier; docker's own
   # healthcheck ran inside the host throughout and is the evidence for that reading.
@@ -980,14 +1019,14 @@ gate_exhausted() {
   done
   if [[ -z "$unproven" ]]; then
     printf '%s\n' "$HOST_OUTPUT" | sed 's/^/    /'
-    die "the health gate timed out after ${HEALTH_TIMEOUT}s, and docker on $HOST reports every service it gave up on —$bad — as RUNNING and HEALTHY, from the same readiness probe run inside the host (see the table above). So what failed is this end of the wire and not the estate: the deploy's probes cross an ssh, docker's healthcheck does not. The stack on $HOST is $TAG and is answering — which is the whole point of this arm. $left Nothing was recorded in deployments.log either way."
+    die "the health gate gave up $spent, and docker on $HOST reports every service it gave up on —$bad — as RUNNING and HEALTHY, from the same readiness probe run inside the host (see the table above). So what failed is this end of the wire and not the estate: the deploy's probes cross an ssh, docker's healthcheck does not. The stack on $HOST is $TAG and is answering — which is the whole point of this arm. $left Nothing was recorded in deployments.log either way."
   fi
   # ESTABLISHED UNREADY: the host answered, and its own answer agrees. This is the one arm that
   # returns, and the router rolls the stack back on it.
   # "THE HOP IS UP" IS ALL THIS ESTABLISHES, which is less than the first wording claimed (D78 §14).
   # Where docker's health column is blank — a service whose compose entry carries no healthcheck — the
   # 24 polls are the only evidence there is, and §3 says so while the message did not.
-  warn "the health gate timed out after ${HEALTH_TIMEOUT}s. The host ANSWERED, so the hop is up; below is docker's own account of the services, and where its health column is blank the polls above are the only evidence:"
+  warn "the health gate gave up $spent. The host ANSWERED, so the hop is up; below is docker's own account of the services, and where its health column is blank the polls above are the only evidence:"
   printf '%s\n' "$HOST_OUTPUT" | sed 's/^/    /'
   # THE EVIDENCE THE ROLLBACK IS ABOUT TO DESTROY, which is what `deploy-dev.sh` puts on the same line
   # as its own `die` (decisions.md D71 §9) — ported here as evidence rather than as the decision,

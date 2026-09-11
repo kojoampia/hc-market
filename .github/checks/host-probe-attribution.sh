@@ -438,10 +438,18 @@ probe() {
     # PART 6's SUBJECT (decisions.md D78). Two services rather than five, so the exhaustion's own
     # table is readable in a failure message; the gate's budget is short and its `sleep` is a no-op,
     # because 24 iterations at ten seconds is not a thing CI can wait for and the count is not what
-    # is under test. HEALTH_TIMEOUT of 10 exhausts on the first iteration; 20 gives the transient
-    # case a second one, which is the poll's own folding being asserted rather than assumed.
+    # is under test. HEALTH_ATTEMPTS of 1 exhausts on the first iteration; 2 gives the transient case
+    # a second one, which is the poll's own folding being asserted rather than assumed.
+    #
+    # HEALTH_DEADLINE is pinned ABOVE anything CI can reach (decisions.md D81, backlog NEW-39): the
+    # gate now stops at whichever of the two bounds comes first, and part 6's subject is the ATTEMPT
+    # budget. A deadline low enough to fire here would end the loop by the other bound and every
+    # assertion below would be about the wrong refusal — green, and about nothing it names. `sleep` is
+    # a no-op in this harness, so wall-clock time here is only the stubs' own, but the pin is what
+    # makes that a fact of the harness rather than a property of how fast the runner happens to be.
     SERVICES=(catalog booking)
-    HEALTH_TIMEOUT="${HC_PROBE_HEALTH_TIMEOUT:-10}"
+    HEALTH_ATTEMPTS="${HC_PROBE_HEALTH_ATTEMPTS:-1}"
+    HEALTH_DEADLINE="${HC_PROBE_HEALTH_DEADLINE:-100000}"
     APP_COMPOSE_FILE="docker-compose.yml"
     export FAKE_COUNTER="$BIN/flake.count"; printf '0' > "$FAKE_COUNTER"
     sleep() { :; }
@@ -892,8 +900,14 @@ GATE='health_gate deploy; printf "GATE_RC=%s\n" "$?"'
 # deploy is guaranteed to reach.
 GATE_RB='health_gate rollback; printf "GATE_RC=%s\n" "$?"'
 GATE_NOPHASE='health_gate; printf "GATE_RC=%s\n" "$?"'
+# THE BOUND, WHICH IS THE SECOND PARAMETER WITH NO DEFAULT (decisions.md D81, backlog NEW-39). Called
+# directly rather than through the gate, because reaching this arm through `health_gate` is impossible
+# by construction — both of its call sites pass a bound — and that is exactly why the refusal needs a
+# drive of its own: the only way to a bound-less exhaustion is a THIRD arm added later, which is the
+# state this asserts is refused rather than silently printing a refusal with its reason missing.
+GATE_NOBOUND='gate_exhausted "catalog booking" deploy; printf "GATE_RC=%s\n" "$?"'
 g_ready="$(HC_PROBE_PATH="$FIX/stack" probe connected gate-ready "$GATE")"
-g_flake="$(HC_PROBE_PATH="$FIX/stack" HC_PROBE_HEALTH_TIMEOUT=20 probe connected gate-flake "$GATE")"
+g_flake="$(HC_PROBE_PATH="$FIX/stack" HC_PROBE_HEALTH_ATTEMPTS=2 probe connected gate-flake "$GATE")"
 g_unready="$(HC_PROBE_PATH="$FIX/stack" probe connected gate-unready "$GATE")"
 g_blip="$(HC_PROBE_PATH="$FIX/stack" probe connected gate-blip "$GATE")"
 g_empty="$(HC_PROBE_PATH="$FIX/stack" probe connected gate-empty "$GATE")"
@@ -905,6 +919,13 @@ g_dry="$(HC_PROBE_PATH="$FIX/stack" probe connected gate-unready "DRY_RUN=1; $GA
 g_rb_daemon="$(HC_PROBE_PATH="$FIX/stack" probe connected daemon-down "$GATE_RB")"
 g_rb_unready="$(HC_PROBE_PATH="$FIX/stack" probe connected gate-unready "$GATE_RB")"
 g_nophase="$(HC_PROBE_PATH="$FIX/stack" probe connected gate-unready "$GATE_NOPHASE")"
+# THE CEILING, driven by making it unreachable-low rather than the attempts unreachable-high, because
+# the attempts arm is tested FIRST in the loop: with both bounds reachable the attempts arm always wins
+# and this drive would silently be a second copy of `g_unready`. `sleep` is a no-op here, so a deadline
+# of 0 is the only value that fires at all — `SECONDS` does not advance across a stubbed poll.
+g_ceiling="$(HC_PROBE_PATH="$FIX/stack" HC_PROBE_HEALTH_ATTEMPTS=99 HC_PROBE_HEALTH_DEADLINE=0 \
+  probe connected gate-unready "$GATE")"
+g_nobound="$(HC_PROBE_PATH="$FIX/stack" probe connected gate-unready "$GATE_NOBOUND")"
 printf '  ready first poll:    %s\n  a transient:         %s\n' "$(one "$g_ready")" "$(one "$g_flake")"
 printf '  really unready:      %s\n' "$(one "$g_unready")"
 printf '  a blip, host agrees: %s\n' "$(one "$g_blip")"
@@ -913,6 +934,7 @@ printf '  no docker on host:   %s\n  ssh unreachable:     %s\n' "$(one "$g_nodoc
 printf '  logs lost after ps:  %s\n  dry run:             %s\n' "$(one "$g_logs")" "$(one "$g_dry")"
 printf '  from rollback, daemon gone: %s\n' "$(one "$g_rb_daemon")"
 printf '  from rollback, unready:     %s\n  no phase at all:            %s\n' "$(one "$g_rb_unready")" "$(one "$g_nophase")"
+printf '  ceiling hit:                %s\n  no bound at all:            %s\n' "$(one "$g_ceiling")" "$(one "$g_nobound")"
 
 # THE POSITIVE CONTROL. Without it every refusal below is satisfied by a gate that refuses
 # everything, which is this repository's sixteenth-instance rule applied to the gate itself.
@@ -1027,6 +1049,29 @@ esac
 case "$g_nophase" in
   *DIE*"called with no phase"*) ok "a gate called with no phase refuses rather than guessing which claim to make" ;;
   *) err "$SCRIPT's health gate accepted a call with NO phase: '$(one "$g_nophase")'. Both of its refusals state whether the stack was left alone or already reverted, so a caller that does not say which gets one of them wrong — silently, and in a message an operator acts on. See decisions.md D78 §14." ;;
+esac
+
+# THE SECOND BOUND — decisions.md D81, backlog NEW-39. `HEALTH_TIMEOUT=240` was a budget of 24 attempts
+# printed as "240s", so the number in the banner was a lower bound on the wait and never a limit on it.
+# The gate stops at whichever of the two bounds comes first now, and what this asserts is that the
+# ceiling exists AND that its refusal is a different sentence: attempts spent is a statement about
+# readiness, a ceiling hit with attempts unspent is a statement about the link.
+case "$g_ceiling" in
+  *"with attempts still unspent"*) ok "a gate cut off by its wall-clock ceiling says so, and says the rounds were slow rather than the services unready" ;;
+  # THIS IS THE ARM A DELETED CEILING REACHES, and it covers two faults with one sentence because the
+  # drive cannot tell them apart from outside: the ceiling arm gone (so the gate runs its 99 attempts
+  # out), or present and naming the wrong bound. Both end the same way for an operator — a gate whose
+  # rounds are each slow says nothing until its whole budget is spent.
+  *"attempts"*)
+    err "$SCRIPT's health gate was refused by ATTEMPTS in a drive that gives it 99 attempts and a 0s ceiling: '$(one "$g_ceiling")'. Either the wall-clock arm is gone or it named the wrong bound. With the probes at ConnectTimeout=8 that is about twenty minutes of silence about a link that died in the first round. See decisions.md D81 and backlog NEW-39." ;;
+  *) err "$SCRIPT's health gate did not stop at its wall-clock ceiling: '$(one "$g_ceiling")'. Without it a gate whose every round is slow spends its whole attempt budget — about twenty minutes with the probes bounded at 8s — before saying anything about a link that died in the first round. See decisions.md D81 and backlog NEW-39." ;;
+esac
+# AND THE BOUND HAS NO DEFAULT EITHER, for the reason the phase has none one arm up: a default inherits
+# whichever bound was written first, and `$spent` is interpolated into all four refusals, so the reason
+# would go MISSING rather than come out wrong — "the health gate gave up  and docker compose…".
+case "$g_nobound" in
+  *DIE*"called with no bound"*) ok "an exhaustion with no bound refuses rather than leaving the reason out of its own refusal" ;;
+  *) err "$SCRIPT's gate_exhausted accepted a call with NO bound: '$(one "$g_nobound")'. Its four refusals all interpolate the bound that fired, so a caller that does not name one produces a refusal with a hole in it. See decisions.md D81." ;;
 esac
 case "$g_dry" in
   *"[dry-run] skipped"*)
@@ -1266,10 +1311,13 @@ run7_source() { # run7_source <site log> <FAKE_DOCKER> <what to run after the so
       printf "__hc_source_returned__\n"
       # Three overrides, and each is the harness s rather than the script s: the compose template moves
       # because a mutant copy lives in a temp directory with no docker/ beside it, the budget because 24
-      # polls at ten seconds is not a thing a check can wait for, and the service list because two
+      # polls at ten seconds is not a thing a check can wait for — and its ceiling because the gate now
+      # ends at whichever bound comes first, so a reachable deadline would refuse by the other one and
+      # every assertion here would be about a refusal it does not name — and the service list because two
       # services make the exhaustion s own table readable in a failure message.
       COMPOSE_TEMPLATE="$HC_P7_TEMPLATE"
-      HEALTH_TIMEOUT=10
+      HEALTH_ATTEMPTS=1
+      HEALTH_DEADLINE=100000
       SERVICES=(catalog booking)
       eval "$HC_P7_BODY"
     ' 2>&1 || true

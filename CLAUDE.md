@@ -240,8 +240,24 @@ site): the brokerage one already names both readings with a remedy covering both
 fail is the **opposite** of the gate's — the condition it guards is D57's and it is silent, so an
 unestablished answer must not ship. The gateway version probe decides nothing at all.
 
-`HEALTH_TIMEOUT=240` is a budget of **24 attempts**, not 240 seconds, and the banner says seconds —
-open as **NEW-39**. Since D78 every `ssh` and the one `scp` in this file carry `SSH_OPTS`, which is
+**The gate has TWO bounds and stops at whichever comes first, since D81 (NEW-39, closed).** It was
+`HEALTH_TIMEOUT=240` printing `Health gate (240s)` while the loop counted ten per iteration regardless
+of how long the iteration took — so the banner's number was a lower bound on the wait and never a limit
+on it. It is **`HEALTH_ATTEMPTS=24`** (the count the loop has always enforced, renamed so the header is
+true) and **`HEALTH_DEADLINE=600`**, and **the refusal names which one fired**: attempts spent is a
+statement about readiness, a ceiling hit with attempts unspent is a statement about the link. Both are
+tested **before** the sleep now, which removes ten seconds spent on a probe the gate had already
+decided not to make.
+**600s is chosen ABOVE docker's own patience and that is the whole argument** — the compose healthcheck
+is `start_period: 120s` with `retries: 20` at `interval: 15s`, so the daemon itself waits up to **420s**
+before calling a service unhealthy, and a ceiling below that would let this gate overrule a verdict
+docker had not reached. (The item said 300s; re-derive it rather than quoting either number.) So the
+deadline can only fire when the **probes** are slow, which is the broken-link case — a healthy estate
+answering promptly spends ~15s a round and exhausts its attempts at ~360s, well inside it.
+`gate_exhausted` takes the bound as a **parameter with no default**, like `phase` beside it: `$spent` is
+interpolated into all four refusals, so a default would make the reason go *missing* rather than come
+out wrong. CI drives both the ceiling arm and the bound-less call.
+Since D78 every `ssh` and the one `scp` in this file carry `SSH_OPTS`, which is
 what took a blackholed host from **~4.5 hours** to a refusal down to about twenty minutes: an
 unbounded ssh connect there is **136s** and `ConnectTimeout=8` is **8s**, both measured.
 **Name the measure if you quote a count of them** — in command position there are 12 `ssh` and 1

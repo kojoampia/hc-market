@@ -3135,7 +3135,7 @@ Do it as one line of shell, not as a corrected constant: a number in a comment i
 
 ---
 
-## NEW-39 — `HEALTH_TIMEOUT` is a budget of 24 attempts and the header calls it seconds · READY
+## NEW-39 — `HEALTH_TIMEOUT` is a budget of 24 attempts and the header calls it seconds · DONE (D81)
 
 Opened by **D78 §10** as an explicit loser, and it is the residual of the lateness that decision
 measured rather than a new reading.
@@ -3168,6 +3168,26 @@ with one sleep spent on nothing at all — ten seconds added to every failing ga
 Nothing is unsafe either way: since D78 the late refusal names the right cause and reverts nothing it
 cannot establish. What is left is an operator waiting twenty minutes for a message about a link that
 went down four minutes in.
+
+**Closed by D81 with BOTH shapes, and the second one is the half that answers the sentence above.**
+`HEALTH_ATTEMPTS=24` is the count the loop always enforced, renamed so the header is true — that is the
+documentation defect. `HEALTH_DEADLINE=600` is the behaviour change, and it exists for the operator:
+the gate stops at whichever bound comes first and **the refusal names which fired**, because attempts
+spent is a statement about readiness while a ceiling hit with attempts unspent is a statement about the
+link.
+
+**600 is above docker's own patience, and this item's own number was wrong.** The compose healthcheck is
+`start_period: 120s` with `retries: 20` at `interval: 15s`, so the daemon waits up to **420s** — not the
+300s written above, which is the retry window without the start period. A ceiling below that would let
+this gate overrule a verdict docker had not reached. Above it, the deadline can only fire when the
+*probes* are slow, so the feared regression — a slow-starting estate failing a gate it used to pass — is
+avoided by the value: a healthy estate spends ~15s a round and exhausts its attempts at ~360s.
+
+Two smaller things went with it. The final `sleep 10` is gone, because both bounds are now tested
+**before** the sleep rather than after it. And the bound is a **parameter with no default**, like
+`phase` beside it: `$spent` is interpolated into all four refusals, so a default would make the reason
+go *missing* rather than come out wrong. Cases **51** and **52** drive the ceiling arm and the
+bound-less call; both were red through the wrong door first and are recorded in D81 §7.
 
 ---
 
