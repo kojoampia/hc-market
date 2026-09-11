@@ -4,7 +4,6 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tags;
 import java.util.concurrent.atomic.AtomicLong;
-import org.springframework.stereotype.Component;
 
 /**
  * Registrations by activation state, and logins by outcome — {@code decisions.md} D84, backlog NEW-43.
@@ -39,13 +38,35 @@ import org.springframework.stereotype.Component;
  * Aggregate counts only. The tag sets below are closed, and every value in them is a constant in this
  * file.
  *
+ * <p><strong>WHICH REGISTRY THIS IS GIVEN DECIDES WHETHER THE METRICS LEAVE THE PROCESS</strong>
+ * ({@code decisions.md} D85, backlog NEW-44), and it is not a {@code @Component} for that reason —
+ * {@code IdentityMetricsConfiguration} hands it {@code Metrics.globalRegistry} explicitly.
+ *
+ * <p>The OpenTelemetry agent's Micrometer bridge adds an OTel-backed registry as a <em>child</em> of
+ * {@code Metrics.globalRegistry}, and a composite registry only forwards meters registered
+ * <em>through it</em> — it does not index what its children register on themselves. Measured:
+ *
+ * <pre>
+ *   registered on a child registry   → that child sees it; the OTHER children do NOT
+ *   registered on Metrics.globalRegistry → every child sees it, including the agent's
+ * </pre>
+ *
+ * <p>So constructing this with the injected {@code MeterRegistry} bean — which is the
+ * {@code PrometheusMeterRegistry} — publishes to the exposition endpoint and to <strong>nothing
+ * else</strong>: the dashboard's series would never arrive however the transport were wired, and every
+ * panel would read "No data" for a reason no configuration file would show. D84 did exactly that and
+ * NEW-44's measurement is what found it.
+ *
+ * <p>The constructor still takes any {@link MeterRegistry}, so a unit test can pass a
+ * {@code SimpleMeterRegistry} and a naming test a real {@code PrometheusMeterRegistry}. What must not
+ * happen is the <em>application</em> handing it a child.
+ *
  * <p><strong>The gauges are read from an {@link AtomicLong} rather than from the database.</strong> A
  * Micrometer gauge supplier is called synchronously by whatever is reading the registry, and the
  * gateway's Mongo access is reactive — a supplier that blocked on it would block a scrape or an export.
  * {@code IdentityMetricsRefresher} in {@code service} owns the refresh; this class owns the numbers it
  * publishes and knows nothing about where they come from.
  */
-@Component
 public class GatewayIdentityMeters {
 
     /** Logins, by what happened. One counter per {@link Outcome}; see the class javadoc for why four. */

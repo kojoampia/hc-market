@@ -3338,7 +3338,7 @@ rather than waiting.
 
 ---
 
-## NEW-44 — nothing carries `gateway_identity_*` anywhere, and which route it should take is unmeasured · READY
+## NEW-44 — nothing carries `gateway_identity_*` anywhere, and which route it should take is unmeasured · DONE (D85)
 
 Opened by **D84 §7**, which decided everything about the gateway identity dashboard except where its
 series go. The metrics are emitted and verified in-process; **no environment in this repository collects
@@ -3372,6 +3372,36 @@ Three routes, and the first two are only distinguishable after that measurement:
 **What this item cannot deliver whichever route wins**: panels with real data. Production has never been
 deployed and quality seeds its accounts, so the figures stay demo figures until there is an estate with
 users — which is why D84 shipped the dashboard marked rather than waiting for this.
+
+**Closed by D85. Route one is open, and the measurement found that we were not on it.**
+
+`deploy/verify-micrometer-otlp-bridge.sh` runs one probe twice, differing only in
+`OTEL_INSTRUMENTATION_MICROMETER_ENABLED`. **Measured**: off → 0 registries attached to
+`Metrics.globalRegistry` and 0 Micrometer meters exported; on → 1 registry, counter and gauge each
+exported 7 times; `jvm.*` control 30 in both, which is what makes a zero mean anything. **So the bridge
+works and is opt-in.** The script's own first version tested only the default and reported "the bridge
+does not carry Micrometer" — a default recorded as a capability.
+
+**And the application half was wrong.** The bridge adds its registry as a *child* of the global
+composite, and a composite forwards only what is registered **through** it — it does not index what its
+children register on themselves. D84 constructed the meters with the injected `MeterRegistry`, which is
+the `PrometheusMeterRegistry`, a child. So **the series would never have arrived however the transport
+was wired**, and every panel would have read "No data" with no config file showing why. Fixed by binding
+the meters to `Metrics.globalRegistry`, with `MicrometerReachesTheGlobalRegistryIT` asserting both
+directions — through the composite *and* still on the application's registry, since a fix that reached
+the agent and lost `/management/prometheus` is the same defect reversed.
+
+**`HC_OTEL_JAVA_OPTS` alone would still have carried nothing**, so the flag is set in all three compose
+files beside the other inert `OTEL_*` variables, and `observability-claims.sh` part 6 refuses its absence
+and any value other than true — "false" and "missing" are one line apart and identically silent.
+
+**The dashboard's `NOT-YET-TRANSPORTED` marker stays**, and that is not a loose end: nothing attaches the
+agent by default, deliberately (D73 §3). What changed is that turning it on is one variable with a known
+outcome rather than an unmeasured hope, and part 5 will *demand* the marker come off the day an estate
+attaches the agent.
+
+The third option in the list above — reversing the 404 and scraping — is refused rather than deferred;
+D85 §6 argues it.
 
 ---
 

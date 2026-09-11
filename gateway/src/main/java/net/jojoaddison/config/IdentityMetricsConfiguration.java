@@ -1,5 +1,6 @@
 package net.jojoaddison.config;
 
+import io.micrometer.core.instrument.Metrics;
 import net.jojoaddison.management.GatewayIdentityMeters;
 import net.jojoaddison.security.CountingReactiveAuthenticationManager;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -35,6 +36,26 @@ import org.springframework.security.authentication.ReactiveAuthenticationManager
  */
 @Configuration
 public class IdentityMetricsConfiguration {
+
+    /**
+     * The meters, on {@code Metrics.globalRegistry} and deliberately not on the injected bean —
+     * {@code decisions.md} D85, backlog NEW-44.
+     *
+     * <p>The injected {@code MeterRegistry} is the {@code PrometheusMeterRegistry}, which Boot also
+     * attaches as a <em>child</em> of the global composite. A composite forwards only what is registered
+     * through it, so a meter created on that child is visible to the exposition endpoint and to nothing
+     * else — including the OTel-backed registry the agent adds as a sibling child. Measured both ways;
+     * see {@link GatewayIdentityMeters}'s javadoc for the table.
+     *
+     * <p>Registering on the composite reaches <strong>every</strong> child, so the exposition still
+     * serves these series AND the agent's bridge can carry them. {@code MicrometerReachesTheGlobalRegistryIT}
+     * asserts both halves, because a fix that reached the agent and lost the endpoint would be the same
+     * defect facing the other way.
+     */
+    @Bean
+    public GatewayIdentityMeters gatewayIdentityMeters() {
+        return new GatewayIdentityMeters(Metrics.globalRegistry);
+    }
 
     @Bean
     @Primary

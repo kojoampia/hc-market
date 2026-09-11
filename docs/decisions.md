@@ -15547,3 +15547,120 @@ that holds — and this is the eighth time that has happened in this session.
 - **The 60-second refresh timer** is driven once by a test rather than waited out; what is asserted is
   one observation, not the schedule.
 - **Production has never been deployed**, so on the only estate that runs, every figure is demo data.
+
+## D85 — The bridge works, is opt-in, and the meters were on the wrong registry
+
+**Ratified 2026-09-11.** Closes backlog **NEW-44**, opened by D84 §7.
+
+### §1 The measurement, and why it had to be one
+
+D84 shipped the gateway identity dashboard marked `NOT-YET-TRANSPORTED` and refused to guess which of
+three routes should carry `gateway_identity_*`. Route one turned on a question nobody had answered:
+**does the OpenTelemetry agent's Micrometer instrumentation actually bridge these meters to OTLP, on
+this agent version and this JDK?** D63 exists because "the agent is present" was read as "the agent
+instruments", so this is `deploy/verify-micrometer-otlp-bridge.sh` rather than a paragraph.
+
+It needs no estate, no database, no container and no network: a JDK, the agent jar from any
+`*/target/otel/`, and micrometer-core on a classpath. It mirrors `verify-otel-agent.sh` including
+`--describe`.
+
+### §2 The answer inverted on one variable, and the first version of the script recorded it wrong
+
+**Measured, both states, same probe, one variable different:**
+
+| | `OTEL_INSTRUMENTATION_MICROMETER_ENABLED=false` | `=true` |
+| --- | --- | --- |
+| registries on `Metrics.globalRegistry` | **0** | **1** |
+| `probe.bridge.counter` | 0 | **7** |
+| `probe.bridge.gauge` | 0 | **7** |
+| `jvm.*` (the control) | 30 | 30 |
+
+**So the bridge works and is opt-in, off by default.** The first version of the script tested only the
+default and printed *"THE BRIDGE DOES NOT CARRY MICROMETER"* — a **default reported as a capability**,
+which is this repository's own recurring defect arriving inside the script written to avoid it. It runs
+both states now, and the `jvm.*` control is what makes a zero mean anything: the agent exports its own
+MBean series whether or not this bridge is attached, so without it "no micrometer metric" and "no
+metric" are the same reading.
+
+### §3 The application half, and the defect only this could find
+
+The bridge adds an OTel-backed registry as a **child** of `Metrics.globalRegistry`, so what matters is
+which registry a meter is registered on. Measured directly:
+
+```
+registered on a child registry        → that child sees it; the OTHER children do NOT
+registered on Metrics.globalRegistry  → every child sees it, including the agent's
+```
+
+**D84 constructed `GatewayIdentityMeters` with the injected `MeterRegistry` bean**, which is the
+`PrometheusMeterRegistry` — a *child*. Boot does attach that child to the global composite
+(`management.metrics.use-global-registry`, default true, set nowhere here and asserted rather than
+read), but a composite forwards only what is registered **through** it and does not index what its
+children register on themselves.
+
+**So the dashboard's series would never have arrived, however the transport were wired**, and every
+panel would have read "No data" for a reason no configuration file would show. `IdentityMetricsConfiguration`
+now hands the meters `Metrics.globalRegistry`, and `MicrometerReachesTheGlobalRegistryIT` asserts
+**both directions** — findable through the composite (so the agent's child receives it) *and* present on
+the application's own registry (so `/management/prometheus` still serves it, which is where the
+dashboard's series names come from). A fix that reached the agent and lost the endpoint would be the
+same defect facing the other way.
+
+This is the whole value of NEW-44: the route was open, and we were not on it.
+
+### §4 The flag goes in the compose files, not in an operator's hands
+
+`HC_OTEL_JAVA_OPTS` is documented as the switch. With only that set, the agent attaches, exports its own
+`jvm.*`, and carries **no** `gateway_identity_*` — the documented switch silently doing half the job.
+So `OTEL_INSTRUMENTATION_MICROMETER_ENABLED: 'true'` is set in all three compose files, beside the other
+`OTEL_*` variables that are already inert while no agent is attached, and
+`observability-claims.sh` **part 6** refuses its absence **and** any value other than true, because
+"false" and "missing" produce identical silence one line apart.
+
+### §5 The dashboard's marker stays, and that is not a loose end
+
+Nothing attaches the agent by default and D73 §3 decided that deliberately: `monitoring-quality` belongs
+to another repository and has been down for days at a time, and an attached estate against a dead
+collector writes 35 ERROR lines per 150 seconds per service. So `NOT-YET-TRANSPORTED` is still true and
+part 5 still requires it. What changed is that turning it on is now **one variable with a known
+outcome** instead of an unmeasured hope — and part 5 will *demand* the marker come off the day an
+environment attaches the agent, which is now the correct demand.
+
+### §6 Losers
+
+- **`micrometer-registry-otlp` in the gateway's pom.** Unnecessary once §2 showed the agent's bridge
+  works, and `pom.xml` is a **generated file** — it would have needed a regeneration-table row, which is
+  a permanent cost for something the agent already does.
+- **Emitting through the OTel API directly**, bypassing Micrometer. Would have cost the Prometheus
+  exposition and with it the naming test, and put two metric APIs in one service.
+- **Reversing the deliberate 404 and scraping.** Cheapest and still refused: it contradicts a written
+  decision in two files plus the parent guide, it would be a control on production and no control at all
+  on the two estates that publish the gateway's port, and §2 makes it unnecessary.
+- **Setting the flag only in `quality/compose.yml`**, on the grounds that quality is the only estate
+  that runs. Rejected: production's compose file is the one that *defaults* the agent on, so it is the
+  file where the omission would bite hardest and be discovered last.
+- **Leaving the flag to the operator beside `HC_OTEL_JAVA_OPTS`.** §4 — two variables where the
+  documentation promises one.
+
+### §7 Verified by running
+
+`verify-micrometer-otlp-bridge.sh` **ok**, both states measured with the `jvm.*` control passing in each
+· `gateway ./mvnw clean verify` — **135 ITs, 0 failures** (was 133) · `MicrometerReachesTheGlobalRegistryIT`
+**2 tests**, both directions · `GatewayIdentityMetricsIT` 6, `CountingReactiveAuthenticationManagerUnitTest`
+7, `GatewayIdentityMetersNamingUnitTest` 1 — all still green with the meters moved to the composite,
+which is the assertion that the move cost the exposition nothing · `observability-claims.sh` parts 5 and
+6 green · its test **15 assertions**, with the flag's two failure shapes as cases · `TechnicalStructureTest`
+green.
+
+**The composite-forwarding table in §3 was measured with a standalone probe before the fix was written**,
+because the reasoning "a composite forwards to its children" is true of registration and false of
+indexing, and guessing which would have produced a fix that passed its own test.
+
+### §8 Not exercised
+
+- **No estate attaches the agent**, so no `gateway_identity_*` series has reached a collector, a Mimir or
+  a Grafana. Everything above is measured in-process or with a standalone probe.
+- **The probe is not the gateway.** It registers two meters on `Metrics.globalRegistry` in a bare JVM;
+  that the gateway's own meters take the same path is asserted by the IT, not by the probe.
+- **`micrometer-1.5` is the instrumentation module measured**; a future agent that renames or re-scopes
+  it would need the script re-run, which is why the script exists rather than this paragraph.

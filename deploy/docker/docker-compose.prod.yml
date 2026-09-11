@@ -91,6 +91,15 @@ x-service-base: &service-base
     # service below is what puts hc-market on the existing dashboards.
     OTEL_EXPORTER_OTLP_ENDPOINT: ${HC_OTEL_ENDPOINT:-http://otel-collector:4317}
     OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+    # THE MICROMETER BRIDGE IS OPT-IN AND OFF BY DEFAULT, so this is set here rather than left to an
+    # operator — decisions.md D85, backlog NEW-44. MEASURED with
+    # `deploy/verify-micrometer-otlp-bridge.sh`: without this variable the agent attaches NO registry to
+    # `Metrics.globalRegistry` and not one Micrometer meter is exported, while its own `jvm.*` series go
+    # out regardless. With it, a counter and a gauge both cross. So `HC_OTEL_JAVA_OPTS` alone would
+    # attach the agent and carry no `gateway_identity_*` at all — the documented switch silently doing
+    # half the job, which is this repository's own recurring shape. Inert while no agent is attached:
+    # nothing in these services reads an OTEL_* variable.
+    OTEL_INSTRUMENTATION_MICROMETER_ENABLED: 'true'
     # deployment.environment ONLY. Adding service.version=${HC_TAG} is tempting -- a deploy would
     # show as a series change -- and it is wrong: the collector turns every resource attribute into
     # a metric label, so a version that changes each deploy starts a whole new series set and

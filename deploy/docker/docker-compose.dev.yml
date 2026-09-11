@@ -184,6 +184,15 @@ x-service-base: &service-base
     # under one name present as instances of one service, and either one's health reads as both.
     OTEL_RESOURCE_ATTRIBUTES: deployment.environment=development
     OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+    # THE MICROMETER BRIDGE IS OPT-IN AND OFF BY DEFAULT, so this is set here rather than left to an
+    # operator — decisions.md D85, backlog NEW-44. MEASURED with
+    # `deploy/verify-micrometer-otlp-bridge.sh`: without this variable the agent attaches NO registry to
+    # `Metrics.globalRegistry` and not one Micrometer meter is exported, while its own `jvm.*` series go
+    # out regardless. With it, a counter and a gauge both cross. So `HC_OTEL_JAVA_OPTS` alone would
+    # attach the agent and carry no `gateway_identity_*` at all — the documented switch silently doing
+    # half the job, which is this repository's own recurring shape. Inert while no agent is attached:
+    # nothing in these services reads an OTEL_* variable.
+    OTEL_INSTRUMENTATION_MICROMETER_ENABLED: 'true'
   # The Jib images contain no curl and no wget -- a CMD-based HTTP check fails with "executable
   # file not found" forever and the container sits in `health: starting` for its whole life. They
   # DO contain bash, so this uses bash's /dev/tcp to speak HTTP with no external tools at all.

@@ -223,4 +223,35 @@ else
   fi
 fi
 
+# ---- 6. the micrometer bridge flag, in every compose file that attaches an agent ------------------
+#
+# decisions.md D85, backlog NEW-44. The agent's Micrometer bridge is OPT-IN and off by default —
+# measured by deploy/verify-micrometer-otlp-bridge.sh, which runs the same probe twice and differs only
+# in this variable: without it the agent attaches no registry to Metrics.globalRegistry and exports not
+# one Micrometer meter, while its own jvm.* series go out either way.
+#
+# So HC_OTEL_JAVA_OPTS alone attaches the agent and carries no `gateway_identity_*` at all. That is the
+# documented switch silently doing half the job, which is why the flag is set in the compose files
+# rather than left to whoever attaches the agent — and why its absence is checked: it is one line whose
+# loss changes nothing visible until somebody asks why the dashboard is empty.
+echo "--- 6. the micrometer bridge is enabled wherever an agent can attach ---"
+readonly MICROMETER_ENV='OTEL_INSTRUMENTATION_MICROMETER_ENABLED'
+for file in "$QUALITY" "$DEV" "$PROD"; do
+  if [ ! -f "$file" ]; then
+    echo "::error::$file does not exist, so part 6 read nothing."
+    fail=1
+    continue
+  fi
+  n="$(grep -c "^[[:space:]]*$MICROMETER_ENV:" "$file" || true)"
+  if [ "$n" -eq 0 ]; then
+    echo "::error file=$file::declares no $MICROMETER_ENV. The agent's micrometer bridge is off by default, so attaching the agent here would export its own jvm.* series and NOT one gateway_identity_* metric — the dashboard empty for a reason no config file shows. Measured by deploy/verify-micrometer-otlp-bridge.sh; see decisions.md D85."
+    fail=1
+  elif ! grep -qE "^[[:space:]]*$MICROMETER_ENV:[[:space:]]*'?true'?[[:space:]]*$" "$file"; then
+    echo "::error file=$file::sets $MICROMETER_ENV to something other than true: '$(grep -E "^[[:space:]]*$MICROMETER_ENV:" "$file" | head -1 | sed 's/^[[:space:]]*//')'. Any other value leaves the bridge off, which is indistinguishable from the variable being absent."
+    fail=1
+  else
+    echo "ok   $file — $MICROMETER_ENV is true, so attaching the agent carries micrometer meters too"
+  fi
+done
+
 exit "$fail"
