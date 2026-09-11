@@ -149,6 +149,23 @@
 #                                              drive named functions, so an ssh growing beside the six
 #                                              is invisible to them
 #
+#  Two more for the gate's SECOND bound — decisions.md D81, backlog NEW-39. `HEALTH_TIMEOUT=240` was a
+#  budget of 24 attempts printed as "240s", so the banner's number was a lower bound on the wait and
+#  never a limit on it. It is `HEALTH_ATTEMPTS` and `HEALTH_DEADLINE` now, whichever comes first.
+#
+#   51  the wall-clock ceiling removed       — only attempts bound the gate again, so an estate whose
+#                                              every round is slow spends its whole budget — about
+#                                              twenty minutes with the probes at ConnectTimeout=8 —
+#                                              before saying anything about a link that died in the
+#                                              first round. Mutated on its own, never with case 23:
+#                                              one sed over both arms is an aggregate that cannot say
+#                                              which of the two bounds is guarded
+#   52  gate_exhausted takes no bound        — the same shape as case 48 one function along, and the
+#                                              failure is QUIETER: `$spent` is interpolated into all
+#                                              four refusals, so the reason goes MISSING rather than
+#                                              coming out wrong — "the health gate gave up  and
+#                                              docker compose…"
+#
 #      ./.github/checks/host-probe-attribution-test.sh
 # ==============================================================================
 set -Eeuo pipefail
@@ -392,9 +409,13 @@ printf '\nThe health gate: the polls must keep folding, the exhaustion must not\
 # until D78: an exhausted gate warns about five services and falls through to `rollback`, whoever
 # the silence belonged to.
 f="$(fresh m23)"
-sed -i 's|{ gate_exhausted "\$bad" "\$phase"; return 1; }|{ warn "still unhealthy:$bad"; return 1; }|' "$f"
+# TWO ARMS SINCE D81, AND EACH IS MUTATED ON ITS OWN. The gate stops at whichever of `HEALTH_ATTEMPTS`
+# and `HEALTH_DEADLINE` comes first, so "the exhaustion calls gate_exhausted" is two lines now, and one
+# sed over both would be an aggregate that cannot say which arm is guarded. Case 23 keeps the attempt
+# arm — the one that existed when NEW-36 was found — and case 51 below is the ceiling's.
+sed -i 's|{ gate_exhausted "\$bad" "\$phase" attempts; return 1; }|{ warn "still unhealthy:$bad"; return 1; }|' "$f"
 expect_red "$f" "23  the exhaustion arm back to warn-and-roll-back (NEW-36 itself)" \
-  '{ warn "still unhealthy:$bad"; return 1; }' '{ gate_exhausted "$bad" "$phase"; return 1; }' \
+  '{ warn "still unhealthy:$bad"; return 1; }' '{ gate_exhausted "$bad" "$phase" attempts; return 1; }' \
   "reported an unreachable host as unhealthy services and fell through to a rollback"
 
 # THE STATE PROBE'S STATUS ARM. Addressed to gate_exhausted's own line range, because `(( HOST_STATUS
@@ -416,7 +437,7 @@ expect_red "$f" "24  the state probe's remote-status arm emptied" '|| true # MUT
 f="$(fresh m25)"
 # `%` as the delimiter, not `|`: the line being matched IS an `||`, and `sed` reads the second bar
 # as the end of the pattern and then refuses the expression. Caught by running it.
-sed -i 's%^    || die "the health gate timed out after ${HEALTH_TIMEOUT}s and docker compose on $HOST reports NO CONTAINERS.*%    || true ## MUTATED-25%' "$f"
+sed -i 's%^    || die "the health gate gave up \$spent and docker compose on $HOST reports NO CONTAINERS.*%    || true ## MUTATED-25%' "$f"
 expect_red "$f" "25  the no-containers arm removed" '|| true ## MUTATED-25' 'NO CONTAINERS AT ALL' \
   "reported a project with NO CONTAINERS as services that failed to become ready"
 
@@ -744,6 +765,35 @@ awk '/^  log "rolling services"$/ { print "  ssh \"${SSH_OPTS[@]}\" \"$HOST\" \"
 expect_red "$f" "50  a seventh remote probe grows beside the six" \
   'ssh "${SSH_OPTS[@]}" "$HOST" "uptime"' '' \
   "made a remote invocation part 7 does not recognise"
+
+# THE SECOND BOUND, mutated on its own — decisions.md D81, backlog NEW-39. Case 23 is the attempt
+# arm's; this is the ceiling's, and it is a separate case rather than a second sed in that one because
+# an aggregate cannot say which of the two is guarded. What the mutation restores is not NEW-36's
+# defect but the wait it left behind: a gate whose rounds are each slow spends its whole attempt budget
+# — about twenty minutes with the probes bounded at 8s — before saying anything about a link that died
+# in the first round.
+# THE MARKER GOES AFTER THE WHOLE STATEMENT, not inside the braces. Written as `{ : ## MUTATED-51 ; }`
+# first, where `##` comments out the closing `; }` and the mutant does not parse — which `expect_red`
+# reports as "the check aborted rather than failing", a red run about the harness rather than about the
+# subject. Caught by running it.
+f="$(fresh m51)"
+sed -i 's|&& { gate_exhausted "\$bad" "\$phase" deadline; return 1; }|\&\& true ## MUTATED-51|' "$f"
+expect_red "$f" "51  the wall-clock ceiling removed, so only attempts bound the gate" \
+  '&& true ## MUTATED-51' '{ gate_exhausted "$bad" "$phase" deadline; return 1; }' \
+  "was refused by ATTEMPTS in a drive that gives it 99 attempts"
+
+# THE BOUND IS A PARAMETER WITH NO DEFAULT, and this is the case that keeps it one. Same shape as
+# case 48 for `phase`: a default would silently inherit whichever bound was written first, and the two
+# refusals say different things about where the fault is — attempts spent is a statement about
+# readiness, a ceiling hit with attempts to spare is a statement about the link. Deleting the `*)` arm
+# makes `$spent` empty, so every refusal reads "the health gate gave up  and docker compose…" with the
+# reason silently missing rather than wrong, which is why the guard is a `die` and not a fallback.
+f="$(fresh m52)"
+awk '/^    \*\) die "gate_exhausted was called with no bound/ { print "    *) : ## MUTATED-52 ;;"; next } { print }' \
+  "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+expect_red "$f" "52  gate_exhausted accepts a call with no bound" \
+  '*) : ## MUTATED-52 ;;' 'was called with no bound' \
+  "accepted a call with NO bound"
 
 # THE ONE CASE THAT MUTATES THE CHECK'S OWN INSTRUMENT rather than the subject. Absent the shell
 # stripper, part 5 reads empty text: every `grep -F` finds nothing, so every site is reported

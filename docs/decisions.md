@@ -15102,3 +15102,110 @@ credential exists in this branch, and the quality stack, the emptied dev estate 
 branch's files were not touched. Four throwaway control copies of the check were created inside
 `.github/checks/` (a copy outside it recomputes `ROOT` and goes red on everything — D78 §15's note) and
 **deleted**; no container, network or volume was created.
+
+## D81 — A budget of twenty-four attempts, printed as seconds
+
+**Ratified 2026-09-11.** Closes backlog **NEW-39**, which D78 §10 opened as an explicit loser.
+
+### §1 What was wrong, and it was the banner rather than the behaviour
+
+`deploy-prod.sh` declared `HEALTH_TIMEOUT=240`, printed `Health gate (240s)`, and then counted
+`waited += 10` once per iteration **regardless of how long the iteration took**. The probes are not in
+that arithmetic, so the number was a lower bound on the wait and never a limit on it. Twenty-four
+rounds of five `ssh … compose exec` probes take as long as the probes take.
+
+D78 §1 measured what that costs. An `ssh` connect to a blackholed address is **136s** unbounded and
+**8s** with `ConnectTimeout=8`. Before D78 put `SSH_OPTS` on the poll a host dropping packets therefore
+took `24 × 5 × 136s` — about **4.5 hours** — to reach a refusal that then named the wrong cause. With
+the timeout it is about **twenty minutes** to a refusal that is now correct. Thirteen times better and
+still not 240 seconds.
+
+### §2 Decision: BOTH bounds, and the refusal names which one fired
+
+The item offered two shapes and costed neither. Taking both is not splitting the difference — they fix
+different halves, and only one of them is a behaviour change:
+
+- **`HEALTH_ATTEMPTS=24`** is the count the loop has always enforced, renamed. That is most of the fix
+  and it changes nothing: the header becomes true.
+- **`HEALTH_DEADLINE=600`** is the half that changes behaviour, and it exists **for the operator rather
+  than for the estate**. The residual after D78 is a person waiting twenty minutes for a message about
+  a link that went down in the first round.
+
+**The refusals are different sentences, and that is why the bound is passed on.** Attempts spent is a
+statement about *readiness* — the estate was asked twenty-four times and did not answer. A ceiling hit
+with attempts unspent is a statement about *the link* — each round was slow, which is not the same
+fault and does not have the same remedy.
+
+### §3 Why 600, and it is the one number in this decision that needed an argument
+
+**Above docker's own patience, deliberately.** The compose healthcheck for every app service is
+`start_period: 120s` with `retries: 20` at `interval: 15s`, so the daemon itself waits up to **420s**
+before calling a service unhealthy. A ceiling below that would let this gate overrule a verdict docker
+had not reached yet — which is the opposite of D78 §3's whole argument, where `{{.Health}}` is a second
+opinion precisely because the daemon runs it *inside* the host and its verdict cannot be affected by
+the hop the probes cross.
+
+**NEW-39 says 300s and that is wrong**; it is `start_period` plus the retry window, not the retry
+window alone. Re-derive it from the compose file rather than quoting either number.
+
+At 600s the deadline can only fire when the **probes** are slow, which is the broken-link case and not
+the slow-estate case: a healthy estate whose probes answer promptly spends ~15s a round and exhausts
+its twenty-four attempts at ~360s, well inside the ceiling. So the regression the item feared — *"a
+slow-starting estate could fail a gate it previously passed"* — is avoided by the value rather than by
+hoping, and it is avoided **because the bound that governs a healthy estate is still the attempt
+count**.
+
+### §4 The bound is a parameter with NO default
+
+Same shape as `phase` one function along (D78 §14), and the failure it prevents is **quieter**.
+`$spent` is interpolated into all four of `gate_exhausted`'s refusals, so a default would not produce
+a wrong reason — it would produce a **missing** one: *"the health gate gave up  and docker compose on
+$HOST could not then be asked…"*. A caller that omits it is refused before a probe is sent.
+
+There is no way to reach that arm through `health_gate`, because both of its call sites pass a bound.
+That is exactly why it is driven by CI directly: the only route to a bound-less exhaustion is a **third
+arm added later**, which is the state the guard exists for.
+
+### §5 Both bounds are tested BEFORE the sleep
+
+The smaller half, and it is D78 §14's review finding carried out. The `sleep 10` used to run first, so
+an exhausted gate spent a final ten seconds waiting for a probe it had already decided not to make —
+ten seconds added to every failing gate for nothing. Checking first also makes `attempt` mean what it
+says: the number of rounds of probes actually performed.
+
+### §6 Losers
+
+- **Rename only** (`HEALTH_ATTEMPTS`, banner says attempts). Cheapest, no behaviour change, header
+  true. **Rejected as incomplete**: it fixes the *documentation* defect and leaves the *operator*
+  defect — the twenty-minute silence — exactly as it was. The item is explicit that what is left is
+  "an operator waiting twenty minutes for a message about a link that went down four minutes in".
+- **Wall clock only** (`SECONDS` at entry, banner and behaviour agree). **Rejected**: on a healthy but
+  slow estate a 240-second wall clock is fewer than twenty-four attempts, so it could fail a gate that
+  previously passed — and against docker's 420s patience, a 240s ceiling overrules a verdict the daemon
+  has not reached. Taking both bounds keeps the attempt count as the one that governs a healthy estate.
+- **A retry count that grows on slow rounds** (adaptive). Rejected without much thought and recorded so
+  nobody re-invents it: a gate whose budget depends on how badly the link is behaving is one whose
+  duration cannot be stated in its own banner, which is the defect this decision closes.
+
+### §7 Verified by running
+
+`bash -n` on every tracked shell script · Appendix B re-embedded, `sync-appendices.sh --check` **ok** ·
+check **67 ok, exit 0** · test **53 ok, 0 failed over 52 numbered mutations** · two new mutations, each
+asserted applied and each red through its own door: the ceiling arm removed (case 51) and
+`gate_exhausted` accepting a call with no bound (case 52) · the ceiling drive answers
+*"gave up after 0s, with attempts still unspent"* and the bound-less call dies · seed byte-identical.
+
+**Two harness defects of my own, found by running it.** Case 51's first mutant was
+`{ : ## MUTATED-51 ; }`, where `##` comments out the closing `; }` so the mutant does not parse —
+reported as "the check aborted rather than failing", a red run about the harness rather than the
+subject. And case 51's door was initially named as the wall-clock arm when the reachable arm is the
+*attempts* one: with the ceiling deleted the gate legitimately exhausts its 99 attempts, so the check's
+second arm fires. **The message was reworded rather than the test**, because that arm covers two faults
+a drive cannot tell apart from outside — the ceiling gone, or present and naming the wrong bound.
+
+### §8 Not exercised
+
+`deploy-prod.sh` has still never run against a host (D49). This establishes what the script **passes**
+and how it refuses; the 136s and 8s figures are D78's, measured against a blackholed TEST-NET-1 address
+and not against the production host. The 420s figure is read off `docker-compose.prod.yml` and has
+never been observed on a running production estate, because there has never been one.
