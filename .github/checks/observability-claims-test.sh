@@ -165,6 +165,25 @@ rm -f "$DASH"
 expect red "the dashboard does not exist"
 restore
 
+# ---- PART 6: the micrometer bridge flag — decisions.md D85, backlog NEW-44 ------------------------
+#
+# The agent's micrometer bridge is off by default, so HC_OTEL_JAVA_OPTS alone attaches the agent and
+# carries no gateway_identity_* at all. Both failure shapes are cases, because "set to false" and
+# "absent" are one line apart and produce the identical silence.
+echo
+echo "=== the bridge flag is removed from a compose file ==="
+sed -i "/OTEL_INSTRUMENTATION_MICROMETER_ENABLED:/d" "$QUALITY"
+expect red "quality declares no micrometer bridge flag"
+restore
+
+echo
+echo "=== the bridge flag is present but false ==="
+# A value other than true leaves the bridge off, which is indistinguishable from the variable being
+# absent — so it must not be accepted merely because the name is there.
+sed -i "s/OTEL_INSTRUMENTATION_MICROMETER_ENABLED: 'true'/OTEL_INSTRUMENTATION_MICROMETER_ENABLED: 'false'/" "$QUALITY"
+expect red "quality sets the bridge flag to false"
+restore
+
 echo
 echo "=== the meters class is missing, so the series list cannot be derived ==="
 # THE VACUITY CASE, and the one that matters most: without it part 5 would compare the dashboard's

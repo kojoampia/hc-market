@@ -588,8 +588,39 @@ Three things about it are worth knowing before touching any of them:
   the sweep does not visit a metrics backend. An IT asserts over the registry's own meters that no other
   tag key exists.
 
-**Nothing transports those series anywhere, and the dashboard says so on itself** (D84 §7, open as
-**NEW-44**). `deploy/observability/hc-market-gateway-identity.json` carries a `NOT-YET-TRANSPORTED`
+**WHICH REGISTRY THE METERS ARE ON DECIDES WHETHER THEY LEAVE THE PROCESS, and D84 had it wrong**
+(D85, backlog NEW-44 — closed). The agent's Micrometer bridge adds an OTel-backed registry as a
+**child** of `Metrics.globalRegistry`, and a composite forwards only what is registered **through** it;
+it does not index what its children register on themselves. Measured with a standalone probe:
+
+```
+registered on a child registry        → that child sees it; the OTHER children do NOT
+registered on Metrics.globalRegistry  → every child sees it, including the agent's
+```
+
+D84 constructed `GatewayIdentityMeters` with the injected `MeterRegistry` — which is the
+`PrometheusMeterRegistry`, a child — so the series **would never have arrived however the transport was
+wired**, with every panel reading "No data" and no config file showing why. `IdentityMetricsConfiguration`
+hands it `Metrics.globalRegistry` now, and `MicrometerReachesTheGlobalRegistryIT` asserts **both
+directions**: through the composite, so the agent's child receives it, *and* still on the application's
+registry, which serves the exposition and is where the dashboard's names come from. A fix that reached
+the agent and lost the endpoint is the same defect reversed. **Do not "simplify" that bean back to the
+injected registry.**
+
+**The bridge is OPT-IN and off by default, and that is measured rather than read** —
+`./deploy/verify-micrometer-otlp-bridge.sh` runs one probe twice differing only in
+`OTEL_INSTRUMENTATION_MICROMETER_ENABLED`: off → **0** registries attached and **0** Micrometer meters
+exported; on → 1 registry, counter and gauge each exported 7 times; `jvm.*` **30 in both**, which is the
+control that makes a zero mean anything. The script's own first version tested only the default and
+reported "the bridge does not carry Micrometer" — **a default recorded as a capability**, in the script
+written to avoid exactly that. So `HC_OTEL_JAVA_OPTS` alone would attach the agent and carry no
+`gateway_identity_*`: the flag is set in **all three** compose files beside the other inert `OTEL_*`
+variables, and `observability-claims.sh` **part 6** refuses its absence and any value other than true,
+because "false" and "missing" are one line apart and identically silent.
+
+**Nothing transports those series anywhere, and the dashboard says so on itself** (D84 §7; the marker
+stays after D85, because nothing attaches the agent by default and D73 §3 decided that deliberately —
+what changed is that turning it on is now one variable with a known outcome). `deploy/observability/hc-market-gateway-identity.json` carries a `NOT-YET-TRANSPORTED`
 marker which `observability-claims.sh` **part 5** holds against the same measured fact part 4 uses, and
 it also derives the series it may query from `GatewayIdentityMeters` rather than trusting the PromQL.
 The exposition strings are asserted separately by `GatewayIdentityMetersNamingUnitTest` against a real
