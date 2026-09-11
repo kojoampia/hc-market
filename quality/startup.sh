@@ -851,12 +851,27 @@ step "Start"
 compose up -d
 ok "containers started"
 
+# THE GATE MUST NOT GIVE UP BEFORE DOCKER HAS -- decisions.md D89, backlog NEW-46. It polled 90 times
+# at 4s = 360s, and docker's own patience for the same question is start_period + retries x interval =
+# 300 + 400 = 700s. A gate below the daemon's ceiling overrules a verdict the daemon has not reached,
+# which is D81's finding in deploy-prod.sh one script along.
+#
+# MEASURED: on the roll to 4b18ac6 with the agent attached, container start to Spring's "Started" line
+# was 492s (catalog) to 641s (payout) -- so ALL FIVE breached 360s and `startup.sh` exited 1 on a roll
+# that had in fact succeeded, never reaching its own `verify`. The stack was healthy; the gate was
+# short.
+#
+# 200 polls x 4s = 800s, above docker's 700s ceiling so the daemon decides first, and above the
+# measured worst case with headroom. It is not a promise that a start takes this long -- the loop
+# leaves as soon as a service reports healthy.
+HEALTH_POLLS=200
+
 step "Wait for health"
 for s in gateway catalog booking messaging payout; do
   printf '  %s… ' "$s"
-  for i in $(seq 1 90); do
+  for i in $(seq 1 "$HEALTH_POLLS"); do
     [[ "$(docker inspect -f '{{.State.Health.Status}}' "hc-market-quality-$s" 2>/dev/null)" == "healthy" ]] && { printf '%shealthy%s\n' "$c_ok" "$c_reset"; break; }
-    [[ $i == 90 ]] && { printf '%stimeout%s\n' "$c_err" "$c_reset"; compose logs --tail=40 "$s"; die "$s did not become healthy"; }
+    [[ $i == "$HEALTH_POLLS" ]] && { printf '%stimeout%s\n' "$c_err" "$c_reset"; compose logs --tail=40 "$s"; die "$s did not become healthy within $((HEALTH_POLLS * 4))s"; }
     sleep 4
   done
 done

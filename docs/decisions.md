@@ -16088,3 +16088,90 @@ the review body is not erased, `Dispute.resolution` is kept — are untouched.
 
 **Nothing here enforces retention.** There is still no scheduler, `GET /api/desk/privacy` still reports
 `enforced: false`, and both the notice and the processing record say so in terms.
+
+## D89 — The roll gate gave up before docker did
+
+**Ratified 2026-09-11.** Closes backlog **NEW-46**, found by rolling quality to `4b18ac6`.
+
+### §1 A successful roll exited 1
+
+The roll worked — ten containers healthy, all five image digests matching the published SHA, the agent
+attached, `--verify` green on all nine checks — and `quality/startup.sh` **died at its own health gate**
+with `✗ gateway did not become healthy`, so it never reached its own `verify`. The stack was healthy;
+the gate was short.
+
+### §2 Measured, because the numbers are the whole decision
+
+Container start to Spring's own *"Started …App"* line, agent attached:
+
+| | gateway | catalog | messaging | booking | payout |
+| --- | --- | --- | --- | --- | --- |
+| wall clock | 528s | 492s | 561s | 592s | **641s** |
+| Spring's own figure | 321s | 404s | 400s | 406s | 410s |
+
+**The gap is the point.** 170–230 seconds pass before Spring's clock starts, on the JVM and on the agent
+rewriting classes — exactly the phase `start_period` exists for, and exactly what nothing had budgeted.
+
+Three ceilings, two of them below reality:
+
+| bound | was | needed |
+| --- | --- | --- |
+| `startup.sh`'s gate: 90 polls × 4s | **360s** | 641s |
+| docker's patience: `start_period` + `retries` × `interval` = 60 + 400 | **460s** | 641s |
+
+### §3 It is D81 one script along
+
+D81 chose `deploy-prod.sh`'s wall clock **above** docker's own patience, on the argument that a gate
+below the daemon's ceiling overrules a verdict the daemon has not reached. Here the script was below
+docker **and** docker was below reality — so the same rule applies twice.
+
+### §4 Both raised, anchored rather than guessed
+
+- **`start_period` 60s → 300s.** Failures inside it do not count at all, so widening it buys time for a
+  slow start *without* making a genuinely broken service look healthy for longer — which raising
+  `retries` would. docker's ceiling becomes 300 + 400 = **700s**.
+- **`HEALTH_POLLS=200`** × 4s = **800s**, deliberately above docker's 700s so the daemon decides first,
+  and above the measured 641s with headroom. It is not a promise that a start takes this long: the loop
+  leaves as soon as a service reports healthy. The refusal names its own budget now.
+
+### §5 One defect introduced while fixing it, and caught
+
+`[[ $i == HEALTH_POLLS ]]` compares against the **literal string** — the right side of `[[ ]]` is not
+expanded without `$`. The timeout arm would have been dead and the loop would have ended **silently**
+after 200 polls, which is worse than the defect being fixed: a gate that neither waits long enough nor
+refuses. Proven both ways: `i=200` fires with `"$HEALTH_POLLS"` and never fires without it.
+
+### §6 Not exercised
+
+**The new gate has not been driven by a real roll.** Its arithmetic is measured and its comparison is
+proven, but re-rolling a healthy stack to observe a timeout that should not fire costs a ten-minute
+restart to learn nothing. The `start_period` change takes effect on the next container recreate, so
+quality is still running the old value.
+
+**And whether the services transited through `unhealthy` on this start is no longer measurable.** The
+arithmetic says docker's 460s ceiling was below payout's 641s, so it should have — but docker retains
+only the last five health-log entries and that window is post-recovery, showing `FailingStreak=0` for
+all five. Recorded as reasoned, not observed.
+
+### §7 What the roll itself established
+
+Verified independently rather than taken from the release agent's report: all five image digests match
+the published SHA (`docker inspect .Image` against the tag's `.Id`, never tag strings); 10/10 containers
+healthy with the databases at 37 hours, so no volume was touched; the agent **and** its exporter
+endpoint on pid 1 of all five; **0** ERROR lines with the ANSI-stripped pattern proven able to match
+first; **0** `MessageDeliveryException`, so every service has a reachable broker; 18 professionals on
+loopback and through `market.healthconnect.local`; and the body served on that hostname is *this*
+catalogue rather than a sibling's app.
+
+**The release agent's one deviation was right.** It added `-Dotel.exporter.otlp.endpoint=http://otel-collector:4317`
+to the `HC_OTEL_JAVA_OPTS` I specified, because without it the agent falls back to `localhost:4317`
+where nothing listens — D63's dead-endpoint condition, which would have produced 35 ERROR lines per 150
+seconds and been mis-diagnosed as the collector having gone away. The pre-roll containers carried the
+flag; my instruction would have dropped it.
+
+**Its one correction to me was wrong, and the reason is worth recording.** It reported that my
+before-state table had two rows transposed — `/api/reviews` 401 against `/api/categories` 200, the
+reverse of what I captured. Both readings are correct: **I queried the `/count` variants** and it
+queried the bare paths, and `PUBLIC_GET_PATHS` contains `/api/categories` and `/api/reviews/count` but
+neither `/api/categories/count` nor `/api/reviews`. Four measurements, all four consistent with the
+allow-list, compared across different endpoints. My abbreviated labels invited it.
