@@ -3109,7 +3109,7 @@ the case error written into the check.
 
 ---
 
-## NEW-38 — the SHELL stripper's caller count is stale, in a file that is not its own · READY
+## NEW-38 — the SHELL stripper's caller count is stale, in a file that is not its own · DONE (D82)
 
 Found by D77's review-fix sweep, and deliberately **not** folded into it: different mechanism,
 different file, and a package that had just been corrected for widening its own scope should not widen
@@ -3132,6 +3132,23 @@ produces it. The same treatment fits here, and the shell stripper's callers are 
 copy of D77's expression.
 
 Do it as one line of shell, not as a corrected constant: a number in a comment is what this is.
+
+**Closed by D82, and this item's own count was stale when it was written.** It names five callers as
+one workflow step plus four check scripts. Measured on `main` at `4b92d8c`: **five files invoke the
+stripper** and they are not that composition — `shared-plane-wiring.sh:152`,
+`host-probe-attribution.sh:100`, `outbox-alias-restore-test.sh:40`, **`host-probe-attribution-test.sh:705`**
+(the one missed) and its own `strip-sh-comments-test.sh:19`. And `build.yml` **invokes it nowhere**: its
+single mention is a comment, in the step whose subject reaches the stripper through
+`outbox-alias-restore-test.sh`. So "one workflow step" describes a dependency rather than a call.
+
+A third statement existed at the same time — `host-probe-attribution-test.sh` said *"one file five checks
+trust"*. **Three sentences about one number, three different wrong answers.**
+
+The fix is a derivation that **prints** the list enumerated and asserts only a **floor of two**, never an
+expected count: a new caller is not a defect, and a check asserting `== 5` would go red on a correct
+change and then be "fixed" by editing the number — this defect through its own guard. Both stale
+sentences now say "one file every shell matcher in the estate trusts" and point at the case that derives
+it; `strip-sh-comments.awk`'s header carries both expressions and no total.
 
 ---
 

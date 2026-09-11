@@ -50,8 +50,12 @@
 #   13  a probe renamed out from under
 #       part 3's enumeration                 — the list is enumerated, so it must refuse rather than
 #                                              silently compare against a probe that is not there
-#   14  the shell stripper absent            — one file five checks trust; absent it, part 5 reads
-#                                              empty text and reports every call site as routed
+#   14  the shell stripper absent            — one file every shell matcher in the estate trusts;
+#                                              absent it, part 5 reads empty text and reports every
+#                                              call site as routed. NO COUNT HERE ON PURPOSE: this
+#                                              said "five" while the same sentence in
+#                                              shared-plane-wiring-test.sh said "four", and that
+#                                              case derives and prints it (decisions.md D82)
 #
 #  Eight more from the review of `25566a2`, and the first of them is the reason the others exist: part
 #  2 drives ONE of the six call sites, and part 5's textual assertion says nothing about the

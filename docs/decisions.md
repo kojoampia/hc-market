@@ -15209,3 +15209,97 @@ a drive cannot tell apart from outside — the ceiling gone, or present and nami
 and how it refuses; the 136s and 8s figures are D78's, measured against a blackholed TEST-NET-1 address
 and not against the production host. The 420s figure is read off `docker-compose.prod.yml` and has
 never been observed on a running production estate, because there has never been one.
+
+## D82 — Three statements of one number, three different wrong answers
+
+**Ratified 2026-09-11.** Closes backlog **NEW-38**.
+
+### §1 The subject, and the item's own instance of it
+
+`shared-plane-wiring-test.sh` described its state 19 as *"the shell stripper absent — one file **four**
+checks trust"*. That number was stale. NEW-38 was raised to correct it and said **five** — one workflow
+step plus four check scripts.
+
+**NEW-38's five is stale too, by the same kind of composition error.** Measured on `main` at `4b92d8c`,
+the files that *invoke* `strip-sh-comments.awk` are **five**, and they are not the item's four-plus-a-step:
+
+| file | how |
+| --- | --- |
+| `.github/checks/shared-plane-wiring.sh:152` | `STRIP_SH=` |
+| `.github/checks/host-probe-attribution.sh:100` | `STRIP_SH=` |
+| `.github/checks/outbox-alias-restore-test.sh:40` | `STRIP=` |
+| `.github/checks/host-probe-attribution-test.sh:705` | `awk -f` — the one the item missed |
+| `.github/checks/strip-sh-comments-test.sh:19` | `awkfile=` — the mechanism's own test |
+
+And `build.yml` **invokes it nowhere**: its single mention is a *comment*, inside the step
+*"verify-outbox-recovery.sh must restore the aliases it severs"*, whose subject reaches the stripper
+through `outbox-alias-restore-test.sh`. So "one workflow step" is true of a **dependency**, not of a call.
+
+A third statement existed at the same time: `host-probe-attribution-test.sh` said *"one file **five**
+checks trust"*. **Three sentences about one number, three different wrong answers**, in a repository
+whose own rule is *count the list, not the number* — and two of them inside test-of-a-check files whose
+subject is that mechanism's reliability.
+
+### §2 Decision: derive and PRINT it, and assert only a floor
+
+The item's instruction was *"one line of shell, not a corrected constant"*, and that is what shipped —
+with one refinement it did not specify.
+
+`shared-plane-wiring-test.sh`'s state 19 now derives the caller list, **prints it enumerated by name**,
+and asserts only that there are **at least two**. It does not assert an expected count, and that is
+deliberate: **a new caller is not a defect.** The defect is a sentence claiming to know how many there
+are. A check asserting `== 5` would go red the next time a shell matcher is added — which is a correct
+change — and would then be "fixed" by editing the number, which is this defect through its own guard.
+
+The floor is 2 because the case's whole premise is that *more than one* check depends on the file. Zero
+or one means the derivation found nothing, which reads as "a stripper no check trusts" rather than as a
+count, so it fails with that sentence. **Measured**: against a tree with no callers the expression yields
+`0` and the floor's refusal fires.
+
+### §3 Two measures, named at every site
+
+The two questions are different and neither is "the number of callers":
+
+- **files that invoke it** — `grep -rl` over `.github/` filtered to the three spellings actually in use
+  (`awk -f`, `STRIP*=`, `awkfile=`);
+- **`build.yml` steps that name it** — D77's `awk` expression over step headers, which is the shape the
+  *Java* stripper's header carries.
+
+Both are printed on one line by the run. `strip-sh-comments.awk`'s header now carries both expressions
+and **no total**, mirroring what D77 did for `strip-comments.awk` — with the difference the item
+identified: the shell stripper's callers are mostly check scripts rather than workflow steps, so the
+derivation is a `grep -rl` rather than a copy of D77's `awk`.
+
+### §4 The two stale sentences
+
+Both are rewritten to say *"one file every shell matcher in the estate trusts"* — no count — and each
+points at the case that derives it. They also record what they used to say and that the other one
+disagreed, because the interesting fact is not the number but that three copies of it drifted apart.
+
+### §5 Losers
+
+- **Correct the constant to five.** What the item explicitly forbade, and §1 is why: the corrected value
+  was already wrong when the item was written.
+- **Assert an exact count in CI.** Rejected in §2 — it makes a legitimate new caller a red build, and the
+  obvious fix for that red is to edit a number.
+- **Delete both sentences.** Cheapest and rejected: state 19 exists *because* several checks share one
+  file, so a reader needs to know that the sharing is real. Deleting the claim removes the reason for
+  the case.
+- **Teach one stripper to handle both languages** and end the duplication. Out of scope and refused on
+  the standing argument in `strip-sh-comments.awk`'s own header: two languages that agree on nothing
+  about comments would be one missing `case` from silently stripping neither.
+
+### §6 Verified by running
+
+`bash -n` clean · `shared-plane-wiring-test.sh` **35 ok, 0 failed**, printing *"the shell stripper is
+invoked by 5 files, and 1 build.yml step(s) name it (two measures, derived)"* with the five enumerated ·
+state 19 still red through its own door · the floor's refusal reproduced against an empty tree ·
+`host-probe-attribution.sh` **67 ok**, its test **53 ok / 0 failed** · `shared-plane-wiring.sh`,
+`outbox-alias-restore-test.sh` and `strip-sh-comments-test.sh` all exit 0 · no sentence in
+`.github/checks/` states a caller count any more.
+
+### §7 Not exercised
+
+Nothing in this decision changes a matcher's reach: the stripper itself is untouched, and the three
+edits are a derivation, a floor, and two comments. The claim that `build.yml` invokes the stripper
+nowhere is read off the file rather than observed by instrumenting a run.
