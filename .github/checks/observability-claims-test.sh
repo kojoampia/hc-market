@@ -23,18 +23,28 @@ RULES=deploy/observability/hc-market-rules.yaml
 QUALITY=quality/compose.yml
 DEV=deploy/docker/docker-compose.dev.yml
 PROD=deploy/docker/docker-compose.prod.yml
-FILES=("$RULES" "$QUALITY" "$DEV" "$PROD")
+# PART 5's SUBJECTS — decisions.md D84, backlog NEW-43. The identity dashboard carries the same kind of
+# marker the rules file does, held against the same measured fact, and part 5 additionally DERIVES the
+# series it may query from the meters class. Both are backed up and restored with the rest, so a failure
+# part-way through cannot leave a mutated dashboard in the tree.
+DASH=deploy/observability/hc-market-gateway-identity.json
+METERS=gateway/src/main/java/net/jojoaddison/management/GatewayIdentityMeters.java
+FILES=("$RULES" "$QUALITY" "$DEV" "$PROD" "$DASH" "$METERS")
 
 BACKUP="$(mktemp -d)"
 for f in "${FILES[@]}"; do
   mkdir -p "$BACKUP/$(dirname "$f")"
   cp "$f" "$BACKUP/$f"
 done
+# RESTORE IS CALLED MORE THAN ONCE and must survive it — decisions.md D84. It used to end with
+# `rm -rf "$BACKUP"`, which made it SINGLE-USE: the first call emptied the backup and every later one
+# copied from nothing, silently, leaving the tree mutated and the EXIT trap printing `cp: cannot stat`
+# after the summary had already said everything behaved. Invisible while no case called it twice, and
+# part 5's four cases do. Found by running them — it deleted two files out of the working tree.
 restore() {
   for f in "${FILES[@]}"; do cp "$BACKUP/$f" "$f"; done
-  rm -rf "$BACKUP"
 }
-trap restore EXIT
+trap 'restore; rm -rf "$BACKUP"' EXIT
 
 failures=0
 
@@ -113,12 +123,56 @@ echo "=== the future state: quality attaches it AND the marker is gone ==="
 # the day telemetry is genuinely turned on this is the shape that has to pass.
 sed -i 's|^    JAVA_OPTS: \${HC_JAVA_OPTS:--Xmx512m -Xms256m} \${HC_OTEL_JAVA_OPTS:-}$|    JAVA_OPTS: -Xmx512m -Xms256m ${HC_OTEL_JAVA_OPTS:--javaagent:/app/otel-javaagent.jar}|' "$QUALITY"
 sed -i '/^# NOT-YET-ATTACHED:/d' "$RULES"
-expect green "telemetry on, marker removed"
+# BOTH markers, because part 5 holds the dashboard's against the same fact part 4 holds the rules
+# file's. In the future state where telemetry is genuinely on, neither file may still claim that
+# nothing reports — and this case is the control for both parts at once, so leaving the dashboard's
+# marker in place here would make it red for a reason the case is not about. Found by CI: this test
+# was not re-run locally when part 5 was added, and it is the only thing that noticed.
+sed -i 's/NOT-YET-TRANSPORTED/now-transported/' "$DASH"
+expect green "telemetry on, both markers removed"
 
 echo
 echo "=== the rules file is missing entirely ==="
 rm -f "$RULES"
 expect red "the rules file does not exist"
+
+# ---- PART 5: the identity dashboard — decisions.md D84, backlog NEW-43 -----------------------------
+#
+# Each of part 5's guarded things, mutated SEPARATELY. These four were run by hand when part 5 was
+# written and that is not where a control belongs: a check is only as good as the states somebody can
+# re-run. The restore below puts the rules file back first, since the cases above deleted it and part 4
+# would otherwise be red for its own reason and mask every verdict here.
+restore
+
+echo
+echo "=== the dashboard queries a series no meter publishes ==="
+# A panel querying a name nothing emits shows "No data", which is indistinguishable from the transport
+# gap the dashboard is already marked for — so the names must correspond, and the list of permitted
+# names is DERIVED from the meters class rather than written in the check.
+sed -i 's/gateway_identity_accounts/gateway_identity_signups/' "$DASH"
+expect red "the dashboard queries a series nothing emits"
+restore
+
+echo
+echo "=== the dashboard's marker is deleted while nothing transports ==="
+sed -i 's/NOT-YET-TRANSPORTED/all-wired-up/' "$DASH"
+expect red "the dashboard stops saying nothing carries its series"
+restore
+
+echo
+echo "=== the dashboard is missing entirely ==="
+rm -f "$DASH"
+expect red "the dashboard does not exist"
+restore
+
+echo
+echo "=== the meters class is missing, so the series list cannot be derived ==="
+# THE VACUITY CASE, and the one that matters most: without it part 5 would compare the dashboard's
+# queries against an EMPTY set of permitted names and report agreement. That is the shape nine
+# fail-opens in this repository took, one of them inside the fix for the previous eight.
+rm -f "$METERS"
+expect red "the meters class does not exist, so nothing could be derived"
+restore
 
 echo
 if [ "$failures" -ne 0 ]; then
