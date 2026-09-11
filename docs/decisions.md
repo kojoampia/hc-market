@@ -15823,3 +15823,136 @@ repository and it was in the file written to be careful about it.
 - **WP-13's Act 987 question** is unanswered and `PaymentProvider` still has no method that pays the
   professional, which is what lets the answer go either way without a rewrite.
 - **WP-17's budget** for the hosted upgrade, and **WP-18's and WP-19's host access**.
+
+## D87 — Relay the link, never host the room
+
+**Ratified 2026-09-11.** Closes backlog **NEW-45**. Builds D17's v1, which D86 part 2 found had never
+been blocked.
+
+### §1 What was blocked, and what was not
+
+WP-17 read as BLOCKED on *"budget for a video provider"* from D17 until D86. D17's recommendation needs
+no provider: *"the professional supplies their own meeting link (Meet, Zoom, whatever they already use);
+the platform stores it and reveals it an hour before, which is the promise the prototype makes."*
+Daily.co is named as the **upgrade**. So the budget question was about the upgrade and the v1 sat
+unbuilt behind it for no reason.
+
+**The prototype settles two of the three open questions NEW-45 listed**, and it says so in its own
+words: *"A private video link is sent to you and to [the professional] one hour before the session."*
+That is **both parties** and **one hour**.
+
+### §2 The column, and why it is additive
+
+`Booking.meetingLink`, `varchar(500)`, **nullable**, added to `jdl/booking.jdl` — the model of record —
+and to the entity and DTO.
+
+**A new changelog rather than a regenerated entity changelog**, and that is the load-bearing decision
+here. Adding the field to the JDL and regenerating rewrites
+`20260825203836_added_entity_Booking.xml`, whose checksum every database that has run it recorded;
+Liquibase then refuses to start with *"1 changesets check sum"* and the estate is down until somebody
+drops the schema. CLAUDE.md records that trap by name. `20260911140000_added_meeting_link.xml` leaves
+every existing checksum alone — **verified**: booking's full `clean verify` runs 130 ITs against a
+Testcontainers PostgreSQL with no checksum failure.
+
+**Nullable is not laziness.** Only `ONLINE` bookings ever want a link; `IN_PERSON` and `HOME_VISIT`
+never will, and an ONLINE booking exists from the moment it is requested while the professional may
+supply the link at any point before the session. `required` would make every in-person booking carry an
+empty string that reads as *a link that is blank* rather than *no link here*.
+
+**500 rather than the 400 used for addresses**: a Meet or Teams URL with a conference id and a passcode
+runs long, and a truncated meeting link is worse than a rejected one — it is a link that looks present
+and does not work at the moment of the appointment.
+
+**No index.** Nothing filters or joins on it; it is read for the one booking already in hand. D39's
+privacy indexes exist because the sweep and three screens filter on those columns, and an index on a
+500-character URL column would cost write throughput to serve no query.
+
+### §3 The reveal rule: four conditions, each a decision
+
+`BookingWorkflow.meetingLinkFor(booking, now)` returns the link or empty. **Computed at read time and
+never pushed**, because there is no scheduler anywhere in this estate and D17 said so.
+
+1. **There is a link.** Absent is the normal case, not a failure.
+2. **The booking is `ONLINE`.** A link stored on an in-person booking is somebody's mistake, and
+   relaying it would send a customer to a video call for a home visit. Refused on the delivery mode
+   rather than on the link's presence, so the mistake cannot leak.
+3. **The booking is still live** — `REQUESTED` or `CONFIRMED`. This is the case the prototype does not
+   speak to, decided conservatively: a cancelled booking has no session, and a revealed link to a room
+   nobody will be in is worse than a customer having to ask. An **allow-list, not a deny-list**, so a
+   status added later must decide for itself rather than inheriting "yes" — the same reason
+   `Cancel.from()` enumerates what may be cancelled. A test iterates **every** `BookingStatus`.
+4. **The session is within the hour**, measured in **the booking's own zone** through `scheduledAt` —
+   not `MARKET_ZONE`. D58 ratified that an appointment is read in its own calendar, and the constant
+   behaves identically today and is wrong for the one case that ratification exists for. **Driven with
+   a booking in `America/Sao_Paulo`** so the two answers differ: half an hour before the session there
+   reveals the link, while half an hour before the same wall clock read in Accra does not.
+
+**It stays revealed after the session starts**, deliberately rather than as an arithmetic oversight: a
+customer who joins late, or whose call drops, needs the link more than one who is early. The window is
+"from an hour before until the booking stops being live".
+
+**One rule for both parties.** The prototype says the link goes to the customer *and* the professional,
+so there is no per-caller branch — the professional supplied it and has it anyway, and a second window
+would be another promise to keep true for no one's benefit.
+
+**One hour is not configurable.** A window an operator can move is a promise the prototype makes and
+the estate does not keep, and there is no second estate with a different answer.
+
+### §4 On the DETAIL and not on the view
+
+`BookingDetail` gains the field; `BookingView` does not. The view is what `/api/bookings/mine` returns
+for **every** booking a customer has, so a list endpoint carrying live meeting links would hand out all
+of them on every page load, an hour early or not. The rule is applied per booking, at read time, by the
+one method that knows the window — and the clock is passed in rather than read inside, which is the
+estate-wide rule after D51.
+
+**Withheld is `null`, not an error.** A customer looking at a booking two days early is the normal case.
+
+### §5 The erasure sweep clears it, for a different reason than the fields beside it
+
+`ErasureWorkflow` nulls `meetingLink` with `visitAddress`, `customerNote`, `onBehalfOf` and
+`cancellationReason` — and it is the only one of the five that is **not data about the customer**. It is
+a URL the professional issued for their own room.
+
+It is cleared anyway because **a live room URL outliving the person it was for is a door rather than a
+datum**, it costs nothing to close, and the session is long past by the time anyone is erased. Counted
+with the free-text fields rather than on its own receipt line, because D39's rule is a number per row
+the sweep touches and this touches no row the others do not.
+
+### §6 Losers
+
+- **Hosting the room.** D17 refused it and the refusal is the whole design: *"hosting a room where
+  health matters are discussed drags in recording, retention and consent — three problems the platform
+  does not otherwise have."* D86's seam exists for the day somebody buys the upgrade.
+- **A scheduled reveal.** There is no scheduler in this estate, and adding one to send a link an hour
+  early would be the largest piece of new machinery in the smallest feature.
+- **`MARKET_ZONE` for the window.** Identical today, wrong for the case D58 exists for. §3.
+- **Putting the link on `BookingView`.** §4 — it would disclose every customer's links on every list.
+- **A configurable window.** §3.
+- **Leaving the erasure sweep alone** on the grounds that the link is not personal data. §5 — true, and
+  not the reason it matters.
+
+### §7 Verified by running
+
+`booking ./mvnw clean verify` — **130 ITs, 0 failures, BUILD SUCCESS**, with no Liquibase checksum
+failure, which is what the additive changelog was for ·
+`TheMeetingLinkIsRevealedAnHourBeforeUnitTest` **6 tests**: the window open and closed with the boundary
+asserted on both sides, every delivery mode, **every** `BookingStatus`, absent-and-blank as the normal
+case, and the São Paulo case that distinguishes the booking's zone from the marketplace's · both XML
+files parse.
+
+**One documented trap walked into.** The changelog's comment used `--` as an em dash, and **XML comments
+may not contain `--`** — CLAUDE.md warns about exactly this, and Liquibase would have failed to parse
+with an error pointing at a line number rather than at the comment. Caught by parsing the file before
+believing it.
+
+### §8 Not exercised
+
+- **Nothing writes the column yet.** There is no endpoint for a professional to supply a link: that is
+  a `/api/pro/**` write, and D87 stopped at the read side because the reveal rule is what the prototype
+  promises and what nothing implemented. A professional's write path is the obvious next item and is
+  **not** opened as one, because it is one endpoint on a resource that already exists rather than a
+  package — whoever adds it adds it.
+- **No estate has a booking with a link in it.** Quality's 298 bookings and dev's seed both predate the
+  column, so every one reads `null`, and the reveal rule has been exercised against constructed
+  bookings rather than against seeded data.

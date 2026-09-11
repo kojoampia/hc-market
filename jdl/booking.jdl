@@ -143,6 +143,24 @@ entity Booking {
   cancellationReason String maxlength(400)
   lateCancellation Boolean                  // inside 24h — payout raises a 50% fee
   reviewed Boolean required
+  // ADDED, decisions.md D87 (D17's v1), backlog NEW-45. The professional's OWN meeting link, relayed
+  // and never hosted.
+  //
+  // D17 chose relay over hosting deliberately: "hosting a room where health matters are discussed
+  // drags in recording, retention and consent - three problems the platform does not otherwise
+  // have." So this column holds a URL somebody else issued, and nothing in this estate creates,
+  // joins, records or expires it.
+  //
+  // NULLABLE, and that is not laziness. Only ONLINE bookings ever want a link; IN_PERSON and
+  // HOME_VISIT never will, and an ONLINE booking exists from the moment it is requested while the
+  // professional may supply the link at any point before the session. `required` would make every
+  // in-person booking carry an empty string that reads as "a link that is blank" rather than "no
+  // link here".
+  //
+  // 500 rather than the 400 used for addresses: a Meet or Teams URL with a conference id and a
+  // passcode runs long, and a truncated meeting link is worse than a rejected one - it is a link
+  // that looks present and does not work at the moment of the appointment.
+  meetingLink String maxlength(500)
 }
 
 /** The append-only audit the prototype had no room for. */

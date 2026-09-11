@@ -178,6 +178,15 @@ public class ErasureWorkflow {
             b.setCustomerNote(null);
             b.setOnBehalfOf(null);
             b.setCancellationReason(null);
+            // THE MEETING LINK GOES TOO, and it is the one field here that is not data ABOUT the
+            // customer — decisions.md D87, backlog NEW-45. It is a URL the PROFESSIONAL issued for
+            // their own room. It is cleared anyway, for a different reason than the fields above: a
+            // live room URL outliving the person it was for is a door rather than a datum, it costs
+            // nothing to close, and the session it was for is long past by the time anyone is erased.
+            // Counted with the free-text fields rather than on its own line of the receipt, because
+            // D39's rule is a number per row the sweep touches and this touches no row the others do
+            // not.
+            b.setMeetingLink(null);
         }
         bookings.saveAll(mine);
 
