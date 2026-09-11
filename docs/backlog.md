@@ -53,7 +53,7 @@ anything else disagree, **the heading wins** — the general rule at the top of 
 | **WP-14** | Verification badge | DONE | — |
 | **WP-15** | Badge: date-only on the wire | DONE | D47 — reviewed 2026-09-04, four findings, all applied |
 | **WP-16** | Search performance | WON'T, for now | — |
-| **WP-17** | Video and WhatsApp providers | BLOCKED | D37 — cost both, build neither |
+| **WP-17** | Video and WhatsApp providers | PARTLY DONE | budget for the hosted upgrade; v1 is NEW-45 |
 | **WP-18** | Production `infranet` alias check | PARTLY DONE | rename shipped; the question needs production host access |
 | **WP-19** | Production deployment configuration, to sibling parity | PARTLY DONE | D49 — `deploy/prod-server/` built, five defects in the deploy path fixed, then reviewed 2026-09-05 and eight more applied, one of them blocking (a failing smoke test triggered an automatic rollback). **Nothing has ever been run against a host**; the fifteen things a person must still do are in that directory's README |
 
@@ -558,6 +558,34 @@ substituted-provider limitation D31, D41 and D43 all recorded is doing more work
 
 ## WP-13 — Payments: provider choice and Act 987 · PARTLY DONE
 
+**D86 wrote Paystack's other four calls, over a stated objection, and two of them turned out not to
+exist.** The architect chose this after being told it was guesswork; that is their call and D86 records
+it as one. Measured first: **`hc-crowdfund-app` calls only `/transaction/initialize`**, so there was
+nothing in this workspace to source the rest from, and nothing here has spoken to Paystack.
+
+**`capture` and `voidAuthorization` have no Paystack equivalent in this flow.** Initialize is a charge
+and not a two-step hold, so no authorization is held to capture and none exists to void — before the
+customer pays there is nothing, afterwards the operation is a refund. Both keep their refusal and
+override it only to say *why*, because "not integrated" and "this provider has no such operation" are
+different facts. **That is also the answer to D43's dead end**: a `PENDING_PAYMENT` booking's payment
+cannot be voided because Paystack has no void.
+
+**`status` is written and read-only** — `GET /transaction/verify/{reference}`, the call a sweep would use
+for bookings D43 leaves waiting. Every non-success keeps the reference; an unrecognised status is
+`FAILED` and never `PENDING`; an answer naming a different reference is refused rather than believed.
+
+**`refund` is written and OFF by default**, behind `healthconnect.payments.paystack.refunds-enabled`,
+separate from `enabled`. Accepted is not done — `REFUNDED` only for a status saying the money is back —
+and a non-positive amount is refused before the wire, because Paystack treats an absent amount as a
+**full** refund.
+
+**36 unit tests (was 25)**, including what the refund actually sends: path, bearer, `transaction`, and
+`amount` unchanged at 15000. **Written is not verified**: no call here has reached Paystack, and that is
+the sentence to re-read before enabling refunds.
+
+**Act 987 is still unanswered** and `PaymentProvider` still has no method that pays the professional,
+which is what lets the answer go either way without a rewrite.
+
 D45. Everything around the providers is built and verified; the providers themselves are not, and that
 is the package's honest boundary rather than an unfinished afternoon.
 
@@ -810,9 +838,34 @@ D19. Search is `contains()` in Java over every card. **Measured rather than defe
 latency measurement. Neither is met. The figures and the re-measure command are in D19; revisit when
 the catalogue grows.
 
-## WP-17 — Video and WhatsApp providers · BLOCKED
+## WP-17 — Video and WhatsApp providers · PARTLY DONE
 
 D17, D18. Budget for a video provider and a WhatsApp BSP, if either is wanted.
+
+**D86 built the seam the architect asked for — and found that this item's block never applied to v1.**
+
+**D17's recommended v1 needs no provider, no account and no budget:** *"the professional supplies their
+own meeting link (Meet, Zoom, whatever they already use); the platform stores it and reveals it an hour
+before, which is the promise the prototype makes."* Daily.co is named as *"the upgrade if a no-account,
+in-browser room with a waiting room is wanted later"*. So the budget question is about the **upgrade
+alone**, and this row has been reading as though it blocked the feature.
+
+**Built**: `MeetingRoomProvider`, `MeetingRoom`, `UnconfiguredMeetingRoomProvider`,
+`ProviderAwaitingSelection`, `DailyCoMeetingRoomProvider`, `SessionConfiguration`, behind
+`HC_DAILYCO_ENABLED` and off by default. The default is **not a refusal** — it reports
+`professionalSupplied()`, which is D17's v1 as far as the seam is concerned; a selected-but-unwritten
+provider refuses and never falls back; the refusal names what it needs; and there is **no recording, not
+even as a seam**, with a test asserting the interface has exactly `name` and `create`. One bean that
+chooses rather than two and a condition, because that construct is D44's ordering hazard.
+
+**Still blocked, and now only on what it always was**: budget and a choice between Daily.co and
+self-hosted Jitsi for the hosted upgrade; and a BSP account for WhatsApp, which D18 puts at v1.5 and
+whose v1 — in-app — is the `Notification` table and is built. A WhatsApp seam would need a channel, a
+delivery state, a provider reference, a dedupe key and an outbox (D18's own costing): a package, not a
+flag.
+
+**v1 is unblocked and is NEW-45.** Nothing calls the seam, deliberately: `Booking` has nowhere to store
+a room, and adding a field is a JDL change with a Liquibase changelog behind it.
 
 ## WP-18 — Production `infranet` alias · PARTLY DONE
 
@@ -820,6 +873,20 @@ D28/D30. Whether `gateway` is already a DNS alias on production's shared `infran
 from a workstation. Largely defused — the production compose services were renamed `hc-market-*` with
 explicit container names, so a collision is impossible whatever else is on that network — but the
 question itself is still unanswered on the host.
+
+**D86 wrote the question as one command: `deploy/probe-infranet-aliases.sh`.** Read-only in the strong
+sense — no container, no network join, no pull, no file — because `docker network inspect` alone answers
+it: compose records a container's aliases on the network object. It takes **no `--host` and no
+credential**, deliberately, since production is halted here and a script that could reach out is one
+somebody could point at production by accident. Whoever has access runs it there.
+
+Verified against `hcnet` (15 containers) and in all three states, each naming its own cause: network
+present, network absent, daemon unanswerable — D71's rule, since docker exits 1 and prints `[]` for both
+of the last two.
+
+**Its output already found something.** On `hcnet` every name is a container name and **not one** is a
+compose alias, independently confirming D68's recorded state; the probe says so when it sees it, because
+then "free" describes a moment and a compose recreate would republish every service name at once.
 
 **`PARTLY DONE`, and it was `CLOSED` in the table against `BLOCKED` here** (decisions.md D83, backlog
 NEW-41). Neither fitted: the rename shipped and is verified, so `BLOCKED` understates it, and the
@@ -3402,6 +3469,36 @@ attaches the agent.
 
 The third option in the list above — reversing the 404 and scraping — is refused rather than deferred;
 D85 §6 argues it.
+
+---
+
+## NEW-45 — the online-session v1 D17 recommended, which was never blocked · READY
+
+Opened by **D86 part 2**. WP-17 has read as BLOCKED on budget since D17, and D17's **v1 needs no
+provider at all**: *"the professional supplies their own meeting link (Meet, Zoom, whatever they already
+use); the platform stores it and reveals it an hour before, which is the promise the prototype makes."*
+Daily.co is the *upgrade*. So the budget block applies to the upgrade and this half is unblocked.
+
+**What it needs, and why it is an item rather than an afternoon:**
+
+- **a field on `Booking` to store the link.** D17 said so at the time — *"Booking has nowhere to put a
+  link"* — and it is still true. That is a JDL change, which means a regenerated entity, a Liquibase
+  changelog, and a row in CLAUDE.md's regeneration table. CLAUDE.md's own warning applies: changing a
+  JDL entity invalidates its checksum, so a database that ran the old changelog fails with
+  `ValidationFailedException` and in dev the answer is to drop the schema;
+- **a read-time visibility rule, not a scheduler.** D17 is explicit that there is no scheduler anywhere
+  in this estate and that the honest version computes visibility from the booking's own
+  `scheduledDate`/`scheduledTime`. **In the booking's own zone** — `Booking.zoneId`, not `MARKET_ZONE`
+  — because D58 settled exactly this for cancellation and an appointment is read in its own calendar;
+- **a decision about who may see it and when.** "An hour before" is the prototype's promise; whether the
+  professional sees it earlier, and whether it survives a cancellation, are not settled anywhere;
+- **the erasure question.** A meeting link is a URL, and D39's rule is that every row the sweep touches
+  gets a number on the receipt. A link that names a room per booking is probably not personal data, but
+  the sweep's coverage is decided per column and this would be a new one.
+
+The seam D86 built is for the hosted upgrade and is **not** what this needs: nothing here hosts a room.
+`MeetingRoom.professionalSupplied()` is already the right answer from the provider's side; what is
+missing is somewhere to keep the link and a rule about revealing it.
 
 ---
 

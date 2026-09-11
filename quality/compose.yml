@@ -521,6 +521,8 @@ services:
       HC_PAYSTACK_SECRET: ${HC_PAYSTACK_SECRET:-}
       HC_PAYSTACK_BASE_URL: ${HC_PAYSTACK_BASE_URL:-}
       HC_PAYSTACK_TIMEOUT_MS: ${HC_PAYSTACK_TIMEOUT_MS:-0}
+      # Off by default: a refund call written from a published API and never watched work (D86).
+      HC_PAYSTACK_REFUNDS_ENABLED: ${HC_PAYSTACK_REFUNDS_ENABLED:-false}
       HC_HUBTEL_ENABLED: ${HC_HUBTEL_ENABLED:-false}
       HC_HUBTEL_SECRET: ${HC_HUBTEL_SECRET:-}
       HC_MOMO_ENABLED: ${HC_MOMO_ENABLED:-false}

@@ -1910,11 +1910,32 @@ time.**
   construction**: a booking reference is minted per request and nothing here authorizes twice. The
   source integration appended per-attempt randomness because it had to; this one does not, and the day
   anything adds a "pay again" path the suffix goes in with it — backlog NEW-11.
-  **`capture`, `refund`, `voidAuthorization` and `status` still refuse**, because the working
-  integration does `initialize` plus the webhook and nothing else — an adapter is six calls, each
-  either sourced or guessed, and a guessed one inside a class that otherwise works is worse than a
-  class that refuses everything. Cost: a `PENDING_PAYMENT` booking whose creation fails cannot have its
-  payment cancelled, so the attempt row is flagged for a person.
+  **That reads "capture, refund, voidAuthorization and status still refuse" before D86, and since D86 it
+  is four of six with TWO THAT DO NOT EXIST** (backlog WP-13). The architect chose to write the other
+  four over a stated objection, and measuring first changed what that meant: **`hc-crowdfund-app` calls
+  only `/transaction/initialize`**, so there was nothing in this workspace to source the rest from.
+  - **`capture` and `voidAuthorization` have no Paystack equivalent in this flow.** Initialize is a
+    charge and not a two-step hold, so no authorization is held to capture and none exists to void —
+    before the customer pays there is nothing, and afterwards the operation is a refund. Both keep their
+    refusal and override it **only to say why**: "not integrated" and "this provider has no such
+    operation" are different facts, and only the second says not to wait for an implementation. **This
+    is also the answer to D43's dead end** — a `PENDING_PAYMENT` booking's payment cannot be voided
+    because there is no void, which is a fact about the provider rather than a gap in the adapter.
+  - **`status` is written and read-only**, `GET /transaction/verify/{reference}`: the call a sweep would
+    use for the bookings D43 leaves in `PENDING_PAYMENT` when no webhook arrives. Every non-success
+    keeps the reference (`PaymentOutcome.failed` drops it), an unrecognised status is `FAILED` and
+    **never `PENDING`** — a wrong PENDING waits for ever on a payment that may already have failed — and
+    an answer naming a *different* reference is refused rather than believed, which is the one wrong
+    answer that would otherwise pass unnoticed.
+  - **`refund` is written and OFF by default**, behind
+    `healthconnect.payments.paystack.refunds-enabled`, **separate from `enabled`**: turning a provider on
+    is routine, turning on a money-returning call nobody has watched work is not the same decision.
+    **Accepted is not done** — `REFUNDED` only for a status saying the money is back, `PENDING`
+    otherwise, or `holdsMoney()` is wrong in the direction that loses a customer's money. A non-positive
+    amount is refused **before the wire**, because Paystack treats an absent amount as a **full** refund.
+  **WRITTEN IS NOT VERIFIED.** No call here has reached Paystack; `verify` and `refund`, their status
+  vocabularies and the asynchronous refund behaviour are from the published API. That is the sentence to
+  re-read before enabling refunds, and `integratedCalls()` naming four does not change it.
   Three things are refused rather than guessed: a currency other than **GHS** (the evidence sends no
   currency field, so the account's currency decides — a silent mis-charge, not a rejected call), a
   secret not starting with `sk_` (refused at both doors and announced at startup; Paystack lists `pk_`
@@ -1994,6 +2015,34 @@ time.**
   both measured green under mutation and guarded by a CI grep instead. An nginx `return 404` was
   considered and **rejected**: it would be a control on production and no control at all on the two
   estates that publish the gateway's port, which is worse than none.
+- **There is a session seam now, and D17's v1 was never blocked** (D86, backlog WP-17, v1 as NEW-45).
+  WP-17 read as BLOCKED on "budget for a video provider" for months, and D17's recommendation needs
+  none: *the professional supplies their own meeting link and the platform relays it, revealed an hour
+  before*. Daily.co is the **upgrade**. `MeetingRoomProvider`, `MeetingRoom`,
+  `UnconfiguredMeetingRoomProvider`, `ProviderAwaitingSelection`, `DailyCoMeetingRoomProvider` and
+  `SessionConfiguration` are the seam for that upgrade, behind `HC_DAILYCO_ENABLED`, off by default.
+  Four things about it that are decisions rather than shape: **the default is not a refusal** — it
+  reports `professionalSupplied()`, which *is* v1, so a caller never has to special-case the normal case
+  (the distinction `OFF_PLATFORM` draws from `FAILED` one seam along); a selected-but-unwritten provider
+  **refuses and never falls back**, or an estate that enabled a hosted provider would silently behave as
+  though it had not; the refusal **names what it needs**, so an operator learns it is waiting on them;
+  and there is **no recording, not even as a seam**, because D17 recommends none in v1 precisely to keep
+  retention and consent out — a test asserts the interface has exactly `name` and `create`, so adding
+  one goes red.
+  **One bean that chooses, not two beans and a condition**: nothing chooses a room provider per booking,
+  and `@ConditionalOnProperty` + `@ConditionalOnMissingBean` is **D44's ordering hazard**, which D45
+  deleted from the payments configuration rather than reasoned about.
+  **Nothing calls it, deliberately** — `Booking` has nowhere to store a room, and adding a field is a
+  JDL change with a changelog behind it. That is v1's real work and it is NEW-45.
+- **`./deploy/probe-infranet-aliases.sh` answers WP-18 in one command, for somebody on the host** (D86).
+  Read-only in the strong sense: no container, no network join, no pull, no file — `docker network
+  inspect` alone answers it, because compose records aliases on the network object. **No `--host` and no
+  credential**, deliberately, since a script that could reach out is one somebody could point at
+  production by accident. Verified against `hcnet` and in all three states, each naming its cause
+  (present / absent / daemon unanswerable — D71's rule, since docker exits 1 and prints `[]` for the
+  last two). **Its output confirms D68 independently**: on `hcnet` every name is a container name and
+  not one is a compose alias, so it prints that caveat when it sees it — in that state "free" describes
+  a moment, and a compose recreate republishes every service name at once.
 - **A provider's signing secret is the estate's third secret, and absent means refused** (D45).
   `healthconnect.payments.<name>.secret`, injected by all three compose files as `HC_PAYSTACK_SECRET`,
   `HC_HUBTEL_SECRET`, `HC_MOMO_SECRET`, **never committed** — this repository is public. Optional,
