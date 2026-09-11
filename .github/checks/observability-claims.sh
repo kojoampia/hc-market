@@ -156,4 +156,71 @@ else
   echo "ok   $RULES — marker $marker, agent attached in $runnable_attached runnable services"
 fi
 
+# ---- 5. the identity dashboard agrees, and queries only series the code emits -----------------------
+#
+# decisions.md D84, backlog NEW-43. The gateway identity dashboard is the same kind of claim the rules
+# file is — observability config for a signal whose transport does not exist — so it carries the same
+# kind of marker and it is held against the same measured fact. Its own wording is NOT-YET-TRANSPORTED
+# rather than NOT-YET-ATTACHED, because what is missing is one step further out: the agent is the
+# transport for the rules file's JVM metrics, and these two series would also need something to collect
+# them even with the agent on.
+#
+# THE SERIES LIST IS DERIVED FROM THE CODE, never enumerated here. A dashboard querying a name no meter
+# publishes is a panel of "No data" that looks exactly like the transport gap above it, so the one thing
+# a text check can usefully establish is that the names correspond. Micrometer's renaming is asserted
+# separately and deterministically by GatewayIdentityMetersNamingUnitTest against a real
+# PrometheusMeterRegistry — this only checks the STEM, because the suffix is that test's subject and
+# duplicating the transformation here would be two copies of one rule.
+echo "--- 5. the gateway identity dashboard agrees ---"
+readonly DASH='deploy/observability/hc-market-gateway-identity.json'
+readonly DASH_MARKER='NOT-YET-TRANSPORTED'
+readonly METERS='gateway/src/main/java/net/jojoaddison/management/GatewayIdentityMeters.java'
+
+if [ ! -f "$DASH" ]; then
+  echo "::error::$DASH does not exist, so part 5 read nothing. It is the dashboard NEW-43 delivered; if it was deliberately removed, remove this part with it."
+  fail=1
+elif [ ! -f "$METERS" ]; then
+  echo "::error::$METERS does not exist, so the series list below could not be derived and this part would pass having compared nothing."
+  fail=1
+else
+  # Meter name stems as the code declares them: `gateway.identity.logins` -> `gateway_identity_logins`.
+  declared="$(grep -oE '"gateway\.identity\.[a-z]+"' "$METERS" | tr -d '"' | tr '.' '_' | sort -u)"
+  declared_n="$(printf '%s\n' "$declared" | grep -c . || true)"
+  queried="$(grep -oE 'gateway_identity_[a-z_]+' "$DASH" | sed -E 's/_(attempts_)?total$//' | sort -u)"
+  queried_n="$(printf '%s\n' "$queried" | grep -c . || true)"
+
+  if [ "$declared_n" -eq 0 ] || [ "$queried_n" -eq 0 ]; then
+    echo "::error::derived $declared_n meter name(s) from $METERS and $queried_n series from $DASH; both must be non-empty or this comparison is vacuous."
+    fail=1
+  else
+    unknown=''
+    for q in $queried; do
+      printf '%s\n' "$declared" | grep -qxF "$q" || unknown="$unknown $q"
+    done
+    if [ -n "$unknown" ]; then
+      echo "::error file=$DASH::queries series no meter publishes:$unknown. Declared in $METERS: $(printf '%s ' $declared). A panel querying a name nothing emits shows 'No data', which is indistinguishable from the transport gap this dashboard is already marked for."
+      fail=1
+    else
+      echo "ok   $DASH — all $queried_n queried series stems are among the $declared_n the code declares"
+    fi
+  fi
+
+  # The marker, on the same measured fact as part 4. Nothing collects these series while no environment
+  # attaches the agent, so the marker is required exactly then.
+  if grep -qF -- "$DASH_MARKER" "$DASH"; then
+    dash_marker=present
+  else
+    dash_marker=absent
+  fi
+  if [ "$runnable_attached" -gt 0 ] && [ "$dash_marker" = present ]; then
+    echo "::error file=$DASH::an environment that runs now attaches the agent, but this dashboard still says $DASH_MARKER. Re-measure whether anything collects gateway_identity_* and correct the marker — see decisions.md D84 and backlog NEW-44."
+    fail=1
+  elif [ "$runnable_attached" -eq 0 ] && [ "$dash_marker" = absent ]; then
+    echo "::error file=$DASH::no environment that has ever run attaches the OpenTelemetry agent, so nothing carries gateway_identity_* anywhere — and this dashboard no longer says so. Installing it would give six panels of 'No data' with nothing explaining why. Restore the $DASH_MARKER marker or wire the transport (backlog NEW-44)."
+    fail=1
+  else
+    echo "ok   $DASH — marker $dash_marker, agent attached in $runnable_attached runnable services"
+  fi
+fi
+
 exit "$fail"

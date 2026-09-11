@@ -10,9 +10,11 @@ and where either disagrees with the code, the code wins.
 **Status vocabulary.** `DONE` — built, tested, and verified against a running estate. `IN PROGRESS` —
 being worked now. `READY` — specified, unblocked, nobody is holding it. `BLOCKED` — waiting on a named
 person, not on engineering. `WON'T` — considered and deliberately not done, with the reason.
-`PARTLY DONE` — some of it is built and verified while the rest is blocked on a named person, so it is
-neither `IN PROGRESS` (nobody is holding it) nor `BLOCKED` (part of it shipped); the row says which half
-is which. `CLOSED by decision (D<n>)` — the item asked a question rather than named work, and the answer
+`PARTLY DONE` — some of it is built and verified while the rest is not, so it is neither `IN PROGRESS`
+(nobody is holding it) nor `BLOCKED` (part of it shipped); the entry says which half is which. **The
+blocking half need not be a person**: it was declared as "blocked on a named person" until D84, whose
+NEW-43 is the first instance where the unshipped half waits on a *measurement* nobody has taken
+(NEW-44) — widened rather than relabelled, for the same reason the two below were added. `CLOSED by decision (D<n>)` — the item asked a question rather than named work, and the answer
 is ratified; no code shipped, so it is not `DONE`.
 
 **Two of these were in use before they were declared here**, which is the same defect this repository
@@ -3210,7 +3212,7 @@ bound-less call; both were red through the wrong door first and are recorded in 
 
 ---
 
-## NEW-43 — a dashboard of gateway registrations and logins, on an estate that transports no application metric · READY
+## NEW-43 — a dashboard of gateway registrations and logins, on an estate that transports no application metric · PARTLY DONE
 
 **Asked for by the architect on 2026-09-11**: a dashboard monitoring the gateway for **registrations
 aggregated by (activated | not-activated)** and **logins aggregated by (success | failed)**.
@@ -3308,6 +3310,68 @@ with the transport decision argued, the gauge/counter split implemented as such,
 outcome buckets, no per-user label anywhere, and each figure labelled with the mode it is true in. If the
 transport decision lands on "push", the agent's Micrometer bridge must be **verified instrumenting**, not
 merely loading.
+
+**`PARTLY DONE` by D84, and the split is deliberate rather than a shortfall.** Five of the six things
+"done means" asks for are built and verified; the sixth cannot be satisfied by this repository at all.
+
+Built and measured:
+
+- **the gauge/counter split**, implemented as such — `gateway.identity.accounts` is a pair of gauges over
+  the collection, `gateway.identity.logins` a set of counters;
+- **four login outcome buckets**, not three — and the one that mattered is verified against the *running
+  container*, because a mock could not answer it: `UserNotActivatedException` **does** survive Spring's
+  authentication manager to be counted separately, where an unknown login does not;
+- **no per-user label anywhere**, asserted over the registry's own meters;
+- **each figure labelled with the mode it is true in**, as a text panel on the dashboard rather than a
+  footnote;
+- **the transport decision argued** — and argued to a *measurement nobody has taken*, which is NEW-44.
+
+Not satisfiable here: *"panels non-zero on an estate that is actually generating registrations and
+logins"*. Production has never been deployed and quality seeds its accounts, so **no estate in this
+repository can make these panels non-zero with real data**, whatever the transport does. The dashboard
+carries a `NOT-YET-TRANSPORTED` marker held against that fact by `observability-claims.sh` part 5.
+
+The item's framing was right about the shape of the work and wrong about one number: it says
+`build.yml` has one step that reaches the shell stripper — unrelated — but more relevantly it assumed
+the four decisions were all downstream of transport. Three of them are not, which is why this shipped
+rather than waiting.
+
+---
+
+## NEW-44 — nothing carries `gateway_identity_*` anywhere, and which route it should take is unmeasured · READY
+
+Opened by **D84 §7**, which decided everything about the gateway identity dashboard except where its
+series go. The metrics are emitted and verified in-process; **no environment in this repository collects
+them.**
+
+**The estate's posture is push, and the push is off.** `/management/prometheus` is deliberately 404'd at
+quality's edge (`quality/host-site.conf:116`) and unscraped in production
+(`deploy/docker/docker-compose.prod.yml:86` — the collector *"deliberately has NO application scrape
+targets"*), and the OpenTelemetry agent that would push is attached in no environment by default
+(D73 §3, because `monitoring-quality` belongs to another repository).
+
+**The measurement nobody has taken, and it is the whole item:** does the OpenTelemetry Java agent's
+Micrometer instrumentation actually bridge these meters to OTLP, **on this agent version and this JDK**?
+D63 exists precisely because "the agent is present" was mistaken for "the agent instruments", and
+`./deploy/verify-otel-agent.sh` is the shape of an honest answer — it reports **loading and instrumenting
+separately** for that reason. Do not assume the bridge works because the module exists.
+
+Three routes, and the first two are only distinguishable after that measurement:
+
+- **the agent bridges Micrometer** — then the transport already exists and the work is one variable
+  (`HC_OTEL_JAVA_OPTS`) plus removing the dashboard's `NOT-YET-TRANSPORTED` marker, which
+  `observability-claims.sh` part 5 will *require* once an environment attaches the agent;
+- **it does not** — then either `micrometer-registry-otlp` goes into the gateway's pom, which is a
+  **generated file** and therefore a regeneration-table row (the OpenTelemetry block in it is already
+  hand-written for exactly this reason), or the two meters are emitted through the OTel API directly;
+- **reverse the 404 and scrape** — cheapest, and it contradicts a written decision in two files plus the
+  parent guide. It needs its own argument for why hc-market scrapes when nothing else in the estate does,
+  and note it would be a control on production and no control at all on the two estates that publish the
+  gateway's port.
+
+**What this item cannot deliver whichever route wins**: panels with real data. Production has never been
+deployed and quality seeds its accounts, so the figures stay demo figures until there is an estate with
+users — which is why D84 shipped the dashboard marked rather than waiting for this.
 
 ---
 
