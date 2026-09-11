@@ -3472,7 +3472,7 @@ D85 §6 argues it.
 
 ---
 
-## NEW-45 — the online-session v1 D17 recommended, which was never blocked · READY
+## NEW-45 — the online-session v1 D17 recommended, which was never blocked · DONE (D87)
 
 Opened by **D86 part 2**. WP-17 has read as BLOCKED on budget since D17, and D17's **v1 needs no
 provider at all**: *"the professional supplies their own meeting link (Meet, Zoom, whatever they already
@@ -3499,6 +3499,36 @@ Daily.co is the *upgrade*. So the budget block applies to the upgrade and this h
 The seam D86 built is for the hosted upgrade and is **not** what this needs: nothing here hosts a room.
 `MeetingRoom.professionalSupplied()` is already the right answer from the provider's side; what is
 missing is somewhere to keep the link and a rule about revealing it.
+
+**Closed by D87, and the prototype settled two of the three open questions in its own words**: *"A
+private video link is sent to you and to [the professional] one hour before the session"* — both parties,
+one hour.
+
+**Built**: `Booking.meetingLink` (`varchar(500)`, nullable) in the JDL, the entity and the DTO, with an
+**additive** changelog — regenerating the entity's own changelog would invalidate the checksum every
+existing database recorded, which is the `ValidationFailedException` CLAUDE.md warns about. Verified:
+130 ITs against a real PostgreSQL with no checksum failure.
+
+**The reveal rule is `BookingWorkflow.meetingLinkFor`, four conditions and each a decision**: there is a
+link (absent is normal, not a failure); the booking is `ONLINE` (a link on a home visit is somebody's
+mistake and must not leak); the booking is still live — an **allow-list** over `BookingStatus` so a new
+status decides for itself; and the session is within the hour **in the booking's own zone**, not
+`MARKET_ZONE`, driven with a `America/Sao_Paulo` booking so the two answers actually differ. It stays
+revealed after the session starts, deliberately: a customer who joins late needs it more than one who is
+early.
+
+**On `BookingDetail` and not `BookingView`** — the view is what `/mine` returns for every booking, so a
+list carrying live links would disclose all of them on every page load. **The erasure sweep clears it**,
+and it is the only one of those five fields that is not data *about* the customer: a live room URL
+outliving the person it was for is a door rather than a datum.
+
+**Not done, and deliberately not opened as an item**: nothing writes the column yet. A professional's
+"supply your link" endpoint is one write on a resource that already exists rather than a package —
+whoever adds it adds it. D87 §8.
+
+The third open question — whether the reveal survives a cancellation — the prototype does not answer, and
+D87 decided it conservatively: it does not, because a link to a room nobody will be in is worse than a
+customer having to ask.
 
 ---
 

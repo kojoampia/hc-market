@@ -78,7 +78,17 @@ public final class BookingDtos {
     /** The append-only audit — every transition a booking has made, oldest first. */
     public record StatusChangeView(String fromStatus, String toStatus, String actor, Instant occurredAt, String note) {}
 
-    public record BookingDetail(BookingView booking, List<StatusChangeView> history) {}
+    /**
+     * One booking, its history, and the meeting link IF it may be seen yet — D87, backlog NEW-45.
+     *
+     * <p>{@code meetingLink} is null until an hour before an online session and after it is cancelled.
+     * It is on the DETAIL and deliberately not on {@link BookingView}: the view is what
+     * {@code /api/bookings/mine} returns for every booking a customer has, and a list endpoint that
+     * carried live meeting links would hand out every one of them on every page load, an hour early or
+     * not. The reveal rule is applied per booking, at read time, by
+     * {@code BookingWorkflow.meetingLinkFor}.
+     */
+    public record BookingDetail(BookingView booking, List<StatusChangeView> history, String meetingLink) {}
 
     /** Wizard step 4. The professional and service are references; the price is looked up, not sent. */
     public record CreateBooking(

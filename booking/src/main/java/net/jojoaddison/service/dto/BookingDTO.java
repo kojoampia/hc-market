@@ -94,6 +94,17 @@ public class BookingDTO implements Serializable {
     @NotNull
     private Boolean reviewed;
 
+    /**
+     * The professional's own meeting link — {@code decisions.md} D87, NEW-45.
+     *
+     * <p><strong>Present on the DTO does not mean disclosed.</strong> This is the generated CRUD DTO and
+     * its resource is deleted (the delete table); what a customer sees goes through
+     * {@code CustomerBookingResource}, which asks {@code BookingWorkflow.meetingLinkFor} rather than
+     * copying this field. D17's reveal rule lives there and not here.
+     */
+    @Size(max = 500)
+    private String meetingLink;
+
     public Long getId() {
         return id;
     }
@@ -308,6 +319,14 @@ public class BookingDTO implements Serializable {
 
     public void setReviewed(Boolean reviewed) {
         this.reviewed = reviewed;
+    }
+
+    public String getMeetingLink() {
+        return meetingLink;
+    }
+
+    public void setMeetingLink(String meetingLink) {
+        this.meetingLink = meetingLink;
     }
 
     @Override

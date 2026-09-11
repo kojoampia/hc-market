@@ -3,6 +3,7 @@ package net.jojoaddison.service;
 import java.time.DateTimeException;
 import java.time.Duration;
 import java.time.Instant;
+import net.jojoaddison.domain.enumeration.DeliveryMode;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.ZoneId;
@@ -243,6 +244,86 @@ public class BookingWorkflow {
      * quantity came to need fixing in two places twice. Two copies of an appointment's conversion is
      * the defect, not the duplication.
      */
+    /**
+     * How long before the session the meeting link is revealed — {@code decisions.md} D87, NEW-45.
+     *
+     * <p>One hour, and it is the prototype's own promise rather than a number chosen here: <em>"A
+     * private video link is sent to you and to [the professional] one hour before the session."</em>
+     * D17 built its v1 recommendation on that promise, so this is the figure the screen already makes.
+     *
+     * <p>Not configurable. A window an operator can move is a promise the prototype makes and the
+     * estate does not keep, and there is no second estate with a different answer — the same argument
+     * {@code FoundingTerms} makes for the brokerage rate being overridable and this not being.
+     */
+    public static final Duration MEETING_LINK_REVEALED = Duration.ofHours(1);
+
+    /**
+     * The meeting link, if this caller may see it yet — {@code decisions.md} D87, backlog NEW-45.
+     *
+     * <p>D17's v1 in one method: the professional supplies their own link, the platform relays it, and
+     * it is revealed an hour before. <strong>Computed at read time and never pushed</strong>, because
+     * there is no scheduler anywhere in this estate and D17 said so — a scheduled reveal would be a
+     * mechanism this whole design avoids.
+     *
+     * <p><strong>Four things have to be true, and each one is a decision:</strong>
+     *
+     * <ol>
+     *   <li><strong>there is a link.</strong> Absent is the normal case, not a failure: only ONLINE
+     *       bookings ever want one and the professional may not have supplied it yet;
+     *   <li><strong>the booking is ONLINE.</strong> A link on an in-person booking is somebody's
+     *       mistake, and relaying it would send a customer to a video call for a home visit. Refused on
+     *       the delivery mode rather than on the link's presence, so the mistake cannot leak;
+     *   <li><strong>the booking is still live.</strong> A cancelled or declined booking has no session,
+     *       so there is nothing to join — the one case the prototype does not speak to, and refusing is
+     *       the conservative direction: a revealed link to a room nobody will be in is worse than a
+     *       customer having to ask;
+     *   <li><strong>the session is within the hour</strong>, measured in <strong>the booking's own
+     *       zone</strong> through {@link #scheduledAt}. Not {@code MARKET_ZONE}: D58 settled that an
+     *       appointment is read in its own calendar, and the constant behaves identically today and is
+     *       wrong for the one case that ratification exists for.
+     * </ol>
+     *
+     * <p><strong>It stays revealed after the session starts</strong>, and that is deliberate rather than
+     * an oversight in the arithmetic: a customer who joins late, or whose call drops, needs the link
+     * more than one who is early. There is no upper bound, so the window is "from an hour before until
+     * the booking stops being live".
+     *
+     * <p><strong>Both parties, one rule.</strong> The prototype says the link goes to the customer
+     * <em>and</em> to the professional, so there is no per-caller branch here — the professional
+     * supplied it and has it anyway, and a rule that revealed it to them earlier would be a second
+     * window to keep true for no one's benefit.
+     *
+     * @return the link, or empty when this caller may not see it yet — never a reason, because the
+     *     absence is not an error and a caller that renders a reason would be rendering one on the
+     *     normal path
+     */
+    public Optional<String> meetingLinkFor(Booking booking, Instant now) {
+        String link = booking.getMeetingLink();
+        if (link == null || link.isBlank()) {
+            return Optional.empty();
+        }
+        if (booking.getDeliveryMode() != DeliveryMode.ONLINE) {
+            return Optional.empty();
+        }
+        if (!isLive(booking)) {
+            return Optional.empty();
+        }
+        Instant revealFrom = scheduledAt(booking).minus(MEETING_LINK_REVEALED);
+        return now.isBefore(revealFrom) ? Optional.empty() : Optional.of(link);
+    }
+
+    /**
+     * Whether a booking still has a session ahead of or around it.
+     *
+     * <p>An allow-list rather than a deny-list: a status added later must decide for itself whether a
+     * meeting link is revealed, rather than inheriting "yes" from not being on a list of refusals. The
+     * same reason {@code Cancel.from()} enumerates what may be cancelled instead of what may not.
+     */
+    private static boolean isLive(Booking booking) {
+        BookingStatus status = booking.getStatus();
+        return status == BookingStatus.REQUESTED || status == BookingStatus.CONFIRMED;
+    }
+
     public Instant scheduledAt(Booking booking) {
         LocalDate date = booking.getScheduledDate();
         return date.atTime(booking.getScheduledTime()).atZone(zoneOf(booking)).toInstant();

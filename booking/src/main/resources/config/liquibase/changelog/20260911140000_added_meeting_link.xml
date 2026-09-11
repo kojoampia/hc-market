@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+
+    <!--
+        The professional's own meeting link, relayed and never hosted.
+        decisions.md D87 (D17's v1), backlog NEW-45.
+
+        A NEW CHANGELOG RATHER THAN A REGENERATED ENTITY CHANGELOG, and that is the whole reason this
+        file exists. Adding the field to the JDL and regenerating rewrites
+        20260825203836_added_entity_Booking.xml, which every database that has already run it records a
+        checksum for; Liquibase then refuses to start with "1 changesets check sum" and the estate is
+        down until somebody drops the schema. CLAUDE.md records that trap by name. A separate additive
+        changelog leaves every existing checksum alone, so quality's 298 bookings and dev's seeded
+        estate both keep running.
+
+        NULLABLE, deliberately. Only ONLINE bookings ever want a link; IN_PERSON and HOME_VISIT never
+        will, and an ONLINE booking exists from the moment it is requested while the professional may
+        supply the link at any time before the session. A NOT NULL column would make every in-person
+        booking carry an empty string, which reads as "a blank link" rather than "no link here".
+
+        NO INDEX. Nothing filters or joins on it — it is read only for the one booking already in hand,
+        by reference. D39's privacy indexes exist because the erasure sweep and three screens filter on
+        those columns; nothing filters on this one, and an index on a 500-char URL column would cost
+        write throughput to serve no query.
+    -->
+    <changeSet id="20260911140000-1" author="jhipster">
+        <addColumn tableName="booking">
+            <column name="meeting_link" type="varchar(500)">
+                <constraints nullable="true"/>
+            </column>
+        </addColumn>
+    </changeSet>
+</databaseChangeLog>

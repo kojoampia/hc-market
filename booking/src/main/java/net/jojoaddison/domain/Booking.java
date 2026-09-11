@@ -139,6 +139,18 @@ public class Booking implements Serializable {
     @Column(name = "reviewed", nullable = false)
     private Boolean reviewed;
 
+    /**
+     * The professional's OWN meeting link, relayed and never hosted — {@code decisions.md} D87, NEW-45.
+     *
+     * <p>Nullable because only {@code ONLINE} bookings ever want one, and an ONLINE booking exists from
+     * the moment it is requested while the professional may supply the link at any point before the
+     * session. {@code BookingWorkflow.meetingLinkFor} decides who may see it and when; this column just
+     * holds it.
+     */
+    @Size(max = 500)
+    @Column(name = "meeting_link", length = 500)
+    private String meetingLink;
+
     @OneToMany(fetch = FetchType.LAZY, mappedBy = "booking")
     @Cache(usage = CacheConcurrencyStrategy.READ_WRITE)
     @JsonIgnoreProperties(value = { "booking" }, allowSetters = true)
@@ -495,6 +507,19 @@ public class Booking implements Serializable {
 
     public void setReviewed(Boolean reviewed) {
         this.reviewed = reviewed;
+    }
+
+    public String getMeetingLink() {
+        return this.meetingLink;
+    }
+
+    public Booking meetingLink(String meetingLink) {
+        this.setMeetingLink(meetingLink);
+        return this;
+    }
+
+    public void setMeetingLink(String meetingLink) {
+        this.meetingLink = meetingLink;
     }
 
     public Set<BookingStatusChange> getHistories() {

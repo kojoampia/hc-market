@@ -202,10 +202,25 @@ public class CustomerBookingResource {
         return mapper.toViews(bookings.forCustomer(currentLogin(), status));
     }
 
+    /**
+     * One booking, with the meeting link if it may be seen yet — D87, backlog NEW-45.
+     *
+     * <p>D17's v1: the professional supplies their own link and the platform relays it an hour before.
+     * The rule lives in {@code BookingWorkflow.meetingLinkFor} and is asked here rather than applied
+     * here, so the one place that knows the window is the one place that computes it — and the clock is
+     * passed in rather than read inside, which is the estate-wide rule after D51.
+     *
+     * <p><strong>Withheld is null and not an error.</strong> A customer looking at a booking two days
+     * early is the normal case, so the field is simply absent from the body.
+     */
     @GetMapping("/{ref}")
     public BookingDetail one(@PathVariable String ref) {
         Booking booking = mineOr404(ref);
-        return new BookingDetail(mapper.toView(booking), mapper.toHistory(history.findByBookingId(booking.getId())));
+        return new BookingDetail(
+            mapper.toView(booking),
+            mapper.toHistory(history.findByBookingId(booking.getId())),
+            bookings.meetingLinkFor(booking, Instant.now()).orElse(null)
+        );
     }
 
     /**

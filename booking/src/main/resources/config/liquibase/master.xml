@@ -37,4 +37,5 @@
          table — silently today, because the only provider configured is the one that returns no
          handle at all, so the breakage waits until the day somebody wires a real one. -->
     <include file="config/liquibase/changelog/20260902200000_added_payment_attempt.xml" relativeToChangelogFile="false"/>
+    <include file="config/liquibase/changelog/20260911140000_added_meeting_link.xml" relativeToChangelogFile="false"/>
 </databaseChangeLog>
