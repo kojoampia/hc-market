@@ -1105,7 +1105,10 @@ S7
 #
 # `pull` and `up` SUCCEED in the daemon-gone-after-roll state, and that is the state's name rather
 # than a shortcut: what the rollback-phase gate exists for is a host that answers the roll and then
-# stops answering, and a daemon that refused the roll would take the ERR trap long before the gate.
+# stops answering. A daemon that REFUSED the roll takes the ERR trap long before the gate — which is
+# what the `refused` state below drives, because that sentence was written here as an argument and
+# was **false of the sourced driver** until D80's review (finding 1): the driver tested its own
+# subshell's status, which disregards errexit and the trap for everything inside it.
 cat > "$B7/docker" <<'S7'
 #!/usr/bin/env bash
 argv="$*"
@@ -1114,6 +1117,14 @@ for a in "$@"; do
   case "$a" in exec|ps|logs|pull|up|version|login|info|network|manifest) sub="$a"; break ;; esac
 done
 gone='failed to connect to the docker API at unix:///nonexistent; check if the path is correct and if the daemon is running: dial unix /nonexistent: connect: no such file or directory'
+case "${HC_FAKE_DOCKER:-ready}:$sub" in
+  # THE ROLL ITSELF REFUSED — a tag the host cannot pull. The shipped `run ssh …` then returns
+  # non-zero and the ERR trap must fire; anything that walks past it reaches the gate and reports a
+  # rollback that never happened.
+  refused:pull)
+    printf 'Error response from daemon: manifest for docker.jojoaddison.net/healthconnect/catalog:1.3.9 not found\n' >&2
+    exit 1 ;;
+esac
 case "$sub" in
   info|network|manifest|pull|up) exit 0 ;;
   login)   cat >/dev/null 2>&1; exit 0 ;;
@@ -1132,8 +1143,13 @@ case "$sub" in
     # declare AND a daemon that cannot be asked. The gate discards both streams, so nothing in part 7
     # can read either line; it is written correctly per state anyway, because a stub that models a
     # dead daemon with a port refusal is a stub whose next reader believes the wrong thing.
+    # `refused` IS READY HERE, DELIBERATELY, and narrowing it to the `pull` alone is what makes its
+    # control land on the arm it is aimed at. With this answering unready too, a driver that walked
+    # past the refused roll died at the gate's own refusal instead — red, and through a door that says
+    # "neither died nor claimed success" rather than the one naming a revert reported as done. The
+    # harm being reproduced is a SUCCESS line for a rollback that never rolled.
     case "${HC_FAKE_DOCKER:-ready}" in
-      ready)                  exit 0 ;;
+      ready|refused)          exit 0 ;;
       daemon-gone-after-roll) printf '%s\n' "$gone" >&2; exit 1 ;;
       *)                      printf 'bash: line 1: /dev/tcp/localhost/8080: Connection refused\n' >&2; exit 1 ;;
     esac ;;
@@ -1202,6 +1218,14 @@ cmp -s "$SCRIPT_ABS" "$X7/stage/deploy/deploy-prod.sh" \
 # --host is a name that does not resolve and HC_PUBLIC_URL is an unroutable address, on purpose: if a
 # stub is ever missed, the real binary fails fast against nothing rather than reaching a host. The
 # registry token is a literal that is not a credential — this repository is public.
+#
+# THE TWO FALLBACKS ARE NOT EQUALLY HARD, and the weaker one is `--host` (D80's review, note 4).
+# `http://127.0.0.1:1` cannot route anywhere by construction; `ci-probe-host` relies on the resolver
+# saying no, so on a network with a wildcard DNS answer a missed `ssh` stub would attempt a live
+# connect to somebody. Re-measured here with the `ssh` stub made non-executable: PATH falls through
+# to the real binary, the run fails fast, and part 7 goes red with **six** named errors — the first
+# being "asked the host NOTHING", because nothing reached the log. Fail-closed on this workstation,
+# where the name does not resolve. Do not make either value a real name to "test something".
 env7=(HC_FAKE_TAG="$T7" HC_REGISTRY_TOKEN=probe-not-a-credential HC_PUBLIC_URL="http://127.0.0.1:1/probe")
 run7_exec() { # run7_exec <site log> <FAKE_DOCKER> — EXECUTES the shipped file
   : > "$1"
@@ -1209,35 +1233,57 @@ run7_exec() { # run7_exec <site log> <FAKE_DOCKER> — EXECUTES the shipped file
     bash "$X7/stage/deploy/deploy-prod.sh" \
     --tag "$T7" --host "$P_HOST" --path "${1%/*}/host-${1##*/}" --yes 2>&1 || true
 }
+# A CHILD PROCESS, NOT A SUBSHELL, AND THAT IS THE WHOLE OF D80's REVIEW FINDING 1. This was
+# `( source …; eval … ) 2>&1 || true`, and **a compound whose status is TESTED disregards errexit and
+# the ERR trap for everything inside it** — including the trap the sourced subject installs at its own
+# line 235. Measured here, three states of the same subject (a function whose first command fails):
+#
+#     ( source …; work )            → TRAP fired, rc=1
+#     ( source …; work ) || true    → "CONTINUED PAST THE FAILURE", rc=0     ← what this shipped
+#     bash -c 'source …; work' || true → TRAP fired, rc=0                    ← what it does now
+#
+# So the sourced driver used to let the shipped script walk past a failed command that the EXECUTED
+# program dies on: with an ssh refusing the rollback's roll, review watched it continue into the gate
+# and print `✓ rolled back to 1.3.9` for a rollback whose roll never happened. Nothing asserted was
+# wrong — every scenario's failure path is an explicit `die` or `warn` — but two texts said the trap
+# was standing behind them, and the next scenario author would have believed them. A child gets fresh
+# errexit semantics whatever the parent does with its status, which is the shape `run7_exec` already
+# had. Scenario `refused` below is the permanent assertion that the trap fires here.
+#
+# EVERYTHING GOES THROUGH THE ENVIRONMENT so the body can be single-quoted: no expansion of this
+# check's variables happens inside the child, and nothing in a scenario body may contain a single
+# quote.
 run7_source() { # run7_source <site log> <FAKE_DOCKER> <what to run after the source returns>
   : > "$1"
-  (
-    export PATH="$B7:$PATH" HC_SITE_LOG="$1" HC_FAKE_DOCKER="$2" "${env7[@]}"
-    unset HC_PROD_HOST HC_SSH_TIMEOUT HC_SMOKE_MIN_PROFESSIONALS HC_NETWORK HC_DATA_NETWORK HC_MONITORING_NETWORK
-    # THE SOURCE ITSELF IS UNDER TEST. Nothing may be called here: the router lives in `main` and
-    # `main` is called only when the file is EXECUTED, so a source that deploys is a defect and the
-    # marker below is what says the source returned rather than exited in the middle of one.
-    source "$SCRIPT_ABS" --tag "$T7" --host "$P_HOST" --path "${1%/*}/host-${1##*/}" --yes
-    printf '__hc_source_returned__\n'
-    # Three overrides, and each is the harness's rather than the script's: the compose template moves
-    # because a mutant copy lives in a temp directory with no docker/ beside it, the budget because 24
-    # polls at ten seconds is not a thing a check can wait for, and the service list because two
-    # services make the exhaustion's own table readable in a failure message.
-    COMPOSE_TEMPLATE="$PROD_COMPOSE_ABS"
-    HEALTH_TIMEOUT=10
-    SERVICES=(catalog booking)
-    eval "$3"
-  ) 2>&1 || true
+  timeout 60 env -i PATH="$B7:/usr/bin:/bin" HC_SITE_LOG="$1" HC_FAKE_DOCKER="$2" "${env7[@]}" \
+    HC_P7_SOURCE="$SCRIPT_ABS" HC_P7_TEMPLATE="$PROD_COMPOSE_ABS" HC_P7_TAG="$T7" \
+    HC_P7_HOST="$P_HOST" HC_P7_PATH="${1%/*}/host-${1##*/}" HC_P7_BODY="$3" \
+    bash -c '
+      # THE SOURCE ITSELF IS UNDER TEST. Nothing may be called here: the router lives in `main` and
+      # `main` is called only when the file is EXECUTED, so a source that deploys is a defect, and the
+      # marker below is what says the source returned rather than exited in the middle of one.
+      source "$HC_P7_SOURCE" --tag "$HC_P7_TAG" --host "$HC_P7_HOST" --path "$HC_P7_PATH" --yes
+      printf "__hc_source_returned__\n"
+      # Three overrides, and each is the harness s rather than the script s: the compose template moves
+      # because a mutant copy lives in a temp directory with no docker/ beside it, the budget because 24
+      # polls at ten seconds is not a thing a check can wait for, and the service list because two
+      # services make the exhaustion s own table readable in a failure message.
+      COMPOSE_TEMPLATE="$HC_P7_TEMPLATE"
+      HEALTH_TIMEOUT=10
+      SERVICES=(catalog booking)
+      eval "$HC_P7_BODY"
+    ' 2>&1 || true
 }
 plain7() { printf '%s\n' "$1" | sed -e "s/$(printf '\033')\[[0-9;]*m//g"; }
 
-for h in s0 s1 s2 s3 s4 opts; do seed_host7 "$X7/host-$h"; done
+for h in s0 s1 s2 s3 s4 s5 opts; do seed_host7 "$X7/host-$h"; done
 r7_inert="$(run7_source "$X7/s0" ready 'declare -F main >/dev/null && printf "HAS_MAIN\n"')"
 r7_opts="$(run7_source "$X7/opts" ready '{ printf "SSHOPTS"; for a in "${SSH_OPTS[@]}"; do printf "\037%s" "$a"; done; printf "\n"; }')"
 r7_deploy="$(run7_exec "$X7/s1" ready)"
 r7_gate="$(plain7 "$(run7_source "$X7/s2" unready main)")"
 r7_rb="$(plain7 "$(run7_source "$X7/s3" daemon-gone-after-roll rollback)")"
 r7_daemon="$(plain7 "$(run7_source "$X7/s4" daemon-gone-after-roll main)")"
+r7_refused="$(plain7 "$(run7_source "$X7/s5" refused rollback)")"
 
 # ---- 7.1 sourcing is inert, and `main` is there to be called -------------------------------------
 # THREE STATES, IN THIS ORDER, AND THE ORDER IS A REVIEW FINDING OF ITS OWN. Written as one case on
@@ -1245,8 +1291,16 @@ r7_daemon="$(plain7 "$(run7_source "$X7/s4" daemon-gone-after-roll main)")"
 # call" arm — true (it never returned) and the wrong cause named, which is this whole family's defect
 # arriving inside its own repair. Found by running the mutation. A source that printed ANYTHING the
 # program prints is a source that ran the program, whatever it went on to do.
+#
+# "PRINTED ANYTHING" MEANS BEFORE THE MARKER, and taking the whole transcript instead was a defect of
+# exactly the kind this arm exists to catch. It was `grep -v` over the two marker lines, which was
+# sound only while nothing after the source could print: once the driver became a child process the
+# subject's ERR trap became live there too, so the probe body's own failure (case 47, `main` renamed)
+# printed a trap line and this arm reported *"a sourced deploy script must not deploy"* about a source
+# that deployed nothing. Splitting at the marker is what makes the sentence true — and when the marker
+# never arrives, everything is "before" it, which is the source-died-mid-deploy case.
 sites_at_source="$(wc -l < "$X7/s0" | tr -d ' ')"
-said_at_source="$(printf '%s\n' "$r7_inert" | { grep -vE '^(__hc_source_returned__|HAS_MAIN)$' || true; } | tr -d '[:space:]')"
+said_at_source="$(printf '%s\n' "$r7_inert" | awk '$0=="__hc_source_returned__"{exit} {print}' | tr -d '[:space:]')"
 if (( sites_at_source > 0 )) || [[ -n "$said_at_source" ]]; then
   err "sourcing $SCRIPT asked the host $sites_at_source thing(s) and printed '$(one "$r7_inert")' before anything called \`main\`. A sourced deploy script must not deploy: \`. ./deploy-prod.sh\`, typed to read one of its functions, would BE a deployment with \`confirm\` the only thing in its way. The router belongs in \`main\`, called under \`[[ \"\${BASH_SOURCE[0]}\" == \"\$0\" ]]\` — and without that, part 7 cannot drive the router at all. See decisions.md D80 and backlog NEW-42."
 elif [[ "$r7_inert" != *"__hc_source_returned__"* ]]; then
@@ -1332,6 +1386,21 @@ case "$r7_daemon" in
     esac ;;
   *) err "a deploy whose gate could not ask the daemon at the timeout said neither of the two things a phase composes: '$(one "$r7_daemon")'. See decisions.md D80." ;;
 esac
+# THE SOURCED DRIVER MUST NOT SUPPRESS THE SUBJECT'S OWN FAILURE SEMANTICS — D80's review finding 1,
+# and this assertion is what stands behind the argument written at the docker stub. `rollback`'s roll
+# is refused, so the shipped `run ssh …` returns non-zero and `deploy-prod.sh`'s ERR trap must fire.
+# Measured before the repair: the driver walked past it, ran the health gate and printed
+# `✓ rolled back to 1.3.9` for a rollback whose roll never happened. A scenario whose failures are
+# left to the trap is only sound while this is green — and every scenario should assert its own
+# failures anyway.
+printf '  rollback, roll refused: %s\n' "$(one "$(printf '%s\n' "$r7_refused" | tail -1)")"
+case "$r7_refused" in
+  *"rolled back to"*)
+    err "a \`rollback\` whose roll the host REFUSED reported success: '$(one "$r7_refused")'. $SCRIPT installs an ERR trap and the failing command is a bare \`run ssh …\`, so the program must die there — the executed program does. A driver that tests its own compound's status disregards errexit and the trap for everything inside it, including a subject it sourced, so a sourced scenario would walk on into the health gate and report a revert that never happened. Use a child process (\`bash -c 'source …; main'\`), never \`( source …; … ) || true\`. See decisions.md D80 §2 and its review." ;;
+  *"failed at line"*)
+    ok "a refused roll dies at the subject's own ERR trap in the sourced driver too, so a scenario cannot walk past a failure the executed program stops on" ;;
+  *) err "a \`rollback\` whose roll the host refused neither died at the ERR trap nor claimed success: '$(one "$r7_refused")'. This scenario exists to establish that the sourced driver preserves the subject's failure semantics; if the roll no longer goes through \`run ssh\`, or the trap has moved, say so here. See decisions.md D80." ;;
+esac
 printf '  rollback, daemon gone: %s\n' "$(one "$(printf '%s\n' "$r7_rb" | tail -1)")"
 case "$r7_rb" in
   *"NOTHING HAS BEEN ROLLED BACK"*)
@@ -1359,6 +1428,14 @@ else
   # entry recognises is a seventh probe growing beside the six — which is exactly what parts 1-4
   # cannot see. Ordered, first match wins: the rollback's roll carries `pull` too, and the data
   # tier's `ps` carries `--format` too.
+  #
+  # WHAT THIS COVERS IS *EXECUTED* INVOCATIONS, AND THE BOUNDARY IS WORTH WRITING DOWN (D80's review,
+  # note 3). The four scenarios reach the default deploy path, so an `ssh` added inside
+  # `build_and_push`, `build_local_only`, `resolve_tag`'s Maven branch or `confirm` would be invisible
+  # here — those need `--build`, an unset `--tag` or an interactive answer — *and* invisible to parts
+  # 1-4, which drive named functions. Only the preamble's near-vacuous line-count floor would see it
+  # at all. Driving them means stubbing `mvnw` per service and answering a prompt; if a probe ever
+  # goes there, that is the work, rather than adding a needle nothing reaches.
   sites7=(
     "the compose file upload (scp):SCP"
     "the ssh and compose-v2 gate:docker compose version"

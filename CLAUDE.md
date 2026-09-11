@@ -221,6 +221,12 @@ time, so a sourced file is configured and inert. That wrapping introduces exactl
 the quietest in the file — delete the `[[ "${BASH_SOURCE[0]}" == "$0" ]]` line and the script parses,
 defines everything and exits 0 having deployed nothing — which is why part 7 also **executes** the file
 as a subprocess and refuses a run that asked the host nothing. No text and no sourced probe can see it.
+**A scenario that sources this script must run in a CHILD PROCESS, never in `( … ) || true`** (D80 §6b,
+found at review): a compound whose status is tested disregards errexit *and the ERR trap* for everything
+inside it, the sourced subject's own trap included — measured, and the cost was the driver walking past a
+refused rollback roll and printing *"✓ rolled back to 1.3.9"* for a revert that never happened. A child
+gets fresh errexit semantics whatever the parent does with its status; part 7's `refused` scenario
+asserts the trap still fires, and a scenario should assert its own failures rather than leave them to it.
 `health_gate` has two callers — the deploy router and `rollback` itself — and from the second a revert
 has **already been applied**, so *"NOTHING HAS BEEN ROLLED BACK, deliberately"* with `--rollback` as the
 remedy was false in the one function every failed deploy reaches. `$left` and `$rolling` are composed

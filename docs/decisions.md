@@ -14878,9 +14878,31 @@ the file as a subprocess, against stubbed `ssh`, `scp`, `docker`, `curl` and `gi
 what the stubs were handed.**
 
 The file resisted sourcing in three ways the item costed correctly, and the third needed a decision:
-`cd "$DEPLOY_DIR"` at the top (harmless — the harness uses absolute paths), an `ERR` trap that `die`s
-(harmless inside a subshell, and every post-source statement here is an assignment or a call), and a
-**router that runs on load**, so a naive `source` performs a deploy.
+`cd "$DEPLOY_DIR"` at the top (harmless — the harness uses absolute paths), an `ERR` trap that `die`s,
+and a **router that runs on load**, so a naive `source` performs a deploy.
+
+**The trap was costed in the leak direction only, and the SUPPRESSION direction is the one that
+mattered** — review's finding 1, and it is corrected here rather than smoothed over, because the first
+version of this section said the trap was *"harmless inside a subshell"* and stopped there. It is not
+merely harmless: **a compound whose status is tested disregards errexit and the ERR trap for
+everything inside it**, including a subject sourced within it. Re-measured independently, three states
+of one subject whose first command fails:
+
+| driver shape | outcome |
+| --- | --- |
+| `( source …; work )` | TRAP fired, rc=1 |
+| `( source …; work ) \|\| true` | **`CONTINUED PAST THE FAILURE`**, rc=0 — what §3's driver shipped |
+| `bash -c 'source …; work' \|\| true` | TRAP fired, rc=0 — what it does now |
+
+So the sourced driver let the shipped script walk past a failed command the *executed* program dies
+on: with the roll refused, it continued into the health gate and printed **`✓ rolled back to 1.3.9`
+for a rollback whose roll never happened** (reproduced here as a control, and it is the sole error in
+that run). Nothing asserted was wrong — every scenario's failure path is an explicit `die` or `warn` —
+but two texts told the next scenario author the trap was standing behind them, which is this item's own
+one-step-away binding gap reappearing inside the mechanism that closes it. **The driver is a child
+process now**, the shape `run7_exec` already had, because a child gets fresh errexit semantics whatever
+the parent does with its status; and the `refused` scenario is a permanent assertion that the trap
+fires, so the argument at the docker stub is driven rather than written.
 
 **Taken: the router moves into `main()`, called under `[[ "${BASH_SOURCE[0]}" == "$0" ]]`.**
 
@@ -15013,9 +15035,41 @@ cause before they were written down.
 recorded at the cases, so a future *"red, but not through the door it was aimed at"* reads as the
 execution having broken rather than as a matcher having drifted.
 
+### §6b Review, and what it found — nothing blocking, one should-fix taken as code
+
+**The behavioural surface held on independent re-derivation.** `deploy-prod.sh`'s logic was
+comment-stripped and whitespace-normalised at **517 → 522 statements with zero removed**, the five
+additions being exactly `main() {`, `}`, the guard, the `main` call and `fi`; behaviour is identical
+for every invocation form before and after, `sh deploy-prod.sh` included, which fails at line 151 with
+`Bad substitution` on `main` too — so the guard adds **no new silent path**. All four required
+mutations were confirmed red through the executed door, the two deleted greps confirmed to have lost
+nothing (exactly two `health_gate` call sites over stripped text, both executed; all 13
+command-position `ssh`/`scp` sites reached), and part 7 confirmed unable to pass vacuously in seven
+separate ways.
+
+**Finding 1, should-fix, taken as code** — §2's corrected trap paragraph above, the child-process
+driver, the `refused` scenario, and the two texts that rested on the trap firing: the docker stub's
+own argument for why `pull` succeeds in `daemon-gone-after-roll`, and this decision's §2.
+
+**Three notes taken, one recorded.** `expect_red`'s `LINE:` mode was a BRE and is `grep -Fqx` now — it
+exists because the previous form failed open, so a pattern carrying a `.` or a `[` would have been the
+same defect one spelling along. **Part 7's coverage is of *executed* invocations** and that boundary is
+now written where the sites are listed: an `ssh` added inside `build_and_push`, `build_local_only`,
+`resolve_tag`'s Maven branch or `confirm` is invisible to part 7 *and* to parts 1-4, seen only by the
+line-count floor. The **stub-miss fallback** is fail-closed here and its two halves are not equally
+hard — `http://127.0.0.1:1` cannot route by construction, `ci-probe-host` relies on the resolver saying
+no — re-measured with the `ssh` stub made non-executable: **six** named errors, the first being "asked
+the host NOTHING".
+
+**And one caution about reading this branch, which changes nothing in the tree.**
+`merge-base(HEAD, main)` is **`d8c7ca0`**; PR #58 (NEW-43, `docs/backlog.md` only) merged *beside* this
+branch, so `git diff 5da9a09..HEAD` renders the whole NEW-43 entry as a **phantom 101-line deletion**.
+`merge-tree` is clean and the merged file carries both NEW-43 and NEW-42·DONE. **Never land this by
+applying that diff as a patch**, and re-derive the base before quoting any diff of it.
+
 ### §7 Verified, by running
 
-The check green at **64** assertions (51 before: +15 from part 7, −2 from the deleted greps) in 3.3s;
+The check green at **65** assertions (51 before: +16 from part 7, −2 from the deleted greps) in ~4s;
 its test at **51 ok, 0 failed** over **50** numbered mutations, every one asserted applied — original
 gone, mutant present, `bash -n` parsing — before its verdict was believed. **Four controls, each
 verifying as a set and each green on a correct tree first**: part 6 removed **41 ok, 10 failed**
@@ -15025,7 +15079,15 @@ removed **45 ok, 6 failed** ({31,32,33,34,39,40}), the two-caller assertions rem
 failed** ({35}). D78's fourth control — the two call-site greps — is **replaced** by the part-7 one
 rather than added to, because its subject no longer exists; the count of controls is therefore still
 four. Every `ok` total moved with the two new cases, which is why the sets and not the numbers are what
-these controls are read by.
+these controls are read by. **All four sets are identical to the measurement taken before review**, so
+the child-process driver moved no case's door — though it momentarily moved case 47's, which is how
+§6b's detector defect was found.
+
+**A fifth control, throwaway, for the repair itself**: `run7_source` put back to
+`( source …; eval … ) || true` inside `.github/checks/`, which makes the `refused` scenario print
+`✓ rolled back to 1.3.9` for a rollback whose roll the host refused — red, **one** `::error::` in the
+whole run, so that assertion is its sole carrier. Removed after measuring; the permanent guard is the
+scenario, not the control.
 
 `bash -n` on every tracked shell script; the six neighbouring checks and the three neighbouring test
 harnesses re-run green; `build.yml`'s inline matchers over `deploy-prod.sh` (the signing-key hint, the

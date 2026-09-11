@@ -198,7 +198,12 @@ expect_red() {
   # matches every file, and the control passes on a mutation that did nothing. Measured.
   case "$absent" in
     LINE:*)
-      if grep -qx -- "${absent#LINE:}" "$f"; then
+      # `-F` AS WELL AS `-x`: without it the pattern is a BRE, so a future pattern carrying a `.`, a
+      # `[` or a `*` would silently match something else — and the failure mode is a "check PASSED on
+      # a broken tree" message about a mutation that had applied, which is a red run with a misleading
+      # cause. Both patterns in use today are literal-safe; this closes it for one character. D80's
+      # review, note 1.
+      if grep -Fqx -- "${absent#LINE:}" "$f"; then
         bad "$name — the mutation did not replace the original (a line reading exactly '${absent#LINE:}' is still in the file)"; return
       fi ;;
     ?*)

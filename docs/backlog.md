@@ -3296,13 +3296,21 @@ cannot be executed at all. It is a safety property in its own right: before it, 
 leaves a script that parses and exits 0 having deployed nothing — which is why part 7 executes the file
 as well as sourcing it, and which is case **45**.
 
-Measured: the check at **64** assertions, its test at **51 ok / 0 failed** over **50** mutations, and
+Measured: the check at **65** assertions, its test at **51 ok / 0 failed** over **50** mutations, and
 **four** controls each verifying as a set — part 6 removed {23,24,25,26,27,28,35,36,41,42} (D78's set,
 unchanged, so part 7 took no case's door from it), part 7 removed
 {37,38,43,44,45,46,47,48,49,50}, the `SSH_OPTS` value guard removed {31,32,33,34,39,40}, the two-caller
 assertions removed {35}. D78's fourth control was the two greps this deleted, so it is replaced rather
 than added to. **D49 still bounds all of it**: this establishes what the script *passes*, never what a
 host answers.
+
+**Review took one should-fix as code** (D80 §6b). The sourced driver was `( source …; eval … ) || true`,
+and **a compound whose status is tested disregards errexit and the ERR trap for everything inside it** —
+including the trap the sourced subject installs. So the driver let the shipped script walk past a failed
+command the executed program dies on, and printed `✓ rolled back to 1.3.9` for a rollback whose roll the
+host refused. It is a **child process** now (`bash -c 'source …; main'`), and the `refused` scenario is
+a permanent assertion that the trap fires there — with a fifth throwaway control confirming that
+assertion is its sole carrier.
 
 ---
 
