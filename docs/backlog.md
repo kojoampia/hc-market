@@ -20,6 +20,15 @@ keeps finding in its own checks and comments: a statement of what the vocabulary
 itself contradicts. Added rather than relabelled — `PARTLY DONE` and `CLOSED by decision` each carry a
 distinction the declared five cannot express, so the declaration was the wrong half.
 
+**AN ITEM'S STATUS LIVES IN ITS OWN `## ` HEADING, and that is the only place it lives** (decisions.md
+D83, backlog NEW-41). The packages table below indexes the **work packages** only — which is what its
+header says it is — and carries a second copy of *their* status, checked against these headings by CI.
+For every `NEW-*` item the heading is the single record: the table used to carry rows for NEW-1..NEW-22
+and none for NEW-23 onward, so it indexed 41 of 58 items while continuing to look complete, and every
+status disagreement this file has produced came from one fact living in two places. Where a heading and
+anything else disagree, **the heading wins** — the general rule at the top of this file settles
+`decisions.md` against the code and says nothing about a file disagreeing with itself.
+
 ---
 
 ## The packages
@@ -41,32 +50,18 @@ distinction the declared five cannot express, so the declaration was the wrong h
 | **WP-13** | Payments: provider choice and Act 987 | PARTLY DONE | D45 — registry, choice, route, permit and secrets built; reviewed 2026-09-04, five findings, all fixed. **D50 closed the Paystack adapter**: two of six calls implemented from a sibling product's working integration; reviewed 2026-09-05, five findings, all applied. Hubtel and MoMo are still seams and Act 987 is still a question for a person. **D74 closed the email**, on D72 §3's authorisation: `GatewayCustomerContacts` asks the gateway's `GET /internal/customers/{login}/email` with a **second** short-lived estate token (`ContactLookupToken` — reusing the erasure one would have made its scope a method name), so Paystack's `authorize` can name who is paying. Four sub-decisions argued, ten mutations run with eight red, and one of D72 §3's own stated terms **overturned by measurement**: D28's route-predicate argument does not keep a gateway endpoint private, because there is no route in front of it. Still no payment end to end, still no credentials, still `PARTLY DONE` |
 | **WP-14** | Verification badge | DONE | — |
 | **WP-15** | Badge: date-only on the wire | DONE | D47 — reviewed 2026-09-04, four findings, all applied |
-| **WP-16** | Search performance | WON'T (measured) | — |
-| **WP-17** | Video and WhatsApp providers | READY (spec only) | D37 — cost both, build neither |
-| **WP-18** | Production `infranet` alias check | CLOSED | D37 — the rename made it moot |
-| **NEW-1** | A retry reported rows re-written, not rows that held data | DONE | D39 |
-| **NEW-2** | Catalog's receipt omitted what it deleted | DONE | D39 |
-| **NEW-3** | A privacy test that could not fail, over a leak that was real | DONE | D40 |
-| **NEW-4** | Both end-to-end scripts could only address the dev estate | DONE | D46 |
-| **NEW-5** | A passing `verify-cycle.sh` made `--verify` report a fault | DONE | D46 |
-| **NEW-6** | A refusal that offered the one name it withholds | DONE | D46 |
-| **NEW-7** | "Sessions brokered" was not live, under a LIVE banner | DONE | D46 |
-| **NEW-8** | The prototype's professional workspace is demo-only in live mode | WON'T (documented) | D46 §5 |
-| **NEW-9** | Four seeders shift every date by the JVM's idea of today | DONE | D48 — zone closed in all four; the shared-`today` half deliberately not built, with its triggers named. Reviewed 2026-09-05, nine findings, all applied |
-| **NEW-10** | Payout writes `ledger.earned_on` in the JVM's calendar and the seeder's in Accra's | DONE | D51 — all six closed, three writes and three renders, across payout and booking. The data question is **answered**: no stored row anywhere was written outside Accra's calendar, so no migration. Catalog's four are NEW-12 |
+| **WP-16** | Search performance | WON'T, for now | — |
+| **WP-17** | Video and WhatsApp providers | BLOCKED | D37 — cost both, build neither |
+| **WP-18** | Production `infranet` alias check | PARTLY DONE | rename shipped; the question needs production host access |
 | **WP-19** | Production deployment configuration, to sibling parity | PARTLY DONE | D49 — `deploy/prod-server/` built, five defects in the deploy path fixed, then reviewed 2026-09-05 and eight more applied, one of them blocking (a failing smoke test triggered an automatic rollback). **Nothing has ever been run against a host**; the fifteen things a person must still do are in that directory's README |
-| **NEW-11** | A second payment attempt for one booking would reuse Paystack's reference | WON'T, until there is a second attempt | D50 — no such path exists; the day one is added the suffix goes in with it. Opened by the D50 review |
-| **NEW-12** | Catalog's four implicit-zone reads, one of which stores a date | DONE | D52 — all four closed, `MarketCalendar`'s fourth copy, and the CI check now scans **every** service with no per-file exemption anywhere. The estate has no implicit-zone read left. The data question is **re-established, not cited, and its answer differs from D51's**: the quality box holds **two** rows written by the defective line, both dated correctly because the container's zone is `Etc/UTC` — "written by the defect and right", not "nothing was written". No migration |
-| **NEW-13** | The brokerage rate is struck when the event is consumed, not when the booking completed | DONE | D53 — the act's instant is on the wire (`bookingCompletedAt`, `bookingCancelledAt`) and nothing on the pricing path reads a clock. An event without one falls back to the envelope's `occurredAt` **at WARN**, never to now; with neither it is refused. Ten tests, all watched red first; one CI check, watched firing three ways |
-| **NEW-14** | A professional's own calendar opens on Accra's day, not theirs | CLOSED by decision | D55 — spec §13 #8 ratified 2026-09-07. A window *start* is a question about the page being read, so `MARKET_ZONE` is now **chosen** there rather than merely unchallenged. **No code change**: the two `ProWorkspaceResource` defaults were already right |
-| **NEW-15** | Any authenticated user can change the brokerage's commission rate — **and eight other things** | DONE | D54 — the scope was **nine, not one**: `BrokerageConfig`, `Ledger`, `Payout`, `Credential`, `AvailabilitySlot`, `ServiceOffering`, `Highlight`, `Message` and `Conversation`, each with four write mappings and zero authorization. Measured in-process at 200/200/201/200 apiece before deletion — 36 assertions, 36 red. All nine deleted with their generated ITs, argued individually; three `GeneratedCrudIsNotAnApiIT` guards, each door mutated **separately**. **The root cause was the control**: one CI check now derives the expected set from `jdl/*.jdl` and demands, per entity, a delete-table row or real authorization. Eight mutations watched. Opened a tenth family as NEW-17 |
-| **NEW-16** | The receipt strikes its split to the day and the ledger to the instant | DONE | D56 — `at` (an `Instant`) beside `on`, **both sent**, `at` preferred, and neither present is a **400** rather than `Instant.now()`. `on` stays because a new booking calling an old payout would otherwise fall through to that service's own clock — NEW-13 rebuilt one service over. The two selectors are merged into `BrokerageTerms` with an explicit tie-break (newest `id`), closing a non-determinism neither copy could see. First tests for an endpoint that had none: 10 ITs through the real binder, **7 red first**; one CI check, all five assertions watched firing — and running it found the check itself was banning a correct `Instant.now()` |
-| **NEW-17** | The five generated Kafka sample resources are unauthenticated write endpoints | DONE | D59 — all five **deleted**, gateway included, with the five ITs that asserted the hole worked. **What `/publish` did is established, and both of D54's readings of it were wrong**: `application.yml` puts `kafka` in `spring.profiles.group.dev` *and* `.prod`, so the profile is active in every environment — read off the running quality container — and the sibling bindings from the same file have auto-created their topics on the shared broker. The write was real. The gateway's `/consume` was the decision rather than the deletion, and it is answered by a measurement: `sse-topic`'s end offset is **0**, so it never carried a byte. `broker.KafkaConsumer` and `KafkaProducer` **stay** as orphaned generated classes with no HTTP door. Second CI check, derived from `baseName` + `messageBroker` rather than from entities, with a `find` sweep closing its own rename fail-open; **14 mutations watched**, and the first harness run reverted the very rows the check depends on. Five guards, each service mutated separately. Opened **NEW-21** |
-| **NEW-18** | Nothing can create a `BrokerageConfig`, and payout cannot price a booking without one | DONE | D57 — **shape (2), the seeded-once row**, argued against a Liquibase changeset (a rate is not schema, and a changeset cannot read the environment, so it *forces* a code constant) and against the append-only `ROLE_BROKERAGE` resource (**it bootstraps nothing** — a fresh estate still waits on a person, and the deploy check would then fail a healthy stack). `BrokerageBootstrap` writes one row into an **empty** table on every environment including `prod`, at `SmartLifecycle` phase `MIN_VALUE` so the consumer's container cannot start first. The founding values are code constants the environment **may** override — so nothing can be got wrong by omission, and a malformed one refuses startup. `effectiveFrom` is `Instant.EPOCH` and is deliberately *not* an input: it is the one field where a well-formed wrong value brings the defect back. The seed no longer writes or deletes the row at all. Preflight shipped with the remedy, never before it — and its first version was **wrong**, found by an actual `prod` boot: reading the aggregate `/management/health` would have rolled back a healthy stack whenever the Kafka binder was down. It reads `brokerage.termsInForce` from `/management/info` instead. 24 unit tests plus 4 IT cases, every guarded thing mutated separately; one CI check, watched firing six ways including on a comment |
-| **NEW-19** | Two sites convert an appointment with `ZoneOffset.UTC` and ignore `Booking.zoneId` | DONE | D58 — both read `booking.getZoneId()` now, and the **two sites are one derivation**: `cancellationPreview` already called `isLate` while computing the same instant a second time, so the resource asks `BookingWorkflow.scheduledAt` for it. The decision the item reserved is **answered by construction, re-established rather than inherited**: `zone_id` is `NOT NULL` with **no column default** (the item and D55 both say otherwise), written at exactly one live site and never recomputed, so no in-flight booking's quoted boundary moves and nothing needed migrating. A zone tzdb cannot read falls back to `MARKET_ZONE` with a WARN rather than making a booking impossible to cancel. 9 tests east and west of UTC, both sites **mutated separately** — the resource alone is red at the endpoint while every unit test stays green. One CI check, watched firing three ways, for the third site no test can cover. Reviewed 2026-09-09, three non-blocking findings, all applied — the sharpest being a **pre-existing** test whose fixture set no zone and so began routing ten assertions through the new fallback. Opened **NEW-20** for the write side |
-| **NEW-20** | A booking stores whatever zone the catalogue hands it, and nothing parses it | DONE | D60 — the decision is a **split**, not either shape the item offered: *absent is a state, unreadable is an error*. Null or blank still defaults (a catalogue one release behind, D56's deployment); a non-blank value tzdb cannot read is **502 and no booking**, because no release of catalog produces one and this estate refuses at a boundary (D45/D50/D57, and D22 on this very endpoint). `CapturedZone` follows `SlotTime`; it stores `ZoneId.of(x).getId()`, so the column round-trips — **measured**, all 604 region ids are their own id while the offset spellings normalise. `DEFAULT_ZONE_ID` deleted, default is `MARKET_ZONE`, three zone constants stay three. **The read-side fallback is NOT dead code** and the item was wrong to expect it: 302 rows were written before this, and a parse at one door is not a check constraint — said on `zoneOf` itself. 25 unit + 5 IT, **four mutations run separately** (the derivation can be right while the door is wrong, and it was). Catalog gets a test on its sole writer's constant plus a CI check scanning **all five** services, watched firing seven ways, so the day catalog grows onboarding its `setZoneId` is red. **Reviewed 2026-09-09, sound, two findings applied**: the sweep was line-based so a **wrapped** `.zoneId(\n raw)` evaded it — and prettier formats Java here, so that shape arrives without intent — and the ERROR log did not delimit the value, hiding the trailing-space fixture in the one place the refusal sends an operator. The check's service list is **enumerated, not derived**, now said so in both places |
-| **NEW-21** | The generated Kafka sample writes to the shared broker with no caller at all, and has written 5.6 million times | READY | D59 — found while establishing NEW-17, and **larger than the door NEW-17 closed**. `broker.KafkaProducer` is a generated `Supplier<String>` bound to `kafkaProducer-out-0` and polled on Spring Cloud Stream's default one-second schedule, in **all five** services. Measured on the shared broker: end offset **5,603,896**, rising at **6/s** over a timed 60 s window. Nothing consumes it and nothing asked for it. The gateway's `broker.KafkaConsumer` sink is the other half — `unicast().onBackpressureBuffer()` with no subscriber since NEW-17. Not fixed there because the remedy is an edit to the generated `application-kafka.yml` (a `spring.cloud.function.definition` naming a bean that no longer exists refuses to bind), which is a regeneration-hazard row and a decision of its own |
-| **NEW-22** | The gateway seeds `admin` with a published default password, in every profile including `prod` | DONE | D61 — the generated Mongock changeunit had **no `@Profile`**, and `mongock.migration-scan-package` is in the **base** `application.yml` with no `prod` override, so it ran on any fresh Mongo — which is exactly what a first production deploy creates. The hash was **measured, not assumed**: a red test proved it is bcrypt of the string `admin`, on an account carrying `ROLE_ADMIN` on the gateway whose tokens all five services accept. **Nothing was ever red and nothing would have been.** Takes **hc-professional's shape** — admin in every profile because an empty prod database has no other way in, demo accounts skipped under `prod`, idempotent `saveUserIfMissing` — which means it stops being a changeunit and becomes an `ApplicationRunner` (a changeunit is not a Spring bean, so the `Environment` and the `@Value` have nowhere to live). Mongock stays, with an empty scan package; **it tolerates that**, established by booting an IT rather than by reading. **Departs from that sibling on the open question**: `prod` with no password **refuses** rather than falling back to a derived value with a warning, following D35/D45 — hc-professional's fallback is what production gets by default there, since nothing in that repository sets the variable. The refusal is inside the missing-account supplier, so an estate whose admin already exists keeps deploying. hc-admin's `@Profile({dev,test})` rejected, and the stated reason **corrected**: it does have a prod path (`AdminBootstrapInitializer`), and its real cost is two admin-creating classes with two property names, one silently inert. 8 unit tests, a CI check whose first part sweeps for a **committed bcrypt hash** rather than for the logic — because the file is generated and a regeneration takes the logic with it — watched firing **14 ways**, each mutated separately. A neighbouring check was widened after **measuring** that `HC_[A-Z]+_DB_PASSWORD` could not see `HC_GATEWAY_ADMIN_PASSWORD`. **`hc-patient` has the identical defect and was not touched** — different repository, raise it there |
+
+**This table indexes the WORK PACKAGES, which is what its header says it is — the `NEW-*` items are
+read in their own sections (decisions.md D83, backlog NEW-41).** It carried rows for NEW-1..NEW-22 and
+none for NEW-23..NEW-39, so it indexed 41 of 58 items while continuing to look complete; and every one
+of the status disagreements this file has produced came from the same fact living in two places. The
+duplication is removed rather than guarded for the `NEW-*` half. It REMAINS for the nineteen work
+packages above, where two rows had already drifted (WP-17, WP-18), so those pairs are checked by CI:
+*"the packages table may not disagree with its own sections"*.
 
 ---
 
@@ -817,12 +812,19 @@ the catalogue grows.
 
 D17, D18. Budget for a video provider and a WhatsApp BSP, if either is wanted.
 
-## WP-18 — Production `infranet` alias · BLOCKED
+## WP-18 — Production `infranet` alias · PARTLY DONE
 
 D28/D30. Whether `gateway` is already a DNS alias on production's shared `infranet`. Cannot be answered
 from a workstation. Largely defused — the production compose services were renamed `hc-market-*` with
 explicit container names, so a collision is impossible whatever else is on that network — but the
 question itself is still unanswered on the host.
+
+**`PARTLY DONE`, and it was `CLOSED` in the table against `BLOCKED` here** (decisions.md D83, backlog
+NEW-41). Neither fitted: the rename shipped and is verified, so `BLOCKED` understates it, and the
+question is still unanswered on a host nobody here can reach, so `CLOSED` overstates it. `PARTLY DONE`
+is the vocabulary's own word for exactly that split — *"some of it is built and verified while the rest
+is blocked on a named person"* — and the half that is blocked needs **production host access**, which is
+WP-19's dependency too.
 
 ## NEW-3 — the receipt scrub is real, but its test cannot fail · DONE
 
@@ -3309,7 +3311,7 @@ merely loading.
 
 ---
 
-## NEW-41 — the packages table disagrees with three of its own sections, and stopped indexing after NEW-22 · READY
+## NEW-41 — the packages table disagrees with three of its own sections, and stopped indexing after NEW-22 · DONE (D83)
 
 Opened at **D78's review**, which found one row and asked for the whole table to be checked rather than
 that row fixed. Doing so turned up two more disagreements and a bigger finding underneath them, which is
@@ -3355,6 +3357,28 @@ says nothing about a file disagreeing with itself.
 A derived check is possible and probably not worth it: a `grep` pairing every table row with its section
 heading would have caught all three, and is the same shape as `build.yml`'s CRUD gate one document over.
 Cost it against the third option, which removes the pairing rather than guarding it.
+
+**Closed by D83, taking the third shape — and the check was worth it for the half the third shape does
+not cover.** The 22 `NEW-*` rows are deleted and the table indexes the nineteen work packages, which is
+what its header always said. The vocabulary paragraph now says where a status lives: in the item's own
+`## ` heading, and for a `NEW-*` item that is the only place.
+
+**The costing above is right about the `NEW-*` rows and wrong about the WP rows.** Two of the three
+disagreements were WP rows, and that pairing survives the third shape — so it is guarded by
+`.github/checks/backlog-table-agrees.sh`, wired into `build.yml`. It compares the **status word** and not
+the whole cell: a differing qualifier is "the same answer in different words" by this item's own reading,
+so `DONE` against `DONE, merged as PR #19` is a note. **The check's first version refused exactly that**,
+on WP-04 and WP-11, and was wrong.
+
+WP-18 is `PARTLY DONE` in both places, since neither of its two statuses fitted, and its "Blocked on"
+cell now names production host access rather than saying the rename made it moot. WP-17 takes its
+section's `BLOCKED`. **A fourth pair turned up and is not a defect**: WP-16's row said `WON'T (measured)`
+against `WON'T, for now` — NEW-11's class again; normalised anyway, since identical cells cost nothing.
+
+One measurement warning from doing it, recorded because it produced a wrong reading first: a
+`grep '^| \*\*WP-'` over the whole file picks up the illustrative table **in this section**, which has the
+same row shape, and reported WP-17 and WP-18 as already agreeing when they did not. The check matches the
+table's header and stops at the first blank line for that reason.
 
 ---
 

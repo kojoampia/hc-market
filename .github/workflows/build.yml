@@ -2165,6 +2165,18 @@ jobs:
       - name: …and that check must fail on every state it exists to refuse
         run: ./.github/checks/admin-seed-wiring-test.sh
 
+      # docs/backlog.md keeps each item's status in its `## ` heading and a SECOND copy of it, for the
+      # nineteen work packages, in the packages table at the top. That duplication produced every status
+      # disagreement the file has had — NEW-21 `READY` against `DONE (D62)`, WP-17 `READY (spec only)`
+      # against `BLOCKED`, WP-18 `CLOSED` against `BLOCKED`. D83 removed the duplication for the 23
+      # `NEW-*` rows (the table indexes work packages, which is what its header always said) and kept it
+      # for the WP half, where a reader wants all nineteen at once. What remains is guarded rather than
+      # trusted. It compares the STATUS WORD and not the whole cell: a differing qualifier is "the same
+      # answer in different words" by NEW-41's own reading, so `DONE` against `DONE, merged as PR #19`
+      # is a note rather than a refusal — the check's first version refused it and was wrong.
+      - name: The packages table may not disagree with its own sections
+        run: ./.github/checks/backlog-table-agrees.sh
+
       # The image name is written in THREE places: image_for() in deploy-prod.sh, that script's own
       # header, and spec §12's channel table. They disagreed for weeks — header and spec said
       # ghcr.io/<owner>/healthconnect-<service>, the code produced hc-market-<service> — and
