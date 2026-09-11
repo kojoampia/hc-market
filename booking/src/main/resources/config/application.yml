@@ -295,6 +295,13 @@ healthconnect:
   # The credentials an OUTBOUND call needs are deliberately not modelled: their shape differs per
   # provider and nobody here has read the documentation. Whoever has an account adds the fields
   # their provider actually has, in the same commit as the adapter that reads them.
+  # Online sessions -- decisions.md D17, D86, backlog WP-17. D17's v1 needs NO provider: the
+  # professional supplies their own meeting link and the platform relays it, which is what an
+  # unconfigured estate does. `dailyco` is the upgrade D17 named and is a SEAM -- enabling it refuses
+  # every online session and says so at boot, because nobody has an account, a price or a chosen API.
+  sessions:
+    dailyco:
+      enabled: ${HC_DAILYCO_ENABLED:false}
   payments:
     # Paystack is the one adapter that is implemented -- decisions.md D50. It still authorizes
     # nothing on this estate: initialize requires the customer's email address and nothing here
@@ -308,6 +315,14 @@ healthconnect:
       # Milliseconds; 0 or less means the adapter's default of 10000. It has a timeout because the
       # call happens inside POST /api/bookings, with the customer waiting on it.
       timeout-ms: ${HC_PAYSTACK_TIMEOUT_MS:0}
+      # Whether the money-RETURNING call may run -- decisions.md D86. SEPARATE from `enabled` and absent
+      # by default, because turning a provider on is a routine deployment decision and turning on a
+      # refund path nothing has ever watched work is not the same decision. The refund call is written
+      # from Paystack's published API rather than from evidence -- hc-crowdfund-app, which D50 sourced
+      # initialize and the webhook from, calls only /transaction/initialize -- so nothing in this
+      # workspace has seen it succeed. An enabled provider with refunds off authorizes and reads
+      # callbacks exactly as before and refuses `refund` with an IllegalStateException naming this key.
+      refunds-enabled: ${HC_PAYSTACK_REFUNDS_ENABLED:false}
     hubtel:
       enabled: ${HC_HUBTEL_ENABLED:false}
       secret: ${HC_HUBTEL_SECRET:}

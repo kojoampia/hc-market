@@ -139,6 +139,19 @@ public class PaystackPaymentProvider extends ProviderAwaitingIntegration {
 
     private static final String INITIALIZE = "/transaction/initialize";
 
+    /**
+     * Read one transaction's state back. {@code GET /transaction/verify/{reference}} takes OUR reference
+     * — the same one {@code authorize} sent — which is why this call exists at all: the estate can ask
+     * about a payment using the only identifier it has.
+     */
+    private static final String VERIFY = "/transaction/verify/";
+
+    /**
+     * Give money back. {@code POST /refund} with {@code {transaction, amount}}, where {@code transaction}
+     * accepts the transaction reference.
+     */
+    private static final String REFUND = "/refund";
+
     /** Confirmed against a working integration; D43 guessed this spelling and hedged it. */
     private static final String SIGNATURE_HEADER = "x-paystack-signature";
 
@@ -180,10 +193,29 @@ public class PaystackPaymentProvider extends ProviderAwaitingIntegration {
         this.contacts = contacts;
     }
 
-    /** The booking path, and only the booking path. See the class comment for what is still a seam. */
+    /**
+     * Four of the six, and the other two do not exist in Paystack's model — {@code decisions.md} D86.
+     *
+     * <p>This list is the estate's account of itself at startup: WARN for a seam, INFO for an
+     * integration (see {@code ProviderAwaitingIntegration}). It names what is <em>written</em>, and
+     * D86 is explicit that written is not the same as verified against a live account — nothing here
+     * has spoken to Paystack, and {@code status} and {@code refund} are written from the published API
+     * rather than from a round trip anybody has watched.
+     *
+     * <p>{@code capture} and {@code voidAuthorization} are absent because there is nothing for them to
+     * do, not because they are unwritten. {@code /transaction/initialize} is a charge, not a two-step
+     * hold: the money moves when the customer completes the checkout, which arrives as
+     * {@code charge.success}. So there is no authorization held separately to capture, and none to
+     * void — before the customer pays there is nothing, and afterwards the operation is a refund. The
+     * interface's own javadoc anticipates exactly this: <em>"a provider that only does immediate
+     * charges implements authorize as a capture and returns CAPTURED — nothing here requires two steps
+     * or forbids one."</em> Both therefore keep {@code ProviderAwaitingIntegration}'s refusal, and each
+     * overrides it only to say <strong>why</strong>, because "not integrated" and "not a thing this
+     * provider has" are different facts for whoever reads the log.
+     */
     @Override
     protected List<String> integratedCalls() {
-        return List.of("authorize", "readCallback");
+        return List.of("authorize", "readCallback", "status", "refund");
     }
 
     /**
@@ -350,6 +382,199 @@ public class PaystackPaymentProvider extends ProviderAwaitingIntegration {
     }
 
     /**
+     * Asks Paystack what became of one transaction — {@code decisions.md} D86.
+     *
+     * <p>{@code GET /transaction/verify/{reference}}, with our own reference, which is the only
+     * identifier this estate holds for a payment. Read-only: it moves no money and creates nothing, so
+     * it is the one of the four that cannot do harm if this adapter's reading of the API is wrong.
+     *
+     * <p><strong>What it is for.</strong> D43 left a booking in {@code PENDING_PAYMENT} until a webhook
+     * confirms the money, and a webhook that never arrives leaves it there for ever — nothing in this
+     * estate sweeps it. This call is what a sweep or an operator would use to ask. Nothing calls it yet;
+     * it is reachable from the registry and from nowhere else, which is deliberate and is why no
+     * behaviour changes by adding it.
+     *
+     * <p><strong>The mapping, and the one asymmetry in it.</strong> Paystack answers
+     * {@code data.status}: {@code success} is the money moved, {@code failed} and {@code abandoned} are
+     * refusals, {@code pending}/{@code ongoing} mean the customer has not finished. A success maps to
+     * {@link PaymentState#CAPTURED} rather than {@code AUTHORIZED} for the same reason
+     * {@code readCallback} does — initialize is a charge and not a hold, and {@code holdsMoney()}
+     * decides whether an abandoned booking needs a refund or a void.
+     *
+     * <p><strong>Every non-success keeps the reference</strong>, through the canonical constructor.
+     * {@code PaymentOutcome.failed} drops it, and a failure naming no payment cannot cancel the booking
+     * that is waiting — D50's review finding, and the rule this package sets for every adapter.
+     *
+     * <p><strong>A status this adapter does not recognise is FAILED and not PENDING.</strong> That is the
+     * conservative direction only if you read it as "this estate will not claim money is on its way when
+     * it cannot tell": a wrong {@code PENDING} leaves a booking waiting for ever on a payment that may
+     * already have failed, while a wrong {@code FAILED} is visible and correctable. The status is logged
+     * so an unrecognised value is a line to read rather than a silent bucket.
+     */
+    @Override
+    public PaymentOutcome status(String providerReference) {
+        requireASecretKey();
+        if (providerReference == null || providerReference.isBlank()) {
+            // Not a provider fault and not a network call: asking Paystack about nothing would be a 404
+            // this adapter would then have to interpret.
+            return new PaymentOutcome(PaymentState.FAILED, providerReference, "no payment reference was given to ask paystack about");
+        }
+        JsonNode root = getJson(VERIFY + providerReference);
+        String status = text(root.path("data").path("status"));
+        String reference = text(root.path("data").path("reference"));
+        // OUR reference is the fallback, not the answer: a verify response that names a different
+        // reference than the one asked about is a mismatch this adapter must not paper over.
+        if (reference != null && !reference.isBlank() && !reference.equals(providerReference)) {
+            LOG.error("paystack answered about payment {} when asked about {}", reference, providerReference);
+            return new PaymentOutcome(
+                PaymentState.FAILED,
+                providerReference,
+                "the paystack payment provider answered about a different payment than the one asked about"
+            );
+        }
+        return switch (status == null ? "" : status) {
+            case "success" -> PaymentOutcome.captured(providerReference);
+            case "failed", "abandoned", "reversed" -> new PaymentOutcome(
+                PaymentState.FAILED,
+                providerReference,
+                "the paystack payment provider reports this payment did not complete"
+            );
+            case "pending", "ongoing", "queued" -> PaymentOutcome.pendingOnDevice(providerReference);
+            default -> {
+                LOG.warn("paystack reported an unrecognised status '{}' for payment {}", status, providerReference);
+                yield new PaymentOutcome(
+                    PaymentState.FAILED,
+                    providerReference,
+                    "the paystack payment provider reported a state this estate does not recognise"
+                );
+            }
+        };
+    }
+
+    /**
+     * Gives a customer's money back — {@code decisions.md} D86.
+     *
+     * <p>{@code POST /refund} with {@code {transaction, amount}}. {@code transaction} takes the
+     * reference, and {@code amount} is in the currency's minor unit exactly as {@code authorize} sends
+     * it, so no arithmetic happens here — pesewas in, pesewas out, which is what
+     * {@code MoneyIsMinorUnitsUnitTest} exists to keep true across this estate.
+     *
+     * <p><strong>THIS IS THE ONE CALL HERE THAT MOVES MONEY, AND IT IS WRITTEN FROM THE PUBLISHED API
+     * RATHER THAN FROM EVIDENCE.</strong> D50 integrated {@code authorize} and {@code readCallback} from
+     * a working integration in this workspace and refused the rest as guesswork; D86 records that the
+     * architect chose to write them anyway, and that {@code hc-crowdfund-app} calls only
+     * {@code /transaction/initialize}, so there was nothing in this workspace to source these from.
+     * Nothing here has spoken to Paystack.
+     *
+     * <p>So this refuses unless an operator has said, separately from enabling the provider at all, that
+     * an unverified refund path may run: {@code healthconnect.payments.paystack.refunds-enabled}, absent
+     * by default. That is not ceremony — turning a provider on is a routine deployment decision, and
+     * turning on a money-returning call nobody has watched work is not the same decision, and must not
+     * ride along with it.
+     *
+     * <p><strong>A refund is asynchronous at Paystack</strong>, so a 2xx here means accepted and not
+     * settled: {@code data.status} comes back {@code pending} or {@code processing} for a refund that
+     * will complete later. This returns {@link PaymentState#REFUNDED} only for a status that says the
+     * money is back, and {@code PENDING} otherwise — never REFUNDED on the strength of a 2xx, because
+     * {@code holdsMoney()} would then be wrong in the direction that loses track of a customer's money.
+     */
+    @Override
+    public PaymentOutcome refund(String providerReference, long amountMinor, String currency, String reason) {
+        if (!SETTLES_IN.equalsIgnoreCase(currency)) {
+            // The same shape authorize uses, and for the same reason: name the currency this adapter can
+            // take rather than the one it was handed, because the first is a fact about the adapter and
+            // the second is a value off a booking.
+            LOG.error("paystack was asked to refund payment {} in a currency this adapter cannot declare", providerReference);
+            return PaymentOutcome.failed("the paystack payment adapter can only take %s".formatted(SETTLES_IN));
+        }
+        requireASecretKey();
+        if (!refundsEnabled()) {
+            // IllegalStateException, not the UnsupportedOperationException a seam throws: this call is
+            // written and is being withheld by configuration, which is an operator's decision to reverse
+            // and not an implementer's. Both reach the customer as a 502 and change no booking.
+            throw new IllegalStateException(
+                "the paystack refund call is written but has never been verified against a live account, so it is off " +
+                "until an operator sets healthconnect.payments.paystack.refunds-enabled=true (decisions.md D86)"
+            );
+        }
+        if (providerReference == null || providerReference.isBlank()) {
+            return new PaymentOutcome(PaymentState.FAILED, providerReference, "no payment reference was given to refund");
+        }
+        if (amountMinor <= 0) {
+            // Refusing here rather than sending it: Paystack treats an absent amount as a FULL refund, so
+            // a zero or negative that reached the wire could return everything. That is the most
+            // expensive possible reading of a bad argument, and it is one line to make impossible.
+            return new PaymentOutcome(
+                PaymentState.FAILED,
+                providerReference,
+                "a refund must name a positive amount — an absent amount is a full refund at this provider"
+            );
+        }
+        LOG.info("asking paystack to refund {} minor units of payment {}", amountMinor, providerReference);
+        JsonNode root = postJson(REFUND, Map.of("transaction", providerReference, "amount", amountMinor));
+        String status = text(root.path("data").path("status"));
+        return switch (status == null ? "" : status) {
+            case "processed", "success", "reversed" -> PaymentOutcome.refunded(providerReference);
+            // ACCEPTED IS NOT DONE. A refund Paystack has taken but not settled is still money the
+            // customer does not have, and holdsMoney() must not be told otherwise.
+            case "pending", "processing", "awaiting-approval" -> PaymentOutcome.pendingOnDevice(providerReference);
+            default -> {
+                LOG.warn("paystack reported refund status '{}' for payment {}", status, providerReference);
+                yield new PaymentOutcome(
+                    PaymentState.FAILED,
+                    providerReference,
+                    "the paystack payment provider did not accept this refund"
+                );
+            }
+        };
+    }
+
+    /**
+     * There is nothing to capture — {@code decisions.md} D86.
+     *
+     * <p>Overridden only to say so. {@code /transaction/initialize} is a charge and not a two-step hold,
+     * so the money moves when the customer completes the checkout and arrives as {@code charge.success}:
+     * no authorization is ever held separately for a later capture. The interface anticipates this
+     * explicitly — <em>"a provider that only does immediate charges implements authorize as a capture and
+     * returns CAPTURED"</em> — which is what {@code readCallback} does.
+     *
+     * <p>It still throws, and the exception type is unchanged, so {@code BookingPayments} answers the
+     * customer exactly as before. What changes is the sentence an operator reads: <strong>"not
+     * integrated" and "this provider has no such operation" are different facts</strong>, and only the
+     * second tells you not to wait for an implementation.
+     */
+    @Override
+    public PaymentOutcome capture(String providerReference, long amountMinor, String currency) {
+        throw new UnsupportedOperationException(
+            "paystack has no capture: /transaction/initialize is a charge rather than a two-step hold, so the money " +
+            "moves at charge.success and there is never an authorization held for a later capture (decisions.md D86)"
+        );
+    }
+
+    /**
+     * There is nothing to void — {@code decisions.md} D86.
+     *
+     * <p>The same fact as {@code capture}, on the other side of it: before the customer completes the
+     * checkout nothing is held, and afterwards the operation is a {@link #refund}. So a void has no
+     * Paystack equivalent in this flow at any moment.
+     *
+     * <p><strong>This is the call D43's dead end needs and it is the one that cannot be written.</strong>
+     * A {@code PENDING_PAYMENT} booking is not the customer's to cancel, because the provider may still
+     * hold a live authorization — and the exit D43 wanted was to void it. Paystack's model means there is
+     * no such exit: the customer either completes the checkout or abandons it, and an abandoned one is
+     * answered by {@link #status} rather than cancelled from this side. That is a fact about the provider
+     * and not a gap in this adapter, which is why it is recorded here rather than left as a refusal
+     * indistinguishable from an unwritten call.
+     */
+    @Override
+    public PaymentOutcome voidAuthorization(String providerReference, String reason) {
+        throw new UnsupportedOperationException(
+            "paystack has no void: nothing is held before the customer completes the checkout, and afterwards the " +
+            "operation is a refund — so there is no authorization to cancel at any point (decisions.md D86)"
+        );
+    }
+
+    /**
      * Refuses to use a key that is not a secret key.
      *
      * <p>{@code IllegalStateException} rather than the {@code UnsupportedOperationException} the
@@ -357,6 +582,52 @@ public class PaystackPaymentProvider extends ProviderAwaitingIntegration {
      * adapter is written and is holding the wrong value, which is a job for an operator rather than
      * for an implementer. Both reach the customer as the same 502 and no booking.
      */
+    /**
+     * One authenticated GET, parsed — {@code decisions.md} D86.
+     *
+     * <p>Nothing is caught. A non-2xx, a read timeout or a body that is not JSON all throw, and
+     * {@code BookingPayments} answers {@link PaymentState#FAILED} with the whole exception at ERROR —
+     * the shape D44 built for a real adapter, and better than a composed {@code failed} because it
+     * carries a stack trace to the one line an operator will read. {@code authorize} works the same way
+     * and deliberately so.
+     */
+    private JsonNode getJson(String path) {
+        String body = http.get().uri(path).header(HttpHeaders.AUTHORIZATION, "Bearer " + signingSecret()).retrieve().body(String.class);
+        return parse(path, body);
+    }
+
+    /** One authenticated POST with a JSON body, parsed. Same no-catch rule as {@link #getJson}. */
+    private JsonNode postJson(String path, Map<String, Object> body) {
+        String answer = http
+            .post()
+            .uri(path)
+            .header(HttpHeaders.AUTHORIZATION, "Bearer " + signingSecret())
+            .contentType(MediaType.APPLICATION_JSON)
+            .body(body)
+            .retrieve()
+            .body(String.class);
+        return parse(path, answer);
+    }
+
+    /**
+     * Parses a response, refusing an empty or unparseable one rather than handing back a node that reads
+     * as "no fields" — which every {@code text(...)} below would then answer null for, and every
+     * {@code switch} would take its default branch on. A missing body and a body saying nothing useful
+     * must not be the same thing to this class.
+     */
+    private JsonNode parse(String path, String body) {
+        if (isBlank(body)) {
+            throw new IllegalStateException("paystack answered %s with an empty body".formatted(path));
+        }
+        try {
+            return json.readTree(body);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            // The path, never the body: a provider's response is somebody else's prose and D44 keeps it
+            // out of anything this estate composes.
+            throw new IllegalStateException("paystack answered %s with something that is not JSON".formatted(path), e);
+        }
+    }
+
     private void requireASecretKey() {
         if (!canVerifyCallbacks()) {
             throw new IllegalStateException("the paystack adapter has no secret key configured, so it cannot authorize anything");

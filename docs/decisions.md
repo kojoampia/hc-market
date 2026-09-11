@@ -15664,3 +15664,162 @@ indexing, and guessing which would have produced a fix that passed its own test.
   that the gateway's own meters take the same path is asserted by the IT, not by the probe.
 - **`micrometer-1.5` is the instrumentation module measured**; a future agent that renames or re-scopes
   it would need the script re-run, which is why the script exists rather than this paragraph.
+
+## D86 — Three answers from one exchange: Paystack's other calls, the session seam, and a probe for a host nobody here can reach
+
+**Ratified 2026-09-11.** Advances backlog **WP-13**, **WP-17** and **WP-18**. One decision rather than
+three because the three answers came from one architect exchange, and every file written below cites
+D86; the parts are separated and can be read alone.
+
+**All three items had their engineering half built already.** What was left was two documents, a
+regulator's answer, a budget and a host nobody here can reach — so this decision is what could be
+advanced without any of those, plus what was learned by trying.
+
+---
+
+### Part 1 — WP-13: Paystack's other four calls
+
+**The architect chose to write them, over a stated objection.** D50 refused them as guesswork and the
+option was described as such before it was taken; that is the architect's call and it is recorded here
+as one. What follows is the honest version of it.
+
+**`hc-crowdfund-app` calls only `/transaction/initialize`.** D50 sourced `authorize` and the webhook
+from that live integration — *"a fact about Paystack, not a copied file"*. Measured before writing
+anything: there is **nothing else in this workspace to source from**. So these are written from
+Paystack's published API and **nothing here has spoken to Paystack**.
+
+**Two of the four do not exist, and that is the finding.** `/transaction/initialize` is a charge and not
+a two-step hold: the money moves when the customer completes the checkout, arriving as
+`charge.success`. So there is no authorization held separately to **capture**, and none to **void** —
+before the customer pays there is nothing, and afterwards the operation is a refund. The interface
+anticipated this exactly: *"a provider that only does immediate charges implements authorize as a
+capture and returns CAPTURED — nothing here requires two steps or forbids one."*
+
+Both therefore keep their refusal and override it **only to say why**, because "not integrated" and
+"this provider has no such operation" are different facts and only the second says not to wait for an
+implementation. **This is also the answer to D43's dead end**: a `PENDING_PAYMENT` booking cannot have
+its payment voided because Paystack has no void, which is a fact about the provider rather than a gap
+in the adapter.
+
+**`status` is implemented and is read-only** — `GET /transaction/verify/{reference}`, with our own
+reference, which is the only identifier this estate holds. It is the call a sweep or an operator would
+use for the bookings D43 leaves in `PENDING_PAYMENT` when no webhook arrives. Three properties are
+decisions rather than mappings:
+
+- **every non-success keeps the reference**, through the canonical constructor, because
+  `PaymentOutcome.failed` drops it and a failure naming no payment cannot cancel the booking that is
+  waiting (D50's review finding);
+- **an unrecognised status is `FAILED`, never `PENDING`** — a wrong PENDING leaves a booking waiting
+  for ever on a payment that may already have failed, while a wrong FAILED is visible and correctable;
+- **an answer naming a different reference is refused** rather than read. It is the one wrong answer
+  that would otherwise pass unnoticed: the state would be believed and attributed to the booking that
+  asked.
+
+**`refund` is implemented and is off by default**, behind
+`healthconnect.payments.paystack.refunds-enabled` — **separate from `enabled`** and absent unless set.
+Turning a provider on is a routine deployment decision; turning on a money-returning call nobody has
+watched work is not the same decision and must not ride along with it. Two more decisions in it:
+
+- **accepted is not done.** A 2xx means Paystack took the refund, not that it settled, so `REFUNDED` is
+  returned only for a status that says the money is back and `PENDING` otherwise — because
+  `holdsMoney()` would otherwise be wrong in the direction that loses track of a customer's money;
+- **a non-positive amount is refused before the wire.** Paystack treats an absent amount as a **full**
+  refund, so a zero that reached the request could return everything. One line to make impossible.
+
+**Verified**: 36 unit tests (was 25), including what the refund actually **sends** — path, bearer,
+`transaction`, and `amount` unchanged at 15000, because a test reading only the outcome passes for an
+adapter that refunded the wrong transaction or the wrong amount.
+
+**Not verified, and this is the part to re-read before enabling refunds**: no call here has reached
+Paystack. The wire format of `verify` and `refund`, the status vocabularies, and the asynchronous refund
+behaviour are all from the published API. `integratedCalls()` names four now, and D86 is explicit that
+**written is not verified**.
+
+---
+
+### Part 2 — WP-17: the session seam, and why v1 was never blocked
+
+**Re-reading D17 found that WP-17's block does not apply to v1.** The item has sat BLOCKED on "budget
+for a video provider" since D17 — whose recommendation is: *"the professional supplies their own meeting
+link (Meet, Zoom, whatever they already use); the platform stores it and reveals it an hour before,
+which is the promise the prototype makes."* **That needs no account, no budget and no integration.**
+Daily.co is named as *"the upgrade if a no-account, in-browser room with a waiting room is wanted
+later"*. So the budget question is about the upgrade alone, and it has been reading as though it blocked
+the feature.
+
+The architect asked for a seam behind a disabled flag, and that is what shipped — for the **upgrade**:
+`MeetingRoomProvider`, `MeetingRoom`, `UnconfiguredMeetingRoomProvider`, `ProviderAwaitingSelection`,
+`DailyCoMeetingRoomProvider`, and `SessionConfiguration`. Four decisions in it:
+
+- **the default is not a refusal.** With nothing configured, `UnconfiguredMeetingRoomProvider` reports
+  `professionalSupplied()` — which *is* D17's v1. Had the default thrown, every caller would special-case
+  the normal case and the first to forget would turn "we relay the professional's link" into an error a
+  customer sees. Same distinction `PaymentState.OFF_PLATFORM` draws from `FAILED`;
+- **a selected-but-unwritten provider refuses and does not fall back**, or an estate that deliberately
+  enabled a hosted provider would silently behave as though it had not;
+- **the refusal names what it needs** — a paid account and key, a room-lifetime decision, a recording
+  decision, and a field on `Booking` that does not exist — so an operator learns it is waiting on them
+  rather than on code;
+- **no recording, not even as a seam.** D17 recommends none in v1 *because* it drags in retention and
+  consent, so there is no method that could start one. A unit test asserts the interface has exactly
+  `name` and `create`, so adding one goes red.
+
+**One bean that chooses, not two beans and a condition.** Nothing chooses a meeting-room provider per
+booking — an estate either hosts rooms or relays links, for every booking — so the payments registry's
+shape would be scaffolding for a choice nobody makes. And `@ConditionalOnProperty` plus
+`@ConditionalOnMissingBean` is **D44's ordering hazard**, which D45 deleted from the payments
+configuration rather than reasoned about. One method with an `if` has no order to get wrong.
+
+**Nothing calls it**, deliberately: `Booking` has nowhere to store a room (D17 said so), and adding a
+field is a JDL change with a Liquibase changelog behind it. That is v1's actual work, it is
+**unblocked**, and it is recorded as **NEW-45** rather than smuggled in behind a seam.
+
+**WhatsApp is untouched.** D18 puts it at v1.5 behind a BSP account and says in-app plus email is v1 —
+in-app is the `Notification` table and is built. A seam for it would need a channel, a delivery state, a
+provider reference, a dedupe key and an outbox (D18's own costing); that is a package, not a flag.
+
+---
+
+### Part 3 — WP-18: the question as one command
+
+**`deploy/probe-infranet-aliases.sh`** answers whether `gateway` is already a DNS alias on production's
+shared `infranet`, for somebody who is on the host. The architect chose this over closing the item.
+
+**Read-only in the strong sense**: no container, no network join, no pull, no file. `docker network
+inspect` alone answers it, because compose records a container's aliases on the network object. A probe
+that started a throwaway container to run `getent hosts` would be the obvious implementation and a worse
+one — it changes state on a production host to learn something already recorded.
+
+**It takes no `--host` and no credential, deliberately.** Production is halted here, and a script that
+could reach out is a script somebody could point at production by accident. Whoever has access runs it
+there.
+
+**Verified against a network I can see** — `hcnet`, which has 15 containers — and in all three states,
+each naming its own cause: the network present, the network absent, and the daemon unanswerable. That
+last pair is D71's rule: docker exits 1 and prints `[]` for both, so they are told apart by docker's
+words and never by its status.
+
+**Its output contains a finding of its own.** On `hcnet`, **every** name is a container name and **not
+one** is a compose alias — which independently confirms D68's recorded state, that something reconnected
+those containers by hand and stripped the alias sets. The probe now says so when it sees it, because in
+that state "free" is a reading of a moment rather than of the network: a compose recreate republishes
+every service name at once.
+
+**Two defects of mine, found by running it.** It contained a `docker run busybox` line inside a script
+whose whole claim is that it creates no container — removed. And both refusal arms took `head -1` of
+docker's output, which for a dead `DOCKER_HOST` is a **blank line**, so the refusal named no cause at
+all. They take the first non-empty line now. That is the nineteenth instance of this family in this
+repository and it was in the file written to be careful about it.
+
+---
+
+### What none of this closes
+
+- **WP-09** waits on the DPC registration number and three documents. The architect said the number
+  would be supplied and it was not; `HC_DPC_REGISTRATION` has no fallback, so the desk reports `null`
+  rather than a placeholder, which is the honest state. **When it arrives it goes in the decision record
+  and not in committed configuration** — this repository is public and the number identifies a real
+  organisation.
+- **WP-13's Act 987 question** is unanswered and `PaymentProvider` still has no method that pays the
+  professional, which is what lets the answer go either way without a rewrite.
+- **WP-17's budget** for the hosted upgrade, and **WP-18's and WP-19's host access**.

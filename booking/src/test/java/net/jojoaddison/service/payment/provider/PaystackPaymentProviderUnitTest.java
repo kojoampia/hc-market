@@ -534,11 +534,16 @@ class PaystackPaymentProviderUnitTest {
      * opposite of the truth without this going red.
      */
     @Test
-    @DisplayName("paystack declares the two calls it implements; the other two adapters declare none")
+    @DisplayName("paystack declares the four calls it implements; the other two adapters declare none")
     void theStartupAccountIsTrue() {
+        // FOUR SINCE D86, and capture/voidAuthorization are deliberately absent: they are not unwritten,
+        // they do not EXIST in Paystack's charge model, and the account names what is written. Their own
+        // refusals say which of the two reasons applies.
         assertThat(provider(SECRET, CustomerContacts.unanswered()).integratedCalls()).containsExactlyInAnyOrder(
             "authorize",
-            "readCallback"
+            "readCallback",
+            "status",
+            "refund"
         );
         assertThat(new HubtelPaymentProvider(settings(SECRET, null)).integratedCalls()).isEmpty();
         assertThat(new MtnMomoPaymentProvider(settings(SECRET, null)).integratedCalls()).isEmpty();
@@ -574,25 +579,227 @@ class PaystackPaymentProviderUnitTest {
     }
 
     /**
-     * Everything that is not the booking path still refuses — {@code decisions.md} D50.
+     * {@code capture} and {@code void} refuse, and they say WHY — {@code decisions.md} D86.
      *
-     * <p>The working evidence for this integration covers {@code initialize} and the webhook, and
-     * nothing else. {@code capture}, {@code refund}, {@code voidAuthorization} and {@code status} are
-     * therefore left exactly as D45 left them rather than written from what a Paystack API plausibly
-     * looks like. The consequence is stated in D50 and is not silent: a {@code PENDING_PAYMENT}
-     * booking whose creation then fails cannot have its payment cancelled, so
-     * {@code BookingPayments.release} flags the row for a person.
+     * <p>They are not unwritten seams any more; they are calls Paystack's model does not have.
+     * {@code /transaction/initialize} is a charge and not a two-step hold, so no authorization is held
+     * for a later capture and none exists to void — before the customer pays there is nothing, and
+     * afterwards the operation is a refund.
+     *
+     * <p><strong>The exception type is unchanged on purpose</strong>, so {@code BookingPayments} answers
+     * the customer exactly as before and no behaviour moves. What is asserted is the <em>message</em>,
+     * because "not integrated" and "this provider has no such operation" are different facts for whoever
+     * reads the log, and only the second says not to wait for an implementation. Asserting the type alone
+     * would pass for the old generic refusal.
+     *
+     * <p>And neither may reach the wire: a refusal that first made a round trip would be a request
+     * Paystack has no endpoint for.
      */
     @Test
-    @DisplayName("capture, refund, void and status are still seams and still refuse")
-    void everythingOutsideTheBookingPathStillRefuses() {
+    @DisplayName("capture and void refuse as operations paystack does not have, not as unwritten seams")
+    void captureAndVoidRefuseWithTheirReason() {
         PaystackPaymentProvider adapter = provider(SECRET, contactsFor("ama@example.test"));
 
-        assertThatThrownBy(() -> adapter.capture("ref", 1L, "GHS")).isInstanceOf(UnsupportedOperationException.class);
-        assertThatThrownBy(() -> adapter.refund("ref", 1L, "GHS", "why")).isInstanceOf(UnsupportedOperationException.class);
-        assertThatThrownBy(() -> adapter.voidAuthorization("ref", "why")).isInstanceOf(UnsupportedOperationException.class);
-        assertThatThrownBy(() -> adapter.status("ref")).isInstanceOf(UnsupportedOperationException.class);
+        assertThatThrownBy(() -> adapter.capture("ref", 1L, "GHS"))
+            .isInstanceOf(UnsupportedOperationException.class)
+            .hasMessageContaining("no capture")
+            .hasMessageContaining("charge rather than a two-step hold");
+        assertThatThrownBy(() -> adapter.voidAuthorization("ref", "why"))
+            .isInstanceOf(UnsupportedOperationException.class)
+            .hasMessageContaining("no void")
+            .hasMessageContaining("the operation is a refund");
+
+        assertThat(paystack.received()).as("a refusal must not first make a round trip").isEmpty();
+    }
+
+    /**
+     * A refund is off until an operator turns it on, separately from enabling the provider — D86.
+     *
+     * <p>This is the one written call here that moves money and the one nothing has watched work. So the
+     * default is refused, with an {@code IllegalStateException} rather than the
+     * {@code UnsupportedOperationException} a seam throws: the two say different things to whoever reads
+     * the log, and this one means "written, and being withheld by configuration" — an operator's decision
+     * to reverse rather than an implementer's.
+     *
+     * <p>Asserted as <strong>no wire traffic</strong> as well as an exception, because a refusal that had
+     * already sent the request would have returned the money it was refusing to return.
+     */
+    @Test
+    @DisplayName("refund refuses while refunds-enabled is absent, and sends nothing")
+    void refundIsOffUntilAnOperatorEnablesIt() {
+        PaystackPaymentProvider adapter = provider(SECRET, contactsFor("ama@example.test"));
+
+        assertThatThrownBy(() -> adapter.refund("ref", 1L, "GHS", "why"))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("refunds-enabled");
+
+        assertThat(paystack.received()).as("nothing may reach paystack while the call is withheld").isEmpty();
+    }
+
+    // ---------------------------------------------------------------- status and refund (D86)
+
+    /** A verified transaction is CAPTURED, not AUTHORIZED — initialize is a charge and not a hold. */
+    @Test
+    @DisplayName("status: a successful verify is CAPTURED and keeps the reference")
+    void statusSuccessIsCaptured() {
+        paystack.willAnswer(200, """
+            {"status":true,"message":"Verification successful","data":{
+              "status":"success","reference":"%s","amount":15000}}""".formatted(BOOKING_REF));
+
+        PaymentOutcome outcome = provider(SECRET, CustomerContacts.unanswered()).status(BOOKING_REF);
+
+        assertThat(outcome.state()).isEqualTo(PaymentState.CAPTURED);
+        assertThat(outcome.providerReference()).isEqualTo(BOOKING_REF);
+    }
+
+    /**
+     * EVERY non-success keeps the reference. {@code PaymentOutcome.failed} drops it, and a failure naming
+     * no payment cannot cancel the booking that is waiting — D50's review finding, and the rule this
+     * package sets for every adapter. A test asserting only the state would pass for the dropped form.
+     */
+    @Test
+    @DisplayName("status: a failed or abandoned transaction is FAILED and still names the payment")
+    void statusFailureKeepsTheReference() {
+        for (String reported : new String[] { "failed", "abandoned", "reversed" }) {
+            paystack.willAnswer(200, """
+                {"status":true,"data":{"status":"%s","reference":"%s"}}""".formatted(reported, BOOKING_REF));
+
+            PaymentOutcome outcome = provider(SECRET, CustomerContacts.unanswered()).status(BOOKING_REF);
+
+            assertThat(outcome.state()).as("%s", reported).isEqualTo(PaymentState.FAILED);
+            assertThat(outcome.providerReference()).as("%s must still name the payment", reported).isEqualTo(BOOKING_REF);
+        }
+    }
+
+    @Test
+    @DisplayName("status: a transaction the customer has not finished is PENDING")
+    void statusPendingIsPending() {
+        paystack.willAnswer(200, """
+            {"status":true,"data":{"status":"ongoing","reference":"%s"}}""".formatted(BOOKING_REF));
+
+        assertThat(provider(SECRET, CustomerContacts.unanswered()).status(BOOKING_REF).state()).isEqualTo(PaymentState.PENDING);
+    }
+
+    /**
+     * An unrecognised status is FAILED rather than PENDING, and that direction is the decision.
+     *
+     * <p>A wrong PENDING leaves a booking waiting for ever on a payment that may already have failed; a
+     * wrong FAILED is visible and correctable. D86 §3.
+     */
+    @Test
+    @DisplayName("status: a status this adapter does not know is FAILED, never PENDING")
+    void statusUnknownIsFailedNotPending() {
+        paystack.willAnswer(200, """
+            {"status":true,"data":{"status":"something-new","reference":"%s"}}""".formatted(BOOKING_REF));
+
+        assertThat(provider(SECRET, CustomerContacts.unanswered()).status(BOOKING_REF).state()).isEqualTo(PaymentState.FAILED);
+    }
+
+    /**
+     * An answer about a DIFFERENT payment is refused rather than read.
+     *
+     * <p>The one wrong answer that would otherwise go through unnoticed: the state would be believed and
+     * attributed to the booking that asked, so a success for somebody else's transaction would capture
+     * this one.
+     */
+    @Test
+    @DisplayName("status: an answer naming another payment is FAILED, not believed")
+    void statusAboutAnotherPaymentIsRefused() {
+        paystack.willAnswer(200, """
+            {"status":true,"data":{"status":"success","reference":"somebody-elses-ref"}}""");
+
+        PaymentOutcome outcome = provider(SECRET, CustomerContacts.unanswered()).status(BOOKING_REF);
+
+        assertThat(outcome.state()).isEqualTo(PaymentState.FAILED);
+        assertThat(outcome.providerReference()).isEqualTo(BOOKING_REF);
+    }
+
+    @Test
+    @DisplayName("status: no reference is refused without asking paystack about nothing")
+    void statusWithNoReferenceAsksNothing() {
+        PaymentOutcome outcome = provider(SECRET, CustomerContacts.unanswered()).status("  ");
+
+        assertThat(outcome.state()).isEqualTo(PaymentState.FAILED);
         assertThat(paystack.received()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("refund: a processed refund is REFUNDED")
+    void refundProcessedIsRefunded() throws Exception {
+        paystack.willAnswer(200, """
+            {"status":true,"message":"Refund queued","data":{"status":"processed","transaction":{"reference":"%s"}}}"""
+            .formatted(BOOKING_REF));
+
+        PaymentOutcome outcome = refundingProvider().refund(BOOKING_REF, 15_000L, "GHS", "customer cancelled");
+
+        assertThat(outcome.state()).isEqualTo(PaymentState.REFUNDED);
+        assertThat(outcome.providerReference()).isEqualTo(BOOKING_REF);
+
+        // WHAT WAS SENT, not just what came back. For a call that returns money this is the assertion
+        // that matters: a test reading only the outcome passes for an adapter that refunded the wrong
+        // transaction, or the wrong amount, or sent nothing at all and mapped a canned reply.
+        StubPaystack.Received sent = paystack.received().get(0);
+        assertThat(sent.method()).isEqualTo("POST");
+        assertThat(sent.path()).isEqualTo("/refund");
+        assertThat(sent.header("Authorization")).isEqualTo("Bearer " + SECRET);
+        JsonNode body = new ObjectMapper().readTree(sent.body());
+        assertThat(body.path("transaction").asText()).isEqualTo(BOOKING_REF);
+        // PESEWAS IN, PESEWAS OUT — no arithmetic happens in this adapter, and 15000 must not become
+        // 150 or 1500000 on the way. The same property MoneyIsMinorUnitsUnitTest keeps across the estate.
+        assertThat(body.path("amount").asLong()).isEqualTo(15_000L);
+    }
+
+    /**
+     * ACCEPTED IS NOT DONE, and this is the assertion that keeps it so.
+     *
+     * <p>A refund Paystack has taken but not settled is still money the customer does not have, and
+     * {@code holdsMoney()} decides whether an abandoned booking needs a refund or a void. Returning
+     * REFUNDED on the strength of a 2xx would be wrong in the direction that loses track of a customer's
+     * money — which is why the mapping reads {@code data.status} rather than the HTTP status.
+     */
+    @Test
+    @DisplayName("refund: a queued refund is PENDING, never REFUNDED on the strength of a 2xx")
+    void refundPendingIsNotRefunded() {
+        paystack.willAnswer(200, """
+            {"status":true,"data":{"status":"pending"}}""");
+
+        PaymentOutcome outcome = refundingProvider().refund(BOOKING_REF, 15_000L, "GHS", "why");
+
+        assertThat(outcome.state()).as("a 2xx is acceptance, not settlement").isEqualTo(PaymentState.PENDING);
+        assertThat(outcome.state()).isNotEqualTo(PaymentState.REFUNDED);
+    }
+
+    /**
+     * A non-positive amount is refused BEFORE the wire, and this is the most expensive argument to get
+     * wrong: Paystack treats an absent amount as a FULL refund, so a zero that reached the request could
+     * return everything.
+     */
+    @Test
+    @DisplayName("refund: a zero or negative amount is refused without sending anything")
+    void refundRefusesANonPositiveAmountWithoutSending() {
+        for (long amount : new long[] { 0L, -1L }) {
+            PaymentOutcome outcome = refundingProvider().refund(BOOKING_REF, amount, "GHS", "why");
+
+            assertThat(outcome.state()).as("%d", amount).isEqualTo(PaymentState.FAILED);
+            assertThat(paystack.received()).as("%d must not reach the wire — an absent amount is a FULL refund", amount).isEmpty();
+        }
+    }
+
+    @Test
+    @DisplayName("refund: a currency this adapter cannot take is refused without sending anything")
+    void refundRefusesAnotherCurrency() {
+        PaymentOutcome outcome = refundingProvider().refund(BOOKING_REF, 15_000L, "NGN", "why");
+
+        assertThat(outcome.state()).isEqualTo(PaymentState.FAILED);
+        assertThat(outcome.reason()).contains("GHS");
+        assertThat(paystack.received()).isEmpty();
+    }
+
+    /** An enabled adapter whose refunds are on, for the four tests above that need the call to run. */
+    private PaystackPaymentProvider refundingProvider() {
+        PaymentProviderProperties.Provider settings = settings(SECRET, paystack.baseUrl());
+        settings.setRefundsEnabled(true);
+        return new PaystackPaymentProvider(settings, RestClient.builder(), new ObjectMapper(), CustomerContacts.unanswered());
     }
 
     // ---------------------------------------------------------------- fixtures

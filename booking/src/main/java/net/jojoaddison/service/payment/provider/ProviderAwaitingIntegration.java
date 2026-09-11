@@ -156,6 +156,22 @@ public abstract class ProviderAwaitingIntegration implements PaymentProvider {
         return settings.getSecret();
     }
 
+    /**
+     * Whether this provider's money-RETURNING calls may run — {@code decisions.md} D86.
+     *
+     * <p>A narrow reader rather than exposing {@code settings}, exactly as {@link #signingSecret()} and
+     * {@link #canVerifyCallbacks()} are: a subclass should be able to ask the two or three questions its
+     * integration needs and nothing else, so that adding a property cannot quietly widen what every
+     * adapter can reach.
+     *
+     * <p>Absent by default and separate from {@code enabled}. Only an adapter that actually has a refund
+     * call reads it — the two that do not have one refuse through {@link #notIntegrated(String)} without
+     * consulting any property, because "not written" is not a configuration state.
+     */
+    protected final boolean refundsEnabled() {
+        return settings != null && settings.isRefundsEnabled();
+    }
+
     @Override
     public PaymentOutcome authorize(PaymentIntent intent) {
         throw notIntegrated("authorize");

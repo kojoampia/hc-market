@@ -143,6 +143,22 @@ public class PaymentProviderProperties {
         private String baseUrl;
 
         /**
+         * Whether a money-RETURNING call this estate has never watched work may run — {@code decisions.md}
+         * D86.
+         *
+         * <p>Separate from {@link #enabled} and absent by default, deliberately. Turning a provider on is a
+         * routine deployment decision; turning on a refund path written from a published API rather than
+         * from a round trip anybody has observed is a different decision, and it must not ride along with
+         * the first. An enabled provider whose refunds are off authorizes and reads callbacks exactly as
+         * before and refuses {@code refund} with an {@code IllegalStateException} naming this property.
+         *
+         * <p>It is per-provider rather than estate-wide because the evidence is per-provider: Paystack's
+         * refund is written, Hubtel's and MTN MoMo's are not written at all, so an estate-wide switch
+         * would imply a choice about two adapters that have no such call.
+         */
+        private boolean refundsEnabled;
+
+        /**
          * How long the adapter waits on that API, in milliseconds. Zero or less means its default.
          *
          * <p>It has one because a payment call happens inside {@code POST /api/bookings}: an
@@ -169,6 +185,14 @@ public class PaymentProviderProperties {
 
         public String getBaseUrl() {
             return baseUrl;
+        }
+
+        public boolean isRefundsEnabled() {
+            return refundsEnabled;
+        }
+
+        public void setRefundsEnabled(boolean refundsEnabled) {
+            this.refundsEnabled = refundsEnabled;
         }
 
         public void setBaseUrl(String baseUrl) {
