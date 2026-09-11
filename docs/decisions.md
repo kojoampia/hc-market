@@ -15303,3 +15303,93 @@ state 19 still red through its own door · the floor's refusal reproduced agains
 Nothing in this decision changes a matcher's reach: the stripper itself is untouched, and the three
 edits are a derivation, a floor, and two comments. The claim that `build.yml` invokes the stripper
 nowhere is read off the file rather than observed by instrumenting a run.
+
+## D83 — The table indexes the work packages, which is what its header always said
+
+**Ratified 2026-09-11.** Closes backlog **NEW-41**, opened at D78's review.
+
+### §1 What was measured
+
+`docs/backlog.md` keeps each item's status in its `## ` heading and a **second copy** of it in the
+packages table at the top. Three rows disagreed with the section that owned them:
+
+| item | the table | its section |
+| --- | --- | --- |
+| **NEW-21** | `READY` | `DONE (D62)` |
+| **WP-17** | `READY (spec only)` | `BLOCKED` |
+| **WP-18** | `CLOSED` | `BLOCKED` |
+
+**And the table was not stale — it was partial.** It carried rows for NEW-1 through NEW-22 and **none**
+for NEW-23 through NEW-39, so it indexed 41 of 58 items while continuing to look like a complete index.
+22 `NEW-*` rows against 42 `NEW-*` sections.
+
+### §2 Decision: delete the `NEW-*` rows and let the headings be the record
+
+The third of the item's three shapes, and the reason is that it **removes the pairing rather than
+guarding it**. Correcting the three rows leaves a table indexing 41 of 58 items and still reading as
+complete; completing it means seventeen new rows each duplicating a status two screens down, which is
+the duplication that produced all three disagreements.
+
+The table's own header is `| WP | Package | Status | Blocked on |`. It now indexes exactly that.
+
+`docs/backlog.md`'s vocabulary paragraph says where a status lives: **in the item's own `## ` heading,
+and that is the only place it lives** for a `NEW-*` item. The general rule at the top of the file settles
+`decisions.md` against the code and says nothing about a file disagreeing with itself, so the new
+sentence says the heading wins.
+
+### §3 WP-18 is `PARTLY DONE`, because neither of its two statuses fitted
+
+The item said so and it is right. The rename shipped and is verified, so `BLOCKED` understates it; the
+question is still unanswered on a host nobody here can reach, so `CLOSED` overstates it. `PARTLY DONE` is
+the vocabulary's own word for that split. Its "Blocked on" cell said *"D37 — the rename made it moot"*,
+which is the `CLOSED` reading, and now names production host access.
+
+WP-17 takes its section's `BLOCKED`: a person has to want a video provider, which is this file's
+definition of `BLOCKED`, and the row's "(spec only)" describes what D37 delivered rather than a status.
+
+### §4 The WP pairing is KEPT and guarded, because it is what actually rotted
+
+Two of the three disagreements were WP rows. So the duplication is removed for the half where the table
+added nothing and kept for the half where a reader wants all nineteen packages at once — and that half
+gets `.github/checks/backlog-table-agrees.sh`, wired into `build.yml`.
+
+The item costed a derived check as *"possible and probably not worth it"* against option three. That is
+right about the `NEW-*` rows, whose pairing no longer exists, and **wrong about the WP rows**, whose
+pairing does and had already drifted twice.
+
+### §5 What must agree is the STATUS WORD, and the check's first version got that wrong
+
+Written to compare cells exactly, it refused **WP-04** (`DONE` against ``DONE, on `pepper-the-pseudonym` ``)
+and **WP-11** (`DONE` against `DONE, merged as PR #19`), where the heading carries extra information
+rather than a different status. NEW-41 settles this in its own text: a differing **qualifier** is "the
+same answer in different words" and is explicitly not a defect, which is why it lists NEW-11 so the next
+sweep does not re-find it.
+
+So each side normalises to the text before the first `,` or ` (` — `DONE (D81)` and `DONE, merged as PR
+#19` both become `DONE` — and only that is refused. A differing qualifier prints as a **note**, which
+keeps the pairs visible without making a correct change red. All four real disagreements differ in the
+vocabulary word.
+
+**A fourth pair was found on the way and is not a defect**: WP-16's row said `WON'T (measured)` against
+`WON'T, for now`. Same class as NEW-11. The row was normalised anyway, since identical cells cost
+nothing.
+
+### §6 Verified by running
+
+`bash -n` clean · the check reports *"the packages table agrees with all 19 work-package sections on the
+status word, and indexes every one of them (2 differ only in their qualifier)"*, exit 0 · **four
+controls, each red through its own cause**: a vocabulary-word disagreement, a row whose section is gone,
+a section whose row is gone, and the table header renamed (which reports *"found 0 work-package rows …
+so this check has no subject"* rather than passing) · 22 `NEW-*` rows removed and 19 WP rows kept, counted
+before and after.
+
+**The vacuity guard is the one that matters** and it is why the header is matched rather than a line
+range: a naive `grep '^| \*\*WP-'` over the whole file picks up the illustrative table **inside NEW-41's
+own section**, which has the same row shape. That is not hypothetical — it is how I first measured this
+item, and it reported WP-17 and WP-18 as already agreeing when they did not.
+
+### §7 Not exercised
+
+This is a documentation change plus a text check; no code path is affected. The check reads
+`docs/backlog.md` only, and it does not read the `NEW-*` sections at all — after §2 they have no second
+copy to disagree with, and giving them one here would reintroduce what the decision removed.
