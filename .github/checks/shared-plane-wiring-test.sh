@@ -36,8 +36,14 @@
 #   17  an expected branch renamed          — the set compared against a branch that is not there
 #   18  preflight never called at all       — every teardown assertion true, of a script that checks
 #                                             no plane on any action
-#   19  the shell stripper absent           — one file four checks trust, and two of them once
-#                                             printed `ok` having read nothing without it
+#   19  the shell stripper absent           — one file every shell matcher in the estate trusts, and
+#                                             two of them once printed `ok` having read nothing
+#                                             without it. THE COUNT IS DERIVED AND PRINTED BY THIS
+#                                             CASE, not written here: this sentence said "four
+#                                             checks", the same sentence in
+#                                             host-probe-attribution-test.sh said "five", and NEW-38
+#                                             — the item raised to fix the first — named five by a
+#                                             composition that missed one (decisions.md D82)
 #   20  up's own preflight deleted          — an `up` that starts the estate with NO plane check;
 #                                             the deny-list passed this, and it is the worse half
 #   21  a new branch gains preflight        — `doctor) preflight; …`: the next diagnostic wedged by a
@@ -347,11 +353,33 @@ expect_red "$d" "22 the router's branch labels unreadable" '      up)' '' "$d/de
 
 RUNNER=run_check
 
-# 19. THE SHELL STRIPPER IS ONE FILE FOUR CHECKS TRUST, and absent it two of them once printed `ok`
-#     having read nothing (D62's review). Part 5 must exit 1 naming the cause instead — asked by
-#     pointing HC_STRIP_SH at nothing, which is the only failure of that file this harness can
-#     construct without touching a file the other three checks are also reading.
+# 19. THE SHELL STRIPPER IS ONE FILE EVERY SHELL MATCHER IN THE ESTATE TRUSTS, and absent it two of
+#     them once printed `ok` having read nothing (D62's review). Part 5 must exit 1 naming the cause
+#     instead — asked by pointing HC_STRIP_SH at nothing, which is the only failure of that file this
+#     harness can construct without touching a file the other callers are also reading.
+#
+#     THE COUNT IS DERIVED AND PRINTED, never written — decisions.md D82, backlog NEW-38. This comment
+#     said "four checks"; the same sentence in host-probe-attribution-test.sh said "five"; and NEW-38,
+#     the item raised to correct the first, named five by a composition that missed one. Three
+#     statements of one number and three different wrong answers, which is why the fix is a line of
+#     shell rather than a corrected constant. Printed rather than asserted against an expected value,
+#     because a *new* caller is not a defect — what is a defect is a sentence claiming to know how
+#     many there are. A floor of 2 is asserted, since the whole point of the case below is that more
+#     than one caller depends on this file.
 printf '\ndeploy-dev.sh: the stripper part 5 depends on\n'
+sh_callers="$(grep -rl 'strip-sh-comments\.awk' "$ROOT/.github/" 2>/dev/null \
+  | grep -v 'checks/strip-sh-comments\.awk$' \
+  | xargs -r grep -lE "awk[[:space:]]+-f[^|;]*strip-sh-comments|STRIP[A-Z_]*=[^=]*strip-sh-comments|awkfile=[^=]*strip-sh-comments" \
+  | sort -u)"
+sh_n="$(printf '%s\n' "$sh_callers" | grep -c . || true)"
+sh_steps="$(awk '/^      - name: /{n=$0} /strip-sh-comments\.awk/{print n}' \
+  "$ROOT/.github/workflows/build.yml" | sort -u | grep -c . || true)"
+if (( sh_n >= 2 )); then
+  note "the shell stripper is invoked by $sh_n files, and $sh_steps build.yml step(s) name it (two measures, derived)"
+  printf '%s\n' "$sh_callers" | sed "s%^$ROOT/%      %"
+else
+  bad "only $sh_n file invokes strip-sh-comments.awk, so this case guards a dependency nothing has — the derivation found nothing, which reads as a stripper no check trusts"
+fi
 d="$WORK/m19"; mkdir -p "$d"
 if ( cd "$ROOT" && HC_STRIP_SH="$d/does-not-exist.awk" bash -e "$CHECK" >"$d/out.txt" 2>&1 ); then
   bad "19 the shell stripper absent — the check PASSED"

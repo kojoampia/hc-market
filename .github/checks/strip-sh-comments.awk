@@ -1,5 +1,26 @@
 # Remove shell comments from a script, preserving line numbering.
 #
+# DO NOT WRITE THE NUMBER OF CALLERS INTO A SENTENCE. Derive it — decisions.md D82, backlog NEW-38.
+# The files that invoke this one are:
+#
+#   grep -rl 'strip-sh-comments\.awk' .github/ | grep -v 'checks/strip-sh-comments\.awk$' \
+#     | xargs grep -lE "awk[[:space:]]+-f[^|;]*strip-sh-comments|STRIP[A-Z_]*=[^=]*strip-sh-comments|awkfile=[^=]*strip-sh-comments"
+#
+# and the `build.yml` steps whose subject reaches it are:
+#
+#   awk '/^      - name: /{n=$0} /strip-sh-comments\.awk/{print n}' .github/workflows/build.yml | sort -u
+#
+# Those are TWO MEASURES and neither is "the number of callers": the first counts files that run this
+# awk, the second counts workflow steps that mention it — and today `build.yml` mentions it only in a
+# comment, so it invokes nothing directly while one of its steps depends on it through
+# `outbox-alias-restore-test.sh`. Name the measure whenever quoting either.
+#
+# This header carries no total on purpose. Two test files stated one and BOTH were wrong in the same
+# direction: `shared-plane-wiring-test.sh` said "four checks" and `host-probe-attribution-test.sh` said
+# "five", while five files invoke it — and NEW-38, the item raised to correct the first, itself named
+# five callers by a composition that missed one. Three statements of one number, three different wrong
+# answers, in an estate whose own rule is "count the list, not the number".
+#
 # THE SHARED STRIPPER NEXT TO THIS ONE IS A JAVA STRIPPER — `//` and `/* */` — and running it over a
 # shell script removes nothing at all while reporting success, which is the fail-open every one of
 # those eight findings was. So this is a second file rather than a widening of the first: the two
