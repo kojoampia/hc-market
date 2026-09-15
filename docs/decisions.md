@@ -16175,3 +16175,207 @@ reverse of what I captured. Both readings are correct: **I queried the `/count` 
 queried the bare paths, and `PUBLIC_GET_PATHS` contains `/api/categories` and `/api/reviews/count` but
 neither `/api/categories/count` nor `/api/reviews`. Four measurements, all four consistent with the
 allow-list, compared across different endpoints. My abbreviated labels invited it.
+
+---
+
+## D90 — From prototype to production: the phase order, and what a first deploy may not go without
+
+**Recorded 2026-09-15**, against `main` at `d9b7365`. Opens backlog **NEW-47** to **NEW-55**.
+
+**The sequencing in §2 is accepted — that is a project-management call and it is taken here.** §3 is a
+**recommendation** and is not ratified; §7 lists what is nobody's here to settle, with who holds each.
+Nothing in this decision changes code, configuration or an environment.
+
+### §1 What the estate is, measured rather than characterised
+
+The backend is real and there is no application in front of it.
+
+| | state | how established |
+| --- | --- | --- |
+| five services | build, test, publish, run | quality healthy at `4b18ac6`, 10/10 containers |
+| `web/`, `api/`, `mobile/` | **empty directories** | `ls` — three of them, `mobile/` added 2026-09-11 |
+| the only UI | one 212,942-byte HTML file with inline `<script>` | `docs/Abofonsa_BridgeCare_Marketplace.html` |
+| production | never deployed | D49; `deploy-prod.sh` has never contacted a host |
+| screens the prototype specifies | **15** | `viewDiscover … viewProProfile`, enumerated |
+| brokerage desk screens | **0** | `CUST_NAV` and `PRO_NAV` are the only two navs |
+
+**The prototype is an acceptance target that cannot become the application.** It is not a codebase with
+gaps in it: it has no build, no module system, no dependency manifest, no test runner and no router
+beyond a hash `switch`. It is also the **seed's source** (D4) and CI asserts it regenerates
+byte-identically, so it does not get refactored — it gets read, and then something else gets built.
+
+**And it is deliberately not served in production** (D49), because it presents 18 invented
+professionals with credentials and association registration numbers. That constraint has a consequence
+nobody has written down: **on the day production exists, it has no user interface at all**, and the one
+artefact that looks like one is the one thing CI forbids.
+
+### §2 The order, and the rule that produces it
+
+Ranked by: unblocks the most other work; is reversible if wrong; is verifiable before production.
+
+**Phase 1 — a person can hold an account.** NEW-47. This is first and it is not a judgement call: the
+gateway's account lifecycle is generated, unconfigured and has never been exercised. `POST /api/register`
+is `permitAll`, creates the user with `activated=false`, and hands off to a `MailService` that catches
+`MailException` and logs **WARN** — against `spring.mail.host: localhost:25` and
+`jhipster.mail.base-url: http://my-server-url-to-change`, the literal generator placeholder, in
+`application-prod.yml`. `UserService`'s `@Scheduled(cron = "0 0 1 * * ?")` then deletes the unactivated
+account after three days. So a customer registers, is told to check their email, receives nothing, can
+never log in, and is deleted — **201, and one WARN line**. Every screen in Phase 2 that is not a public
+read sits behind this.
+
+**Phase 2 — the application.** NEW-48. The largest package in the project's remaining life and the
+answer to the question that prompted this decision. It depends on Phase 1 for anything behind a token
+and on §3 for its shape; it depends on nothing else, which is why it is second and not fourth.
+
+**Phase 3 — the promises the API already makes.** NEW-49 (nothing can create a `Professional`), NEW-50
+(the "from" price), NEW-51 (nothing writes a `Payout`), NEW-52 (two configured periods with no scheduler
+behind them), NEW-53 (a desk read leaves no trace and the desk has no screen). Each is small, each is
+independent of the others, and **each is a claim the estate currently makes and cannot meet.** They are
+third rather than first because none of them blocks the frontend and all of them are cheaper to build
+against a screen that exercises them.
+
+**Phase 4 — money for real.** WP-13 continues; NEW-54 is new and is the one that changes the plan:
+**no environment in this estate can receive a provider callback.** Quality is `jacserver` on a private
+LAN (`127.0.0.1`, `market.healthconnect.local`), so a Paystack webhook cannot reach it, and production
+is the only host with a public name. The payment path is therefore the one part of this system whose
+first real execution is necessarily in production unless something is added for it.
+
+**Phase 5 — deploy.** WP-19's fifteen items, WP-18's one command, NEW-55.
+
+**Why not deploy first.** An API-only production estate is deployable today and would be honest — but
+it would be an estate with no way to acquire a user (NEW-47), no interface (NEW-48), eighteen fabricated
+practitioners as its entire supply (NEW-49), and no means of paying anyone (NEW-51, WP-13). Deploying it
+buys the operational learning WP-19 needs and nothing else, and it buys it at the price of a public
+health-services hostname serving a marketplace that cannot transact. **Deploy last, and deploy behind
+the four gates in §4.**
+
+**What would change this order.** If the architect wants the operational learning early, the reversible
+version is to deploy Phases 1 and 5 and hold the DNS record until Phase 2 lands — production reachable
+by IP, `market.abofonsa.com` pointed at nothing. That is a smaller change than it sounds and it inverts
+nothing above.
+
+### §3 The frontend's shape — RECOMMENDED, not ratified
+
+**Generate a client-only JHipster 9.2.0 Angular application into `web/`, to `hc-admin/app`'s exact
+shape.** Measured, in this workspace, rather than reasoned from the siblings in general:
+
+| | `hc-admin/app` | `hc-patient/web` |
+| --- | --- | --- |
+| JHipster | **9.2.0** — the same generator as all five hc-market apps | 8.1.0 |
+| Angular | **21.2.23** | 17.0.6 |
+| `skipServer` | **true** — no `mvnw`, no `pom.xml`, **0 `.java` files** | absent, has `mvnw`, 0 `.java` files |
+| test runner | Vitest 4.1.10 | Jest |
+
+`hc-admin/app` is the current precedent and `hc-patient/web` is four Angular majors stale, so "read a
+sibling" has a right answer and a wrong one.
+
+**The decisive argument is `skipServer`, and it is about the regeneration hazard rather than taste.**
+The other way to get a client here is `clientFramework angular` in `jdl/gateway.jdl` and a gateway
+regeneration — and the gateway is the **worst** app in this estate to regenerate. CLAUDE.md's own table
+says why: `--force` restores `InitialSetupMigration` with `@ChangeUnit` and no `@Profile`, creating
+`admin` with a committed bcrypt hash of `admin`, activated, `ROLE_ADMIN`, in `prod` too (D61) — *"the
+only regeneration hazard here that hands back a working credential"* — and rewrites `pom.xml`, losing
+the OpenTelemetry block silently. A client-only app at `web/` touches none of that: separate
+`.yo-rc.json`, separate `package.json`, no Java, no pom, and the gateway's four hand-written files and
+its JDL are never opened.
+
+**Two sub-choices go with it and neither is engineering's.** `jhiPrefix` — `hc-admin` is `abf`,
+`hc-professional` `hpd`, and hc-market has never had one; and `enableTranslation`, which is `false` in
+all five hc-market services and `true` in `hc-admin/app`. Recommended: a new prefix, and translation
+**off** — the prototype is English-only for a Ghanaian market, and i18n is a pipeline in every
+component rather than a flag you turn on later cheaply. Both are in §7.
+
+**Three traps to close in the generated output on day one, each measured in a sibling now:**
+
+- **`angular.json` `assets` must be the glob-with-`ignore` shape, not a bare string.** `hc-admin/app`
+  lists `"src/main/webapp/content"` as a bare string (measured) and therefore publishes its
+  `content/scss/*.scss` — including `_hc-tokens.scss` and `_bootstrap-variables.scss` — on
+  `admin.abofonsa.com`. `hc-vendor/web` and `hc-professional/web` carry the fix. Free at generation,
+  a backlog row for two live products.
+- **`eslint.config.ts` must ignore `.claude/`.** The workspace guide records `hc-admin/app` as not
+  ignoring it; **that is stale** — measured, line 43 lists `.claude/` today. Carry it in rather than
+  rediscover it.
+- **Never white text on gold.** `#C59437` on white is 2.74:1 and fails AA. Navy `#0D3058`, gold
+  `#C59437`, cream `#F7F4EE`; the three sibling products implement the same values through three
+  different stacks, so markup does not copy between them untranslated.
+
+**And one design fact the prototype hands over rather than teaches.** Its router disambiguates
+`#/pro/p1` (a public profile) from `#/pro/profile` (the professional's own editor) with a **hard-coded
+reserved-word list duplicated at two sites** — `['overview','requests','schedule','services','earnings',
+'reviews','profile']` — plus a `state.role==='pro'` test. A framework router should not inherit that:
+split the namespaces (`/professionals/:ref` for the public profile, `/pro/*` for the workspace) and the
+reserved list disappears, along with the latent defect that a professional whose `reference` is
+`profile` is unreachable.
+
+### §4 The four gates a first production deploy may not go without
+
+Everything else in this decision may follow a deploy. These may not:
+
+1. **A working account lifecycle** — NEW-47. Open self-registration on a public health-services domain
+   whose activation email goes nowhere is not a soft launch, it is a door that logs a warning.
+   `/api/register` also carries **no rate limit**: the only non-comment `limit_req` in either production
+   nginx file is inside `location /services/healthconnectbooking/webhooks/` (measured,
+   `hc-market-app.conf:197-199`).
+2. **WP-19's blocking six** — the ssh target and `/srv/healthconnect`, port 8086 free, `infranet` and
+   `monitoring` present, `secrets.env` with a fresh key and an escrowed pepper, DNS, nginx and certbot.
+   Listed in `deploy/prod-server/README.md`; none is engineering.
+3. **A restored backup.** WP-19 names it and it is worth repeating as a gate rather than an item: no
+   dump this repository produces has ever been restored, which makes every one of them a belief.
+4. **The privacy notice served somewhere a data subject can reach it** — WP-09. Three documents exist,
+   all marked DRAFT and NOT APPROVED, and **nothing in this estate serves any of them.** A public
+   marketplace processing personal data with an unserved notice is the one item here whose exposure
+   begins on the day of the deploy rather than on the day of the first customer.
+
+**Act 987 is not on that list, and that is deliberate.** It gates taking money (Phase 4), not
+deploying. An estate that serves a catalogue, takes bookings for the two free services and refuses
+every priced one is coherent; the platform has **no method that pays a professional** on purpose
+(`PaymentProvider`), so the answer can arrive late without a rewrite.
+
+### §5 One correction to the brief this decision answers
+
+The brief reported that `fromPriceMinor` is *"absent from the detail endpoint for every professional
+(p1, p2, p13 all `null`)"*. **It is present.** `ProfessionalDetail` embeds the whole `ProfessionalCard`
+and the detail path calls the same `toCard` — measured against quality:
+`GET /api/professionals/p13` answers `.card.fromPriceMinor = 0`, `.fromPriceMinor = null`, because the
+field is one level down. Nothing to fix and no item opened.
+
+**The other half of that finding is real and is NEW-50**, and the sharp form of it is not the
+divergence but the comment: `MarketplaceQueryRepository:37-38` says the query computes the from-price
+*"exactly as the prototype computed it"*, and the prototype filters `s.price > 0` at three sites while
+the JPQL has no such predicate. One of the two has to move; which one is a product decision.
+
+### §6 What I checked, and what I took on trust
+
+**Measured here:** the three empty directories; the 15 view functions and two navs; `new Professional()`
+in one place (`CatalogSeeder:142`); `new Payout()` nowhere in `payout/src/main`; `setMeetingLink` written
+only by `ErasureWorkflow:189`; `@Scheduled` in exactly two places estate-wide (`OutboxPublisher`, the
+gateway's generated user cleanup) and neither a retention sweep; `registerUser` setting
+`activated=false`; the five `permitAll` paths; `MailService` catching and warning; the mail placeholder;
+`limit_req` on the webhook alone; Paystack's `integratedCalls()` returning four of six; both
+`fromPriceMinor` readings against the running quality estate; `hc-admin/app`'s generator config, Angular
+version, absence of Java and `assets` shape; and that `d9b7365` changed no service source, so quality's
+`4b18ac6` images are current.
+
+**Taken from the brief and not re-verified:** that the quality run is 0 ERROR lines with the seed intact,
+and the browser behaviour of live mode.
+
+**Taken from the documents:** D49 on production never having run, D42/D88 on counsel, D86 on Paystack's
+provenance, WP-19's fifteen items.
+
+### §7 Not mine to settle
+
+Each is framed, costed and recommended in its backlog item; none of them blocks the phase above it from
+starting.
+
+| question | who holds it | default if nobody answers | blocks |
+| --- | --- | --- | --- |
+| the frontend's shape (§3), `jhiPrefix`, translation | architect | client-only Angular at `web/`, new prefix, translation off | NEW-48 |
+| is "from ₵0" the honest headline, or does a free consultation hide? | architect, product | follow the prototype — it is the acceptance target | NEW-50 |
+| who enrols a professional, and does D16's "manual review in `hc-admin`" still stand? | architect | build enrolment in hc-market behind `ROLE_BROKERAGE` | NEW-49 |
+| does the brokerage desk get screens, or stay curl-and-psql? | architect | screens, after Phase 2, because erasure is a legal deliverable | NEW-53 |
+| how does a provider callback reach a pre-production estate? | architect | a tunnel to quality for one supervised session | NEW-54 |
+| Act 987: may a broker settle funds to a professional? | counsel / regulator | keep `bankReference` and settle by hand | WP-13, NEW-51 |
+| an SMTP provider and credentials | architect / budget | — none; this is the gate | NEW-47 |
+| Paystack live credentials and a test account | architect / provider | — | WP-13, NEW-54 |
+| production host access | architect on `webserver` | — | WP-18, WP-19 |
+| the privacy notice's approval, and one document or six | counsel | — | WP-09 |
