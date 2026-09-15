@@ -16379,3 +16379,129 @@ starting.
 | Paystack live credentials and a test account | architect / provider | — | WP-13, NEW-54 |
 | production host access | architect on `webserver` | — | WP-18, WP-19 |
 | the privacy notice's approval, and one document or six | counsel | — | WP-09 |
+
+---
+
+## D91 — "There is no scheduler in this estate" is false, and it reached two documents counsel will read
+
+**Recorded 2026-09-15**, against `prototype-to-production-the-backlog` at `a8ebf93`. Opens backlog
+**NEW-56**; corrects **NEW-52**, `docs/processing-record.md` and `docs/privacy-notice.md`.
+
+### 1. How it was found, which matters more than the finding
+
+D90's brief asserted that a customer who registers today is *"deleted in three days"*. That claim rests
+on a `@Scheduled` method, and a `@Scheduled` method does nothing without `@EnableScheduling` — so the
+premise was checked before the item built on it was believed. `@EnableScheduling` turned out to be
+present, which confirmed D90 and falsified something this repository has said ten times.
+
+It was found by verifying an agent's report rather than by reading code for its own sake, and it is the
+second finding of this session that came from the same habit. **An agent's report is a claim.** So is a
+sentence in `decisions.md` that nobody has re-measured since it was written.
+
+### 2. What was claimed, and where
+
+*"There is no scheduler in this estate"*, or the same thought in other words, appears in **ten** places:
+
+- **`docs/decisions.md`** — nine sites, including D17 and D86 (the meeting-link reveal: *"there is no
+  scheduler anywhere in this estate, so the honest cheap version is to compute visibility at read
+  time"*), the retention answer, `Dispute.dueBy`, the availability-slot sweep and the brokerage figure;
+- **`docs/healthconnect-marketplace.md:325`**, in a source comment quoted into the spec;
+- **`docs/processing-record.md` §3** and **`docs/privacy-notice.md` §7** — the two WP-09 drafts written
+  on 2026-09-11 and destined for counsel. The notice's words were *"Nothing deletes anything on a
+  schedule."*
+
+**NEW-52 repeated it on the day it was written**, and did so in a paragraph that had just enumerated
+both counter-examples correctly — *"`@Scheduled` appears in exactly two places … and there is no
+scheduler infrastructure at all."* The facts were right and the inference drawn from them in the next
+clause was wrong. That is worth recording as its own lesson: the defect was not a missing measurement,
+it was a conclusion that did not follow from a measurement already in hand.
+
+### 3. What is true, measured in source and at runtime
+
+| Question | Answer | How |
+| --- | --- | --- |
+| Is scheduling enabled? | **Yes, in all five services** | `config/AsyncConfiguration.java`, `@Configuration @EnableAsync @EnableScheduling @Profile("!testdev & !testprod")`. Neither `testdev` nor `testprod` is active on any estate, so it is on for `dev`, `test` and `prod` alike |
+| Is a scheduler thread actually running? | **Yes, in all five quality containers** | `/proc/1/task/*/comm` → `ThreadPoolTaskS…` present in gateway, catalog, booking, messaging and payout |
+| How many `@Scheduled` methods? | **Two** | `booking/…/OutboxPublisher.java:69` and `gateway/…/UserService.java:291` |
+| Has the account deletion fired? | **Yes, four times** | Quality's gateway started `2026-09-11T21:22:51Z`; the cron is `0 0 1 * * ?` and four 01:00 UTC boundaries have passed |
+
+**`OutboxPublisher.drain()` is the one that settles it.** It is `@Scheduled(fixedDelayString =
+"${healthconnect.outbox.poll-ms:2000}")` — the estate's **entire Kafka event-delivery path**, polling
+every two seconds. Every `booking.requested`, every ledger row, every notification in this estate's
+life has reached the broker through a scheduled task. `verify-outbox-recovery.sh` exercises it
+deliberately. The estate did not merely have the *capability* to schedule; it has been depending on a
+scheduler continuously, while ten documents said there was none.
+
+### 4. The second finding: a deletion nobody here decided
+
+`UserService.removeNotActivatedUsers` deletes any account with `activated = false` and an activation key
+older than **three days**, daily at 01:00. It destroys a sign-in name, a first and last name, an email
+address and a password hash.
+
+**It is JHipster's generated behaviour and was never a decision of this project** — which is exactly
+why it was invisible: nobody looks for a retention rule in a file they did not write. It is a *de facto*
+retention period for one class of account, it has never been put to counsel, and until today it was
+recorded nowhere.
+
+It also interacts with **NEW-47** in the worst available way. No estate can send an activation mail —
+SMTP is `localhost:25` in both `application-dev.yml` and `application-prod.yml`, no compose file passes
+`SPRING_MAIL_*`, `MailService` catches `MailException` and logs a WARN, and prod's `base-url` is still
+`http://my-server-url-to-change`. So registration answers `201`, the mail fails silently, the account
+cannot be activated, and three days later it is deleted. **The three days cannot be survived on any
+estate that exists.**
+
+### 5. What was corrected, and what deliberately was not
+
+**Corrected in place**, because both are outward-facing and unapproved:
+
+- `docs/privacy-notice.md` — the opening box, §7's warning, and a **new §7.1** written in a data
+  subject's language: what is deleted, when, what it contains, that the project did not choose it, and
+  that the confirmation mail does not currently arrive. Marked as new so counsel does not skim it.
+- `docs/processing-record.md` — §3's warning, a **new §3.1** with the mechanism and its evidence, §2.1's
+  retention row (now *split*: activated accounts uncategorised, unactivated ones on three days), §5's
+  security row, and §6.1, whose question to counsel is now sharper — the organisation has an unexamined
+  3-day rule for one class of account and no rule at all for the rest.
+- `docs/backlog.md` — NEW-52's title (*"no scheduler behind either"* → *"no **sweep** behind either"*)
+  and its costing. **This changes the estimate**: there is no scheduler to stand up, no
+  `@EnableScheduling` to add, no starter to introduce. A new `@Component` carrying a `@Scheduled` method
+  is picked up on every estate as it stands.
+
+**Not corrected, deliberately:** the nine historical citations in this file. `decisions.md` amends
+everything else by house rule and is a record of what was decided when — rewriting nine past entries
+would destroy the evidence of how long the error survived, which is the most useful thing about it. This
+entry is the amendment. **NEW-56** carries the triage.
+
+### 6. What this does NOT change, and the trap in assuming otherwise
+
+**Retention is still unenforced and the gap is still the largest in the processing record.** A scheduler
+existing is not a sweep existing, and `GET /api/desk/privacy` still reports `enforced: false` correctly.
+Nothing in this entry moves that.
+
+**And the nine decisions are unlikely to be wrong.** D17's read-time reveal is still probably the right
+answer — it needs no delivery guarantee, cannot double-send, and has nothing to get out of step. The
+defect is that it is right for reasons it does not state, while stating a reason that is false. This
+repository's own rule, from `CLAUDE.md`: *"A document asserting a property the code lacks is a defect.
+So is a stated reason that is true but is not the reason doing the work."* This is the third case of that
+family — a stated reason that is **false** and load-bearing anyway.
+
+### 7. Verified, assumed, not exercised
+
+**Verified:** `@EnableScheduling` in all five `AsyncConfiguration` classes and its profile expression;
+the live `ThreadPoolTaskScheduler` thread in all five quality containers at `/proc/1/task`; both
+`@Scheduled` sites and their expressions; the gateway container's start time against the cron; SMTP
+config in all three gateway profile files and its absence from all three compose files;
+`MailService`'s catch-and-WARN; `AccountResource.register` calling `sendActivationEmail`;
+`new Professional()` occurring once, in the seeder; `Payout.settledOn` and `.bankReference` in the JDL
+and the entity; the credential and highlight write path at `ProWorkspaceResource:194–209`; and
+`.card.fromPriceMinor = 0` on catalog's detail endpoint, which **corrects a claim made earlier this
+session** that the field was absent there — it was measured one level too high in the JSON.
+
+**Assumed:** that the nine citations all meant "no sweep" rather than "no scheduling capability". That
+is NEW-56's work and the reason it is an item rather than a closed finding.
+
+**Not exercised:** the deletion has never been watched removing an account, because no unactivated
+account has ever existed on any estate — quality's users are seeded activated. Its four firings found
+nothing to delete. **So the cron is proven to run and the delete branch is proven only by reading it**,
+and creating an account on the quality box to watch it disappear was declined as a write to a live
+environment for a fact that source establishes. It is worth watching once on the first estate that has
+mail, and NEW-47 is where that belongs.

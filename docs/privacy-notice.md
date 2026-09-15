@@ -15,7 +15,10 @@
 >   was shared, as a yes/no; it holds no conditions, no allergies and no medications. D42 obtained a
 >   lawful-basis position about such data and **the platform has never held any** — that finding is
 >   D88's and counsel should know it, because it changes the risk they assessed.
-> - **Retention periods are stated, not enforced.** See §7. Nothing deletes anything on a schedule.
+> - **Retention periods are stated, not enforced.** See §7. Nothing deletes a booking, a message or a
+>   review on a schedule. **One thing IS deleted on a schedule** and it is not a retention period: an
+>   account that is never activated is removed three days after it is created (§7.1). That was found on
+>   2026-09-15 and this notice said the opposite until then — `decisions.md` **D91**.
 > - **Erasure is operated by a person, not by the customer.** See §8. There is no self-service button.
 
 > **⚠ SCOPE**
@@ -112,10 +115,25 @@ We do not sell your data, and we do not share it with anyone else except where t
 | **Financial records** — bookings, payment records, disputes | **6 years** (2,190 days) |
 | **Operational data** — messages, notifications | **1 year** (365 days) |
 
-> **⚠ These periods are a stated policy, not an applied one.** Nothing in our systems deletes data on a
-> schedule today. The periods above are what we have decided and configured; enforcing them is
-> outstanding engineering work, and this notice says so rather than implying otherwise. Our internal
-> policy endpoint reports the same caveat.
+> **⚠ These periods are a stated policy, not an applied one.** Nothing in our systems deletes a
+> booking, a message, a notification or a review when its period expires. The periods above are what we
+> have decided and configured; enforcing them is outstanding engineering work, and this notice says so
+> rather than implying otherwise. Our internal policy endpoint reports the same caveat.
+
+### 7.1 One deletion that does happen automatically
+
+**If you start to register and never confirm your email address, your part-finished account is deleted
+three days later.** It runs once a day and removes the sign-in name, the name and the email address you
+entered. Nothing else about you exists at that point, because an unconfirmed account cannot book,
+message or review.
+
+This is not one of the periods in §7 and it is not a retention rule we chose — it is default behaviour
+of the framework the platform is built on, and we are recording it because it deletes a real person's
+data. **If you want to keep the account, confirm your email address.** If your confirmation email never
+arrives you will not be able to, which is a defect we know about and are fixing before launch.
+
+> Corrected on 2026-09-15. Earlier drafts of this notice said nothing was deleted on a schedule, which
+> was wrong — `decisions.md` **D91**. Counsel should read this section as new.
 
 ## 8. Your rights, and how to use them
 

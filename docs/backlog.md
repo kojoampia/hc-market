@@ -4088,12 +4088,24 @@ the whole of the internal record, and only *automated* settlement waits on couns
 
 ---
 
-## NEW-52 — two configured promises with no scheduler behind either · READY
+## NEW-52 — two configured promises with no SWEEP behind either · READY
 
 **Phase 3.** `@Scheduled` appears in exactly **two** places in all five services' main sources, measured:
 `booking/.../OutboxPublisher.java:69` (the outbox poll) and `gateway/.../UserService.java:291` (the
 generated not-activated-user cleanup — see NEW-47, where it is part of the defect rather than a
-feature). **Neither is a retention sweep, and there is no scheduler infrastructure at all.**
+feature). **Neither is a retention sweep.**
+
+> **The scheduler infrastructure DOES exist, and this item said it did not** — corrected 2026-09-15,
+> `decisions.md` **D91**, item **NEW-56**. `@EnableScheduling` is active in **all five** services
+> (`config/AsyncConfiguration.java`, `@Profile("!testdev & !testprod")`, so active on every estate that
+> runs) and a `ThreadPoolTaskScheduler` thread is live in **all five** quality containers, measured at
+> `/proc/1/task`. The two `@Scheduled` methods this item correctly enumerated are the proof rather than
+> the exception: one of them is the estate's entire event-delivery path.
+>
+> **It changes the cost, not the work.** "Done means one scheduler and two sweeps" below should read
+> *two sweeps* — there is no scheduler to stand up, no `@EnableScheduling` to add and no starter to
+> introduce. A new `@Component` with a `@Scheduled` method on it is picked up on every estate as it
+> stands.
 
 **Two promises rest on that absence** and both are honest about it in the source, which is why this is an
 item rather than a finding:
@@ -4108,7 +4120,8 @@ item rather than a finding:
 - **`Dispute.dueBy`** — the prototype's promise of five working days, recorded and not enforced.
   `DisputeWorkflow`'s javadoc at `:42` says so and points at the same gap.
 
-**Done means one scheduler and two sweeps, and the two sweeps are not the same kind of thing.** The
+**Done means two sweeps, and they are not the same kind of thing** (the scheduler is already there —
+see the box above). The
 retention sweep performs an **irreversible** act on real people's data and must therefore be: off by
 default, dry-runnable with a count before it deletes anything, and **recorded on the erasure register
 like any other erasure** (D31/D39 — a receipt whose count is too small reads as "we held nothing about
@@ -4245,6 +4258,56 @@ four products and the arithmetic reverses.
 **Done means** a decision recorded either way, and — if the answer is the DNS-hold — a written sequence
 for it, because *"deploy but do not point DNS"* is an operational procedure and `deploy-prod.sh` has
 never been run at all, let alone in a mode nobody has described.
+
+---
+
+## NEW-56 — "there is no scheduler in this estate" is false, and nine decisions rest on it · READY
+
+**Phase 3, and it is a documentation defect with a compliance edge rather than a code defect.** Found
+2026-09-15 while verifying NEW-47's premise; `decisions.md` **D91**.
+
+**What was claimed, in ten places.** *"There is no scheduler in this estate"* — `docs/decisions.md` at
+nine sites (D17's meeting-link reveal, D86, the retention answer, `Dispute.dueBy`, the slot sweep, the
+brokerage figure, and three more), `docs/healthconnect-marketplace.md:325`, and — worst, because it is
+outward-facing — `docs/processing-record.md` §3 and `docs/privacy-notice.md` §7, **both drafts destined
+for counsel**. NEW-52 repeated it on the day it was written.
+
+**What is true, measured twice — source and runtime:**
+
+| | |
+| --- | --- |
+| `@EnableScheduling` | Active in **all five** services, `config/AsyncConfiguration.java`, `@Profile("!testdev & !testprod")` — so on for `dev`, `test` and `prod` alike |
+| `ThreadPoolTaskScheduler` thread | Live in **all five** quality containers, read at `/proc/1/task/*/comm` |
+| `@Scheduled` methods in main source | **Two.** `booking/…/OutboxPublisher.java:69`, `fixedDelayString` 2 s — **the estate's entire Kafka delivery path**. And `gateway/…/UserService.java:291`, `cron = "0 0 1 * * ?"` — deletes unactivated accounts after 3 days |
+| Has the deletion run? | **Yes.** Quality's gateway started 2026-09-11T21:22Z; four 01:00 UTC boundaries have passed |
+
+**The estate has run a scheduler as its core event path for its entire life** while ten documents said
+it had none. That is this repository's own signature failure — a confident claim nobody measured,
+repeated until it became load-bearing — and CLAUDE.md is largely a catalogue of the same shape.
+
+**What is already done, and is not this item.** The two compliance drafts are corrected (with a new
+`processing-record.md` §3.1 and `privacy-notice.md` §7.1 recording the 3-day deletion as processing in
+its own right, because it destroys a real person's data on a timer and had never been written down).
+NEW-52's title and costing are corrected. **D91 is the amendment of record** — `decisions.md` amends
+everything else by house rule, so the nine historical citations are not edited in place.
+
+**What is left, and why it is not just a find-and-replace.** Each of the nine cited the absence as the
+*reason* for a choice. Re-read them and record, per decision, whether the conclusion survives a
+falsified premise:
+
+- **D17 / D86 / NEW-45 — the meeting-link reveal.** The likeliest to be genuinely re-openable: *"there
+  is no scheduler anywhere in this estate, so the honest cheap version is to compute visibility at read
+  time."* Read-time is still probably right (it needs no delivery guarantee and cannot double-send), but
+  it should be right **on its own argument** rather than on a false one.
+- **D53 / D51's `earned_on`, the slot sweep, `Dispute.dueBy`, the brokerage figure** — each said "no
+  scheduler" as shorthand for "no sweep". Confirm that is all each meant.
+
+**Done means** the nine are triaged with a one-line verdict each, none silently, and no document in the
+repository asserts the absence any more. **The likely outcome is that every conclusion stands** — which
+is the good case and still has to be established rather than assumed, because the one that does not is
+the one worth finding.
+
+**Not blocked.** No decision, no outside fact.
 
 ---
 
