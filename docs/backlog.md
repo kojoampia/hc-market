@@ -4311,6 +4311,85 @@ the one worth finding.
 
 ---
 
+## NEW-57 — the identity gauges can be overwritten by a STALER reading, and the javadoc says they cannot · READY
+
+**Found 2026-09-15 by CI on PR #69**, a branch whose entire diff is four `docs/*.md` files — so it is
+**pre-existing on `main` at `d9b7365`** and was introduced by D84/D85. `GatewayIdentityMetricsIT` is
+byte-identical between the two branches (0-line diff), and no Java test reads a markdown file. First
+observed failure; D85's own PR was 6/6 green, which is what a timing-dependent flake looks like.
+
+```
+GatewayIdentityMetricsIT.gaugesPartitionTheCollection:182
+expected: 6L
+ but was: 2L
+```
+
+`expected` is `userRepository.count()`; `but was` is `activatedBefore + dormantBefore`. **The gauges
+summed to 2 while the collection held 6** — they were holding a reading taken when the collection had
+two documents in it.
+
+### The mechanism, and it is not the test's fault
+
+`IdentityMetricsRefresher.start()` runs `Flux.interval(Duration.ZERO, interval).concatMap(tick ->
+refresh())`. **`concatMap` serialises the timer against itself and against nothing else.** An explicit
+`refresh()` — which `GatewayIdentityMeters`' own contract invites, and which the test uses instead of
+sleeping — runs *concurrently* with whatever the timer already has in flight, and `setAccounts` is
+last-writer-wins:
+
+1. the first tick fires at **`Duration.ZERO`**, at context startup, against a cold Testcontainers Mongo
+   holding only `admin` and `user`. Its `Mono.zip` of two counts is slow;
+2. earlier methods in the class add four accounts;
+3. the test calls `refresher.refresh().block()`, which reads 6 and writes 6;
+4. **the first tick's zip finally completes and writes 2 back over it;**
+5. the test reads the gauges and gets 2.
+
+**The `Duration.ZERO` first tick is deliberate and should stay** — D84's argument is that a gauge
+reading `-1` for the first minute of every deploy is a dashboard that looks broken on every deploy, the
+same call the SSE heartbeat makes. It is the *unserialised* explicit refresh that is wrong, not the
+eager first tick.
+
+### Two javadoc claims stronger than the code, which is the actual defect
+
+This is the house failure mode in a feature I wrote three days ago, twice in one class pair:
+
+- **`refresh()`** — *"a caller … can drive exactly one observation and know when it has landed"*. True
+  of **landing**, false of **standing**: nothing stops a slower concurrent observation landing after it
+  and replacing it. The `Mono` times your own write and says nothing about which write survives.
+- **`setAccounts`** — *"both numbers are set from one observation so a dashboard cannot add them and get
+  a total that existed at no single moment"*. The pair is genuinely zipped, so the *intent* holds, but
+  the two `AtomicLong.set` calls are sequential — a reader landing between them adds one number from
+  this observation to one from the last. The exposition is scraped concurrently, so that reader is real.
+
+### Production impact is small, and that is a reason to be careful rather than relaxed
+
+The interval is **60s**, so overlap in production needs a Mongo count slower than a minute: essentially
+never, and when it happens the cost is one stale dashboard reading. **Do not use that to justify fixing
+only the test.** The claims above are wrong regardless of how often they bite, and a gauge that can
+silently regress is exactly the sort of thing that is discovered during an incident.
+
+### Done means
+
+Serialise every observation, and make the two javadocs true or delete them. Two candidate shapes, both
+small — **pick one and record why**:
+
+- **one queue.** Explicit refreshes go through the same `concatMap` chain as the timer (a `Sinks.many`
+  trigger the loop consumes), so `refresh()` enqueues and nothing ever overlaps. Keeps the returned
+  `Mono` meaningful and makes the javadoc true as written. Note the sink rules from D79 — `Sinks.many(`,
+  never `unsafe`;
+- **versioned write.** Stamp each observation and write only if newer. Cheaper, but leaves two
+  concurrent Mongo queries running for no benefit.
+
+For the torn pair, hold both numbers in **one** immutable object behind a single reference, so there is
+no window between them.
+
+**And fix the test properly rather than around it.** Asserting a partition was the right instinct — it
+is why this failed loudly instead of passing on a coincidence — but it still races a live background
+loop. Once refreshes are serialised, `refresh().block()` genuinely means "the standing reading is mine".
+
+**Not blocked.** No decision outside the repository, no outside fact.
+
+---
+
 ## Not a package: standing constraints
 
 - **Production is off limits.** The pipeline is not ready; `deploy/deploy-prod.sh --dry-run` is the
