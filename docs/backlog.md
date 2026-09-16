@@ -3882,6 +3882,14 @@ engineering and can be built against a local catcher while that is obtained.
 
 ## NEW-48 — there is no application: the front end the prototype has been specifying all along · READY
 
+> **RATIFIED 2026-09-16 — `decisions.md` D92 §2.** **Client-only JHipster 9.2.0 Angular into `web/`**,
+> `skipServer: true`, to `hc-admin/app`'s shape — so the gateway is never regenerated and D61's
+> `admin`/`admin` credential and the `pom.xml` OTel block are never at risk. **`enableTranslation` is
+> ON**, against the recommendation: every string behind a `jhiTranslate` in `i18n/en/*.json` **from the
+> first screen**, because retrofitting i18n means touching every template written without it.
+> **`jhiPrefix` is `abm`.** Close the three day-one traps: `assets` as a glob-with-`ignore`,
+> `eslint.config.ts` ignoring `.claude/`, and never white text on gold.
+
 **Phase 2, and the largest package remaining in this project.** D90 §2, §3.
 
 **What exists to build against is unusually complete**, which is why this is a build and not a design:
@@ -3953,7 +3961,22 @@ a product decision nobody has taken.
 
 ---
 
-## NEW-49 — nothing can create a `Professional`, so this marketplace has eighteen practitioners for ever · READY
+## NEW-49 — self-service professional signup, so this marketplace stops having eighteen practitioners for ever · READY
+
+> **RATIFIED 2026-09-16 — `decisions.md` D92 §3, and the subject of this item CHANGED.** It was framed
+> as desk enrolment behind `ROLE_BROKERAGE`; the answer is **self-service signup**, with an unverified
+> professional **visible and badged** rather than withheld. Both went against the recommendation.
+>
+> **It is cheaper than this item costed it, because the read side already behaves this way** — measured:
+> `GET /api/professionals` returns 18, of which **2 are `UNVERIFIED`** (`p9`, `p18`), and
+> `verifiedOnly=true` returns 16. `verifiedOnly` is **opt-in**, so the default listing has served
+> unverified professionals for the estate's whole life. What is missing is a badge on a client that does
+> not exist yet.
+>
+> **The sharpest edge is already closed:** `verification`, `insured` and `policeClearance` are absent
+> from `SaveProfile` — *"a professional who can set their own verified flag is a trust chain with a hole
+> in it."* **What is not closed is `NEW-58`**: `Credential.label` and `yearsPractising` are self-declared
+> free text served publicly, and `SUSPENDED` professionals are served in the default listing.
 
 **Phase 3.** The supply side of a two-sided marketplace has no way in.
 
@@ -3996,6 +4019,14 @@ where that stops being copy.
 ---
 
 ## NEW-50 — the API's "from" price includes a free service and the prototype's excludes it · READY
+
+> **RATIFIED 2026-09-16 — `decisions.md` D92 §4. Neither reading wins: say both.** The headline is the
+> **paid** minimum and the free service gets its **own marker**, not a price of ₵0. It is the only one of
+> the three options that is not a one-line change and the only one that is true — a doula whose packages
+> run to ₵3,200 is not a "from ₵0" listing, and a free intro call is a conversion tool.
+>
+> **Do not implement it by changing `fromPriceMinor`'s meaning.** `0` is the honest minimum; the badge is
+> a second field **derived** from the same `services` collection, never stored.
 
 **Phase 3, and the decision is a product one.** Found in a browser against live mode on 2026-09-15 and
 confirmed against the running quality estate.
@@ -4137,6 +4168,15 @@ rather than defaulting.
 
 ## NEW-53 — a desk read leaves no trace, and the desk has no screen in the acceptance target · READY
 
+> **RATIFIED 2026-09-16 — `decisions.md` D92 §5. Screens, after Phase 2**, as recommended: erasure is a
+> legal deliverable under DPC registration `P0021484082`, and a receipt read out of `psql` is a process
+> that will be done wrong under pressure on the one path that is irreversible.
+>
+> **The queue is now load-bearing rather than occasional** — D92 §3 made every listing arrive unverified
+> and publish immediately, so between now and Phase 2 it is worked by hand. **The audit half is not
+> closed by this and is not meant to be:** nothing records who looked at whom, whichever interface the
+> looking happens through.
+
 **Phase 3, and two findings that share a subject.**
 
 **One: nothing records that staff looked.** `ROLE_BROKERAGE` guards four surfaces —
@@ -4176,6 +4216,20 @@ built is what that person uses.
 ---
 
 ## NEW-54 — no environment in this estate can receive a provider callback · READY, and a decision with it
+
+> **RATIFIED 2026-09-16 — `decisions.md` D92 §6. Wait for production behind the DNS-hold**, against the
+> recommendation of a time-boxed tunnel to quality. **So the payment path's first real execution is in
+> production**, which was the stated objection and is the architect's call; what the decision avoids is a
+> temporary public door onto a box whose seeded privileged accounts have passwords derivable from a rule
+> published in this public repository, and a tunnel could never have exercised nginx, TLS or the route
+> anyway.
+>
+> **The mitigations are therefore requirements, not advice:** the DNS-hold holds until the callback is
+> observed end to end; smallest chargeable amount on a real account; watch the booking's status
+> transition rather than inferring it from a 200; **`refunds-enabled` stays off** (D86); **`status` —
+> `GET /transaction/verify/{reference}` — is the reconciliation path** for a booking stuck in
+> `PENDING_PAYMENT`, and it has never reached Paystack either; **one booking, then stop and read the
+> row.**
 
 **Phase 4.** WP-13 records that no payment has been taken end to end, that Hubtel and MoMo are seams,
 and that Paystack is four of six calls never spoken to a live account. It does not record **why the last
@@ -4223,6 +4277,11 @@ products, this stops being a payments question.
 ---
 
 ## NEW-55 — the `prod` profile has never served an account, and there is nothing between quality and the public · READY
+
+> **RATIFIED 2026-09-16 — `decisions.md` D92 §7. No staging host**, as recommended and entailed by
+> NEW-54's answer. Production behind the DNS-hold *is* the pre-production environment: real nginx, real
+> certificate, real route, no public name. **What would reverse it** is the other three products wanting
+> the same box — not hc-market's decision to take alone.
 
 **Phase 5.** A companion to WP-19 rather than a duplicate of it: WP-19 is *"fifteen things a person must
 do on the host"*, and this is the one thing that is true **after** all fifteen are done.
@@ -4387,6 +4446,88 @@ is why this failed loudly instead of passing on a coincidence — but it still r
 loop. Once refreshes are serialised, `refresh().block()` genuinely means "the standing reading is mine".
 
 **Not blocked.** No decision outside the repository, no outside fact.
+
+---
+
+## NEW-58 — what "visible while unverified" requires, and the one state it leaves wrong · READY
+
+**Opened by `decisions.md` D92 §3**, ratified 2026-09-16. This was not work before that decision: desk
+enrolment made every one of these unnecessary, because nothing published until a person had looked at it.
+Self-service signup with immediate visibility makes them the conditions on which that choice is safe.
+
+**Phase 2, alongside NEW-49 — not after it.** Enrolment shipping without these is the window where the
+harm is available.
+
+### What is already safe, so it is not in scope
+
+`ProWorkspaceResource.saveProfile` omits `verification`, `insured` and `policeClearance` from
+`SaveProfile`, with the reason in place: *"a professional who can set their own verified flag is a trust
+chain with a hole in it."* A self-enrolled professional cannot claim to be verified, insured or
+police-cleared. **That is what makes this decision tenable and it needs no work** — and it must not be
+"tidied" into the profile body by anyone adding fields there later.
+
+### 1. Self-declared fields must say that they are self-declared
+
+Two public fields are free text the professional sets, measured at `ProWorkspaceResource:187` and `:194`:
+
+| Field | What a self-enrolled person can put in it |
+| --- | --- |
+| `Credential.label` | *"DONA International Certified Birth Doula"*, an association registration number, a licence number — anything |
+| `yearsPractising` | any integer |
+
+Under desk enrolment nobody could; under self-service anybody can, and this platform serves it on a
+public health-services domain. **A badge on the profile does not qualify the credential** — the reader
+sees a named person with a named qualification. Until `VERIFIED`, credentials and years must render as
+**self-declared**, at the field rather than at the page.
+
+This is the same category `VerificationReviewResource` was deleted for — *"a forged verification is a
+public claim about a real person"* — arriving through a door that is now deliberately open, which is why
+the mitigation is presentational rather than a refusal.
+
+### 2. The badge goes on every surface, not the profile alone
+
+Browse card, Discover, search result, **and the booking confirmation**. A card in Browse with no
+qualifier asserts a bookable professional; the customer who books from it never opens the profile.
+
+### 3. A takedown route for impersonation
+
+Nothing provides one — no screen, no endpoint — because all eighteen listings were seeded and no real
+person could be misrepresented by one. Self-service signup means a person can now have claims published
+about them by somebody else. **Needs a route before enrolment opens**, and it need not be a product
+feature: a documented contact that reaches the desk, with `VerificationState.SUSPENDED` as the lever, is
+enough for v1. What is not enough is nothing.
+
+### 4. Signup abuse limits
+
+Registration is `permitAll` (NEW-47), and one account creating many professional listings is now a
+supply-side spam vector rather than a theoretical one. Rate-limit both, and cap listings per account.
+
+### 5. `SUSPENDED` in the default listing — a DEFECT, not a consequence
+
+**Separated deliberately, because "visible while unverified" was decided and "visible while suspended"
+was not.**
+
+`VerificationState` is `UNVERIFIED, PENDING, VERIFIED, SUSPENDED`, and `jdl/catalog.jdl:66` says the
+fourth exists *"because suspension has to be distinguishable from never-verified"*. But `verifiedOnly` is
+**opt-in** — measured: the default listing returns all 18, `verifiedOnly=true` returns 16 — so **a
+professional whose verification was taken away is served in the default listing**. That is worse than an
+unverified one: it is a trust signal this platform granted and then withdrew, and the withdrawal is
+invisible to a reader.
+
+D33 fixed the adjacent half — a `SUSPENDED` professional was publishing a `verifiedOn` date, so the badge
+outlived the verification. **The listing half is untouched.**
+
+**Nothing has ever exercised it: there is no `SUSPENDED` row in either estate**, so every statement here
+is read from code rather than observed. Write the row first, watch what is served, then fix it — in that
+order, or the fix is verified against a reading of the same code that produced the defect.
+
+### Done means
+
+The four protections shipped with NEW-49 rather than after it, and the `SUSPENDED` listing decided
+explicitly — suppressed, or served with an unmissable withdrawal notice — with a seeded or hand-written
+`SUSPENDED` row proving which, since that state has never existed anywhere.
+
+**Not blocked.** The decision is taken; this is its condition.
 
 ---
 

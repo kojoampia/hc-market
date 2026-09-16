@@ -16505,3 +16505,208 @@ nothing to delete. **So the cron is proven to run and the delete branch is prove
 and creating an account on the quality box to watch it disappear was declined as a write to a live
 environment for a fact that source establishes. It is worth watching once on the first estate that has
 mail, and NEW-47 is where that belongs.
+
+---
+
+## D92 — Eight answers from the architect: the front end, who enrols, what a price says, and where a callback lands
+
+**Ratified 2026-09-16 by the architect**, in response to the questions D90 §7 left open. Unblocks
+backlog **NEW-48, NEW-49, NEW-50, NEW-53, NEW-54, NEW-55**; opens **NEW-58**. No code changed in this
+entry — it is the record, and each item carries the work.
+
+**Four of the eight went against the recommendation.** They are marked, the recommendation is preserved,
+and the reasoning is **not re-argued** — a decision the architect has taken is the premise for what
+follows. What each section does instead is state what the choice now commits the estate to, because a
+consequence nobody wrote down is how an authorised decision becomes an unauthorised surprise.
+
+### §1 The eight answers
+
+| # | Question | Answer | vs. recommendation |
+| --- | --- | --- | --- |
+| 1 | the front end's shape | **client-only Angular into `web/`**, `hc-admin/app`'s shape | **followed** |
+| 2 | `enableTranslation` | **ON** — i18n wired from the start | **against** (§2) |
+| 3 | `jhiPrefix` | **`abm`** | engineering default, stated and unopposed |
+| 4 | who enrols a professional | **self-service signup** | **against** (§3) |
+| 5 | how an unverified professional appears | **visible, badged unverified** | **against** (§3) |
+| 6 | the "from" price | **paid minimum + a free-intro badge** | the third option; neither prior default |
+| 7 | the brokerage desk | **screens, after Phase 2** | **followed** |
+| 8 | the provider callback | **wait for production behind the DNS-hold** | **against** (§6) |
+| 9 | a staging host | **no** — the DNS-hold is the answer | **followed**, and implied by 8 |
+
+### §2 The front end: the shape as recommended, translation the other way
+
+**The shape is ratified as D90 §3 argued it** — a client-only JHipster 9.2.0 Angular application
+generated into `web/` with `skipServer: true`, matching `hc-admin/app` rather than the four-majors-stale
+`hc-patient/web`. The decisive property stands: it **never opens the gateway**, so `InitialSetupMigration`'s
+`admin`/`admin` credential (D61) and the hand-written OpenTelemetry block in `pom.xml` are never at risk,
+and the gateway's four route-and-security files and its JDL are never touched.
+
+**`enableTranslation` is ON, against the recommendation.** The recommendation was off, on the grounds
+that the prototype is English-only for an English-official market and that i18n is a pipeline through
+every component rather than a flag. **The architect's choice is the one that cannot be regretted
+later**, and that is the honest way to read it: translation-on is expensive now and translation-off is
+expensive *forever*, since retrofitting means touching every template that was written without it. The
+recommendation optimised for the 15 screens in front of us; the decision optimises for the one moment
+the choice is cheap. It also aligns with `hc-admin/app`, which this app is otherwise copying exactly —
+so the estate now has one answer instead of a 5-to-1 split with no rationale.
+
+**What it commits.** Every user-visible string goes in `i18n/en/*.json` behind a `jhiTranslate`, from
+the first screen — not retrofitted at the end, which produces a half-translated app and a linter nobody
+can make green. `jhiPrefix` is **`abm`** (hc-market has never had one; `hc-admin` is `abf`,
+`hc-professional` `hpd`).
+
+**Three traps close on day one** and are restated because they are free at generation and a backlog row
+afterwards: `angular.json`'s `assets` must be the **glob-with-`ignore`** shape and not a bare string, or
+this app publishes its own Sass exactly as `admin.abofonsa.com` does today; `eslint.config.ts` must
+ignore **`.claude/`**, or `npm test` fails before a single test whenever an agent worktree exists; and
+**never white text on gold** — `#C59437` on white is 2.74:1 and fails AA.
+
+### §3 Enrolment: self-service, and visible while unverified
+
+**Both answers went against the recommendation, and together they are the largest change of direction
+in this set.** The recommendation was desk enrolment behind `ROLE_BROKERAGE`, with an unverified
+professional invisible until the desk passed them. The decision is **self-service signup**, with an
+unverified professional **visible and badged**.
+
+**The first thing to record is that the read side already behaves this way**, which the recommendation
+did not establish and which makes the decision considerably cheaper than it was costed. Measured on the
+quality estate: `GET /api/professionals` returns **18**, of which **16** are `VERIFIED` and **2**
+(`p9`, `p18`) are `UNVERIFIED`; `verifiedOnly=true` returns **16**. So `verifiedOnly` is an **opt-in
+filter** and the default listing has served unverified professionals for the estate's whole life. The
+decision ratifies existing behaviour rather than asking for new behaviour, and what is actually missing
+is a **badge on the client** — which does not exist yet because the client does not exist yet.
+
+**The sharpest edge was already closed, by somebody who saw this coming.**
+`ProWorkspaceResource.saveProfile` omits `verification`, `insured` and `policeClearance` from
+`SaveProfile`, and says why in place: *"a professional who can set their own verified flag is a trust
+chain with a hole in it."* So a self-enrolled professional **cannot** mark themselves verified, insured
+or police-cleared. That is the difference between this decision being tenable and not, and it needs no
+work.
+
+**What is NOT closed, and is NEW-58.** Two public fields are self-declared free text:
+`Credential.label` (`ProWorkspaceResource:194`) and `yearsPractising`. A self-enrolled person can type
+*"DONA International Certified Birth Doula"* and have this platform serve it on a public health-services
+domain. Under desk enrolment nobody could; under self-service everybody can, and the badge on the
+*profile* does not qualify the *credential*. So: credentials and years must render as **self-declared**
+until `VERIFIED`, the badge must appear on **every** surface that shows a professional — Browse card,
+Discover, search result, booking confirmation, not only the profile — and there must be a **takedown
+route** for someone impersonated, which no screen and no endpoint provides today because all eighteen
+listings were seeded.
+
+**And `SUSPENDED` is the state this decision leaves wrong.** The enum is `UNVERIFIED, PENDING, VERIFIED,
+SUSPENDED`, and the JDL says the fourth exists *"because suspension has to be distinguishable from
+never-verified"*. With `verifiedOnly` opt-in, **a professional whose verification was taken away is
+served in the default listing** — which is worse than an unverified one, because it is a trust signal
+this platform granted and then withdrew. D33 already fixed the adjacent half (a `SUSPENDED` professional
+was publishing a `verifiedOn` date, so the badge outlived the verification). The listing half is
+untouched and **untested**: there is no `SUSPENDED` row in either estate, so nothing has ever exercised
+it. "Visible while unverified" is a decision; "visible while suspended" is not, and NEW-58 separates them.
+
+**One interaction worth naming.** Self-service makes the verification queue load-bearing rather than
+occasional — every listing arrives unverified and publishes immediately — while answer 7 puts desk
+screens *after* Phase 2. That is coherent, and it means the queue is worked by hand in the interval.
+NEW-53 and NEW-58 both say so.
+
+### §4 The price: say both
+
+**`fromPriceMinor` keeps the literal minimum and the card gains a free-intro marker.** Neither the
+prototype's reading (cheapest *paid* service, `filter(s => s.price > 0)` at three sites) nor the API's
+(the literal minimum, `0` for p12 and p13) was adopted: the headline is the **paid** minimum and the
+free service is surfaced **as its own fact** rather than as a price.
+
+It is the only one of the three options that is not a one-line change — a new field on the card DTO, the
+prototype's three sites, and a badge in a design system that does not exist yet — and it is the only one
+that is true. A doula whose packages run to ₵3,200 is not a "from ₵0" listing, and a free intro call is a
+conversion tool that deserves better than being hidden to make the headline tidy.
+
+**Do not implement it by changing `fromPriceMinor`'s meaning.** `0` is the honest minimum and other
+things may come to read it; the badge is a second field derived from the same `services` collection. And
+note the derivation rule this estate turns on — it is computed, never stored.
+
+### §5 The desk: screens, after Phase 2
+
+**As recommended.** Erasure is a legal deliverable under DPC registration `P0021484082`, and a receipt
+read out of `psql` is a process that will be performed wrong under pressure, on the one path that is
+irreversible. Building it after the customer and professional screens means its components are reused
+rather than invented.
+
+The audit gap is **not** closed by this and is not meant to be: nothing records who looked at whom,
+whichever interface the looking happens through. That stays NEW-53's other half.
+
+### §6 The callback: production is the pre-production environment
+
+**Against the recommendation, and the recommendation is preserved here in full because the objection is
+real and was made before the decision was taken.** The recommendation was a time-boxed `cloudflared`
+tunnel to quality for one supervised session. The decision is to **wait for production behind the
+DNS-hold** and test there with the smallest chargeable amount.
+
+**What the objection was.** A Paystack payment *is* its webhook — until the callback arrives the booking
+sits in `PENDING_PAYMENT`, `booking.requested` is withheld and the professional is never told (D43).
+Quality is this workstation on a private LAN and Paystack cannot reach it, so this decision places the
+payment path's **first real execution in production**, on the one path where a customer's money is
+already committed, in an estate whose quality box has found **seven** defects that every test suite
+passed. D50 explicitly refused to guess the signature scheme, the field paths and the status mapping;
+four of Paystack's six calls are **written and have never reached Paystack** (D86).
+
+**What the decision buys, which is not nothing.** The tunnel would have been a temporary public door
+onto a box whose seeded accounts hold privileged roles with passwords derived from their logins by a
+rule published in this public repository — a real cost the recommendation carried and did not price
+highly enough. And the tunnel could never have exercised nginx, TLS, the production route or the rate
+limit, so it was always going to be followed by a production test. The architect's choice is one
+supervised production session instead of two sessions, the first of which proves the wire format and
+nothing else.
+
+**So the mitigations move from optional to required**, and they are NEW-54's content rather than advice:
+
+- **the DNS-hold is load-bearing**, not a convenience. `market.abofonsa.com` stays unpublished until the
+  callback has been observed end to end;
+- **smallest chargeable amount**, on a real Paystack account, with somebody watching the booking's
+  status transition rather than inferring it from a 200;
+- **`refunds-enabled` stays off** (D86). It is a separate flag from `enabled` precisely so that turning
+  a provider on is not the same decision as turning on a money-returning call nobody has watched work;
+- **`status` is the reconciliation path and is now the safety net.** D86 wrote
+  `GET /transaction/verify/{reference}` for exactly the bookings D43 leaves in `PENDING_PAYMENT` when no
+  webhook arrives. If the first production callback does not land, that call is how a stuck booking is
+  resolved without guessing — and it, too, has never reached Paystack;
+- **one booking, then stop and read the row.** Not a batch.
+
+### §7 Staging: no
+
+**As recommended, and entailed by §6.** No staging host is bought. Production behind the DNS-hold is the
+pre-production environment: reachable by IP, running the real nginx, the real certificate and the real
+route, with no public name. The quality box already proves the deployed image is the published image at
+full 40-character digests, so what staging would have added is mostly the edge hop — which the DNS-hold
+gives on the real machine.
+
+**What would reverse it** is the other three products wanting the same box, at which point one host
+serves four products and the arithmetic changes. That is not hc-market's decision to take alone.
+
+### §8 What these answers open
+
+**NEW-58** — the protections that "visible while unverified" requires, which did not exist as work
+before this decision because desk enrolment made them unnecessary: self-declared attribution on
+credentials and years, the badge on every surface rather than the profile alone, a takedown route for
+impersonation, signup abuse limits, and the `SUSPENDED` listing question, which is a **defect** rather
+than a consequence of the decision and is untested in both estates.
+
+Every other answer lands in an item that already exists. **NEW-49's subject changes** — it was framed as
+desk enrolment and is now self-service signup — so its heading is rewritten rather than annotated,
+per the house rule against a title describing a plan nobody followed.
+
+### §9 Verified, assumed, not exercised
+
+**Verified**, on the running quality estate and in source, while answering these questions:
+`GET /api/professionals` returns 18 with 16 `VERIFIED` and 2 `UNVERIFIED` (`p9`, `p18`), and
+`verifiedOnly=true` returns 16 — so the default listing does not filter;
+`VerificationState` is a four-value enum including `SUSPENDED`; `verification`, `insured` and
+`policeClearance` are absent from `SaveProfile` and the javadoc says why; `Credential.label` and
+`yearsPractising` **are** self-settable at `ProWorkspaceResource:187` and `:194`;
+`hc-admin/app` is JHipster 9.2.0 / Angular 21 with `skipServer: true` and `hc-patient/web` is 8.1.0.
+
+**Assumed:** that `hc-admin/app`'s generated shape reproduces under JHipster 9.2.0 today — nothing was
+generated to check, and the generator's defaults may have moved since that app was scaffolded.
+
+**Not exercised:** no Angular application has been generated; no professional has ever been enrolled by
+any means; **no `SUSPENDED` row has ever existed in either estate**, so every claim about how a
+suspended professional is served is read from the code and not observed; and no Paystack call has
+reached Paystack.
