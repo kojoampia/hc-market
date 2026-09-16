@@ -159,6 +159,9 @@ class GatewayIdentityMetersPublicationUnitTest {
         stop.set(true);
         for (Thread t : threads) {
             t.join(TimeUnit.SECONDS.toMillis(10));
+            // JOIN WITH A TIMEOUT DOES NOT ASSERT TERMINATION — found at review. A hung thread would
+            // time out silently here and every assertion below could still pass with it running.
+            assertThat(t.isAlive()).as("every writer and the reader must have stopped").isFalse();
         }
 
         // THE CONTROL, and it is the whole reason this test means anything: if the reader never actually
@@ -203,6 +206,7 @@ class GatewayIdentityMetersPublicationUnitTest {
         start.countDown();
         for (Thread t : threads) {
             t.join(TimeUnit.SECONDS.toMillis(10));
+            assertThat(t.isAlive()).as("every writer must have stopped").isFalse();
         }
 
         long highest = (long) writers * each;

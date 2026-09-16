@@ -25,10 +25,21 @@ import reactor.core.scheduler.Schedulers;
  * happens on a schedule, off that path, and {@link GatewayIdentityMeters} publishes whatever the last
  * observation said.
  *
- * <p><strong>Both numbers come from one observation.</strong> Two independent counts taken moments apart
- * can disagree — a registration between them makes the pair describe no single moment, and a dashboard
- * adding them for a total would show an account that existed twice or not at all. They are counted
- * together and published together.
+ * <p><strong>Both numbers are PUBLISHED as one observation. They are not COUNTED as one, and the
+ * difference is a residual rather than a fix</strong> — narrowed at review of NEW-57, because the
+ * paragraph here used to claim both. Publication is now a single reference swap, so no reader can add
+ * one observation's {@code activated} to another's {@code notActivated}
+ * ({@code GatewayIdentityMeters.AccountSplit}). But the counting is still <strong>two independent
+ * queries</strong> joined by {@code Mono.zip}: if an account activates between them, the {@code is(true)}
+ * count ran too early to see it and the {@code ne(true)} count ran too late, so the pair sums to one less
+ * than the collection holds — a total that existed at no single moment, now published atomically.
+ *
+ * <p>It is self-correcting at the next tick, it can never make the reading go backwards, and it needs a
+ * registration inside a two-query window. It is not fixed here because the fix is a different change —
+ * one aggregation grouping on {@code activated} rather than two counts — with its own null-key handling
+ * for a document that has no such field. Worth knowing before anyone writes a test that asserts the two
+ * gauges sum to the collection size and expects it to hold under concurrent writes; the one integration
+ * test that does is safe only because those tests run sequentially, and it says so.
  *
  * <p><strong>It reads through {@link ReactiveMongoTemplate} and not through a repository method.</strong>
  * {@code UserRepository} is generated, so a {@code countByActivated} added to it is discarded by the next
@@ -94,7 +105,10 @@ public class IdentityMetricsRefresher {
      *
      * <p>The real reason is composition. {@link #refresh()} returns a {@link Mono}, and
      * {@code Flux.interval(...).concatMap(...)} consumes it natively: one observation at a time, on a
-     * scheduler that is not the event loop, with backpressure if Mongo is slow. A {@code @Scheduled} void
+     * scheduler that is not the event loop, with backpressure if Mongo is slow. (Precisely: the interval
+     * ticks on {@code Schedulers.parallel()} and {@code setAccounts} runs on the Mongo driver's thread —
+     * {@code subscribeOn} moves the subscription and not every signal. Nothing blocks on any of them,
+     * which is the property that matters.) A {@code @Scheduled} void
      * method would have to {@code block()} — which is banned here and is what BlockHound would catch — or
      * subscribe and discard, which drops the serialisation {@code concatMap} provides.
      */
@@ -102,7 +116,13 @@ public class IdentityMetricsRefresher {
     void start() {
         Flux
             .interval(Duration.ZERO, interval)
-            .concatMap(tick -> refresh())
+            // THE BELT: refresh() handles an error from the COUNTS, but a throw from inside its own
+            // Mono.defer supplier — building a Query, say — errors the outer Mono instead, and an error
+            // reaching concatMap CANCELS THE INTERVAL. The timer would then be dead for the life of the
+            // process, with one onErrorDropped line and gauges frozen at their last reading: silent, total
+            // and permanent, which is the worst failure shape available here. Unreachable today, found at
+            // review, and one line to make "it never throws" true of the timer as well as of refresh().
+            .concatMap(tick -> refresh().onErrorResume(e -> Mono.empty()))
             .subscribeOn(Schedulers.boundedElastic())
             .subscribe();
         LOG.info("publishing {} every {}", GatewayIdentityMeters.ACCOUNTS_METER, interval);
@@ -116,12 +136,21 @@ public class IdentityMetricsRefresher {
      * split now" is a legitimate operation, and the alternative is a test that sleeps, which is a test
      * that is either slow or flaky.
      *
-     * <p><strong>When this {@link Mono} completes, the standing reading is this observation or a NEWER
-     * one — never an older one.</strong> That is the guarantee, and it is narrower than the one this
-     * javadoc used to give. It said a caller could "know when it has landed", which was true of landing
-     * and false of <em>standing</em>: nothing serialises an explicit {@code refresh()} against the timer
-     * above, so a slow timer observation could complete afterwards and write its older numbers over this
-     * one. The gauge then regressed to a reading from the past, silently.
+     * <p><strong>When this {@link Mono} completes having counted successfully, the standing reading is
+     * this observation or a NEWER one — never an older one.</strong> That is the guarantee, and it is
+     * narrower than the one this javadoc used to give. It said a caller could "know when it has landed",
+     * which was true of landing and false of <em>standing</em>: nothing serialises an explicit
+     * {@code refresh()} against the timer above, so a slow timer observation could complete afterwards and
+     * write its older numbers over this one. The gauge then regressed to a reading from the past, silently.
+     *
+     * <p><strong>"Having counted successfully" is load-bearing and the first version of this sentence
+     * omitted it</strong> — found at review, in the commit whose whole subject is a claim outrunning its
+     * code. The counts can fail: {@code onErrorResume} below turns that into an <em>empty</em>
+     * {@code Mono}, so this one <em>completes normally having published nothing</em>, and the standing
+     * reading is then whatever stood before — possibly older than this observation, possibly the initial
+     * {@code -1}. A caller that blocks on this and concludes "the account I just saved is in the counts"
+     * is wrong in exactly that case. {@code IdentityMetricsRefresherUnitTest} pins it, because a
+     * qualification nothing tests is the next version of the sentence this one replaced.
      *
      * <p>That is NEW-57, and it is fixed in {@link GatewayIdentityMeters#setAccounts} rather than here:
      * each observation takes a <strong>sequence before it queries</strong>, and a write whose sequence is

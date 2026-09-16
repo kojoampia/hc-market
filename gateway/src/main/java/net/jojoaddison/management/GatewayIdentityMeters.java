@@ -128,6 +128,14 @@ public class GatewayIdentityMeters {
      * queries. It is what makes {@link #setAccounts} monotone: a slow observation that completes after a
      * later one is discarded instead of overwriting it.
      *
+     * <p><strong>It orders observations by when they were ISSUED, not by how fresh their data is</strong>
+     * — narrowed at review. If observation 1 stalls before its queries leave (a connection-pool wait,
+     * say) while observation 2 queries and lands, then 1's counts are <em>newer</em> and are still
+     * discarded for having a lower sequence. The cost is bounded staleness — at most until the next tick —
+     * and never a reading that goes backwards, which is the trade being made deliberately: ordering by
+     * data freshness would need a timestamp from the server and buys nothing a gauge on a 60-second
+     * interval can use.
+     *
      * @param activated accounts with {@code activated = true}
      * @param notActivated accounts with {@code activated != true} — {@code ne}, so the two partition the
      *     collection even for a document with no such field
