@@ -170,11 +170,27 @@ class GatewayIdentityMetricsIT {
      * numbers are both non-negative, that they sum to the collection's size, and that adding an
      * unactivated account moves the unactivated side by exactly one. That last delta is the assertion
      * that would fail if the query said {@code is(false)} and a document had no {@code activated} field.
+     *
+     * <p><strong>This test found NEW-57 and is only sound because of the fix.</strong> It failed in CI as
+     * {@code expected: 6L but was: 2L} — the gauges holding a reading from when the collection had two
+     * documents. The partition was never the problem: {@code refresh().block()} guaranteed that <em>this</em>
+     * observation had landed and not that it still <em>stood</em>, so the timer's slow first tick (at
+     * {@code Duration.ZERO}, against a cold Mongo) completed afterwards and wrote its older numbers over it.
+     *
+     * <p>So the sequence is asserted below, before the numbers. It is the guarantee the numbers rest on,
+     * and a test that checks the consequence without the premise is the one that took three days to
+     * explain. The mechanism itself is pinned by {@code GatewayIdentityMetersPublicationUnitTest}, which
+     * needs no Mongo and no context — this one only has to show it holds through the real refresher.
      */
     @Test
     @DisplayName("the account gauges partition the collection, and a new dormant account moves one side by one")
     void gaugesPartitionTheCollection() {
         refresher.refresh().block();
+        long publishedSequence = meters.accounts().sequence();
+        assertThat(publishedSequence)
+            .as("an observation must have been published — Long.MIN_VALUE means none ever landed")
+            .isGreaterThan(Long.MIN_VALUE);
+
         long activatedBefore = meters.activatedAccounts();
         long dormantBefore = meters.notActivatedAccounts();
         assertThat(activatedBefore).as("the first refresh must have answered").isNotNegative();
@@ -183,6 +199,10 @@ class GatewayIdentityMetricsIT {
 
         saveUser("metrics-gauge-dormant", "the-password", false);
         refresher.refresh().block();
+
+        assertThat(meters.accounts().sequence())
+            .as("the second observation must have superseded the first, or the numbers below are the first's")
+            .isGreaterThan(publishedSequence);
 
         assertThat(meters.notActivatedAccounts()).isEqualTo(dormantBefore + 1);
         assertThat(meters.activatedAccounts()).isEqualTo(activatedBefore);

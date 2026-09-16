@@ -38,7 +38,7 @@ class GatewayIdentityMetersNamingUnitTest {
         for (Outcome outcome : Outcome.values()) {
             meters.recordLogin(outcome);
         }
-        meters.setAccounts(7, 3);
+        meters.setAccounts(7, 3, 1);
 
         String scrape = registry.scrape();
 

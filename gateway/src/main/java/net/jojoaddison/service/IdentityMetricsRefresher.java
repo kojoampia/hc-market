@@ -1,6 +1,7 @@
 package net.jojoaddison.service;
 
 import java.time.Duration;
+import java.util.concurrent.atomic.AtomicLong;
 import net.jojoaddison.domain.User;
 import net.jojoaddison.management.GatewayIdentityMeters;
 import org.slf4j.Logger;
@@ -58,6 +59,14 @@ public class IdentityMetricsRefresher {
     private final GatewayIdentityMeters meters;
     private final Duration interval;
 
+    /**
+     * Which observation this is. Monotonic, taken before each observation's queries go out, and the only
+     * thing that lets {@link GatewayIdentityMeters#setAccounts} tell a fresh reading from a slow one that
+     * completed late — NEW-57. It is never read for anything else, so wrapping at {@link Long#MAX_VALUE}
+     * is not a concern: at one observation a second it would take some 292 billion years.
+     */
+    private final AtomicLong observations = new AtomicLong();
+
     public IdentityMetricsRefresher(
         ReactiveMongoTemplate mongo,
         GatewayIdentityMeters meters,
@@ -76,9 +85,18 @@ public class IdentityMetricsRefresher {
      * is the same mistake the SSE heartbeat made in reverse (its first tick was an interval away, so no
      * response was committed for twenty seconds).
      *
-     * <p>{@code @Scheduled} is deliberately not used: it needs {@code @EnableScheduling} on a generated
-     * application class, which a regeneration would discard silently — leaving the gauges frozen at
-     * {@code -1} with nothing failing.
+     * <p><strong>{@code @Scheduled} is deliberately not used, and the reason given here was wrong until
+     * NEW-57.</strong> It said {@code @Scheduled} "needs {@code @EnableScheduling} on a generated
+     * application class, which a regeneration would discard silently". Measured for {@code decisions.md}
+     * D91: {@code @EnableScheduling} is on the generated {@code config/AsyncConfiguration}, active in all
+     * five services and on every profile that runs — so a regeneration <em>restores</em> it rather than
+     * discarding it, and {@code @Scheduled} works here today. {@code UserService} uses one.
+     *
+     * <p>The real reason is composition. {@link #refresh()} returns a {@link Mono}, and
+     * {@code Flux.interval(...).concatMap(...)} consumes it natively: one observation at a time, on a
+     * scheduler that is not the event loop, with backpressure if Mongo is slow. A {@code @Scheduled} void
+     * method would have to {@code block()} — which is banned here and is what BlockHound would catch — or
+     * subscribe and discard, which drops the serialisation {@code concatMap} provides.
      */
     @jakarta.annotation.PostConstruct
     void start() {
@@ -94,32 +112,64 @@ public class IdentityMetricsRefresher {
      * One observation of the account split.
      *
      * <p>Public and returning its own {@link Mono} so a caller — the timer above, or a test — can drive
-     * exactly one observation and know when it has landed, rather than waiting on the interval. It is not
-     * a test backdoor: "observe the split now" is a legitimate operation, and the alternative is a test
-     * that sleeps, which is a test that is either slow or flaky.
+     * exactly one observation rather than waiting on the interval. It is not a test backdoor: "observe the
+     * split now" is a legitimate operation, and the alternative is a test that sleeps, which is a test
+     * that is either slow or flaky.
+     *
+     * <p><strong>When this {@link Mono} completes, the standing reading is this observation or a NEWER
+     * one — never an older one.</strong> That is the guarantee, and it is narrower than the one this
+     * javadoc used to give. It said a caller could "know when it has landed", which was true of landing
+     * and false of <em>standing</em>: nothing serialises an explicit {@code refresh()} against the timer
+     * above, so a slow timer observation could complete afterwards and write its older numbers over this
+     * one. The gauge then regressed to a reading from the past, silently.
+     *
+     * <p>That is NEW-57, and it is fixed in {@link GatewayIdentityMeters#setAccounts} rather than here:
+     * each observation takes a <strong>sequence before it queries</strong>, and a write whose sequence is
+     * not the newest is discarded. Serialising the two callers was the alternative and it is the wrong
+     * trade — it needs a sink, a completion signal per enqueued observation, and it would make an
+     * explicit refresh wait on a Mongo round trip it does not need.
+     *
+     * <p>The sequence is taken at <strong>subscribe</strong> time and not at assembly, hence the
+     * {@link Mono#defer}: a {@code Mono} held and subscribed twice is two observations, and the number has
+     * to say when the queries went out rather than when the pipeline was built.
      *
      * <p>It never throws. A failed count warns and leaves the previous reading in place, so a caller
      * cannot distinguish "refreshed" from "tried and failed" — deliberately, because the two gauges are
      * the answer and the {@link Mono} is only the timing.
      */
     public Mono<Void> refresh() {
-        Mono<Long> activated = mongo.count(new Query(Criteria.where(ACTIVATED).is(true)), User.class);
-        Mono<Long> notActivated = mongo.count(new Query(Criteria.where(ACTIVATED).ne(true)), User.class);
-        // `ne(true)` RATHER THAN `is(false)`, so the two counts partition the collection. A document whose
-        // `activated` field is absent or null — which nothing here writes today, but a hand-inserted or
-        // migrated user could — would be counted by neither under `is(false)`, and the two gauges would
-        // silently not add up to the number of accounts.
-        return Mono
-            .zip(activated, notActivated)
-            .doOnNext(both -> meters.setAccounts(both.getT1(), both.getT2()))
-            .doOnError(e ->
-                LOG.warn(
-                    "could not count accounts for {}, so the previous reading stands and is now stale: {}",
-                    GatewayIdentityMeters.ACCOUNTS_METER,
-                    e.toString()
+        return Mono.defer(() -> {
+            long sequence = observations.incrementAndGet();
+            Mono<Long> activated = mongo.count(new Query(Criteria.where(ACTIVATED).is(true)), User.class);
+            Mono<Long> notActivated = mongo.count(new Query(Criteria.where(ACTIVATED).ne(true)), User.class);
+            // `ne(true)` RATHER THAN `is(false)`, so the two counts partition the collection. A document
+            // whose `activated` field is absent or null — which nothing here writes today, but a
+            // hand-inserted or migrated user could — would be counted by neither under `is(false)`, and the
+            // two gauges would silently not add up to the number of accounts.
+            return Mono
+                .zip(activated, notActivated)
+                .doOnNext(both -> {
+                    if (!meters.setAccounts(both.getT1(), both.getT2(), sequence)) {
+                        // DEBUG, not WARN. A discarded observation is the guard working: the numbers were
+                        // right when taken and a later reading has already superseded them. Nothing is
+                        // wrong and nobody needs to act, so warning here would train people to ignore the
+                        // level that the genuinely stale case above uses.
+                        LOG.debug(
+                            "observation {} of {} completed after a newer one and was discarded",
+                            sequence,
+                            GatewayIdentityMeters.ACCOUNTS_METER
+                        );
+                    }
+                })
+                .doOnError(e ->
+                    LOG.warn(
+                        "could not count accounts for {}, so the previous reading stands and is now stale: {}",
+                        GatewayIdentityMeters.ACCOUNTS_METER,
+                        e.toString()
+                    )
                 )
-            )
-            .onErrorResume(e -> Mono.empty())
-            .then();
+                .onErrorResume(e -> Mono.empty())
+                .then();
+        });
     }
 }
