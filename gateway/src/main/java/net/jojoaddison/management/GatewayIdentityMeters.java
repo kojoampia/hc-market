@@ -4,6 +4,7 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tags;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Registrations by activation state, and logins by outcome — {@code decisions.md} D84, backlog NEW-43.
@@ -61,7 +62,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * {@code SimpleMeterRegistry} and a naming test a real {@code PrometheusMeterRegistry}. What must not
  * happen is the <em>application</em> handing it a child.
  *
- * <p><strong>The gauges are read from an {@link AtomicLong} rather than from the database.</strong> A
+ * <p><strong>The gauges are read from memory rather than from the database.</strong> A
  * Micrometer gauge supplier is called synchronously by whatever is reading the registry, and the
  * gateway's Mongo access is reactive — a supplier that blocked on it would block a scrape or an export.
  * {@code IdentityMetricsRefresher} in {@code service} owns the refresh; this class owns the numbers it
@@ -114,13 +115,43 @@ public class GatewayIdentityMeters {
     private final Counter error;
 
     /**
-     * The two account numbers the gauges publish. {@code -1} until the first refresh has answered, and
-     * that is not a placeholder — it is the honest value. Zero would mean "this estate holds no
-     * unactivated accounts", which is a claim, and a dashboard cannot tell a real zero from a refresh
-     * that has not run yet. A negative reading is obviously not a count and a panel can say so.
+     * One observation of the account split, published as a unit.
+     *
+     * <p><strong>Both numbers live in ONE object behind ONE reference, and that is load-bearing rather
+     * than tidy</strong> — NEW-57. They were two {@link AtomicLong}s written by two sequential
+     * {@code set} calls, so a reader landing between them added {@code activated} from this observation
+     * to {@code notActivated} from the last one. The exposition endpoint is scraped concurrently with
+     * the refresh, so that reader is real rather than theoretical, and the total it computed existed at
+     * no single moment — which is precisely what this class's javadoc promised could not happen.
+     *
+     * <p>{@code sequence} is which observation this is, assigned by the refresher <em>before</em> it
+     * queries. It is what makes {@link #setAccounts} monotone: a slow observation that completes after a
+     * later one is discarded instead of overwriting it.
+     *
+     * <p><strong>It orders observations by when they were ISSUED, not by how fresh their data is</strong>
+     * — narrowed at review. If observation 1 stalls before its queries leave (a connection-pool wait,
+     * say) while observation 2 queries and lands, then 1's counts are <em>newer</em> and are still
+     * discarded for having a lower sequence. The cost is bounded staleness — at most until the next tick —
+     * and never a reading that goes backwards, which is the trade being made deliberately: ordering by
+     * data freshness would need a timestamp from the server and buys nothing a gauge on a 60-second
+     * interval can use.
+     *
+     * @param activated accounts with {@code activated = true}
+     * @param notActivated accounts with {@code activated != true} — {@code ne}, so the two partition the
+     *     collection even for a document with no such field
+     * @param sequence the observation's own number; {@link Long#MIN_VALUE} before any has landed
      */
-    private final AtomicLong activated = new AtomicLong(-1);
-    private final AtomicLong notActivatedAccounts = new AtomicLong(-1);
+    public record AccountSplit(long activated, long notActivated, long sequence) {}
+
+    /**
+     * The account split the gauges publish. {@code -1} until the first refresh has answered, and that is
+     * not a placeholder — it is the honest value. Zero would mean "this estate holds no unactivated
+     * accounts", which is a claim, and a dashboard cannot tell a real zero from a refresh that has not
+     * run yet. A negative reading is obviously not a count and a panel can say so.
+     */
+    private final AtomicReference<AccountSplit> accounts = new AtomicReference<>(
+        new AccountSplit(-1, -1, Long.MIN_VALUE)
+    );
 
     public GatewayIdentityMeters(MeterRegistry registry) {
         this.success = counter(registry, Outcome.SUCCESS);
@@ -133,8 +164,12 @@ public class GatewayIdentityMeters {
         // the first failure — and a dashboard cannot tell "nobody has failed to log in" from "this panel
         // is querying a name that does not exist". `absent()` is what D63 found alerting on for the same
         // reason, one signal along.
-        registry.gauge(ACCOUNTS_METER, Tags.of(STATE_TAG, "activated"), activated, AtomicLong::doubleValue);
-        registry.gauge(ACCOUNTS_METER, Tags.of(STATE_TAG, "not-activated"), notActivatedAccounts, AtomicLong::doubleValue);
+        // BOTH GAUGES READ THE SAME REFERENCE, which is what makes the pair untearable: each supplier
+        // dereferences once and takes its number from one observation. Micrometer holds a WEAK reference
+        // to the state object, so `accounts` must stay a strong field on this bean — it does, and this
+        // bean is a singleton supplied by IdentityMetricsConfiguration.
+        registry.gauge(ACCOUNTS_METER, Tags.of(STATE_TAG, "activated"), accounts, ref -> ref.get().activated());
+        registry.gauge(ACCOUNTS_METER, Tags.of(STATE_TAG, "not-activated"), accounts, ref -> ref.get().notActivated());
     }
 
     private static Counter counter(MeterRegistry registry, Outcome outcome) {
@@ -157,21 +192,52 @@ public class GatewayIdentityMeters {
     }
 
     /**
-     * Publish the account split. Called by the refresher; both numbers are set from one observation so a
-     * dashboard cannot add them and get a total that existed at no single moment.
+     * Publish one observation of the account split, if it is the newest one seen.
+     *
+     * <p>Both numbers are published in a single reference swap, so a dashboard cannot add them and get a
+     * total that existed at no single moment. That sentence was here before NEW-57 and was not true: the
+     * numbers were two {@link AtomicLong}s set one after the other. It is true now because there is one
+     * write.
+     *
+     * <p><strong>A STALER OBSERVATION IS DISCARDED rather than written</strong>, which is the other half
+     * of NEW-57. {@code IdentityMetricsRefresher} runs a timer and also exposes {@code refresh()} for a
+     * caller that wants an observation now; nothing serialised the two, so a slow timer observation could
+     * complete <em>after</em> a later one and write its older numbers over them. The gauge then regressed
+     * to a reading from the past with nothing logged and nothing failing. Discarding by sequence fixes it
+     * without serialising anything, and it holds for any number of concurrent observations.
+     *
+     * <p>Equal sequences are also refused. Nothing issues one twice, and "refuse a repeat" is the safe
+     * direction for a guard whose job is that the published reading only ever moves forward.
+     *
+     * @param sequence the observation's number, assigned before its queries were issued
+     * @return {@code true} if this observation is now published; {@code false} if a newer one stands, in
+     *     which case the caller's numbers were correct when taken and are simply no longer current
      */
-    public void setAccounts(long activatedCount, long notActivatedCount) {
-        activated.set(activatedCount);
-        notActivatedAccounts.set(notActivatedCount);
+    public boolean setAccounts(long activatedCount, long notActivatedCount, long sequence) {
+        AccountSplit proposed = new AccountSplit(activatedCount, notActivatedCount, sequence);
+        while (true) {
+            AccountSplit standing = accounts.get();
+            if (standing.sequence() >= sequence) {
+                return false;
+            }
+            if (accounts.compareAndSet(standing, proposed)) {
+                return true;
+            }
+        }
+    }
+
+    /** What the gauges currently publish, as one observation. Never a mix of two. */
+    public AccountSplit accounts() {
+        return accounts.get();
     }
 
     /** For tests: what the gauges currently publish. */
     public long activatedAccounts() {
-        return activated.get();
+        return accounts.get().activated();
     }
 
     /** For tests: what the gauges currently publish. */
     public long notActivatedAccounts() {
-        return notActivatedAccounts.get();
+        return accounts.get().notActivated();
     }
 }
