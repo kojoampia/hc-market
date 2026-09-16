@@ -37,7 +37,7 @@
 | **Categories of subject** | Customers, non-medical health professionals, internal staff |
 | **Source** | Provided by the subject at registration |
 | **Where** | Gateway service, MongoDB. `gateway/…/domain/User.java` |
-| **Retention** | Not categorised. **See §6.1 — this is a gap** |
+| **Retention** | **Split.** An *activated* account is not categorised — **see §6.1, this is a gap**. An account never activated is **deleted after 3 days**, automatically — §3.1 |
 | **Recipients** | None outside the platform |
 
 ### 2.2 Taking and managing a booking
@@ -144,7 +144,31 @@
 **There is no third category.** A `care-summary-days` period of 90 days existed until D88 and is
 removed: it governed no data.
 
-> **⚠ NOTHING ENFORCES ANY OF THIS.** There is no scheduler in this estate. The periods are read from
+### 3.1 One erasure that IS automatic, and is not one of the periods above
+
+| | |
+| --- | --- |
+| **What** | An account created but never activated |
+| **Deleted after** | **3 days**, swept daily at 01:00 UTC |
+| **Where** | `gateway/…/service/UserService.java:291` — `@Scheduled(cron = "0 0 1 * * ?")`, deleting `activated = false` accounts with an activation key older than three days |
+| **Data destroyed** | Sign-in name, first and last name, email address, password hash |
+| **Decided by** | **Nobody here.** It is JHipster's generated behaviour and was never a decision of this project |
+| **Runs today** | Yes. Verified live: the quality gateway started 2026-09-11T21:22Z, so it has swept four times |
+
+Recorded because it destroys a real person's personal data on a timer, and because **this document
+asserted the opposite until 2026-09-15.** It is a *de facto* retention period for one class of account
+and it has never been put to counsel. Two things follow, both in backlog **NEW-47** and **NEW-56**: no
+activation mail can currently be sent on any estate, so the three days cannot be survived; and §6.1's
+"accounts have no retention category" is not quite right — unactivated ones have one, imposed by a
+framework default.
+
+> **⚠ NOTHING ENFORCES ANY OF THIS — but not for the reason this document gave until 2026-09-15.**
+> It said *"there is no scheduler in this estate"*, and that is false: `@EnableScheduling` is active in
+> **all five** services and a `ThreadPoolTaskScheduler` thread runs in **all five** quality containers,
+> measured at `/proc/1/task`. Two `@Scheduled` methods already run — booking's outbox poll every two
+> seconds, which is the estate's entire event-delivery path, and the gateway's daily deletion of
+> unactivated accounts (§3.1). **What is missing is a retention sweep, not the ability to schedule one.**
+> `decisions.md` **D91**. The periods are read from
 > the environment at start-up with the ratified figures as the committed default, the internal policy
 > endpoint reports them beside `enforced: false`, and a test pins that honesty so the day a sweep
 > exists it must be changed deliberately.
@@ -166,7 +190,7 @@ draft. The host also runs the other five BridgeCare services, so the same transf
 | Each service owns its own database instance | **Implemented** |
 | Databases unreachable from other products | **Implemented** — they join no shared network |
 | Payment provider callbacks authenticated by signature over the raw body | **Implemented** (HMAC-SHA512, constant-time comparison) |
-| Retention enforcement | **Not implemented** — §3 |
+| Retention enforcement | **Not implemented** — §3. The scheduling capability exists and is running; the sweep does not — §3.1, D91 |
 | Audit log of staff access to customer records | **Not implemented.** §6.3 |
 
 ## 6. Known gaps, each needing a decision or work
@@ -175,6 +199,10 @@ draft. The host also runs the other five BridgeCare services, so the same transf
 **2.1 (accounts)** and **2.4 (reviews)** are not covered by either configured period. An account is
 neither a financial record nor operational data, and a review is published indefinitely by design.
 **Needs counsel:** whether an account and a published review need stated periods, and what they are.
+
+**One correction since 2026-09-15:** an *unactivated* account does have a period — three days, applied
+automatically, never decided here (§3.1). So the question to counsel is sharper than it was: the
+organisation has an unexamined 3-day rule for one class of account and no rule at all for the rest.
 
 ### 6.2 Retention is not enforced
 §3. Engineering work — a scheduler this estate does not have. It is the largest gap in this record and

@@ -16175,3 +16175,645 @@ reverse of what I captured. Both readings are correct: **I queried the `/count` 
 queried the bare paths, and `PUBLIC_GET_PATHS` contains `/api/categories` and `/api/reviews/count` but
 neither `/api/categories/count` nor `/api/reviews`. Four measurements, all four consistent with the
 allow-list, compared across different endpoints. My abbreviated labels invited it.
+
+---
+
+## D90 — From prototype to production: the phase order, and what a first deploy may not go without
+
+**Recorded 2026-09-15**, against `main` at `d9b7365`. Opens backlog **NEW-47** to **NEW-55**.
+
+**The sequencing in §2 is accepted — that is a project-management call and it is taken here.** §3 is a
+**recommendation** and is not ratified; §7 lists what is nobody's here to settle, with who holds each.
+Nothing in this decision changes code, configuration or an environment.
+
+### §1 What the estate is, measured rather than characterised
+
+The backend is real and there is no application in front of it.
+
+| | state | how established |
+| --- | --- | --- |
+| five services | build, test, publish, run | quality healthy at `4b18ac6`, 10/10 containers |
+| `web/`, `api/`, `mobile/` | **empty directories** | `ls` — three of them, `mobile/` added 2026-09-11 |
+| the only UI | one 212,942-byte HTML file with inline `<script>` | `docs/Abofonsa_BridgeCare_Marketplace.html` |
+| production | never deployed | D49; `deploy-prod.sh` has never contacted a host |
+| screens the prototype specifies | **15** | `viewDiscover … viewProProfile`, enumerated |
+| brokerage desk screens | **0** | `CUST_NAV` and `PRO_NAV` are the only two navs |
+
+**The prototype is an acceptance target that cannot become the application.** It is not a codebase with
+gaps in it: it has no build, no module system, no dependency manifest, no test runner and no router
+beyond a hash `switch`. It is also the **seed's source** (D4) and CI asserts it regenerates
+byte-identically, so it does not get refactored — it gets read, and then something else gets built.
+
+**And it is deliberately not served in production** (D49), because it presents 18 invented
+professionals with credentials and association registration numbers. That constraint has a consequence
+nobody has written down: **on the day production exists, it has no user interface at all**, and the one
+artefact that looks like one is the one thing CI forbids.
+
+### §2 The order, and the rule that produces it
+
+Ranked by: unblocks the most other work; is reversible if wrong; is verifiable before production.
+
+**Phase 1 — a person can hold an account.** NEW-47. This is first and it is not a judgement call: the
+gateway's account lifecycle is generated, unconfigured and has never been exercised. `POST /api/register`
+is `permitAll`, creates the user with `activated=false`, and hands off to a `MailService` that catches
+`MailException` and logs **WARN** — against `spring.mail.host: localhost:25` and
+`jhipster.mail.base-url: http://my-server-url-to-change`, the literal generator placeholder, in
+`application-prod.yml`. `UserService`'s `@Scheduled(cron = "0 0 1 * * ?")` then deletes the unactivated
+account after three days. So a customer registers, is told to check their email, receives nothing, can
+never log in, and is deleted — **201, and one WARN line**. Every screen in Phase 2 that is not a public
+read sits behind this.
+
+**Phase 2 — the application.** NEW-48. The largest package in the project's remaining life and the
+answer to the question that prompted this decision. It depends on Phase 1 for anything behind a token
+and on §3 for its shape; it depends on nothing else, which is why it is second and not fourth.
+
+**Phase 3 — the promises the API already makes.** NEW-49 (nothing can create a `Professional`), NEW-50
+(the "from" price), NEW-51 (nothing writes a `Payout`), NEW-52 (two configured periods with no scheduler
+behind them), NEW-53 (a desk read leaves no trace and the desk has no screen). Each is small, each is
+independent of the others, and **each is a claim the estate currently makes and cannot meet.** They are
+third rather than first because none of them blocks the frontend and all of them are cheaper to build
+against a screen that exercises them.
+
+**Phase 4 — money for real.** WP-13 continues; NEW-54 is new and is the one that changes the plan:
+**no environment in this estate can receive a provider callback.** Quality is `jacserver` on a private
+LAN (`127.0.0.1`, `market.healthconnect.local`), so a Paystack webhook cannot reach it, and production
+is the only host with a public name. The payment path is therefore the one part of this system whose
+first real execution is necessarily in production unless something is added for it.
+
+**Phase 5 — deploy.** WP-19's fifteen items, WP-18's one command, NEW-55.
+
+**Why not deploy first.** An API-only production estate is deployable today and would be honest — but
+it would be an estate with no way to acquire a user (NEW-47), no interface (NEW-48), eighteen fabricated
+practitioners as its entire supply (NEW-49), and no means of paying anyone (NEW-51, WP-13). Deploying it
+buys the operational learning WP-19 needs and nothing else, and it buys it at the price of a public
+health-services hostname serving a marketplace that cannot transact. **Deploy last, and deploy behind
+the four gates in §4.**
+
+**What would change this order.** If the architect wants the operational learning early, the reversible
+version is to deploy Phases 1 and 5 and hold the DNS record until Phase 2 lands — production reachable
+by IP, `market.abofonsa.com` pointed at nothing. That is a smaller change than it sounds and it inverts
+nothing above.
+
+### §3 The frontend's shape — RECOMMENDED, not ratified
+
+**Generate a client-only JHipster 9.2.0 Angular application into `web/`, to `hc-admin/app`'s exact
+shape.** Measured, in this workspace, rather than reasoned from the siblings in general:
+
+| | `hc-admin/app` | `hc-patient/web` |
+| --- | --- | --- |
+| JHipster | **9.2.0** — the same generator as all five hc-market apps | 8.1.0 |
+| Angular | **21.2.23** | 17.0.6 |
+| `skipServer` | **true** — no `mvnw`, no `pom.xml`, **0 `.java` files** | absent, has `mvnw`, 0 `.java` files |
+| test runner | Vitest 4.1.10 | Jest |
+
+`hc-admin/app` is the current precedent and `hc-patient/web` is four Angular majors stale, so "read a
+sibling" has a right answer and a wrong one.
+
+**The decisive argument is `skipServer`, and it is about the regeneration hazard rather than taste.**
+The other way to get a client here is `clientFramework angular` in `jdl/gateway.jdl` and a gateway
+regeneration — and the gateway is the **worst** app in this estate to regenerate. CLAUDE.md's own table
+says why: `--force` restores `InitialSetupMigration` with `@ChangeUnit` and no `@Profile`, creating
+`admin` with a committed bcrypt hash of `admin`, activated, `ROLE_ADMIN`, in `prod` too (D61) — *"the
+only regeneration hazard here that hands back a working credential"* — and rewrites `pom.xml`, losing
+the OpenTelemetry block silently. A client-only app at `web/` touches none of that: separate
+`.yo-rc.json`, separate `package.json`, no Java, no pom, and the gateway's four hand-written files and
+its JDL are never opened.
+
+**Two sub-choices go with it and neither is engineering's.** `jhiPrefix` — `hc-admin` is `abf`,
+`hc-professional` `hpd`, and hc-market has never had one; and `enableTranslation`, which is `false` in
+all five hc-market services and `true` in `hc-admin/app`. Recommended: a new prefix, and translation
+**off** — the prototype is English-only for a Ghanaian market, and i18n is a pipeline in every
+component rather than a flag you turn on later cheaply. Both are in §7.
+
+**Three traps to close in the generated output on day one, each measured in a sibling now:**
+
+- **`angular.json` `assets` must be the glob-with-`ignore` shape, not a bare string.** `hc-admin/app`
+  lists `"src/main/webapp/content"` as a bare string (measured) and therefore publishes its
+  `content/scss/*.scss` — including `_hc-tokens.scss` and `_bootstrap-variables.scss` — on
+  `admin.abofonsa.com`. `hc-vendor/web` and `hc-professional/web` carry the fix. Free at generation,
+  a backlog row for two live products.
+- **`eslint.config.ts` must ignore `.claude/`.** The workspace guide records `hc-admin/app` as not
+  ignoring it; **that is stale** — measured, line 43 lists `.claude/` today. Carry it in rather than
+  rediscover it.
+- **Never white text on gold.** `#C59437` on white is 2.74:1 and fails AA. Navy `#0D3058`, gold
+  `#C59437`, cream `#F7F4EE`; the three sibling products implement the same values through three
+  different stacks, so markup does not copy between them untranslated.
+
+**And one design fact the prototype hands over rather than teaches.** Its router disambiguates
+`#/pro/p1` (a public profile) from `#/pro/profile` (the professional's own editor) with a **hard-coded
+reserved-word list duplicated at two sites** — `['overview','requests','schedule','services','earnings',
+'reviews','profile']` — plus a `state.role==='pro'` test. A framework router should not inherit that:
+split the namespaces (`/professionals/:ref` for the public profile, `/pro/*` for the workspace) and the
+reserved list disappears, along with the latent defect that a professional whose `reference` is
+`profile` is unreachable.
+
+### §4 The four gates a first production deploy may not go without
+
+Everything else in this decision may follow a deploy. These may not:
+
+1. **A working account lifecycle** — NEW-47. Open self-registration on a public health-services domain
+   whose activation email goes nowhere is not a soft launch, it is a door that logs a warning.
+   `/api/register` also carries **no rate limit**: the only non-comment `limit_req` in either production
+   nginx file is inside `location /services/healthconnectbooking/webhooks/` (measured,
+   `hc-market-app.conf:197-199`).
+2. **WP-19's blocking six** — the ssh target and `/srv/healthconnect`, port 8086 free, `infranet` and
+   `monitoring` present, `secrets.env` with a fresh key and an escrowed pepper, DNS, nginx and certbot.
+   Listed in `deploy/prod-server/README.md`; none is engineering.
+3. **A restored backup.** WP-19 names it and it is worth repeating as a gate rather than an item: no
+   dump this repository produces has ever been restored, which makes every one of them a belief.
+4. **The privacy notice served somewhere a data subject can reach it** — WP-09. Three documents exist,
+   all marked DRAFT and NOT APPROVED, and **nothing in this estate serves any of them.** A public
+   marketplace processing personal data with an unserved notice is the one item here whose exposure
+   begins on the day of the deploy rather than on the day of the first customer.
+
+**Act 987 is not on that list, and that is deliberate.** It gates taking money (Phase 4), not
+deploying. An estate that serves a catalogue, takes bookings for the two free services and refuses
+every priced one is coherent; the platform has **no method that pays a professional** on purpose
+(`PaymentProvider`), so the answer can arrive late without a rewrite.
+
+### §5 One correction to the brief this decision answers
+
+The brief reported that `fromPriceMinor` is *"absent from the detail endpoint for every professional
+(p1, p2, p13 all `null`)"*. **It is present.** `ProfessionalDetail` embeds the whole `ProfessionalCard`
+and the detail path calls the same `toCard` — measured against quality:
+`GET /api/professionals/p13` answers `.card.fromPriceMinor = 0`, `.fromPriceMinor = null`, because the
+field is one level down. Nothing to fix and no item opened.
+
+**The other half of that finding is real and is NEW-50**, and the sharp form of it is not the
+divergence but the comment: `MarketplaceQueryRepository:37-38` says the query computes the from-price
+*"exactly as the prototype computed it"*, and the prototype filters `s.price > 0` at three sites while
+the JPQL has no such predicate. One of the two has to move; which one is a product decision.
+
+### §6 What I checked, and what I took on trust
+
+**Measured here:** the three empty directories; the 15 view functions and two navs; `new Professional()`
+in one place (`CatalogSeeder:142`); `new Payout()` nowhere in `payout/src/main`; `setMeetingLink` written
+only by `ErasureWorkflow:189`; `@Scheduled` in exactly two places estate-wide (`OutboxPublisher`, the
+gateway's generated user cleanup) and neither a retention sweep; `registerUser` setting
+`activated=false`; the five `permitAll` paths; `MailService` catching and warning; the mail placeholder;
+`limit_req` on the webhook alone; Paystack's `integratedCalls()` returning four of six; both
+`fromPriceMinor` readings against the running quality estate; `hc-admin/app`'s generator config, Angular
+version, absence of Java and `assets` shape; and that `d9b7365` changed no service source, so quality's
+`4b18ac6` images are current.
+
+**Taken from the brief and not re-verified:** that the quality run is 0 ERROR lines with the seed intact,
+and the browser behaviour of live mode.
+
+**Taken from the documents:** D49 on production never having run, D42/D88 on counsel, D86 on Paystack's
+provenance, WP-19's fifteen items.
+
+### §7 Not mine to settle
+
+Each is framed, costed and recommended in its backlog item; none of them blocks the phase above it from
+starting.
+
+| question | who holds it | default if nobody answers | blocks |
+| --- | --- | --- | --- |
+| the frontend's shape (§3), `jhiPrefix`, translation | architect | client-only Angular at `web/`, new prefix, translation off | NEW-48 |
+| is "from ₵0" the honest headline, or does a free consultation hide? | architect, product | follow the prototype — it is the acceptance target | NEW-50 |
+| who enrols a professional, and does D16's "manual review in `hc-admin`" still stand? | architect | build enrolment in hc-market behind `ROLE_BROKERAGE` | NEW-49 |
+| does the brokerage desk get screens, or stay curl-and-psql? | architect | screens, after Phase 2, because erasure is a legal deliverable | NEW-53 |
+| how does a provider callback reach a pre-production estate? | architect | a tunnel to quality for one supervised session | NEW-54 |
+| Act 987: may a broker settle funds to a professional? | counsel / regulator | keep `bankReference` and settle by hand | WP-13, NEW-51 |
+| an SMTP provider and credentials | architect / budget | — none; this is the gate | NEW-47 |
+| Paystack live credentials and a test account | architect / provider | — | WP-13, NEW-54 |
+| production host access | architect on `webserver` | — | WP-18, WP-19 |
+| the privacy notice's approval, and one document or six | counsel | — | WP-09 |
+
+---
+
+## D91 — "There is no scheduler in this estate" is false, and it reached two documents counsel will read
+
+**Recorded 2026-09-15**, against `prototype-to-production-the-backlog` at `a8ebf93`. Opens backlog
+**NEW-56**; corrects **NEW-52**, `docs/processing-record.md` and `docs/privacy-notice.md`.
+
+### 1. How it was found, which matters more than the finding
+
+D90's brief asserted that a customer who registers today is *"deleted in three days"*. That claim rests
+on a `@Scheduled` method, and a `@Scheduled` method does nothing without `@EnableScheduling` — so the
+premise was checked before the item built on it was believed. `@EnableScheduling` turned out to be
+present, which confirmed D90 and falsified something this repository has said ten times.
+
+It was found by verifying an agent's report rather than by reading code for its own sake, and it is the
+second finding of this session that came from the same habit. **An agent's report is a claim.** So is a
+sentence in `decisions.md` that nobody has re-measured since it was written.
+
+### 2. What was claimed, and where
+
+*"There is no scheduler in this estate"*, or the same thought in other words, appears in **ten** places:
+
+- **`docs/decisions.md`** — nine sites, including D17 and D86 (the meeting-link reveal: *"there is no
+  scheduler anywhere in this estate, so the honest cheap version is to compute visibility at read
+  time"*), the retention answer, `Dispute.dueBy`, the availability-slot sweep and the brokerage figure;
+- **`docs/healthconnect-marketplace.md:325`**, in a source comment quoted into the spec;
+- **`docs/processing-record.md` §3** and **`docs/privacy-notice.md` §7** — the two WP-09 drafts written
+  on 2026-09-11 and destined for counsel. The notice's words were *"Nothing deletes anything on a
+  schedule."*
+
+**NEW-52 repeated it on the day it was written**, and did so in a paragraph that had just enumerated
+both counter-examples correctly — *"`@Scheduled` appears in exactly two places … and there is no
+scheduler infrastructure at all."* The facts were right and the inference drawn from them in the next
+clause was wrong. That is worth recording as its own lesson: the defect was not a missing measurement,
+it was a conclusion that did not follow from a measurement already in hand.
+
+### 3. What is true, measured in source and at runtime
+
+| Question | Answer | How |
+| --- | --- | --- |
+| Is scheduling enabled? | **Yes, in all five services** | `config/AsyncConfiguration.java`, `@Configuration @EnableAsync @EnableScheduling @Profile("!testdev & !testprod")`. Neither `testdev` nor `testprod` is active on any estate, so it is on for `dev`, `test` and `prod` alike |
+| Is a scheduler thread actually running? | **Yes, in all five quality containers** | `/proc/1/task/*/comm` → `ThreadPoolTaskS…` present in gateway, catalog, booking, messaging and payout |
+| How many `@Scheduled` methods? | **Two** | `booking/…/OutboxPublisher.java:69` and `gateway/…/UserService.java:291` |
+| Has the account deletion fired? | **Yes, four times** | Quality's gateway started `2026-09-11T21:22:51Z`; the cron is `0 0 1 * * ?` and four 01:00 UTC boundaries have passed |
+
+**`OutboxPublisher.drain()` is the one that settles it.** It is `@Scheduled(fixedDelayString =
+"${healthconnect.outbox.poll-ms:2000}")` — the estate's **entire Kafka event-delivery path**, polling
+every two seconds. Every `booking.requested`, every ledger row, every notification in this estate's
+life has reached the broker through a scheduled task. `verify-outbox-recovery.sh` exercises it
+deliberately. The estate did not merely have the *capability* to schedule; it has been depending on a
+scheduler continuously, while ten documents said there was none.
+
+### 4. The second finding: a deletion nobody here decided
+
+`UserService.removeNotActivatedUsers` deletes any account with `activated = false` and an activation key
+older than **three days**, daily at 01:00. It destroys a sign-in name, a first and last name, an email
+address and a password hash.
+
+**It is JHipster's generated behaviour and was never a decision of this project** — which is exactly
+why it was invisible: nobody looks for a retention rule in a file they did not write. It is a *de facto*
+retention period for one class of account, it has never been put to counsel, and until today it was
+recorded nowhere.
+
+It also interacts with **NEW-47** in the worst available way. No estate can send an activation mail —
+SMTP is `localhost:25` in both `application-dev.yml` and `application-prod.yml`, no compose file passes
+`SPRING_MAIL_*`, `MailService` catches `MailException` and logs a WARN, and prod's `base-url` is still
+`http://my-server-url-to-change`. So registration answers `201`, the mail fails silently, the account
+cannot be activated, and three days later it is deleted. **The three days cannot be survived on any
+estate that exists.**
+
+### 5. What was corrected, and what deliberately was not
+
+**Corrected in place**, because both are outward-facing and unapproved:
+
+- `docs/privacy-notice.md` — the opening box, §7's warning, and a **new §7.1** written in a data
+  subject's language: what is deleted, when, what it contains, that the project did not choose it, and
+  that the confirmation mail does not currently arrive. Marked as new so counsel does not skim it.
+- `docs/processing-record.md` — §3's warning, a **new §3.1** with the mechanism and its evidence, §2.1's
+  retention row (now *split*: activated accounts uncategorised, unactivated ones on three days), §5's
+  security row, and §6.1, whose question to counsel is now sharper — the organisation has an unexamined
+  3-day rule for one class of account and no rule at all for the rest.
+- `docs/backlog.md` — NEW-52's title (*"no scheduler behind either"* → *"no **sweep** behind either"*)
+  and its costing. **This changes the estimate**: there is no scheduler to stand up, no
+  `@EnableScheduling` to add, no starter to introduce. A new `@Component` carrying a `@Scheduled` method
+  is picked up on every estate as it stands.
+
+**Not corrected, deliberately:** the nine historical citations in this file. `decisions.md` amends
+everything else by house rule and is a record of what was decided when — rewriting nine past entries
+would destroy the evidence of how long the error survived, which is the most useful thing about it. This
+entry is the amendment. **NEW-56** carries the triage.
+
+### 6. What this does NOT change, and the trap in assuming otherwise
+
+**Retention is still unenforced and the gap is still the largest in the processing record.** A scheduler
+existing is not a sweep existing, and `GET /api/desk/privacy` still reports `enforced: false` correctly.
+Nothing in this entry moves that.
+
+**And the nine decisions are unlikely to be wrong.** D17's read-time reveal is still probably the right
+answer — it needs no delivery guarantee, cannot double-send, and has nothing to get out of step. The
+defect is that it is right for reasons it does not state, while stating a reason that is false. This
+repository's own rule, from `CLAUDE.md`: *"A document asserting a property the code lacks is a defect.
+So is a stated reason that is true but is not the reason doing the work."* This is the third case of that
+family — a stated reason that is **false** and load-bearing anyway.
+
+### 7. Verified, assumed, not exercised
+
+**Verified:** `@EnableScheduling` in all five `AsyncConfiguration` classes and its profile expression;
+the live `ThreadPoolTaskScheduler` thread in all five quality containers at `/proc/1/task`; both
+`@Scheduled` sites and their expressions; the gateway container's start time against the cron; SMTP
+config in all three gateway profile files and its absence from all three compose files;
+`MailService`'s catch-and-WARN; `AccountResource.register` calling `sendActivationEmail`;
+`new Professional()` occurring once, in the seeder; `Payout.settledOn` and `.bankReference` in the JDL
+and the entity; the credential and highlight write path at `ProWorkspaceResource:194–209`; and
+`.card.fromPriceMinor = 0` on catalog's detail endpoint, which **corrects a claim made earlier this
+session** that the field was absent there — it was measured one level too high in the JSON.
+
+**Assumed:** that the nine citations all meant "no sweep" rather than "no scheduling capability". That
+is NEW-56's work and the reason it is an item rather than a closed finding.
+
+**Not exercised:** the deletion has never been watched removing an account, because no unactivated
+account has ever existed on any estate — quality's users are seeded activated. Its four firings found
+nothing to delete. **So the cron is proven to run and the delete branch is proven only by reading it**,
+and creating an account on the quality box to watch it disappear was declined as a write to a live
+environment for a fact that source establishes. It is worth watching once on the first estate that has
+mail, and NEW-47 is where that belongs.
+
+---
+
+## D92 — Eight answers from the architect: the front end, who enrols, what a price says, and where a callback lands
+
+**Ratified 2026-09-16 by the architect**, in response to the questions D90 §7 left open. Unblocks
+backlog **NEW-48, NEW-49, NEW-50, NEW-53, NEW-54, NEW-55**; opens **NEW-58**. No code changed in this
+entry — it is the record, and each item carries the work.
+
+**Four of the eight went against the recommendation.** They are marked, the recommendation is preserved,
+and the reasoning is **not re-argued** — a decision the architect has taken is the premise for what
+follows. What each section does instead is state what the choice now commits the estate to, because a
+consequence nobody wrote down is how an authorised decision becomes an unauthorised surprise.
+
+### §1 The eight answers
+
+| # | Question | Answer | vs. recommendation |
+| --- | --- | --- | --- |
+| 1 | the front end's shape | **client-only Angular into `web/`**, `hc-admin/app`'s shape | **followed** |
+| 2 | `enableTranslation` | **ON** — i18n wired from the start | **against** (§2) |
+| 3 | `jhiPrefix` | **`abm`** | engineering default, stated and unopposed |
+| 4 | who enrols a professional | **self-service signup** | **against** (§3) |
+| 5 | how an unverified professional appears | **visible, badged unverified** | **against** (§3) |
+| 6 | the "from" price | **paid minimum + a free-intro badge** | the third option; neither prior default |
+| 7 | the brokerage desk | **screens, after Phase 2** | **followed** |
+| 8 | the provider callback | **wait for production behind the DNS-hold** | **against** (§6) |
+| 9 | a staging host | **no** — the DNS-hold is the answer | **followed**, and implied by 8 |
+
+### §2 The front end: the shape as recommended, translation the other way
+
+**The shape is ratified as D90 §3 argued it** — a client-only JHipster 9.2.0 Angular application
+generated into `web/` with `skipServer: true`, matching `hc-admin/app` rather than the four-majors-stale
+`hc-patient/web`. The decisive property stands: it **never opens the gateway**, so `InitialSetupMigration`'s
+`admin`/`admin` credential (D61) and the hand-written OpenTelemetry block in `pom.xml` are never at risk,
+and the gateway's four route-and-security files and its JDL are never touched.
+
+**`enableTranslation` is ON, against the recommendation.** The recommendation was off, on the grounds
+that the prototype is English-only for an English-official market and that i18n is a pipeline through
+every component rather than a flag. **The architect's choice is the one that cannot be regretted
+later**, and that is the honest way to read it: translation-on is expensive now and translation-off is
+expensive *forever*, since retrofitting means touching every template that was written without it. The
+recommendation optimised for the 15 screens in front of us; the decision optimises for the one moment
+the choice is cheap. It also aligns with `hc-admin/app`, which this app is otherwise copying exactly —
+so the estate now has one answer instead of a 5-to-1 split with no rationale.
+
+**What it commits.** Every user-visible string goes in `i18n/en/*.json` behind a `jhiTranslate`, from
+the first screen — not retrofitted at the end, which produces a half-translated app and a linter nobody
+can make green. `jhiPrefix` is **`abm`** (hc-market has never had one; `hc-admin` is `abf`,
+`hc-professional` `hpd`).
+
+**Three traps close on day one** and are restated because they are free at generation and a backlog row
+afterwards: `angular.json`'s `assets` must be the **glob-with-`ignore`** shape and not a bare string, or
+this app publishes its own Sass exactly as `admin.abofonsa.com` does today; `eslint.config.ts` must
+ignore **`.claude/`**, or `npm test` fails before a single test whenever an agent worktree exists; and
+**never white text on gold** — `#C59437` on white is 2.74:1 and fails AA.
+
+### §3 Enrolment: self-service, and visible while unverified
+
+**Both answers went against the recommendation, and together they are the largest change of direction
+in this set.** The recommendation was desk enrolment behind `ROLE_BROKERAGE`, with an unverified
+professional invisible until the desk passed them. The decision is **self-service signup**, with an
+unverified professional **visible and badged**.
+
+**The first thing to record is that the read side already behaves this way**, which the recommendation
+did not establish and which makes the decision considerably cheaper than it was costed. Measured on the
+quality estate: `GET /api/professionals` returns **18**, of which **16** are `VERIFIED` and **2**
+(`p9`, `p18`) are `UNVERIFIED`; `verifiedOnly=true` returns **16**. So `verifiedOnly` is an **opt-in
+filter** and the default listing has served unverified professionals for the estate's whole life. The
+decision ratifies existing behaviour rather than asking for new behaviour, and what is actually missing
+is a **badge on the client** — which does not exist yet because the client does not exist yet.
+
+**The sharpest edge was already closed, by somebody who saw this coming.**
+`ProWorkspaceResource.saveProfile` omits `verification`, `insured` and `policeClearance` from
+`SaveProfile`, and says why in place: *"a professional who can set their own verified flag is a trust
+chain with a hole in it."* So a self-enrolled professional **cannot** mark themselves verified, insured
+or police-cleared. That is the difference between this decision being tenable and not, and it needs no
+work.
+
+**What is NOT closed, and is NEW-58.** Two public fields are self-declared free text:
+`Credential.label` (`ProWorkspaceResource:194`) and `yearsPractising`. A self-enrolled person can type
+*"DONA International Certified Birth Doula"* and have this platform serve it on a public health-services
+domain. Under desk enrolment nobody could; under self-service everybody can, and the badge on the
+*profile* does not qualify the *credential*. So: credentials and years must render as **self-declared**
+until `VERIFIED`, the badge must appear on **every** surface that shows a professional — Browse card,
+Discover, search result, booking confirmation, not only the profile — and there must be a **takedown
+route** for someone impersonated, which no screen and no endpoint provides today because all eighteen
+listings were seeded.
+
+**And `SUSPENDED` is the state this decision leaves wrong.** The enum is `UNVERIFIED, PENDING, VERIFIED,
+SUSPENDED`, and the JDL says the fourth exists *"because suspension has to be distinguishable from
+never-verified"*. With `verifiedOnly` opt-in, **a professional whose verification was taken away is
+served in the default listing** — which is worse than an unverified one, because it is a trust signal
+this platform granted and then withdrew. D33 already fixed the adjacent half (a `SUSPENDED` professional
+was publishing a `verifiedOn` date, so the badge outlived the verification). The listing half is
+untouched and **untested**: there is no `SUSPENDED` row in either estate, so nothing has ever exercised
+it. "Visible while unverified" is a decision; "visible while suspended" is not, and NEW-58 separates them.
+
+**One interaction worth naming.** Self-service makes the verification queue load-bearing rather than
+occasional — every listing arrives unverified and publishes immediately — while answer 7 puts desk
+screens *after* Phase 2. That is coherent, and it means the queue is worked by hand in the interval.
+NEW-53 and NEW-58 both say so.
+
+### §4 The price: say both
+
+**`fromPriceMinor` keeps the literal minimum and the card gains a free-intro marker.** Neither the
+prototype's reading (cheapest *paid* service, `filter(s => s.price > 0)` at three sites) nor the API's
+(the literal minimum, `0` for p12 and p13) was adopted: the headline is the **paid** minimum and the
+free service is surfaced **as its own fact** rather than as a price.
+
+It is the only one of the three options that is not a one-line change — a new field on the card DTO, the
+prototype's three sites, and a badge in a design system that does not exist yet — and it is the only one
+that is true. A doula whose packages run to ₵3,200 is not a "from ₵0" listing, and a free intro call is a
+conversion tool that deserves better than being hidden to make the headline tidy.
+
+**Do not implement it by changing `fromPriceMinor`'s meaning.** `0` is the honest minimum and other
+things may come to read it; the badge is a second field derived from the same `services` collection. And
+note the derivation rule this estate turns on — it is computed, never stored.
+
+### §5 The desk: screens, after Phase 2
+
+**As recommended.** Erasure is a legal deliverable under DPC registration `P0021484082`, and a receipt
+read out of `psql` is a process that will be performed wrong under pressure, on the one path that is
+irreversible. Building it after the customer and professional screens means its components are reused
+rather than invented.
+
+The audit gap is **not** closed by this and is not meant to be: nothing records who looked at whom,
+whichever interface the looking happens through. That stays NEW-53's other half.
+
+### §6 The callback: production is the pre-production environment
+
+**Against the recommendation, and the recommendation is preserved here in full because the objection is
+real and was made before the decision was taken.** The recommendation was a time-boxed `cloudflared`
+tunnel to quality for one supervised session. The decision is to **wait for production behind the
+DNS-hold** and test there with the smallest chargeable amount.
+
+**What the objection was.** A Paystack payment *is* its webhook — until the callback arrives the booking
+sits in `PENDING_PAYMENT`, `booking.requested` is withheld and the professional is never told (D43).
+Quality is this workstation on a private LAN and Paystack cannot reach it, so this decision places the
+payment path's **first real execution in production**, on the one path where a customer's money is
+already committed, in an estate whose quality box has found **seven** defects that every test suite
+passed. D50 explicitly refused to guess the signature scheme, the field paths and the status mapping;
+four of Paystack's six calls are **written and have never reached Paystack** (D86).
+
+**What the decision buys, which is not nothing.** The tunnel would have been a temporary public door
+onto a box whose seeded accounts hold privileged roles with passwords derived from their logins by a
+rule published in this public repository — a real cost the recommendation carried and did not price
+highly enough. And the tunnel could never have exercised nginx, TLS, the production route or the rate
+limit, so it was always going to be followed by a production test. The architect's choice is one
+supervised production session instead of two sessions, the first of which proves the wire format and
+nothing else.
+
+**So the mitigations move from optional to required**, and they are NEW-54's content rather than advice:
+
+- **the DNS-hold is load-bearing**, not a convenience. `market.abofonsa.com` stays unpublished until the
+  callback has been observed end to end;
+- **smallest chargeable amount**, on a real Paystack account, with somebody watching the booking's
+  status transition rather than inferring it from a 200;
+- **`refunds-enabled` stays off** (D86). It is a separate flag from `enabled` precisely so that turning
+  a provider on is not the same decision as turning on a money-returning call nobody has watched work;
+- **`status` is the reconciliation path and is now the safety net.** D86 wrote
+  `GET /transaction/verify/{reference}` for exactly the bookings D43 leaves in `PENDING_PAYMENT` when no
+  webhook arrives. If the first production callback does not land, that call is how a stuck booking is
+  resolved without guessing — and it, too, has never reached Paystack;
+- **one booking, then stop and read the row.** Not a batch.
+
+### §7 Staging: no
+
+**As recommended, and entailed by §6.** No staging host is bought. Production behind the DNS-hold is the
+pre-production environment: reachable by IP, running the real nginx, the real certificate and the real
+route, with no public name. The quality box already proves the deployed image is the published image at
+full 40-character digests, so what staging would have added is mostly the edge hop — which the DNS-hold
+gives on the real machine.
+
+**What would reverse it** is the other three products wanting the same box, at which point one host
+serves four products and the arithmetic changes. That is not hc-market's decision to take alone.
+
+### §8 What these answers open
+
+**NEW-58** — the protections that "visible while unverified" requires, which did not exist as work
+before this decision because desk enrolment made them unnecessary: self-declared attribution on
+credentials and years, the badge on every surface rather than the profile alone, a takedown route for
+impersonation, signup abuse limits, and the `SUSPENDED` listing question, which is a **defect** rather
+than a consequence of the decision and is untested in both estates.
+
+Every other answer lands in an item that already exists. **NEW-49's subject changes** — it was framed as
+desk enrolment and is now self-service signup — so its heading is rewritten rather than annotated,
+per the house rule against a title describing a plan nobody followed.
+
+### §9 Verified, assumed, not exercised
+
+**Verified**, on the running quality estate and in source, while answering these questions:
+`GET /api/professionals` returns 18 with 16 `VERIFIED` and 2 `UNVERIFIED` (`p9`, `p18`), and
+`verifiedOnly=true` returns 16 — so the default listing does not filter;
+`VerificationState` is a four-value enum including `SUSPENDED`; `verification`, `insured` and
+`policeClearance` are absent from `SaveProfile` and the javadoc says why; `Credential.label` and
+`yearsPractising` **are** self-settable at `ProWorkspaceResource:187` and `:194`;
+`hc-admin/app` is JHipster 9.2.0 / Angular 21 with `skipServer: true` and `hc-patient/web` is 8.1.0.
+
+**Assumed:** that `hc-admin/app`'s generated shape reproduces under JHipster 9.2.0 today — nothing was
+generated to check, and the generator's defaults may have moved since that app was scaffolded.
+
+**Not exercised:** no Angular application has been generated; no professional has ever been enrolled by
+any means; **no `SUSPENDED` row has ever existed in either estate**, so every claim about how a
+suspended professional is served is read from the code and not observed; and no Paystack call has
+reached Paystack.
+
+---
+
+## D93 — NEW-57: how the gauges were fixed, and three of my own tests that asserted nothing
+
+**Recorded 2026-09-16.** Closes backlog **NEW-57**; opens **NEW-59**. PR **#70**, merged as `32216fd`
+(`e644cce` + `47b5514` + `d43a299`). The defect and the fix are both **D84/D85's**, which is to say mine,
+three days old.
+
+### 1. The shape chosen, and why not the other one
+
+NEW-57 costed two fixes and required that one be picked with a reason. **The versioned write.**
+
+Both counts live in one immutable `AccountSplit(activated, notActivated, sequence)` behind a single
+`AtomicReference`; each observation takes its sequence at **subscribe** time (`Mono.defer` +
+`incrementAndGet`); `setAccounts` is a CAS that returns `false` and discards when
+`standing.sequence() >= sequence`. **One primitive closes both halves** — the tear, because there is one
+write; the stale overwrite, because an older sequence loses.
+
+**The queue was rejected on cost, not taste.** Routing explicit refreshes through the timer's existing
+`concatMap` needs a sink *and* a completion signal per enqueued observation, and it would make a caller
+that wants a reading now wait on a Mongo round trip it does not need. The `Duration.ZERO` first tick
+**stays** — D84's argument stands, a gauge reading `-1` for the first minute of every deploy looks broken
+on every deploy — because what was wrong was the unserialised explicit refresh, not the eager tick.
+
+Independently confirmed at review: the CAS loop has **no ABA** (every install is a freshly allocated
+record and `compareAndSet` is reference-identity, so the A→B→A precondition cannot arise) and terminates
+per call; `Mono.defer` genuinely takes the sequence per subscription; Micrometer's weak reference to the
+gauge state is held alive by the singleton bean; and nothing else reads the old two-`AtomicLong` shape —
+the dashboard JSON and `observability-claims.sh` part 5 derive from the untouched string constants.
+
+### 2. What the reviews found, which is the part worth keeping
+
+**Two rounds on a five-file change, and each found a claim of mine outrunning its code — in the commit
+whose entire subject was two claims outrunning their code.**
+
+- **Round one: the new guarantee was false on the error path.** `refresh()`'s javadoc said, bolded and
+  unconditional, *"when this Mono completes, the standing reading is this observation or a NEWER one."*
+  But `onErrorResume(e -> Mono.empty())` makes it complete **normally** having published nothing, so on a
+  Mongo blip the standing reading is whatever stood before. The class's own closing paragraph said as much
+  two paragraphs below. Fixed by qualifying with *"having counted successfully"* and **pinning it**.
+- **Round two: the narrowed tear paragraph asserted one direction and the error is bidirectional.**
+  `Mono.zip` subscribes to both sources up front and they are separate driver commands, so
+  `is(true)`-then-`ne(true)` gives `N − 1` and the reverse gives `N + 1`. That paragraph exists to warn the
+  next test author, so a wrong direction is worse than pedantry: `sum <= collectionSize`, written on its
+  strength, is flaky exactly where it promised safety.
+- **Round two also found the quietest path in the class.** Measured on reactor-core 3.8.7: `Mono.zip`
+  completes **normally** when a source completes empty, skipping `doOnNext` **and** `doOnError` — nothing
+  published, nothing logged. Unreachable through `ReactiveMongoTemplate.count`, and belted with
+  `.single()` anyway, because **the fix this class's own javadoc recommends** — one aggregation — is
+  precisely a pipeline that can complete empty. The trap was on the documented roadmap.
+
+### 3. Three of my own tests asserted nothing, and all three were caught the same way
+
+This is the entry's real content. Not one was found by reading; every one was found by **breaking the code
+and noticing the test did not care.**
+
+| Test | Passed for the wrong reason because |
+| --- | --- |
+| the IT's partition assertion | it checked the consequence without the premise — the numbers without the sequence they rest on |
+| `aFailedCountLeavesThePreviousReadingStanding` | the helper built a fresh refresher per call, restarting the sequence at zero, so a mutation publishing `(0,0)` on error hit the **equal-sequence guard** and never reached the error path. Only its sibling went red |
+| `anEmptyCountIsTreatedAsAFailure` | it asserted state that is **identical with and without** the guard. An empty zip publishes nothing either way; the only thing `.single()` changes is that the estate is **told**. Rewritten to assert the WARN |
+
+**The procedure that works is cheap and it is the same three steps every time**: back the file up to a
+uniquely-named scratch directory, reproduce the *old* behaviour behind the *new* signature, run, then
+restore and confirm byte-identical. Pre-fix: **4 of 5 red**, the tear test included — so a concurrent
+scrape genuinely did see a mixed pair, which makes that javadoc claim false **in fact** rather than weak in
+theory. A claim that a check is a check has to be measured like any other.
+
+### 4. Two reach limits recorded rather than papered over
+
+Both are in the source, where somebody reading a green run will see them:
+
+- **The refresher's unit tests cannot see the predicates.** They all stub
+  `count(any(Query.class), any(Class.class))`, so a change making both counts `is(true)` passes every one
+  of them — `times(2)` and `eq(User.class)` included. What pins `is(true)` versus `ne(true)` is
+  `GatewayIdentityMetricsIT` against a real Mongo.
+- **`everySubscriptionTakesItsOwnSequence` pins half of what its javadoc claims.** It distinguishes
+  subscribe-time from assembly-time sequencing, but not *"assigned before its queries were issued"* —
+  moving `incrementAndGet` into `doOnNext` passes every test while silently changing issue-order to
+  completion-order. A javadoc property with no test behind it, and it says so in place.
+
+### 5. And one claim the review made true by running it
+
+The belt added in `start()` — `.concatMap(tick -> refresh().onErrorResume(...))` — is **not decoration.**
+A synchronous throw from inside `Mono.defer`'s supplier becomes an error at subscribe, and an error
+reaching `concatMap` **cancels the interval**: the timer would be dead for the life of the process with one
+`onErrorDropped` line and gauges frozen at their last reading. Measured on reactor-core 3.8.7: without the
+belt the interval processed **1** tick and died; with it, **9** in the same window.
+
+### 6. Verified, assumed, not exercised
+
+**Verified:** `./mvnw -o clean verify` on the gateway at the merged head — **67 unit** (56 on `main`
+before), **135 IT**, **0 Checkstyle violations**, counts read from the surefire/failsafe XML rather than a
+log line; CI 6/6 per check on three successive heads; the mutation results above; `MicrometerReaches
+TheGlobalRegistryIT` and `GatewayIdentityMetersNamingUnitTest` still green, so D85's registry choice and
+the exposition names the dashboard queries did not move.
+
+**Assumed:** that Micrometer's `DefaultGauge` holds its state object weakly — stated from knowledge of the
+library and not run; the empirical half is the naming test scraping real values through it.
+
+**Not exercised — and this is the sentence to re-read before anyone treats the item as urgent:** the gauges
+have **never been observed regressing in a real deployment.** The interval is 60s, so overlap needs a Mongo
+count slower than a minute. The defect was reproduced in a unit test and observed **once** in CI, on an
+unrelated docs-only branch. It has not been seen on the quality box, and production has never been
+deployed. The fix is right regardless of how often it would bite, which is the argument for making it
+rather than deferring it — not an argument that it was biting.
