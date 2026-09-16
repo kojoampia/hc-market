@@ -5,12 +5,18 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Duration;
+import java.util.List;
 import net.jojoaddison.domain.User;
 import net.jojoaddison.management.GatewayIdentityMeters;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.mongodb.core.ReactiveMongoTemplate;
 import org.springframework.data.mongodb.core.query.Query;
 import reactor.core.publisher.Mono;
@@ -38,6 +44,14 @@ import reactor.core.publisher.Mono;
  * <p>Unit tests with a mocked template on purpose — the question is what the pipeline does when a count
  * fails, which needs no Mongo, no context and no timer. The publication guard itself is pinned by
  * {@code GatewayIdentityMetersPublicationUnitTest}.
+ *
+ * <p><strong>THE REACH LIMIT, stated rather than discovered later.</strong> Every test here stubs
+ * {@code count(any(Query.class), any(Class.class))}, so the two queries are <em>indistinguishable</em> to
+ * these tests: a change making both counts {@code is(true)} passes all of them, {@code times(2)} and
+ * {@code eq(User.class)} included. What pins the predicates is {@code GatewayIdentityMetricsIT} against a
+ * real Mongo — the two gauges summing to {@code userRepository.count()}, and adding an unactivated
+ * account moving the dormant side by exactly one. Do not read a green run here as covering
+ * {@code is(true)} versus {@code ne(true)}; that distinction is the integration test's to keep.
  */
 class IdentityMetricsRefresherUnitTest {
 
@@ -132,6 +146,82 @@ class IdentityMetricsRefresherUnitTest {
         assertThat(meters.accounts().sequence()).isEqualTo(Long.MIN_VALUE);
     }
 
+    /**
+     * A count that completes EMPTY is treated as a failed count, not as a silent no-op.
+     *
+     * <p>Found at review and measured there on reactor-core 3.8.7: {@code Mono.zip} completes
+     * <strong>normally</strong> when a source completes empty, skipping {@code doOnNext} <em>and</em>
+     * {@code doOnError} — so before the {@code .single()} guard this published nothing and logged nothing,
+     * which is quieter than the error path the {@code refresh()} guarantee is careful to qualify.
+     *
+     * <p>Unreachable through {@code ReactiveMongoTemplate.count}, which emits exactly one element or
+     * errors. It is pinned because the fix named in the class javadoc — one aggregation grouping on
+     * {@code activated} — is exactly a pipeline that can complete empty on an empty collection, so this
+     * test is what stops that change reintroducing the silence.
+     */
+    @Test
+    @DisplayName("a count that completes empty is REPORTED, not silently ignored")
+    void anEmptyCountIsTreatedAsAFailure() {
+        var mongo = mock(ReactiveMongoTemplate.class);
+        var meters = meters();
+        var refresher = refresher(mongo, meters);
+
+        when(mongo.count(any(Query.class), any(Class.class))).thenReturn(Mono.just(9L));
+        refresher.refresh().block();
+        long standingSequence = meters.accounts().sequence();
+        assertThat(meters.activatedAccounts()).isEqualTo(9);
+
+        // Mono.empty() rather than an error: this is the path that used to be invisible.
+        when(mongo.count(any(Query.class), any(Class.class))).thenReturn(Mono.empty());
+        List<ILoggingEvent> heard = whileListening(() -> refresher.refresh().block());
+
+        // THE ASSERTION THAT HAS TEETH, and the first version of this test did not have it. Asserting
+        // only "the previous reading stands" passes WITH and WITHOUT the `.single()` guard — measured,
+        // by removing the guard and watching all six tests stay green — because an empty zip publishes
+        // nothing either way. The whole difference `.single()` makes is that the estate is TOLD.
+        assertThat(heard)
+            .as("an empty count must produce a WARN; without .single() it is silent, which is the defect")
+            .anyMatch(e -> e.getLevel() == Level.WARN && e.getFormattedMessage().contains("could not count accounts"));
+
+        assertThat(meters.activatedAccounts())
+            .as("and the previous reading stands, exactly as it does for a failed count")
+            .isEqualTo(9);
+        assertThat(meters.accounts().sequence())
+            .as("nothing was published, so the sequence has not moved")
+            .isEqualTo(standingSequence);
+    }
+
+    /**
+     * Collects what {@link IdentityMetricsRefresher} logs while the given work runs — the shape
+     * {@code PaymentConfigurationUnitTest} established in booking and
+     * {@code TheZoneACatalogueOffersIsParsedAtCaptureTest} copied. The appender is attached to that one
+     * logger and detached in a {@code finally}, so a failure inside the block cannot leave it attached
+     * for the rest of the suite.
+     */
+    private static List<ILoggingEvent> whileListening(Runnable work) {
+        Logger logger = (Logger) LoggerFactory.getLogger(IdentityMetricsRefresher.class);
+        ListAppender<ILoggingEvent> heard = new ListAppender<>();
+        heard.start();
+        logger.addAppender(heard);
+        try {
+            work.run();
+        } finally {
+            logger.detachAppender(heard);
+            heard.stop();
+        }
+        return List.copyOf(heard.list);
+    }
+
+    /**
+     * Two subscriptions are two observations — the {@code Mono.defer} half of the sequence claim.
+     *
+     * <p><strong>What this does NOT pin</strong>, said plainly because the javadoc it supports claims
+     * more than this test can see: the sequence being taken <em>before the queries are issued</em>. Moving
+     * {@code incrementAndGet} into {@code doOnNext} — after the counts have returned — passes every test
+     * in this class while silently changing issue-order to completion-order, which is the ordering the
+     * {@code AccountSplit} javadoc reasons about. It is a javadoc property with no behavioural
+     * consequence today; it is written down rather than asserted, which is the honest state of it.
+     */
     @Test
     @DisplayName("each subscription is its own observation, so a held Mono does not reuse a sequence")
     void everySubscriptionTakesItsOwnSequence() {

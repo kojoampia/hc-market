@@ -30,16 +30,29 @@ import reactor.core.scheduler.Schedulers;
  * paragraph here used to claim both. Publication is now a single reference swap, so no reader can add
  * one observation's {@code activated} to another's {@code notActivated}
  * ({@code GatewayIdentityMeters.AccountSplit}). But the counting is still <strong>two independent
- * queries</strong> joined by {@code Mono.zip}: if an account activates between them, the {@code is(true)}
- * count ran too early to see it and the {@code ne(true)} count ran too late, so the pair sums to one less
- * than the collection holds — a total that existed at no single moment, now published atomically.
+ * queries</strong> joined by {@code Mono.zip}, and an account that activates while they are in flight is
+ * counted wrongly.
+ *
+ * <p><strong>The error is in BOTH directions, and the first version of this paragraph claimed only
+ * one</strong> — corrected at review, which is the third time in this change that a sentence asserted
+ * something narrower than the mechanism allows. {@code Mono.zip} subscribes to both sources up front and
+ * they are two separate commands on the driver, so <em>neither</em> count is guaranteed to run first:
+ *
+ * <pre>
+ *   is(true) snapshots BEFORE the flip, ne(true) AFTER  → counted by neither → sum = N − 1
+ *   ne(true) snapshots BEFORE the flip, is(true) AFTER  → counted by both    → sum = N + 1
+ * </pre>
+ *
+ * <p>Getting that wrong mattered more than the pedantry suggests, because this paragraph exists to warn
+ * whoever writes the next test: an assertion of {@code sum <= collectionSize}, written on the strength of
+ * the old sentence, would be flaky in precisely the direction the old sentence said was impossible.
  *
  * <p>It is self-correcting at the next tick, it can never make the reading go backwards, and it needs a
  * registration inside a two-query window. It is not fixed here because the fix is a different change —
  * one aggregation grouping on {@code activated} rather than two counts — with its own null-key handling
- * for a document that has no such field. Worth knowing before anyone writes a test that asserts the two
- * gauges sum to the collection size and expects it to hold under concurrent writes; the one integration
- * test that does is safe only because those tests run sequentially, and it says so.
+ * for a document that has no such field, which is the same gap {@code ne(true)} exists to avoid. The one
+ * integration test asserting the two gauges sum to the collection size is safe only because those tests
+ * run sequentially, and it says so.
  *
  * <p><strong>It reads through {@link ReactiveMongoTemplate} and not through a repository method.</strong>
  * {@code UserRepository} is generated, so a {@code countByActivated} added to it is discarded by the next
@@ -152,6 +165,12 @@ public class IdentityMetricsRefresher {
      * is wrong in exactly that case. {@code IdentityMetricsRefresherUnitTest} pins it, because a
      * qualification nothing tests is the next version of the sentence this one replaced.
      *
+     * <p>"Counted successfully" means <em>each count emitted a number</em>, and a count that completed
+     * <strong>empty</strong> used to slip between the two readings of that phrase — {@code Mono.zip}
+     * completes normally on an empty source, skipping {@code doOnNext} and {@code doOnError} alike, so
+     * nothing was published and nothing was logged. The {@code .single()} at each count closes it by
+     * making an empty count a failure like any other; see the comment there.
+     *
      * <p>That is NEW-57, and it is fixed in {@link GatewayIdentityMeters#setAccounts} rather than here:
      * each observation takes a <strong>sequence before it queries</strong>, and a write whose sequence is
      * not the newest is discarded. Serialising the two callers was the alternative and it is the wrong
@@ -169,8 +188,19 @@ public class IdentityMetricsRefresher {
     public Mono<Void> refresh() {
         return Mono.defer(() -> {
             long sequence = observations.incrementAndGet();
-            Mono<Long> activated = mongo.count(new Query(Criteria.where(ACTIVATED).is(true)), User.class);
-            Mono<Long> notActivated = mongo.count(new Query(Criteria.where(ACTIVATED).ne(true)), User.class);
+            // `.single()` TURNS AN EMPTY COUNT INTO A LOUD FAILURE, and the alternative is the quietest
+            // path in this class. Measured at review on reactor-core 3.8.7: `Mono.zip` completes NORMALLY
+            // when a source completes empty, skipping `doOnNext` AND `doOnError` — so an empty count
+            // would publish nothing with no WARN either, which is strictly worse than the error path the
+            // guarantee below is careful to qualify. `single()` makes it a NoSuchElementException, which
+            // the existing doOnError/onErrorResume then handles exactly like any other failed count.
+            //
+            // Unreachable today: `ReactiveMongoTemplate.count` emits exactly one element or errors. It is
+            // belted anyway for the same reason the interval is, and for one more — the fix named in the
+            // class javadoc, a single aggregation grouping on `activated`, is precisely a pipeline that
+            // CAN complete empty, on an empty collection. The trap is on this class's own roadmap.
+            Mono<Long> activated = mongo.count(new Query(Criteria.where(ACTIVATED).is(true)), User.class).single();
+            Mono<Long> notActivated = mongo.count(new Query(Criteria.where(ACTIVATED).ne(true)), User.class).single();
             // `ne(true)` RATHER THAN `is(false)`, so the two counts partition the collection. A document
             // whose `activated` field is absent or null — which nothing here writes today, but a
             // hand-inserted or migrated user could — would be counted by neither under `is(false)`, and the
