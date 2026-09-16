@@ -4083,6 +4083,23 @@ of the browser report was wrong: **`fromPriceMinor` is present on the detail end
 
 ## NEW-51 — the ledger earns and nothing ever settles: no writer for `Payout` · READY
 
+> **GROUNDED 2026-09-16, read-only, and it is smaller than this item costed it.** The model **already has
+> the double-payment guard**: `jdl/payout.jdl` declares
+> `relationship ManyToOne { Ledger{payout} to Payout{entries} }`, so **`payout IS NULL` is "not yet
+> settled"** and a ledger row already in a batch cannot be batched again. With `PayoutStatus`
+> `{OPEN, IN_PROGRESS, PAID, FAILED}` and `settledOn` + `bankReference`, the whole
+> settled-by-hand flow is already expressible. Measured: **`new Payout()` occurs zero times outside the
+> seeder.**
+>
+> **THE SUBTLE PART, which was written down nowhere until now: `Ledger.reversalOf`.** D23's compensating
+> entries for resolved disputes must be **inside** the batch arithmetic, or a professional is paid for a
+> booking that was refunded. Note how a reversal is keyed — it carries the **dispute** reference in
+> `bookingReference`, because that column is unique and its uniqueness is the guard against a replayed
+> `booking.completed` double-crediting — so a batch query filtering on `bookingReference` shape rather than
+> on `payout IS NULL` will get this wrong.
+>
+> Act 987 blocks **automated settlement**, not recording one a human made. That is why this is unblocked.
+
 **Phase 3.** `grep -rn "new Payout()" payout/src/main` finds **nothing** — CLAUDE.md's delete-table row
 says so, and the consequence is stated there too: `/api/pro/payouts` returns `[]` on an unseeded estate
 and always will. What that row does not say is that **this is the only thing standing between a working
@@ -4370,7 +4387,25 @@ the one worth finding.
 
 ---
 
-## NEW-57 — the identity gauges can be overwritten by a STALER reading, and the javadoc says they cannot · READY
+## NEW-57 — the identity gauges can be overwritten by a STALER reading, and the javadoc says they cannot · DONE (D93)
+
+> **CLOSED 2026-09-16 — PR #70, merged as `32216fd`** (`e644cce` + `47b5514` + `d43a299`).
+> Both counts now live in one immutable `AccountSplit` record behind a single `AtomicReference`, and each
+> observation takes a **sequence before it queries**, so `setAccounts` is a CAS that refuses anything not
+> newer. **The shape chosen was the versioned write, not the queue** — this item costed both, and the queue
+> needs a sink plus a completion signal per enqueued observation and would make an explicit refresh wait on
+> a Mongo round trip it does not need.
+>
+> **Mutation-tested, not asserted:** the pre-fix publication behaviour was reproduced behind the post-fix
+> signature and **4 of the 5 new tests went red**, the tear test included — so a concurrent scrape genuinely
+> did see a mixed pair. Restored byte-identical after every probe.
+>
+> **Two review rounds found two more claims of mine outrunning their code**, and the second found a *third*
+> hollow test. All of it is in D93; the short version is that the fix's own new guarantee was false on the
+> error path, the narrowed tear paragraph asserted one direction when the error is bidirectional, and the
+> test written to pin the empty-count guard passed identically with and without it.
+>
+> **The observation tear is a stated residual, not fixed → NEW-59.**
 
 **Found 2026-09-15 by CI on PR #69**, a branch whose entire diff is four `docs/*.md` files — so it is
 **pre-existing on `main` at `d9b7365`** and was introduced by D84/D85. `GatewayIdentityMetricsIT` is
@@ -4528,6 +4563,47 @@ explicitly — suppressed, or served with an unmissable withdrawal notice — wi
 `SUSPENDED` row proving which, since that state has never existed anywhere.
 
 **Not blocked.** The decision is taken; this is its condition.
+
+---
+
+## NEW-59 — the account gauges are PUBLISHED as one observation but COUNTED as two · READY
+
+**Opened by NEW-57's review**, 2026-09-16, `decisions.md` **D93**. NEW-57 fixed the *publication* tear; this
+is the *observation* tear, which survives deliberately and is stated in the source rather than hidden.
+
+`IdentityMetricsRefresher.refresh()` issues **two independent counts** joined by `Mono.zip`. `Mono.zip`
+subscribes to both up front and they are separate commands on the driver, so neither is guaranteed to run
+first — and an account that activates while they are in flight is counted wrongly **in either direction**:
+
+```
+is(true) snapshots BEFORE the flip, ne(true) AFTER  → counted by neither → sum = N − 1
+ne(true) snapshots BEFORE the flip, is(true) AFTER  → counted by both    → sum = N + 1
+```
+
+**The first version of that paragraph claimed only `N − 1`**, which mattered because the paragraph exists to
+warn the next test author: `sum <= collectionSize`, written on its strength, is flaky in exactly the
+direction it called impossible. Corrected at review — and it is the reason this item says "in either
+direction" twice.
+
+**Bounded and self-correcting.** Never a regression, gone at the next tick, and it needs a registration
+inside a two-query window. That is why it is an item rather than a fix in NEW-57.
+
+**The fix is one aggregation grouping on `activated`** instead of two counts — and it carries two traps
+worth naming before anyone starts:
+
+- **null and absent must fold into the not-activated bucket.** The current query is `ne(true)` and *not*
+  `is(false)` precisely so the two counts partition the collection even for a document with no `activated`
+  field. A `$group` keyed on that field puts such documents under a *third* key, so a naive grouping
+  reintroduces the exact gap `ne(true)` exists to close;
+- **an aggregation can complete empty** on an empty collection, where `count` emits exactly one element or
+  errors. NEW-57 added `.single()` at each count for that reason — measured: `Mono.zip` completes
+  **normally** on an empty source, skipping `doOnNext` *and* `doOnError`, so nothing is published and
+  nothing is logged. `anEmptyCountIsTreatedAsAFailure` is red without the guard; keep it red-able.
+
+**It would also make `GatewayIdentityMetricsIT`'s sum assertion unconditionally sound.** Today that holds
+only because the integration tests run sequentially, and the class javadoc says so.
+
+**Not blocked.** No decision, no outside fact.
 
 ---
 

@@ -16710,3 +16710,110 @@ generated to check, and the generator's defaults may have moved since that app w
 any means; **no `SUSPENDED` row has ever existed in either estate**, so every claim about how a
 suspended professional is served is read from the code and not observed; and no Paystack call has
 reached Paystack.
+
+---
+
+## D93 — NEW-57: how the gauges were fixed, and three of my own tests that asserted nothing
+
+**Recorded 2026-09-16.** Closes backlog **NEW-57**; opens **NEW-59**. PR **#70**, merged as `32216fd`
+(`e644cce` + `47b5514` + `d43a299`). The defect and the fix are both **D84/D85's**, which is to say mine,
+three days old.
+
+### 1. The shape chosen, and why not the other one
+
+NEW-57 costed two fixes and required that one be picked with a reason. **The versioned write.**
+
+Both counts live in one immutable `AccountSplit(activated, notActivated, sequence)` behind a single
+`AtomicReference`; each observation takes its sequence at **subscribe** time (`Mono.defer` +
+`incrementAndGet`); `setAccounts` is a CAS that returns `false` and discards when
+`standing.sequence() >= sequence`. **One primitive closes both halves** — the tear, because there is one
+write; the stale overwrite, because an older sequence loses.
+
+**The queue was rejected on cost, not taste.** Routing explicit refreshes through the timer's existing
+`concatMap` needs a sink *and* a completion signal per enqueued observation, and it would make a caller
+that wants a reading now wait on a Mongo round trip it does not need. The `Duration.ZERO` first tick
+**stays** — D84's argument stands, a gauge reading `-1` for the first minute of every deploy looks broken
+on every deploy — because what was wrong was the unserialised explicit refresh, not the eager tick.
+
+Independently confirmed at review: the CAS loop has **no ABA** (every install is a freshly allocated
+record and `compareAndSet` is reference-identity, so the A→B→A precondition cannot arise) and terminates
+per call; `Mono.defer` genuinely takes the sequence per subscription; Micrometer's weak reference to the
+gauge state is held alive by the singleton bean; and nothing else reads the old two-`AtomicLong` shape —
+the dashboard JSON and `observability-claims.sh` part 5 derive from the untouched string constants.
+
+### 2. What the reviews found, which is the part worth keeping
+
+**Two rounds on a five-file change, and each found a claim of mine outrunning its code — in the commit
+whose entire subject was two claims outrunning their code.**
+
+- **Round one: the new guarantee was false on the error path.** `refresh()`'s javadoc said, bolded and
+  unconditional, *"when this Mono completes, the standing reading is this observation or a NEWER one."*
+  But `onErrorResume(e -> Mono.empty())` makes it complete **normally** having published nothing, so on a
+  Mongo blip the standing reading is whatever stood before. The class's own closing paragraph said as much
+  two paragraphs below. Fixed by qualifying with *"having counted successfully"* and **pinning it**.
+- **Round two: the narrowed tear paragraph asserted one direction and the error is bidirectional.**
+  `Mono.zip` subscribes to both sources up front and they are separate driver commands, so
+  `is(true)`-then-`ne(true)` gives `N − 1` and the reverse gives `N + 1`. That paragraph exists to warn the
+  next test author, so a wrong direction is worse than pedantry: `sum <= collectionSize`, written on its
+  strength, is flaky exactly where it promised safety.
+- **Round two also found the quietest path in the class.** Measured on reactor-core 3.8.7: `Mono.zip`
+  completes **normally** when a source completes empty, skipping `doOnNext` **and** `doOnError` — nothing
+  published, nothing logged. Unreachable through `ReactiveMongoTemplate.count`, and belted with
+  `.single()` anyway, because **the fix this class's own javadoc recommends** — one aggregation — is
+  precisely a pipeline that can complete empty. The trap was on the documented roadmap.
+
+### 3. Three of my own tests asserted nothing, and all three were caught the same way
+
+This is the entry's real content. Not one was found by reading; every one was found by **breaking the code
+and noticing the test did not care.**
+
+| Test | Passed for the wrong reason because |
+| --- | --- |
+| the IT's partition assertion | it checked the consequence without the premise — the numbers without the sequence they rest on |
+| `aFailedCountLeavesThePreviousReadingStanding` | the helper built a fresh refresher per call, restarting the sequence at zero, so a mutation publishing `(0,0)` on error hit the **equal-sequence guard** and never reached the error path. Only its sibling went red |
+| `anEmptyCountIsTreatedAsAFailure` | it asserted state that is **identical with and without** the guard. An empty zip publishes nothing either way; the only thing `.single()` changes is that the estate is **told**. Rewritten to assert the WARN |
+
+**The procedure that works is cheap and it is the same three steps every time**: back the file up to a
+uniquely-named scratch directory, reproduce the *old* behaviour behind the *new* signature, run, then
+restore and confirm byte-identical. Pre-fix: **4 of 5 red**, the tear test included — so a concurrent
+scrape genuinely did see a mixed pair, which makes that javadoc claim false **in fact** rather than weak in
+theory. A claim that a check is a check has to be measured like any other.
+
+### 4. Two reach limits recorded rather than papered over
+
+Both are in the source, where somebody reading a green run will see them:
+
+- **The refresher's unit tests cannot see the predicates.** They all stub
+  `count(any(Query.class), any(Class.class))`, so a change making both counts `is(true)` passes every one
+  of them — `times(2)` and `eq(User.class)` included. What pins `is(true)` versus `ne(true)` is
+  `GatewayIdentityMetricsIT` against a real Mongo.
+- **`everySubscriptionTakesItsOwnSequence` pins half of what its javadoc claims.** It distinguishes
+  subscribe-time from assembly-time sequencing, but not *"assigned before its queries were issued"* —
+  moving `incrementAndGet` into `doOnNext` passes every test while silently changing issue-order to
+  completion-order. A javadoc property with no test behind it, and it says so in place.
+
+### 5. And one claim the review made true by running it
+
+The belt added in `start()` — `.concatMap(tick -> refresh().onErrorResume(...))` — is **not decoration.**
+A synchronous throw from inside `Mono.defer`'s supplier becomes an error at subscribe, and an error
+reaching `concatMap` **cancels the interval**: the timer would be dead for the life of the process with one
+`onErrorDropped` line and gauges frozen at their last reading. Measured on reactor-core 3.8.7: without the
+belt the interval processed **1** tick and died; with it, **9** in the same window.
+
+### 6. Verified, assumed, not exercised
+
+**Verified:** `./mvnw -o clean verify` on the gateway at the merged head — **67 unit** (56 on `main`
+before), **135 IT**, **0 Checkstyle violations**, counts read from the surefire/failsafe XML rather than a
+log line; CI 6/6 per check on three successive heads; the mutation results above; `MicrometerReaches
+TheGlobalRegistryIT` and `GatewayIdentityMetersNamingUnitTest` still green, so D85's registry choice and
+the exposition names the dashboard queries did not move.
+
+**Assumed:** that Micrometer's `DefaultGauge` holds its state object weakly — stated from knowledge of the
+library and not run; the empirical half is the naming test scraping real values through it.
+
+**Not exercised — and this is the sentence to re-read before anyone treats the item as urgent:** the gauges
+have **never been observed regressing in a real deployment.** The interval is 60s, so overlap needs a Mongo
+count slower than a minute. The defect was reproduced in a unit test and observed **once** in CI, on an
+unrelated docs-only branch. It has not been seen on the quality box, and production has never been
+deployed. The fix is right regardless of how often it would bite, which is the argument for making it
+rather than deferring it — not an argument that it was biting.
