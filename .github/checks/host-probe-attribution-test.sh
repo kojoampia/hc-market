@@ -64,11 +64,14 @@
 #   15  the secrets loop's remote-status
 #       arm emptied                          — THE FAIL-OPEN, and the only mutation in this file
 #                                              whose result is a PASS. grep's exit 2 matches an empty
-#                                              branch, the loop walks all twelve values, and
+#                                              branch, the loop walks every required value, and
 #                                              preflight approves a secrets.env it could not read
 #   16  the not-set refusal stops naming
-#       which value                          — twelve values are asked one at a time so that the
-#                                              refusal can name one
+#       which value                          — every required value is asked one at a time so that
+#                                              the refusal can name one. The count is the script's
+#                                              own arrays' and is printed, not restated: it was
+#                                              twelve until D94 made it fifteen, which is what turned
+#                                              this check red on a correct branch
 #   17  rollback stops checking the remote
 #       status                               — a wrong --path was back to a fact about this estate's
 #                                              deployment history. WORSE than the review predicted:
@@ -330,12 +333,12 @@ printf '\nsecrets.env and the previous tag — the five other call sites\n'
 # M-c, THE ONLY MUTATION IN THIS FILE WHOSE RESULT IS A PASS RATHER THAN A WRONG MESSAGE. One line,
 # it parses, and before part 3 existed the check was 22 ok / exit 0 on it: `grep`'s exit 2 — the
 # unreadable-0600 state the code's own comment names as live — matches an empty branch, the loop
-# proceeds past all twelve values, and preflight APPROVES a secrets file it could not read. Worse
+# proceeds past every required value, and preflight APPROVES a secrets file it could not read. Worse
 # than the defect this package fixed, which at least refused.
 f="$(fresh m15)"
 sed -i 's|^        \*) die "\$HOST:\$REMOTE_PATH/\$SECRETS_FILE could not be read.*|        *) : ;;|' "$f"
 expect_red "$f" "15  the secrets loop's remote-status arm emptied (the FAIL-OPEN)" '        *) : ;;' \
-  'could not be read while looking for' "walked all twelve values past it"
+  'could not be read while looking for' "walked every value past it"
 
 f="$(fresh m16)"
 sed -i 's|1) die "\$v is not set in|1) die "a value is not set in|' "$f"

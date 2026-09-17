@@ -17122,6 +17122,49 @@ of this package restored those files by hand; the recommendation is to commit a 
 once, in a commit that touches nothing else, which is a dependency decision rather than a backlog
 item's to take.
 
+### §5d Round three: this decision turned another check's fixture stale, and it was the fixture's own subject
+
+**CI went red on PR #71 with the five service matrices green.** `host-probe-attribution.sh` failed —
+and the cause was this package's preflight working, not being wrong.
+
+That check builds a fixture `secrets.env` and drives the **real** `deploy-prod.sh` end to end against
+stubbed `ssh`, `scp`, `docker`, `curl` and `git`. Its fixture was a **hand-written list of the twelve
+values of the day**, so the three keys §3 made required — `HC_MAIL_HOST`, `HC_MAIL_PORT`,
+`HC_MAIL_BASE_URL` — were absent from it, preflight correctly refused it, and the driven run died
+before the `scp`. D80 wrote part 7's assertions to be read off a run that **reached the end**, exactly
+so a truncated run cannot satisfy them by never asking — so a short fixture does not fail one
+assertion, it fails thirteen, and the first reading of the log is "the deploy script is broken".
+
+**Fixed by deriving, not by adding three lines.** Both fixtures — part 3's and part 7's `seed_host7`
+— are generated from `SECRET_KEYS` + `CONNECTION_KEYS`, the same shipped bytes the probe already
+`eval`s, so a key added to `deploy-prod.sh` cannot stale them again. Every count is printed from
+`${#REQUIRED_KEYS[@]}` rather than restated, in eleven places that said "twelve". Two guards go with
+it: the arrays must yield at least twelve values (so arrays lifted but **not parsed** refuse before
+anything is driven, rather than driving an empty fixture), and `HC_PAYOUT_DB_PASSWORD` — the one key
+part 3 deliberately omits, to prove the refusal names the value that is missing — is asserted to be
+**in** the list, so a rename is red here rather than silently dropping nothing.
+
+**A second fixture was short in a different way: the stub's `/management/info`.** It answered only
+`build.version`, so §3's new mail gate — which fails closed, because a front door that answers 201 and
+discards the registration must not ship — refused, the deploy rolled back, and part 7 reported that
+the run *"never got as far as the gateway version probe"*: the failure being the stub's, one probe
+upstream of the one it named. The stub answers a mail block now.
+
+**And one `ok` line was over-claiming, which the reviewer caught by reading the red log rather than
+the code.** Part 7 printed `all 7 remote invocation sites received the whole of SSH_OPTS` on the run
+that reached 7 of 20, because the number came from the run and the line fired whenever no *reached*
+site had been handed a bare invocation — while `missing7` had already erred about the other thirteen.
+The aggregate was red, so it was not a hole; it was **the same over-claim §5c removed from the window
+check's `ok` line**, in a file whose whole subject is attribution. The count is the enumerated site
+list's now and the line does not appear at all on a run that did not reach them all.
+
+**Proved at three states** (control green, restored byte-identical): as shipped → green, `all 20`;
+the derived list three keys short → red at the compose upload, **and no site line at all**; the arrays
+unparsed → red before anything is driven. Part 3's own refusals still fire for their own reasons —
+a value absent is named, an absent file is "missing or empty", an unreadable one is not reported as
+unset — and the check's 52-mutation test is 53 ok / 0 failed, after one expected-message fragment in
+it was updated to the derived wording rather than left greping text the check no longer prints.
+
 ### §6 Verified, assumed, not exercised
 
 **Verified by running it.** Registration through activation to sign-in, walked end to end against a
