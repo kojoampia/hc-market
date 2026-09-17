@@ -76,6 +76,12 @@ readonly -a PROD_ENV=(
   HC_BOOKING_DB_URL=jdbc:x HC_BOOKING_DB_PASSWORD=x
   HC_MESSAGING_DB_URL=jdbc:x HC_MESSAGING_DB_PASSWORD=x
   HC_PAYOUT_DB_URL=jdbc:x HC_PAYOUT_DB_PASSWORD=x
+  # The three mail values, required since decisions.md D94 (backlog NEW-47). Not this check's
+  # subject at all — they are here because `docker compose config` interpolates the WHOLE file, so a
+  # new `:?` variable anywhere in it makes every render in this repository fail until it is listed.
+  # That is the intended cost of `:?` and it is why they are placeholders rather than realistic:
+  # nothing here reads them.
+  HC_MAIL_HOST=smtp.example.invalid HC_MAIL_PORT=587 HC_MAIL_BASE_URL=https://example.invalid
 )
 
 # Count services rendering the flag, and refuse a count of zero SERVICES — the fail-open every

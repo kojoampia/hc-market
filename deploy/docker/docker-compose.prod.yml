@@ -169,6 +169,53 @@ services:
       OTEL_SERVICE_NAME: hc-market-gateway
       # SPRING_MONGODB_URI: Spring Boot 4 renamed spring.data.mongodb.* to spring.mongodb.*
       SPRING_MONGODB_URI: ${HC_GATEWAY_MONGODB_URI:?gateway mongodb uri is required}
+      # --- MAIL: THREE REQUIRED VALUES, AND NO DEFAULT FOR ANY OF THEM -------------------------
+      #
+      # decisions.md D94, backlog NEW-47. This file passed no SPRING_MAIL_* at all, so production
+      # would have run on application-prod.yml's committed `localhost:25` — the container's own
+      # loopback, where nothing listens — with `jhipster.mail.base-url` still set to JHipster's
+      # placeholder `http://my-server-url-to-change`. A customer registering on market.abofonsa.com
+      # would have been answered 201, received nothing, been unable to log in, and been deleted by
+      # the unactivated-account sweep some days later, with one WARN line as the only trace.
+      #
+      # `:?` rather than a default is the whole point: a default is exactly how the placeholder
+      # survived into the production profile. Compose refuses to interpolate before a container is
+      # created, deploy-prod.sh checks all three by name on the host before it touches the stack,
+      # application-prod.yml carries defaultless placeholders behind them, and MailDeliveryGuard
+      # refuses what none of those can see — a value present and empty, and loopback under prod.
+      #
+      # THE PORT IS REQUIRED TOO, and that is deliberate rather than thorough: 25, 465 and 587 are
+      # three different sets of assumptions about TLS and authentication, and a wrong one fails
+      # exactly as silently as a wrong host. An operator who knows their relay knows its port.
+      SPRING_MAIL_HOST: ${HC_MAIL_HOST:?the SMTP relay's hostname is required — no customer can activate an account without it, and a registration whose mail fails is still a 201 followed by a deletion. It may not be localhost, which inside this container is its own loopback and is the committed default this variable exists to replace — decisions.md D94}
+      SPRING_MAIL_PORT: ${HC_MAIL_PORT:?the SMTP relay's port is required — 25, 465 and 587 mean three different things about TLS and authentication, and a wrong one fails as silently as a wrong host — decisions.md D94}
+      JHIPSTER_MAIL_BASE_URL: ${HC_MAIL_BASE_URL:?the origin activation and password-reset links are composed against is required, with no trailing slash — e.g. https://market.abofonsa.com. A wrong value produces a mail that is DELIVERED and whose link is dead, which nothing anywhere reports. It was `http://my-server-url-to-change` in application-prod.yml until decisions.md D94}
+      # --- AND THREE THAT ARE OPTIONAL, BECAUSE A RELAY MAY NEED NONE OF THEM ------------------
+      #
+      # Not `:?`, and not in deploy-prod.sh's required list, for the same reason a payment provider's
+      # secret is not (D45): absence is a working configuration. A relay on the estate's own network
+      # authenticates nobody; a provider over the public internet needs both. Blank counts as absent.
+      #
+      # HC_MAIL_PASSWORD IS A SECRET and belongs in secrets.env beside the other three. It is
+      # deliberately not in SECRET_KEYS, which would make a deploy refuse over a value an estate may
+      # legitimately not have.
+      #
+      # Both properties default to TRUE here and to false in dev and quality. That is the safe
+      # direction rather than the common one: an estate whose relay cannot do STARTTLS fails to send
+      # rather than sending a credential in clear. The residual is stated — a send that fails is
+      # still one WARN line — and GET /management/info reports `mail.authenticated` so an operator
+      # can see which half is in force.
+      SPRING_MAIL_USERNAME: ${HC_MAIL_USERNAME:-}
+      SPRING_MAIL_PASSWORD: ${HC_MAIL_PASSWORD:-}
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH: ${HC_MAIL_SMTP_AUTH:-true}
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE: ${HC_MAIL_SMTP_STARTTLS:-true}
+      # The estate's retention policy for an account that was never activated — three days by
+      # default, which is JHipster's generated figure kept on purpose (decisions.md D94 §2), stated
+      # in docs/privacy-notice.md 7.1 and docs/processing-record.md 3.1. Optional: blank means the
+      # default, and an estate that sets neither deletes exactly what every estate has always
+      # deleted. A value that is set and unreadable refuses to start.
+      HEALTHCONNECT_ACCOUNTS_UNACTIVATED_RETENTION_DAYS: ${HC_UNACTIVATED_ACCOUNT_RETENTION_DAYS:-}
+      HEALTHCONNECT_ACCOUNTS_UNACTIVATED_SWEEP_CRON: ${HC_UNACTIVATED_ACCOUNT_SWEEP_CRON:-}
       # The first administrator's password — decisions.md D61. On the GATEWAY only: it is the one
       # service holding accounts, and a secret handed to four services that cannot read it is four
       # more places for it to be seen.

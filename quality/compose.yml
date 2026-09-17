@@ -282,6 +282,42 @@ services:
       retries: 20
       start_period: 15s
 
+  # --- THE MAIL CATCHER (decisions.md D94, backlog NEW-47) -------------------------------------
+  #
+  # Registration, activation and password reset are generated code that had never been exercised
+  # anywhere: no compose file in any of the three environments passed a single SPRING_MAIL_*, and
+  # MailServiceIT mocks JavaMailSender, so no message has ever left this estate. A catcher is what
+  # makes the path walkable on a box that has no business relaying real mail.
+  #
+  # IT IS ON `quality` ONLY — the project's own network, exactly like the five databases and for the
+  # same reason in reverse: nothing in another product has business relaying through this box, and
+  # `mailpit` is a short name that would be published as a DNS alias on every network it joined.
+  # The gateway addresses it by CONTAINER name below.
+  #
+  # ONLY THE WEB UI IS PUBLISHED, AND ONLY ON LOOPBACK. Mailpit's SMTP port stays unpublished
+  # deliberately: an unauthenticated SMTP listener reachable from the LAN is an open relay, and
+  # nothing outside this compose project needs to send through it. Read what was sent at
+  # http://127.0.0.1:18104 (or MAILPIT_HTTP_PORT) — that is how a human checks an activation mail.
+  #
+  # No volume: what a catcher holds is a test message, and a restart losing them is the correct
+  # amount of durability for a box whose whole security story is that it is on a private LAN.
+  mailpit:
+    image: axllent/mailpit:v1.21
+    container_name: hc-market-quality-mailpit
+    restart: unless-stopped
+    networks: [quality]
+    ports: ["127.0.0.1:${MAILPIT_HTTP_PORT:-18104}:8025"]
+    environment:
+      MP_MAX_MESSAGES: 500
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
   catalog-db:
     <<: *postgres
     container_name: hc-market-quality-catalog-db
@@ -339,6 +375,43 @@ services:
       # and the old name sets something nothing reads — the gateway then dies inside Mongock with
       # "Connection refused ... localhost:27017", pointing at the database rather than the variable.
       SPRING_MONGODB_URI: mongodb://gateway-db:27017/healthconnectGateway
+      # --- MAIL: THE CATCHER, NOT A RELAY (decisions.md D94, backlog NEW-47) ------------------
+      #
+      # This block did not exist until D94, in any of the three compose files, which is half of
+      # NEW-47: registration answered 201, the account was written unactivated, MailService's send
+      # failed against `localhost:25` — the container's own loopback — and logged one WARN line, and
+      # the unactivated-account sweep deleted the account three days later. Nobody who registered on
+      # any estate could ever log in.
+      #
+      # The host is the catcher's CONTAINER name, not `mailpit`: the short name is a DNS alias on
+      # every network a container joins, and this box shares `hcnet` with three sibling products
+      # (NEW-26). Overridable so an operator can point this box at a real relay for one session
+      # without editing the file — and if they do, JHIPSTER_MAIL_BASE_URL has to move with it, since
+      # a link to market.healthconnect.local is unreachable from anywhere but this LAN.
+      #
+      # No credentials and no TLS: the catcher accepts anything (MP_SMTP_AUTH_ACCEPT_ANY), so a
+      # username here would prove nothing about a provider that needs one. Production defaults both
+      # the other way.
+      SPRING_MAIL_HOST: ${HC_MAIL_HOST:-hc-market-quality-mailpit}
+      SPRING_MAIL_PORT: ${HC_MAIL_PORT:-1025}
+      SPRING_MAIL_USERNAME: ${HC_MAIL_USERNAME:-}
+      SPRING_MAIL_PASSWORD: ${HC_MAIL_PASSWORD:-}
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH: ${HC_MAIL_SMTP_AUTH:-false}
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE: ${HC_MAIL_SMTP_STARTTLS:-false}
+      # The origin every activation and password-reset link is composed against. This box's own
+      # vhost, so a link read out of the catcher is a link that resolves from this LAN.
+      #
+      # It points at a FRONTEND route (`${baseUrl}/account/activate?key=…`) and this estate has no
+      # frontend yet (NEW-48), so today that link 404s while the key activates the account perfectly
+      # well through `GET /api/activate?key=…`. Backlog NEW-60.
+      JHIPSTER_MAIL_BASE_URL: ${HC_MAIL_BASE_URL:-http://market.healthconnect.local}
+      # How long an account that is never activated is kept, and when the sweep runs — the estate's
+      # stated retention policy for one class of account, three days by default, which is JHipster's
+      # generated figure kept deliberately (decisions.md D94 §2). Blank means the default; both are
+      # passed through so that a variable this repository documents is not one that silently does
+      # nothing (D46, D50).
+      HEALTHCONNECT_ACCOUNTS_UNACTIVATED_RETENTION_DAYS: ${HC_UNACTIVATED_ACCOUNT_RETENTION_DAYS:-}
+      HEALTHCONNECT_ACCOUNTS_UNACTIVATED_SWEEP_CRON: ${HC_UNACTIVATED_ACCOUNT_SWEEP_CRON:-}
       # No GATEWAY_ADMIN_PASSWORD, deliberately — decisions.md D61. This box runs `dev,test`, so the
       # seeder creates `admin` and `user` with passwords derived from their own logins by a rule
       # written in InitialSetupMigration, in a public repository. That is the same bargain the rest of

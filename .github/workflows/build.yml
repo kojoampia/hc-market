@@ -169,6 +169,8 @@ jobs:
               HC_BOOKING_DB_URL=jdbc:x HC_BOOKING_DB_PASSWORD=x \
               HC_MESSAGING_DB_URL=jdbc:x HC_MESSAGING_DB_PASSWORD=x \
               HC_PAYOUT_DB_URL=jdbc:x HC_PAYOUT_DB_PASSWORD=x \
+              HC_MAIL_HOST=smtp.example.invalid HC_MAIL_PORT=587 \
+              HC_MAIL_BASE_URL=https://example.invalid \
             docker compose -f deploy/docker/docker-compose.prod.yml config >/dev/null
           # The production DATA TIER — the four PostgreSQL instances and the gateway's MongoDB,
           # installed on the host once and never rolled by a deploy. A fourth compose file, and the
@@ -609,6 +611,27 @@ jobs:
 
       - name: …and that check must fail on each of the states it exists to refuse
         run: ./.github/checks/host-probe-attribution-test.sh
+
+      # --- THE ACCOUNT LIFECYCLE (decisions.md D94, backlog NEW-47) -------------------------------
+      #
+      # The composite this guards was invisible to every other job here and to the whole test suite:
+      # POST /api/register is permitAll, answers 201 WITHOUT waiting for the mail, MailService
+      # catches MailException and logs WARN, spring.mail.host was the committed `localhost:25`, no
+      # compose file in any environment passed a single SPRING_MAIL_*, production's base-url was
+      # JHipster's own `http://my-server-url-to-change`, and the generated UserService then deleted
+      # the unactivated account after three days on a @Scheduled nobody in this project had chosen.
+      # A customer would have registered, received nothing, been unable to log in, and disappeared,
+      # with one WARN line as the only trace. MailServiceIT mocks JavaMailSender, so no test in the
+      # estate has ever sent a message and none of them was red.
+      #
+      # Six parts, thirty-six assertions, and the one enumerated list in it — the two permitAll paths
+      # D94 §5 leaves unlimited — is an EXACT-SET assertion, so a sixth public door is red in the
+      # pull request that adds it rather than in an audit nobody schedules.
+      - name: The account lifecycle must be configured, rate-limited and stated
+        run: ./.github/checks/account-lifecycle-guards.sh
+
+      - name: …and that check must fail on each of the states it exists to refuse
+        run: ./.github/checks/account-lifecycle-guards-test.sh
 
       # "The agent must be verified as INSTRUMENTING, not merely loading" has been in CLAUDE.md
       # since D25 and was a paragraph of prose that had been run once, by hand. It is a script now

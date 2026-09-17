@@ -1744,14 +1744,20 @@ esac
 #  requires a NUMBER, not a positive one; see smoke_test. Raise the floor to 1 once there is real
 #  data, at which point an estate answering 0 is a failure and should roll back.
 #
-#  Required ON THE HOST, in $REMOTE_PATH/secrets.env, and NOT here. TWELVE values, all of them `:?`
-#  in docker-compose.prod.yml, all of them checked in preflight by name before the stack is touched:
+#  Required ON THE HOST, in $REMOTE_PATH/secrets.env, and NOT here. FIFTEEN values, all of them `:?`
+#  in docker-compose.prod.yml, all of them checked in preflight by name before the stack is touched —
+#  the count is printed by preflight itself from the two arrays, so read that line rather than this
+#  one, which has been out of date before:
 #     JWT_BASE64_SECRET       this ESTATE's signing key   (decisions.md D37 — NOT the platform key)
 #     HC_PRIVACY_PEPPER       the erasure pepper           (decisions.md D35)
 #     HC_GATEWAY_ADMIN_PASSWORD  the FIRST administrator   (decisions.md D61)
 #     HC_GATEWAY_MONGODB_URI  the gateway's user store
 #     HC_{CATALOG,BOOKING,MESSAGING,PAYOUT}_DB_URL       the four PostgreSQL instances
 #     HC_{CATALOG,BOOKING,MESSAGING,PAYOUT}_DB_PASSWORD  and their credentials
+#     HC_MAIL_HOST, HC_MAIL_PORT, HC_MAIL_BASE_URL       the relay, and the origin in every link
+#                                                        (decisions.md D94 — without them a customer
+#                                                        registers, gets nothing, cannot log in, and
+#                                                        is deleted three days later)
 #
 #  The template, with a generation command beside every line and a real value on none of them, is
 #  deploy/prod-server/secrets.env.example. The five stores those last nine address are declared in
@@ -1769,7 +1775,7 @@ esac
 #  counsel's ratified figures are the committed fallback (HC_RETENTION_FINANCIAL_DAYS and its two
 #  siblings override them only if a deployment has to be corrected without cutting a release).
 #
-#  Those twelve are the stack's long-lived values and this script never sees them. It generates .env
+#  Those fifteen are the stack's long-lived values and this script never sees them. It generates .env
 #  on every deploy and overwrites what was there, so anything kept in .env survives exactly until
 #  the next deploy — which is why docker-compose.prod.yml's two `:?` variables lived in a file that
 #  could not hold them, and why every production `up` would have died on
@@ -1783,7 +1789,7 @@ esac
 #
 #      ssh $HC_PROD_HOST
 #      mkdir -p /srv/healthconnect && cd /srv/healthconnect
-#      umask 077 && cat > secrets.env      # paste all twelve, filled in, then Ctrl-D
+#      umask 077 && cat > secrets.env      # paste all fifteen, filled in, then Ctrl-D
 #      chmod 600 secrets.env
 #
 #  JWT_BASE64_SECRET IS GENERATED FRESH — `head -c 64 /dev/urandom | base64 -w0` — AND IS NOT THE
@@ -1876,12 +1882,20 @@ SECRET_KEYS=(JWT_BASE64_SECRET HC_PRIVACY_PEPPER HC_GATEWAY_ADMIN_PASSWORD)
 # messages differ: the URLs are topology and can be reconstructed from prod-server/compose.yml, while
 # a lost pepper cannot be reconstructed from anything. Presence and non-emptiness only, for both —
 # the values stay on the host, nothing here reads them, so nothing here can print them.
+#
+# THE THREE MAIL VALUES JOINED THEM ON 2026-09-17 (decisions.md D94, backlog NEW-47), and they are
+# here rather than in SECRET_KEYS because none of the three is a secret: a relay's hostname, its
+# port, and the origin printed in every mail this estate sends. HC_MAIL_PASSWORD, which IS a secret,
+# is deliberately in NEITHER list — a relay may need no credential at all, and refusing a deploy
+# over a value an estate legitimately does not have is how a required variable becomes a placeholder
+# somebody invents.
 CONNECTION_KEYS=(
   HC_GATEWAY_MONGODB_URI
   HC_CATALOG_DB_URL   HC_CATALOG_DB_PASSWORD
   HC_BOOKING_DB_URL   HC_BOOKING_DB_PASSWORD
   HC_MESSAGING_DB_URL HC_MESSAGING_DB_PASSWORD
   HC_PAYOUT_DB_URL    HC_PAYOUT_DB_PASSWORD
+  HC_MAIL_HOST        HC_MAIL_PORT        HC_MAIL_BASE_URL
 )
 # The two files in $REMOTE_PATH, and the number of stores the second one declares.
 #
@@ -2151,6 +2165,10 @@ secret_hint() {
       printf 'jdbc:postgresql://hc-market-<service>-db:5432/healthconnect<Service> — the stores declared in deploy/prod-server/compose.yml, reachable over hcmarketnet. See deploy/prod-server/secrets.env.example.' ;;
     HC_*_DB_PASSWORD)
       printf 'The SAME value the store reads in deploy/prod-server/compose.yml — written once in secrets.env and read by both compose projects, which is why they cannot drift. See deploy/prod-server/secrets.env.example.' ;;
+    HC_MAIL_HOST|HC_MAIL_PORT)
+      printf 'The SMTP relay activation and password-reset mail goes through (decisions.md D94). NOT localhost — inside the gateway container that is its own loopback, where nothing listens, and it is the committed default these variables exist to replace. The port is required rather than defaulted because 25, 465 and 587 mean three different things about TLS and authentication and a wrong one fails exactly as silently as a wrong host. Credentials are HC_MAIL_USERNAME and HC_MAIL_PASSWORD and are optional, because a relay may need neither.' ;;
+    HC_MAIL_BASE_URL)
+      printf 'The origin every activation and password-reset link is composed against, with no trailing slash — e.g. https://market.abofonsa.com. THE ONE MAIL VALUE THAT FAILS AFTER DELIVERY WORKS: a wrong host here sends a message the relay accepts and the customer receives, carrying a link to somewhere that does not answer, and nothing in the estate reports it. It names the origin A PERSON BROWSES rather than the API, and this estate has no frontend yet (NEW-48), so that link 404s today while the key in it activates the account through GET /api/activate — backlog NEW-60.' ;;
     *) printf 'See the header, and deploy/prod-server/secrets.env.example.' ;;
   esac
 }
@@ -2257,7 +2275,7 @@ preflight() {
   else
     # BOTH OF THESE ASSERTED AN ABSENCE FROM A DISCARDED SSH STATUS, exactly as the network loop did:
     # an ssh that never arrived was reported as "secrets.env is missing" and then as "$v is not set",
-    # for all twelve, which sends an operator to a file that is fine. `test -s` folding "missing" and
+    # for all of them, which sends an operator to a file that is fine. `test -s` folding "missing" and
     # "empty" together is deliberate and stays — that is one remedy stated as a disjunction, not a
     # cause asserted (decisions.md D75, and D71 §5 on what the rule is actually about).
     host_run "read $REMOTE_PATH/$SECRETS_FILE on $HOST" "test -s '$REMOTE_PATH/$SECRETS_FILE'"
@@ -2857,6 +2875,54 @@ smoke_test() {
     return 1
   fi
 
+  # --- CAN ANYBODY ACTUALLY GET AN ACCOUNT? (decisions.md D94, backlog NEW-47) --------------------
+  #
+  # The gateway's own /management/info, read from the container for the same two reasons the payout
+  # probe is: /management is 404 at the public edge on purpose, and the Jib images ship no curl. ONE
+  # request serves this check and the version check below, because they are one question asked of one
+  # endpoint and two round trips would be two chances for the answer to differ.
+  #
+  # WHAT IT IS GATING. Until D94 no compose file in any environment passed a single SPRING_MAIL_*, so
+  # production would have run on application-prod.yml's committed `localhost:25` with
+  # jhipster.mail.base-url still set to JHipster's `http://my-server-url-to-change`. Every part of
+  # what follows is generated code behaving exactly as generated: POST /api/register is permitAll,
+  # answers 201 WITHOUT WAITING for the mail, MailService catches the failure and logs one WARN line,
+  # and the unactivated account is deleted by the sweep some days later. A customer registers,
+  # receives nothing, cannot log in, and disappears. Nothing else in this script — or in the whole
+  # test suite — can see it: MailServiceIT mocks JavaMailSender.
+  #
+  # IT FAILS CLOSED, and the direction is the brokerage probe's rather than the health gate's. Three
+  # `:?` variables and three defaultless placeholders mean a correct estate cannot be in the state
+  # being checked for, so a "no" here is either a real misconfiguration or an unestablished answer —
+  # and an estate whose front door swallows people must not ship on an unestablished answer. Same
+  # fold, same argument, same rollback.
+  #
+  # IT CHECKS `configured`, WHICH IS A FACT THIS PROCESS HOLDS, AND NOT REACHABILITY. Nothing here
+  # opens an SMTP connection, and management.health.mail.enabled stays false: a mail health indicator
+  # sits inside the aggregate /management/health that the compose healthcheck greps for UP, so an
+  # unreachable relay would take the gateway unhealthy and revert a deployment over somebody else's
+  # outage. The residual is stated rather than hidden — a relay that accepts the connection and
+  # refuses the credential is still one WARN line, which is why `mail.authenticated` is printed here
+  # for a human to read rather than asserted.
+  local gateway_info
+  gateway_info="$(ssh "${SSH_OPTS[@]}" "$HOST" "cd '$REMOTE_PATH' && $REMOTE_COMPOSE exec -T $(compose_name gateway) bash -c \
+    'exec 3<>/dev/tcp/localhost/8080 && printf \"GET /management/info HTTP/1.0\\r\\n\\r\\n\" >&3 && cat <&3'" 2>/dev/null || true)"
+  if printf '%s' "$gateway_info" | grep -qE '"configured"[[:space:]]*:[[:space:]]*true'; then
+    ok "gateway can send mail — relay $(printf '%s' "$gateway_info" | grep -oE '"host"[[:space:]]*:[[:space:]]*"[^"]*"' \
+      | head -1 | cut -d'"' -f4), links under $(printf '%s' "$gateway_info" \
+      | grep -oE '"baseUrl"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | cut -d'"' -f4), authenticated=$(printf '%s' "$gateway_info" \
+      | grep -oE '"authenticated"[[:space:]]*:[[:space:]]*(true|false)' | head -1 | grep -oE '(true|false)')"
+  else
+    warn "the gateway reports NO mail configuration, or could not be asked."
+    warn "  Registration still answers 201 on an estate in that state, the account is written"
+    warn "  unactivated, the failed send is one WARN line, and the sweep deletes the account after"
+    warn "  the configured window. Nobody who registers can ever log in (decisions.md D94)."
+    warn "  HC_MAIL_HOST, HC_MAIL_PORT and HC_MAIL_BASE_URL are required in $REMOTE_PATH/secrets.env;"
+    warn "  preflight checks all three by name, so if it got this far look at the gateway's log for"
+    warn "  MailDeliveryGuard's refusal — it names the value it read."
+    return 1
+  fi
+
   # The version comes from the CONTAINER, not from the edge, and that is deliberate.
   #
   # /management is 404 at the public edge on purpose (prod-server/hc-market-app.conf): actuator
@@ -2866,9 +2932,10 @@ smoke_test() {
   #
   # Strictly better than the old form as well as merely possible: it reports what the DEPLOYED
   # container believes it is, rather than what the edge happens to route.
-  if ssh "${SSH_OPTS[@]}" "$HOST" "cd '$REMOTE_PATH' && $REMOTE_COMPOSE exec -T $(compose_name gateway) bash -c \
-       'exec 3<>/dev/tcp/localhost/8080 && printf \"GET /management/info HTTP/1.0\\r\\n\\r\\n\" >&3 && cat <&3'" \
-       2>/dev/null | grep -q "$TAG"; then
+  #
+  # It reads the body the mail check above already fetched. This probe decides nothing — it warns
+  # either way — so it may fold; the one above may not, and does not.
+  if printf '%s' "$gateway_info" | grep -q "$TAG"; then
     ok "gateway container reports version $TAG"
   else
     warn "the gateway container did not report $TAG in /management/info"

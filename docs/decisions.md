@@ -16817,3 +16817,230 @@ count slower than a minute. The defect was reproduced in a unit test and observe
 unrelated docs-only branch. It has not been seen on the quality box, and production has never been
 deployed. The fix is right regardless of how often it would bite, which is the argument for making it
 rather than deferring it — not an argument that it was biting.
+
+---
+
+## D94 — The front door swallowed people, and three days was nobody's decision
+
+**Recorded 2026-09-17**, against `main` at `d90a7a2`. Closes backlog **NEW-47**; opens **NEW-60**.
+The retention question in §2 was **answered by the architect on 2026-09-17** and is recorded here as
+settled; §5's three questions are surfaced and not answered.
+
+### §1 What was wrong, as a composite rather than as five defects
+
+Every part of this was generated code doing exactly what it was generated to do, which is why nobody
+had read any of it:
+
+| | where | behaviour |
+| --- | --- | --- |
+| `POST /api/register` | `SecurityConfiguration.java:73` | `permitAll` — open self-registration |
+| `registerUser` | `UserService.java:121` | writes the account with `activated = false` |
+| the response | `AccountResource.registerAccount` | **201 CREATED, without waiting for the mail** |
+| the send | `MailService.java:79-80` | catches `MailException \| MessagingException`, logs **`LOG.warn`** |
+| the relay | `application-dev.yml`, `application-prod.yml` | `spring.mail.host: localhost`, `port: 25` |
+| the links | `application-prod.yml` | `jhipster.mail.base-url: http://my-server-url-to-change` |
+| every compose file | all three | **passed no `SPRING_MAIL_*` and no `JHIPSTER_MAIL_BASE_URL` at all** |
+| then | `UserService.java:291` | `@Scheduled(cron = "0 0 1 * * ?")` deletes it after three days |
+
+**So: 201, no mail, cannot authenticate, deleted in three days, and one WARN line.** Each row is
+defensible on its own. The composite is a front door that swallows people.
+
+**And nothing could see it.** `MailServiceIT` has ten `@Test`s and mocks `JavaMailSender` with
+`@MockitoBean` — re-derived here rather than taken from the brief — so **no message has ever left
+this estate**, on any environment, in the project's whole life. A green `MailServiceIT` is not
+coverage of delivery, and it is the reason the local catcher in §3 is not a convenience.
+
+`POST /api/account/reset-password/init` is the same defect with a worse ending: also `permitAll`, also
+silent, and a reset that never arrives generates support load rather than a deletion. It is fixed by
+the same three variables.
+
+### §2 The decision: the three days STAY, and become configurable and documented
+
+**Ratified by the architect, 2026-09-17.** Three days is now a policy this organisation holds:
+`healthconnect.accounts.unactivated-retention-days`, defaulting to **3**, so **an estate that
+configures nothing behaves byte-identically to every estate that has ever run.**
+
+**The reasoning, which is the part worth keeping.** D91's objection was that *an undecided framework
+default was destroying personal data unrecorded* — not that the number is wrong. Making it a stated,
+changeable policy answers that objection exactly. Changing the number would be a different decision
+with a counsel dimension, and it is not this package's to take.
+
+Two alternatives were considered and are rejected rather than merely unchosen:
+
+- **Extend it — 14 or 30 days.** Fewer people lose an account they meant to create, which is a real
+  benefit now that the mail actually arrives. The cost is that a longer window holds a name and an
+  email address for longer under **no counsel position at all**: `processing-record.md` §6.1 records
+  that accounts have no ratified retention category, so lengthening the one period that exists would
+  be widening an unexamined rule rather than applying a decided one. If the product later wants this,
+  it is one variable — and it is one line in two outward-facing documents, which CI now enforces.
+- **Stop deleting automatically.** Nobody loses an account. But names and email addresses then
+  accumulate under **no stated period whatsoever**, which makes §6.1's open question strictly bigger:
+  the organisation would go from "an unexamined 3-day rule for one class of account" to "no rule for
+  any account". That is the wrong direction for the one gap this document set already flags as its
+  largest.
+
+**What "configurable" cost, in shape rather than in lines.** `UserService` is a **generated** file, so
+the policy could not live there: `--force` discards edits to it silently. The annotation is removed
+from it (the smallest possible edit to a generated file) and the schedule lives in a new
+`UnactivatedAccountSweep`, which registers a cron task through `SchedulingConfigurer` rather than
+through `@Scheduled`.
+
+**That indirection is not taste, and the reason is compose.** A variable this repository documents and
+no compose file passes is a variable that silently does nothing (D46, D50), so both values are passed
+through in all three files — and compose's `${X:-}` sets an **empty** variable rather than leaving it
+unset. `@Scheduled(cron = "${healthconnect.accounts.unactivated-sweep-cron:0 0 1 * * ?}")` prefers
+that empty value to its own default and **fails the context on every estate that passes the variable
+without setting it**: an empty cron is not a missing cron, it is an invalid one. Blank-handling
+therefore lives in one place, in Java, where a test can drive it — the same arrangement `FoundingTerms`
+has in payout for the same measured reason (D57).
+
+Two consequences, both deliberate:
+
+- **A malformed window refuses startup**, and so do `0` and a negative number. Zero means "delete an
+  account registered a second ago on the next sweep" and a negative window puts the cutoff in the
+  future, which is the same thing said differently. Both are one keystroke from a plausible policy.
+- **There is no value meaning "never delete"** — see §5.
+
+**`removeNotActivatedUsers` is KEPT in the generated file, annotation removed.** Two *generated*
+integration tests call it (`UserServiceIT`), and a regeneration brings them back; deleting the method
+would break the build at exactly the wrong moment. The consequence is stated rather than hidden: those
+two tests now cover a method **the estate does not schedule**, so they are no longer statements about
+this estate's behaviour. `UnactivatedAccountSweepIT` is.
+
+**And the generated method logs the row it deletes** — `LOG.debug("Deleted User: {}", user)`, where
+`User.toString()` renders the login, both names, the email address and the activation key, at DEBUG,
+which is the level `net.jojoaddison` runs at under `dev` — which is what the quality box runs. Nothing
+has ever leaked, because no unactivated account has ever existed on any estate for it to delete
+(D91 §7). The sweep the estate runs logs **a count and a window** at INFO and no personal data at all.
+The generated line is left where it is: it is a generated file, it is now reachable only from those two
+tests, and D94's answer to it is the guard in §4 that makes its return visible.
+
+### §3 The second decision: build against a catcher, require the values in production
+
+**Also settled by the architect.** Dev and quality run **mailpit**; production requires
+`HC_MAIL_HOST`, `HC_MAIL_PORT` and `HC_MAIL_BASE_URL` with **no default anywhere**.
+
+Four choices inside that, each of which could reasonably have gone the other way:
+
+- **The port is required too, not defaulted.** 25, 465 and 587 are three different sets of
+  assumptions about TLS and authentication, and a wrong one fails exactly as silently as a wrong
+  host. An operator who knows their relay knows its port.
+- **The credentials are OPTIONAL and are in neither required list.** A relay on the estate's own
+  network authenticates nobody; a provider over the public internet needs both. Refusing a deploy
+  over a value an estate legitimately does not have is how a required variable becomes a placeholder
+  somebody invents (the whole of `my-server-url-to-change`). `HC_MAIL_PASSWORD` is a secret and is
+  deliberately not in `SECRET_KEYS` for that reason. `mail.smtp.auth` and `starttls` default **true**
+  in production and **false** on the two estates with a catcher: an estate whose relay cannot do
+  STARTTLS then fails to send rather than sending a credential in clear.
+- **`localhost` is REFUSED under `prod`.** It is the committed default that reached the production
+  profile, and inside a container it is the container's own loopback, where no SMTP server has ever
+  listened. An estate really relaying through an MTA on the host names it. The escape is documented
+  at the refusal: a compose service name, a hostname, or the host's gateway address.
+- **The catcher's SMTP port is not published, on either estate.** Only its web UI, on loopback. An
+  unauthenticated SMTP listener reachable from the LAN is an open relay, and nothing outside the
+  compose project needs to send through it.
+
+**No connection is opened, and `management.health.mail.enabled` stays `false`.** That is D57's
+argument one service along, and the edge is sharper here: a mail health indicator sits inside the
+aggregate `/management/health`, which is exactly what both compose healthchecks grep for `UP` and what
+docker decides a container's health from — so an unreachable relay would take the gateway **unhealthy**
+and `deploy-prod.sh`'s health gate would **revert a healthy deployment over somebody else's outage**.
+What replaces it is configuration made *visible*: `MailDeliveryInfoContributor` puts `mail.configured`,
+the relay, the base-url, `mail.authenticated` and the retention window on `GET /management/info`, and
+the smoke test **fails the deploy** on the first of those. A deploy that refuses because mail is
+unconfigured is the right failure; an estate that goes down because a mail server blinked is not.
+
+**The username and password are never published there**, and the assertion is over the whole rendered
+document rather than one key: `/management/info` is `permitAll` in the gateway's own chain, and the
+username is half a credential.
+
+**What is NOT changed, deliberately.** A registration whose mail fails is still `201` and still one
+WARN line. Making the response depend on delivery is a different decision with a worse failure mode —
+a registration rolled back because a relay was slow — and it is surfaced in §5 rather than taken here.
+
+### §4 What now goes red, and the one thing that cannot
+
+Seven mechanisms, and the split between them is deliberate: a **test** for behaviour, a **CI check**
+for the moment somebody runs a generator rather than a test suite.
+
+| | guards |
+| --- | --- |
+| `AccountRetentionUnitTest` | the window and the cron **bind** through a real Spring binder, blank counts as absent, `0` and a negative are refused, and the two defaults are the generated figures |
+| `UnactivatedAccountSweepUnitTest` | the task is actually **registered**, on the configured expression — delete one line and every other test stays green while nothing is ever deleted |
+| `UnactivatedAccountSweepIT` | the **boundary**, against a real database: four days old goes, 71 hours against a 72-hour cutoff stays, an activated account is never touched, an unactivated one with no activation key is left alone |
+| `MailDeliveryGuardUnitTest` | each refusal, **and a positive control beside it** — a configured production estate starts, and a dev estate on loopback with no catcher still starts |
+| `MailDeliveryInfoContributorUnitTest` | `configured` is present and false rather than absent, and no credential is in the rendered document |
+| `ThereIsOneAccountSweepTest` | ArchUnit over the whole main tree: **no `@Scheduled` anywhere in the gateway** |
+| `account-lifecycle-guards.sh` | six parts, 36 assertions, driven against 20 broken states by its own test |
+
+**The CI check's part 6 is derived, and that is the NEW-15 lesson applied.** The rate-limited set is
+read out of `SecurityConfiguration`'s own `permitAll` matchers, and the difference between that set and
+what the two nginx files limit must be **exactly** the two paths §5 argues. A sixth public door is red
+in the pull request that adds it.
+
+**Three of this package's own guards were found to be worthless by running them**, which is the
+discipline this file keeps recording:
+
+- part 5 greped the whole (stripped) `deploy-prod.sh` for each variable name, which is satisfied by
+  `smoke_test`'s own WARN listing all three in prose — so emptying `CONNECTION_KEYS` left preflight
+  checking nothing and the check green. It reads the **array** now (D78 §13's `SSH_OPTS` lesson);
+- part 4's placeholder sweep greped raw text and reported three files, two of which were *this
+  decision's own comments* explaining the placeholder and one a stale `gateway/target` copy;
+- the catcher check greped the rendered compose config for `mailpit`, so replacing the image left the
+  service name and `container_name` still matching. It asks whether `SPRING_MAIL_HOST`'s default
+  **names a container in the same file** now, which also catches a typo in the host.
+
+**And the check killed itself silently**: a `grep` that matches nothing exits 1, `pipefail` hands that
+to the substitution and `errexit` ends the run with **no error line and no summary** — measured, on the
+state where production stops passing `SPRING_MAIL_PORT`. Every branch has to be able to say what is
+missing, which is what `|| true` on those substitutions buys.
+
+**What no mechanism here covers**: that a relay actually accepts and delivers. Nothing in CI can, and
+nothing should try — see §3 on why a connection attempt does not belong in a health aggregate. What
+replaced it is a walk, §6.
+
+### §5 Three questions this package surfaced and did not answer
+
+1. **Should `/api/activate` and `/api/account/reset-password/finish` be rate-limited too?** Both are
+   `permitAll`; NEW-47 named three paths and this package limited exactly those three.
+   **hc-patient's equivalent nginx file limits all four of its account paths**, so widening is house
+   practice rather than an invention, and it is **one line in each of the two maps**. Against it: both
+   consume a single-use key rather than sending mail, so the amplifier argument does not apply, and
+   `/api/activate` is the path a person follows out of an email they just received — a 429 there is a
+   customer who cannot finish registering. **Recommendation: widen, at the account zone's 10/min.**
+   Not taken here; CI pins the exclusion as an exact set, so the answer has to be written down either
+   way.
+2. **Should the window be able to mean "never delete"?** A different shape from a number — a sentinel
+   rather than a value — and it is the one option that makes `processing-record.md` §6.1 bigger rather
+   than smaller. Deliberately not expressible: an operator who wants it today has to say so.
+3. **Should a registration whose mail fails still answer 201?** It does, unchanged. Waiting for the
+   send would turn a slow relay into a failed registration, and `MailService`'s whole shape — fire and
+   forget on a `Mono.defer(...).subscribe()` — is built the other way. The honest middle is a
+   different response for "we could not send it" and a way to ask for it again, which is a screen and
+   therefore NEW-48's.
+
+### §6 Verified, assumed, not exercised
+
+**Verified by running it.** Registration through activation to sign-in, walked end to end against a
+real gateway, a real MongoDB and a real SMTP catcher on this workstation — the statuses and the
+message body are in the package's report and in NEW-47. The sweep watched deleting a real account at
+the boundary against a real database. Both nginx files parsed by nginx itself in a scratch prefix,
+including the negative control with the zone file absent (`[emerg] zero size shared memory zone`,
+which is **not** the message this repository's other two headers quote — 1.28.3 here, and the
+production host's version is not known). The three compose files rendered, production refusing without
+each mail value and rendering with them. The gateway's `clean verify`, and every guard above mutated
+and watched going red.
+
+**Assumed, from reading.** That the production host's nginx would say `unknown limit_req zone` rather
+than 1.28.3's wording. That a real provider's relay behaves as its documentation says about STARTTLS
+and authentication.
+
+**Not exercised.** **No message has reached a real mail provider**, because none is chosen — that is
+D90 §7's open budget item and it is the one thing NEW-47 could not close. Production has still never
+been deployed, so the `:?` refusals, the preflight check and the smoke test's mail gate are asserted
+against fixtures and a rendered compose file rather than a host (D49). **And the quality box's own
+gateway was not recreated**: it is D73's evidence, it is healthy at `d90a7a2`, and recreating it is a
+live-environment change for the architect to authorise — the walk was therefore done against a
+throwaway gateway built from this branch, on the same daemon, with the same configuration the quality
+compose file now carries. **`/etc/nginx` is untouched on both machines**: the rate limits are provided,
+printed and not installed, so they are in force nowhere until a person installs them.

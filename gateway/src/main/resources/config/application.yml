@@ -239,3 +239,28 @@ jhipster:
 # ===================================================================
 
 # application:
+
+# --- THE ACCOUNT LIFECYCLE'S ONE RETENTION RULE (decisions.md D94, backlog NEW-47) -----------------
+#
+# How long an account that was registered and never activated is kept, and when the sweep that deletes
+# it runs. Read by service/AccountRetention and carried out by service/UnactivatedAccountSweep.
+#
+# BOTH DEFAULTS LIVE IN JAVA, NOT HERE, AND THAT IS DELIBERATE — the same arrangement as payout's
+# healthconnect.brokerage.founding (D57). src/test/resources/config/application.yml SHADOWS this file
+# rather than merging with it, so a default written here binds to nothing under test; and a default
+# written here is lost silently on the next regeneration, which rewrites this file wholesale. In Java
+# it survives both. What these two lines buy is OVERRIDABILITY, which is the whole of D94: three days
+# was a literal in a generated file, it is a stated policy now, and an operator can change it.
+#
+# Blank counts as absent. Compose's `${X:-}` sets an EMPTY variable rather than leaving it unset, so
+# every estate that passes these through without setting them arrives here with "" — which is why
+# AccountRetention's fields are Strings and why the sweep registers its cron through
+# SchedulingConfigurer instead of @Scheduled(cron = "${...:default}"), which would take the empty
+# value in preference to its own default and fail the context.
+#
+# A value that is SET and unusable refuses to start, naming the property. There is no value meaning
+# "never delete" — see D94 §5, where that is surfaced as a question rather than answered.
+healthconnect:
+  accounts:
+    unactivated-retention-days: ${HC_UNACTIVATED_ACCOUNT_RETENTION_DAYS:}
+    unactivated-sweep-cron: ${HC_UNACTIVATED_ACCOUNT_SWEEP_CRON:}

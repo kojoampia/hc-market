@@ -15,7 +15,6 @@ import net.jojoaddison.service.dto.UserDTO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Pageable;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
@@ -284,11 +283,24 @@ public class UserService {
     }
 
     /**
-     * Not activated users should be automatically deleted after 3 days.
-     * <p>
-     * This is scheduled to get fired every day, at 01:00 (am).
+     * Deletes not-activated users whose activation key is older than three days.
+     *
+     * <p><strong>THIS IS NOT WHAT THE ESTATE RUNS, AND THE MISSING {@code @Scheduled} IS THE EDIT.</strong>
+     * The generated form of this method carried {@code @Scheduled(cron = "0 0 1 * * ?")} over the
+     * hard-coded three days below, which made a generated literal this organisation's retention
+     * policy for one class of account — recorded nowhere until {@code decisions.md} D91, and
+     * destroying a name, an email address and a password hash every time it fired.
+     *
+     * <p>The policy is stated and configurable now, and it lives in {@link AccountRetention} with
+     * {@link UnactivatedAccountSweep} carrying the schedule — {@code decisions.md} D94, backlog
+     * NEW-47. Three days is still the default, so nothing about a default estate's behaviour moved.
+     *
+     * <p>Both methods are kept rather than deleted because two <em>generated</em> integration tests
+     * call this one ({@code UserServiceIT}), and a regeneration would bring them back. Do not put the
+     * annotation back: the estate would then have two sweeps, and the generated one would delete at
+     * three days on an estate that had chosen longer. {@code ThereIsOneAccountSweepTest} and CI's
+     * <em>"The unactivated-account sweep must be the estate's only one"</em> both go red if you do.
      */
-    @Scheduled(cron = "0 0 1 * * ?")
     public void removeNotActivatedUsers() {
         removeNotActivatedUsersReactively().blockLast();
     }

@@ -81,16 +81,24 @@ production. Phases are sequential where stated and their items are independent w
 
 | phase | what | items | depends on |
 |---|---|---|---|
-| **1** | a person can hold an account | NEW-47 | nothing — **start here** |
+| **1** | a person can hold an account | ~~NEW-47~~ **DONE** (D94) | — |
 | **2** | the application | NEW-48 | phase 1 for anything behind a token; D90 §3 for its shape |
 | **3** | the promises the API already makes | NEW-49, NEW-50, NEW-51, NEW-52, NEW-53 | nothing; cheaper with phase 2's screens |
 | **4** | money for real | WP-13, NEW-54 | Act 987, provider credentials, a callback route |
 | **5** | deploy | WP-18, WP-19, NEW-55 | the four gates below |
 
-**Phase 1 is first and it is not a judgement call.** The gateway's account lifecycle is generated,
-unconfigured, and has never been exercised by anybody: a customer registers, is told to check their
-email, receives nothing, can never log in, and is deleted three days later — `201 Created` and one
-`WARN` line. NEW-47. Every screen in phase 2 that is not a public read sits behind it.
+**Phase 1 is DONE as of 2026-09-17 — NEW-47, `decisions.md` D94.** It was first and it was not a
+judgement call: the gateway's account lifecycle was generated, unconfigured and had never been
+exercised by anybody, so a customer registered, was told to check their email, received nothing, could
+never log in, and was deleted three days later — `201 Created` and one `WARN` line. Mail is now
+required before any environment can be deployed, the three days are a stated and configurable policy
+rather than a generated literal, the three public account paths have ceilings, and **the whole path was
+walked for real** against a live gateway and a real SMTP catcher. One thing it could not close and one
+it opened: **no message has reached a real provider**, because none is chosen (D90 §7, a budget item),
+and the link in the mail points at a frontend route nothing serves yet — **NEW-60**, which is phase 2's
+to close.
+
+**Phase 2 is therefore unblocked for everything behind a token.**
 
 **Phase 3 is not first, deliberately.** None of its five items blocks the frontend, and each is
 cheaper to build against a screen that exercises it. They are all *claims the estate currently makes
@@ -105,7 +113,7 @@ by IP, `market.abofonsa.com` pointed at nothing. D90 §2.
 **The four gates a first production deploy may not go without** (D90 §4) — everything else here may
 follow a deploy:
 
-1. a working account lifecycle — **NEW-47**;
+1. a working account lifecycle — **NEW-47, closed 2026-09-17** (D94). What remains of this gate is not engineering: **an SMTP provider has to be chosen and paid for**, because an environment with no mail configuration now refuses to start rather than swallowing registrations;
 2. WP-19's blocking six, in `deploy/prod-server/README.md` — ssh target, port 8086, `infranet` and
    `monitoring`, `secrets.env`, DNS, nginx and certbot;
 3. **a restored backup** — no dump this repository produces has ever been restored, which makes every
@@ -3821,7 +3829,7 @@ assertion is its sole carrier.
 
 ---
 
-## NEW-47 — a customer who registers can never log in, and is deleted three days later · READY
+## NEW-47 — a customer who registers can never log in, and is deleted three days later · DONE (D94)
 
 **Phase 1, and the first thing to pick up.** Opened by D90 §2. Nothing in this repository has ever
 recorded it, which is the point: every part of it is generated code doing exactly what it was generated
@@ -3877,6 +3885,58 @@ the mail works.
 
 **Blocked on one outside fact** — an SMTP provider and credentials (D90 §7). Everything else is
 engineering and can be built against a local catcher while that is obtained.
+
+---
+
+### CLOSED 2026-09-17 — `decisions.md` D94
+
+**What was built**, against the five "done means" bullets above:
+
+- **the three mail values, in all three compose files.** `HC_MAIL_HOST`, `HC_MAIL_PORT` and
+  `HC_MAIL_BASE_URL` are `:?` in `docker-compose.prod.yml` and defaultless placeholders in
+  `application-prod.yml`; `deploy-prod.sh` checks all three by name on the host before it touches the
+  stack (`CONNECTION_KEYS`, now fifteen values); dev and quality default them at a **mailpit** catcher
+  whose SMTP port is deliberately unpublished. The username, password and the two STARTTLS properties
+  are **optional** — a relay may need none of them, and D94 §3 argues why that is not laxness.
+  `application-prod.yml`'s `http://my-server-url-to-change` is gone and CI refuses its return;
+- **the deletion is a decision now.** `healthconnect.accounts.unactivated-retention-days`, **default
+  3**, so a default estate behaves byte-identically to every estate that has ever run. The architect
+  ratified keeping the number and making it configurable; D94 §2 argues the two rejected shapes
+  (extend it, stop deleting) rather than listing them. `@Scheduled` is out of the generated
+  `UserService` and the schedule is in a new `UnactivatedAccountSweep` via `SchedulingConfigurer` —
+  `0` and a negative window refuse startup, and there is deliberately no "never delete";
+- **`limit_req` on the three paths, at both edges** — `hc_market_login` (1/s, burst 5) and
+  `hc_market_account` (10/min, burst 3), keyed through a `map` so the single `location /` is not
+  duplicated, which is hc-patient's pattern and its reasoning. Production's zones are a new
+  `deploy/prod-server/nginx-conf.d/hc-market-account.conf`; quality's are in `host-site.conf` itself,
+  because that file is a whole site at http scope. **Provided, printed, not installed** — `/etc/nginx`
+  is the architect's;
+- **exercised end to end, for real.** Registration → the message in the catcher → activation → sign-in,
+  against a live gateway from this branch, a real MongoDB and a real SMTP catcher on this workstation:
+  `201`, a message whose link carries the activation key, `204` from `/api/activate`, and a token from
+  `/api/authenticate` where the same credentials had answered **401** before activation. The sweep was
+  then watched deleting a real unactivated account and leaving a recent one alone;
+- **both privacy documents amended in the same commit** — `privacy-notice.md` §7.1 (the deletion is a
+  policy we hold; the confirmation mail is no longer a known defect; contact us if it does not arrive)
+  and `processing-record.md` §3.1, §2.1's recipients, §4's second transfer, §5's three new rows and a
+  new §6.7. CI refuses a build whose code and whose two documents disagree about the number.
+
+**Seven guards, 22 driven states**: `AccountRetentionUnitTest`, `UnactivatedAccountSweepUnitTest`,
+`UnactivatedAccountSweepIT`, `MailDeliveryGuardUnitTest`, `MailDeliveryInfoContributorUnitTest`,
+`ThereIsOneAccountSweepTest` (ArchUnit — no `@Scheduled` anywhere in the gateway, which is what a
+regeneration brings back) and `.github/checks/account-lifecycle-guards.sh` with its own test.
+Gateway: **97 unit / 140 IT / 0 Checkstyle**, from 67/135.
+
+**What it did NOT close, and it is the same outside fact as before:** no message has reached a real
+provider, because none is chosen. That is D90 §7's budget item. The difference is that an environment
+with no mail configuration now **refuses to start** rather than answering 201 and discarding the
+registration, so the gap can no longer be deployed through.
+
+**Two things surfaced rather than taken** (D94 §5): whether `/api/activate` and
+`/api/account/reset-password/finish` — also `permitAll` — should be rate-limited too (recommended;
+hc-patient limits all four of its account paths, and CI pins the exclusion as an exact set so the
+answer has to be written down), and whether a registration whose mail fails should still answer 201
+(it does, unchanged).
 
 ---
 
@@ -4604,6 +4664,112 @@ worth naming before anyone starts:
 only because the integration tests run sequentially, and the class javadoc says so.
 
 **Not blocked.** No decision, no outside fact.
+
+---
+
+## NEW-60 — the activation link points at a page nothing serves · READY
+
+**Opened by NEW-47's own walk, 2026-09-17**, `decisions.md` D94 §5. Small, and it is the last step
+between "the mail arrives" and "a person can use it".
+
+`templates/mail/activationEmail.html` composes the link as `${baseUrl}/account/activate?key=…` and
+`passwordResetEmail.html` as `${baseUrl}/account/reset/finish?key=…` — **frontend routes**, which is
+the right convention and is what `JHIPSTER_MAIL_BASE_URL` names. Note that the second one is not the
+API's path with the origin changed: the API is `POST /api/account/reset-password/finish`, so the two
+differ by more than a prefix and a screen has to know both. This estate has no frontend (**NEW-48**), so the origin an
+operator can honestly put there is the API's own edge, where `/account/activate` matches no route and
+**404s**.
+
+**Measured during NEW-47's walk**, against a live gateway with a real catcher:
+
+| | |
+| --- | --- |
+| the link in the message | `http://127.0.0.1:18907/account/activate?key=l7WERmeOHkbVw8FG6znc` |
+| following it, as a person would | **401** — not 404. Reactive Spring Security denies an exchange no `authorizeExchange` rule matched (D74 measured the same default), so the estate answers a *credential challenge* for a link it told somebody to click |
+| `GET /api/activate?key=<the same key>` | **200**, and the account is activated |
+| `POST /api/authenticate` after that | **200 with a token** |
+
+**The 401 rather than a 404 is the part to keep**, and it was written here as a 404 from reasoning
+before it was measured: a person following the link is asked to authenticate in order to reach the
+page that exists to let them authenticate. There is no wording of that a customer can act on.
+
+So the lifecycle works and the mail is one hop short of being usable by a person who is not holding a
+terminal. Nobody is harmed today — no estate can send a message at all until a provider is chosen
+(D90 §7) — which is exactly why this is an item rather than a patch: the first person to receive one
+of these should not be the one who finds this.
+
+**Why the generated template was NOT edited in NEW-47.** Pointing it at `/api/activate` would make
+the link work today and be wrong the day NEW-48 lands: a person clicking it would get a bare `204`
+and no page, and JHipster's convention — which the frontend will implement — is the SPA route. The
+template is also a generated file, so the edit would be discarded by a regeneration while looking
+permanent.
+
+**The fix, therefore, is a screen and belongs with phase 2**: NEW-48 stage B or C serves
+`/account/activate` and `/account/reset/finish` — the two routes the shipped templates actually
+compose, measured out of two real messages rather than read off the templates — calls
+`GET /api/activate` and `POST /api/account/reset-password/finish` behind them, and
+`JHIPSTER_MAIL_BASE_URL` then names the frontend's origin, which is what it was always for.
+
+**Until then, two things are true and both are written down where they will be read.**
+`deploy/prod-server/secrets.env.example` and `deploy-prod.sh`'s hint for `HC_MAIL_BASE_URL` both say
+the link 404s and that the key in it activates the account through `GET /api/activate`; so does
+`quality/compose.yml`. An operator activating an account for somebody does it with the key out of the
+link.
+
+**Not blocked.** It needs NEW-48 to exist, and nothing else.
+
+---
+
+## NEW-61 — an unactivated account's own login answers 500, and that is the one failure that identifies it · READY, and a decision with it
+
+**Opened by NEW-47's walk, 2026-09-17.** Small to fix, not mine to decide, and it is two defects
+sharing one line.
+
+**Measured, live, against a running gateway** — four authentication outcomes, one of which is not like
+the others:
+
+| what was sent | status | body's `detail` |
+| --- | --- | --- |
+| an activated account, wrong password | **401** | `Invalid credentials` |
+| a login that does not exist | **401** | `Invalid credentials` |
+| **a registered account that was never activated, with the RIGHT password** | **500** | `Invalid credentials` |
+| an activated account, right password | 200 | a token |
+
+`ExceptionTranslator:111-118` maps every `AuthenticationException` to the title *"Unauthorized"* and
+the detail *"Invalid credentials"* — under a comment reading *"Ensure no information about existing
+users is revealed via failed authentication attempts"* — but takes the **status** from
+`toStatus(ex)`, and `UserNotActivatedException` is a custom `AuthenticationException` with no
+`@ResponseStatus`, so it falls through to **500**.
+
+**So the comment is false for exactly one of the four buckets, and it is the informative one.** A
+prober who knows a password learns from the status alone that the login exists and the password is
+right — which is precisely the disclosure JHipster converts `UsernameNotFoundException` into
+`BadCredentialsException` to prevent. It is a narrow oracle (it needs the password) and it is still an
+oracle, and it is the one the comment claims not to be there.
+
+**And it is what a real customer meets.** Somebody who registers, does not click the link, and tries to
+sign in is told the platform is broken *and* that their password is wrong. Both are false. This is the
+next thing that happens after NEW-47's path, which is how it was found.
+
+**The decision, which is not engineering's.** The fix is one line either way; what to say is the
+question:
+
+- **401 with `Invalid credentials`** — smallest change, tells the customer nothing they can act on,
+  keeps the enumeration surface closed. Recommended as the floor.
+- **A distinct answer — 403, or 401 with `account not activated`** — the customer can act on it, and
+  support load drops. It also *publishes* the oracle rather than closing it: an unactivated account
+  becomes distinguishable by anyone holding the password. D84's registration gauges already count this
+  outcome, so the platform can see it without telling the caller.
+- **Either, plus "send me the link again"** — the genuinely useful version, and it needs a screen and a
+  rate limit, so it is NEW-48's rather than this item's.
+
+**A test has to come with it**, and the shape matters: assert the status **and** that the three failure
+modes are indistinguishable from outside if that is the answer chosen. `GatewayIdentityMetricsIT`
+already measures that `UserNotActivatedException` survives the authentication manager (D84), so the
+metric does not depend on whichever answer is chosen — but it does depend on the exception still being
+thrown, so do not "fix" this by converting it earlier in `DomainUserDetailsService`.
+
+**Not blocked.** It needs the architect to pick one of the three.
 
 ---
 

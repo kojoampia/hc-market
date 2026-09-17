@@ -123,17 +123,30 @@ We do not sell your data, and we do not share it with anyone else except where t
 ### 7.1 One deletion that does happen automatically
 
 **If you start to register and never confirm your email address, your part-finished account is deleted
-three days later.** It runs once a day and removes the sign-in name, the name and the email address you
-entered. Nothing else about you exists at that point, because an unconfirmed account cannot book,
-message or review.
+three days later** — 3 days, counted from when you registered. It runs once a day and removes the
+sign-in name, the name and the email address you entered. Nothing else about you exists at that point,
+because an unconfirmed account cannot book, message or review.
 
-This is not one of the periods in §7 and it is not a retention rule we chose — it is default behaviour
-of the framework the platform is built on, and we are recording it because it deletes a real person's
-data. **If you want to keep the account, confirm your email address.** If your confirmation email never
-arrives you will not be able to, which is a defect we know about and are fixing before launch.
+This is not one of the periods in §7. It is now a period we have **chosen and written down**, which it
+was not when this section was first drafted: the three days came from the framework the platform is
+built on, nobody here had decided it, and it was recorded nowhere until 2026-09-15. We have kept the
+same three days rather than changing the number, so nothing about how long we hold a part-finished
+account has moved — what changed is that it is a stated policy, it is the same on every one of our
+systems, and changing it is a decision somebody takes rather than a default nobody read.
 
-> Corrected on 2026-09-15. Earlier drafts of this notice said nothing was deleted on a schedule, which
-> was wrong — `decisions.md` **D91**. Counsel should read this section as new.
+**If you want to keep the account, confirm your email address.** Until 2026-09-17 the confirmation
+email did not reach anybody, on any of our systems, because no mail server was configured anywhere —
+so an account that could not be confirmed was deleted three days later. That is fixed: mail settings
+are now required before a system can be deployed at all, and a system that cannot send this email
+refuses to start rather than accepting your registration and discarding it. **If your confirmation
+email does not arrive, contact us** using the details in §1 and we will confirm the account or delete
+it, whichever you ask for.
+
+> Corrected on 2026-09-15 (`decisions.md` **D91**) and amended on 2026-09-17 (`decisions.md` **D94**).
+> Earlier drafts said nothing was deleted on a schedule, which was wrong, and then said the
+> confirmation email was a known defect, which it no longer is. Counsel should read this section as
+> new, and the question in it is still ours to answer rather than yours: **three days is now a policy
+> we hold, and we have never asked whether it is the right one.**
 
 ## 8. Your rights, and how to use them
 

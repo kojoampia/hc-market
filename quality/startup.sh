@@ -82,6 +82,11 @@ CATALOG_PORT="${CATALOG_PORT:-18100}"
 BOOKING_PORT="${BOOKING_PORT:-18101}"
 MESSAGING_PORT="${MESSAGING_PORT:-18102}"
 PAYOUT_PORT="${PAYOUT_PORT:-18103}"
+# The mail catcher's web UI — decisions.md D94, backlog NEW-47. Its SMTP port is deliberately not
+# published: nothing outside the compose project sends through it, and an unauthenticated SMTP
+# listener on the LAN is an open relay. 18104 is the next free port on this host after the four
+# above; the default is written here AND in compose.yml, like GATEWAY_PORT.
+MAILPIT_HTTP_PORT="${MAILPIT_HTTP_PORT:-18104}"
 SITE="market.healthconnect.local"
 
 MODE="remote"; ACTION="up"; IMAGES="published"
@@ -604,7 +609,7 @@ env_for_compose() {
     # "CI has not published yet" when the name simply cannot exist.
     export REGISTRY="${REGISTRY:-ghcr.io/kojoampia/hc-market}" IMAGE_SEP="-"
   fi
-  export GATEWAY_PORT CATALOG_PORT BOOKING_PORT MESSAGING_PORT PAYOUT_PORT
+  export GATEWAY_PORT CATALOG_PORT BOOKING_PORT MESSAGING_PORT PAYOUT_PORT MAILPIT_HTTP_PORT
   # compose.yml reads this as the `name:` of its external `qualitynet` declaration, and
   # ensure_otel_network creates whatever it names. Exported on every action, teardown included, so
   # `--down` cannot address a different network from the `up` that created the containers.
@@ -885,6 +890,7 @@ ${c_b}hc-market quality is up${c_reset}
   Gateway        http://127.0.0.1:$GATEWAY_PORT
   catalog        http://127.0.0.1:$CATALOG_PORT      booking   http://127.0.0.1:$BOOKING_PORT
   messaging      http://127.0.0.1:$MESSAGING_PORT      payout    http://127.0.0.1:$PAYOUT_PORT
+  Mail catcher   http://127.0.0.1:$MAILPIT_HTTP_PORT      ${c_dim}(every activation and reset mail lands here — D94)${c_reset}
   Profiles       dev,test        ${c_dim}(both — that pair is what makes it seeded)${c_reset}
 
 ${c_dim}  This is an API. There is no page to open: try
