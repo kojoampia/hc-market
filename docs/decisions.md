@@ -17059,6 +17059,69 @@ reading §5 would decide:
   catcher running. It says **ADDRESSED**, names that nothing has been contacted, and off production
   points at the catcher.
 
+### §5c Round two: the shape, not a third patch
+
+The second review pass confirmed both guard rewrites — the permitAll one it could not break, and it
+tested further than I had: an intervening comment, a comment *mentioning* `permitAll`, an
+`HttpMethod`-prefixed call, and an absent `python3`, which falls into "no permitAll path found" and
+is therefore fail-closed. It then found **two more escapes in the window assertion**, both natural
+English and both measured:
+
+| planted in §7.1 | round-1 check |
+| --- | --- |
+| *"deleted after a fourteen-day period"*, digits dropped | **passed** — hyphenated, so the grep never matched |
+| *"We may in future keep it for thirty days."* added | **passed** — `thirty` was past the end of a word list that stopped at fourteen |
+
+**The instruction was to widen and to stop the `ok` line over-claiming. I did the second and replaced
+the first with a different shape**, which the reviewer explicitly left open. Widening a list of wrong
+spellings closes the ones somebody thought of; the version here has three layers and only the first is
+exact:
+
+- **REQUIRED, with no English parsing at all: the section must state the window in DIGITS beside the
+  word day** — `3 days`, `3-day`, `**3 days**`. A positive requirement for one unambiguous form cannot
+  be escaped by a *spelling*, which is what both escapes were. Escape A fails here.
+- **BANNED: any other number-like figure beside `day`/`days`** — a digit sequence that is not the
+  applied one, or a number word from a list that now runs one…twenty plus the tens to a hundred.
+  Escape B fails here, and so does the mixed case the reviewer did not plant: correct digits with
+  `fourteen-day` added beside them.
+- **IGNORED, and the header says so**: a token that is not number-like ("it runs once a day",
+  "calendar days" — flagging grammar is how a check gets weakened), a number word outside that list,
+  and any other unit — "72 hours", "two weeks". What stands behind those is the digit requirement and
+  nothing else.
+
+`and no other` is gone from the success line, which now reports how many figures it inspected — five
+in each document today. **An `ok` that asserts more than the code delivers is the over-trust the
+header exists to prevent**, and that was the more important half of the finding.
+
+**The rewrite introduced a defect of its own and the control caught it in one run.** The new function
+was written as `python3 - "$1" <<'PY'`, which reads the *program* from stdin — so the piped section
+was consumed by the heredoc, `sys.stdin.read()` saw nothing, and every assertion would have been made
+against an empty string. The real documents failed immediately, which is what a control is for; part 6
+had already had it right on `-c`. It is worth recording because the fail-open version of that mistake
+is invisible: had the rule been "refuse if a wrong figure is found", an empty string would have found
+none and printed `ok`.
+
+**And the `pathMatchers(CONSTANT)` limit is closed rather than stated.** The reviewer offered either.
+A door whose path is a constant — or built by concatenation — yields no matching literal, so the
+derivation did not see it and the whole check printed `ok`: the same family as the wrapped call, one
+step further out, and my new comment ("the formatter cannot hide a door") invited exactly that
+over-trust. Any argument to a `permitAll` `pathMatchers` call that is not a plain string literal is now
+an **error naming the call**, with a leading `HttpMethod.X` as the one permitted exception because it
+is Spring idiom this gateway already uses elsewhere — and 17j is the control that keeps that exception
+honest.
+
+The test drives **29** broken states now (31 assertions, two of them controls). Case 17d was kept and
+its expected message updated rather than retuned: the mutation replaces `3 days` with `14 days`, so it
+trips the digit requirement before the ban, and a case asserting a message the check no longer
+produces is a case passing for the wrong reason.
+
+**One item opened rather than fixed: NEW-62.** `npm run prettier:format` rewrites 17 files from four
+earlier packages every time, with `prettier` and `prettier-plugin-java` pinned exactly and **no
+committed lockfile**, so the drift is most likely in the plugin's own transitive parser. Three rounds
+of this package restored those files by hand; the recommendation is to commit a lockfile and reformat
+once, in a commit that touches nothing else, which is a dependency decision rather than a backlog
+item's to take.
+
 ### §6 Verified, assumed, not exercised
 
 **Verified by running it.** Registration through activation to sign-in, walked end to end against a

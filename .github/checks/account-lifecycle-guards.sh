@@ -134,36 +134,44 @@ fi
 # default that does not reach both of them makes two outward-facing documents false, and the whole
 # point of D94 is that this deletion is stated rather than inherited.
 #
-# DIGIT OR ENGLISH WORD, because one of the two documents is written for a person. The privacy
-# notice says "deleted three days later" and should: a data subject reads prose. The processing
-# record says "**3 days**, swept daily at 01:00 UTC" and should: a regulator reads a table. So the
-# check accepts either spelling rather than forcing one register on both.
+# WHAT THIS CAN AND CANNOT SEE — because parsing English for periods is inherently approximate, and
+# two rounds of review found one escape each. Version 1 looked anywhere in the document; version 2
+# scoped it to the section and banned other periods with a word list that stopped at fourteen. Both
+# of these are natural English and both passed version 2, measured:
 #
-# The word list stops at fourteen, and the failure that causes is LOUD AND IN THE RIGHT DIRECTION:
-# change the window to thirty days, write "thirty days" in the notice, and this goes red asking for
-# the digit. That is a nuisance on a correct change and it is the only spelling of this check that
-# cannot pass a document stating a period the estate does not apply.
-number_word() {
-  case "$1" in
-    1) printf 'one' ;;   2) printf 'two' ;;    3) printf 'three' ;;  4) printf 'four' ;;
-    5) printf 'five' ;;  6) printf 'six' ;;    7) printf 'seven' ;;  8) printf 'eight' ;;
-    9) printf 'nine' ;; 10) printf 'ten' ;;   11) printf 'eleven' ;; 12) printf 'twelve' ;;
-   13) printf 'thirteen' ;; 14) printf 'fourteen' ;;
-    *) printf '' ;;
-  esac
-}
+#     "deleted after a fourteen-day period"        — hyphenated, so the grep never matched
+#     "We may in future keep it for thirty days."  — past the end of the list
+#
+# So it no longer rests on enumerating the spellings somebody thought of. Three layers, and only the
+# first is exact:
+#
+#   REQUIRED, and this part needs no English at all: the section must state the applied window in
+#   DIGITS beside the word day — `3 days`, `3-day`, `**3 days**`. A positive requirement for one
+#   unambiguous form cannot be escaped by a spelling, which is what the two escapes above both were.
+#   A section that renames the period in prose and drops the digits is red.
+#
+#   BANNED: any OTHER number-like figure beside `day`/`days` — a digit sequence that is not the
+#   applied one, or a number word from the list in the python below, which runs one…twenty plus the
+#   tens to a hundred. Both measured escapes fall inside it.
+#
+#   IGNORED, AND STATED RATHER THAN PRETENDED AWAY: a token that is not number-like at all, because
+#   "it runs once a day" and "calendar days" are grammar and flagging them would drive somebody to
+#   weaken this check; a number word outside that list; and a period in any other unit — "72 hours",
+#   "two weeks", "a month" — which this check does not read. What stands behind those is the digit
+#   requirement above, and nothing else does.
+#
+# The success line reports how many figures it inspected and does NOT say "and no other": an `ok`
+# claiming more than the code delivers is the over-trust this header exists to prevent.
 #
 # SCOPED TO THE SECTION THAT STATES IT, AND IT WAS DOCUMENT-WIDE UNTIL NEW-47's REVIEW. Measured:
 # with §7.1's headline rewritten to "fourteen days later — 14 days" and the code still applying 3,
 # the document-wide grep printed `ok … states the window the code applies (3 days)` — because both
 # documents mention three days several times elsewhere, including in the paragraph that explains the
-# decision. That is what made the drift plausible AND invisible, and the comment here used to claim
-# the check "cannot pass a document stating a period the estate does not apply", which was false.
+# decision. That is what made the drift plausible AND invisible.
 #
-# What it can see, stated precisely so the next person does not over-trust it again: the number in
-# THE SECTION THAT DEFINES THE PERIOD. A wrong figure in some other paragraph of the same document is
-# still invisible to it, and so is a section that has been renumbered out from under the pattern —
-# which is why the section is missing-means-error below rather than missing-means-skip.
+# A wrong figure in some OTHER paragraph of the same document is still invisible, and so is a section
+# renumbered out from under the pattern — which is why a missing section is an error below rather
+# than a skip.
 section_of() {                        # $1 = file, $2 = heading regex
   awk -v pat="$2" '
     $0 ~ pat { inside = 1; print; next }
@@ -174,8 +182,60 @@ section_of() {                        # $1 = file, $2 = heading regex
 NOTICE_SECTION="${HC_NOTICE_SECTION:-^### 7\.1}"
 RECORD_SECTION="${HC_RECORD_SECTION:-^### 3\.1}"
 
+# Reads a section on stdin and the applied window as $1. Prints `figures <n>`, then one
+# `bad <token>` line per number-like figure that is not the applied one, then `digits yes|no`.
+# In python because the rule spans lines, hyphens and markdown emphasis, and because the number-word
+# list belongs in one place rather than in three greps.
+window_figures() {
+  # THE PROGRAM GOES ON -c AND NOT ON STDIN. `python3 - <<'PY'` reads the PROGRAM from stdin, so the
+  # piped section was consumed by the heredoc and sys.stdin.read() saw nothing: every assertion below
+  # would have been made against an empty string. The control caught it — the real documents failed
+  # the moment this function was introduced. Part 6 already had this right; this copy did not.
+  python3 -c '
+import re, sys
+
+applied = sys.argv[1]
+text = sys.stdin.read()
+
+WORDS = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
+    "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14,
+    "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18, "nineteen": 19, "twenty": 20,
+    "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60, "seventy": 70, "eighty": 80,
+    "ninety": 90, "hundred": 100,
+}
+
+# The token immediately before `day`/`days`, separated by a space or a hyphen, with the word not
+# running on into another word (so `daily` is not a period). [0-9A-Za-z]+ excludes the separator, so
+# `fourteen-day` yields `fourteen` rather than `fourteen-day`.
+pattern = re.compile(r"(?<![0-9A-Za-z])([0-9A-Za-z]+)[-–—\s]+days?(?![A-Za-z])", re.I)
+
+figures = 0
+bad = []
+digits_present = False
+for match in pattern.finditer(text):
+    token = match.group(1).lower()
+    if token.isdigit():
+        value = int(token)
+    elif token in WORDS:
+        value = WORDS[token]
+    else:
+        continue                      # grammar, or a number word outside the list — see the header
+    figures += 1
+    if value == int(applied):
+        if token.isdigit():
+            digits_present = True
+    else:
+        bad.append(token)
+
+print("figures %d" % figures)
+for token in bad:
+    print("bad %s" % token)
+print("digits %s" % ("yes" if digits_present else "no"))
+' "$1"
+}
+
 if [ -n "$default_days" ]; then
-  word="$(number_word "$default_days")"
   for pair in "$PRIVACY_NOTICE:$NOTICE_SECTION" "$PROCESSING_RECORD:$RECORD_SECTION"; do
     doc="${pair%%:*}"; heading="${pair#*:}"
     if [ ! -f "$doc" ]; then
@@ -185,36 +245,22 @@ if [ -n "$default_days" ]; then
     section="$(section_of "$doc" "$heading")"
     if [ -z "$section" ]; then
       err "$doc has no section matching '$heading', so the period this estate applies is stated nowhere this check can find — and a check that cannot see its own subject reports success. That section is where the unactivated-account window is told to a data subject or a regulator (decisions.md D94, D91 §5); if it has been renumbered, move HC_NOTICE_SECTION/HC_RECORD_SECTION with it." "$doc"
+      continue
+    fi
+    report="$(printf '%s\n' "$section" | window_figures "$default_days" || true)"
+    if [ -z "$report" ]; then
+      err "the window figures in $doc could not be read (python3 missing or failing), so nothing about that document is established." "$doc"
+      continue
+    fi
+    figures="$(printf '%s\n' "$report" | sed -n 's/^figures //p')"
+    digits="$(printf '%s\n' "$report" | sed -n 's/^digits //p')"
+    others="$(printf '%s\n' "$report" | sed -n 's/^bad //p' | sort -u | tr '\n' ' ')"
+    if [ "$digits" != "yes" ]; then
+      err "$doc's section at '$heading' does not state the window in DIGITS beside the word day — '$default_days days' or '$default_days-day'. The gateway deletes an unactivated account after $default_days days (AccountRetention.DEFAULT_RETENTION_DAYS) and that section is what tells a data subject or a regulator how long that is (decisions.md D94, D91 §5). The digit form is required because it is the one spelling this check can assert exactly; prose beside it is welcome, prose instead of it is not." "$doc"
+    elif [ -n "$others" ]; then
+      err "$doc's section at '$heading' also names a period the estate does not apply: $others. The code applies $default_days days (AccountRetention.DEFAULT_RETENTION_DAYS). Two periods in the section that defines one is how a headline drifts from the paragraph under it — measured twice, in two review rounds. If a second period genuinely has to be named there, say so in D94 and widen this deliberately." "$doc"
     else
-      # EVERY PERIOD IN THE SECTION, NOT "DOES IT MENTION THE RIGHT ONE" — and that is the second
-      # tightening, from the same review round. Scoping to §7.1 was not enough on its own: the
-      # section legitimately says "we have kept the same three days" in the paragraph explaining the
-      # decision, so a headline rewritten to "fourteen days later — 14 days" still left a matching
-      # "three days" inside the scope and the check still passed. Measured.
-      #
-      # So the set of day-figures in the section must be exactly the one the code applies. A section
-      # that needs to name a second period — "we used to keep it for 30 days" — goes red, and that
-      # is the right direction: the wording then has to be changed deliberately, in the commit that
-      # introduces the second number, rather than discovered by a data subject.
-      stated=""
-      for d in $(printf '%s\n' "$section" | grep -oiE '[0-9]+[[:space:]]+(days|day)' | grep -oE '^[0-9]+' | sort -u); do
-        [ "$d" = "$default_days" ] || stated="$stated $d"
-      done
-      for n in 1 2 3 4 5 6 7 8 9 10 11 12 13 14; do
-        w="$(number_word "$n")"
-        [ "$n" = "$default_days" ] && continue
-        printf '%s\n' "$section" | grep -qiE "(^|[^a-z])$w[[:space:]]+(days|day)" && stated="$stated $w"
-      done
-      says_it=0
-      printf '%s\n' "$section" | grep -qiE "(^|[^0-9a-z])$default_days[[:space:]]*(days|day)" && says_it=1
-      [ -n "$word" ] && printf '%s\n' "$section" | grep -qiE "(^|[^a-z])$word[[:space:]]+(days|day)" && says_it=1
-      if [ "$says_it" = 0 ]; then
-        err "$doc's section at '$heading' states neither '$default_days days' nor '$word days'. The gateway deletes an unactivated account after $default_days days (AccountRetention.DEFAULT_RETENTION_DAYS) and that section is what tells a data subject or a regulator how long that is — decisions.md D94, D91 §5. If the window has changed, both documents change with it." "$doc"
-      elif [ -n "$stated" ]; then
-        err "$doc's section at '$heading' also states a period the estate does not apply:$stated. The code applies $default_days days (AccountRetention.DEFAULT_RETENTION_DAYS). Two periods in the section that defines one is how a headline drifts from the paragraph under it — measured, that is exactly what the document-wide version of this check passed (decisions.md D94)." "$doc"
-      else
-        ok "$doc's section at '$heading' states the window the code applies ($default_days days) and no other"
-      fi
+      ok "$doc's section at '$heading' states $default_days days in digits; $figures period figure(s) inspected, all of them the applied one"
     fi
   done
 fi
@@ -405,18 +451,45 @@ if [ -f "$SECURITY_CONFIG" ]; then
   # `.pathMatchers("/api/a", "/api/b").permitAll()`, which the old regex also missed — yields both
   # paths. Space-separated on the way out, because the `case " $permit_paths " in *" $p "*` tests
   # below use spaces as delimiters and a newline-separated string matched nothing in either of them.
-  permit_paths="$(java_src "$SECURITY_CONFIG" | python3 -c '
+  # AND A PATH THAT IS NOT A STRING LITERAL IS REFUSED RATHER THAN IGNORED — NEW-47 review, round 2.
+  # The comment above says "the formatter cannot hide a door", and a formatter cannot; a CONSTANT can.
+  # `.pathMatchers(API_REGISTER).permitAll()` yields no literal, so the old derivation simply did not
+  # see that door and the whole check printed ok — as the line-bound grep before it did. A path built
+  # by concatenation is the same hole: `.pathMatchers(PREFIX + "/signup")` yields "/signup", which does
+  # not start with /api/ and is silently dropped.
+  #
+  # So any argument that is not a plain string literal is an ERROR naming the call. A leading
+  # `HttpMethod.X` is the one permitted exception, because it is Spring
+  # idiom rather than a hidden path — PaymentWebhookRouteConfiguration uses that form — and it still
+  # requires every remaining argument to be a literal. The cost of the strictness is that a future
+  # constant has to be inlined or argued; that is the intended direction.
+  permit_report="$(java_src "$SECURITY_CONFIG" | python3 -c '
 import re, sys
 
 src = sys.stdin.read()
 paths = []
+opaque = []
 # [^)] spans newlines and \s* absorbs the wrap, so the formatter cannot hide a door.
 for call in re.findall(r"\.pathMatchers\(([^)]*)\)\s*\.permitAll\(\)", src):
-    for path in re.findall(r"\"([^\"]*)\"", call):
-        if path.startswith("/api/"):
-            paths.append(path)
-print(" ".join(sorted(set(paths))))
+    for argument in call.split(","):
+        argument = argument.strip()
+        if not argument:
+            continue
+        if re.fullmatch(r"HttpMethod\.[A-Z]+", argument):
+            continue
+        literal = re.fullmatch(r"\"([^\"]*)\"", argument)
+        if not literal:
+            opaque.append(argument)
+        elif literal.group(1).startswith("/api/"):
+            paths.append(literal.group(1))
+for argument in sorted(set(opaque)):
+    print("opaque %s" % argument)
+print("paths %s" % " ".join(sorted(set(paths))))
 ' || true)"
+  for argument in $(printf '%s\n' "$permit_report" | sed -n 's/^opaque //p'); do
+    err "$SECURITY_CONFIG permits a path this check cannot read: .pathMatchers($argument).permitAll(). A public door whose path comes from a constant or a concatenation is invisible to the derivation below, so nothing about its rate limit is established — and this check would otherwise print ok. Inline the literal, or widen the derivation deliberately in decisions.md D94." "$SECURITY_CONFIG"
+  done
+  permit_paths="$(printf '%s\n' "$permit_report" | sed -n 's/^paths //p')"
   [ -n "$permit_paths" ] || err "no permitAll /api path found in $SECURITY_CONFIG — the set this part derives from could not be read, so nothing about the rate limits was established." "$SECURITY_CONFIG"
 else
   err "$SECURITY_CONFIG does not exist"

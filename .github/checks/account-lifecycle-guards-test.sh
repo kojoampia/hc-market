@@ -216,7 +216,11 @@ case_refuses "17c a MULTI-PATH permitAll hides a second door" "/api/signup-two" 
 # the code applies three: the old grep found "three days" in the paragraph BELOW the headline — the
 # one explaining the decision — and printed ok. Scoping to the section was not enough on its own for
 # the same reason, which is why every period figure in the section now has to be the applied one.
-case_refuses "17d the notice's OWN SECTION drifts from the code" "also states a period the estate does not apply" \
+# The arm this trips CHANGED in review round 2 and the case is kept rather than retuned: the mutation
+# replaces "3 days" with "14 days", so the DIGIT requirement fires before the other-period ban. Both
+# are correct refusals; this asserts the one that actually fires, because a case asserting a message
+# no longer produced is a case that passes for the wrong reason.
+case_refuses "17d the notice's OWN SECTION drifts from the code" "does not state the window in DIGITS" \
   sed -i 's/^three days later\*\* — 3 days, counted from when you registered./fourteen days later** — 14 days, counted from when you registered./' \
     "$FIXTURE/docs/privacy-notice.md"
 
@@ -235,6 +239,73 @@ if printf '%s' "$renumbered" | grep -q "has no section matching"; then
   report ok "17e a renumbered section is refused rather than skipped"
 else
   report bad "17e a renumbered section did not refuse: $(printf '%s' "$renumbered" | grep -c '^ok') assertions passed"
+fi
+
+# --- 17f-17i. THE SECOND REVIEW ROUND'S ESCAPES, AND THE SHAPE THAT REPLACED THE WORD LIST -------
+#
+# Round 1 scoped the window assertion to the section and banned other periods with a word list that
+# stopped at fourteen. These two are natural English and both PASSED that version, measured by the
+# reviewer and reproduced here before the rewrite:
+#
+#   17f  "deleted after a fourteen-day period"       — hyphenated, so the grep never matched
+#   17g  "We may in future keep it for thirty days"  — past the end of the list
+#
+# What replaced it does not enumerate wrong spellings: the digit form is REQUIRED (which needs no
+# English at all and is what 17f now fails), and other number-like figures are banned from a list
+# that reaches a hundred (which is what 17g and 17h fail). The header states what is still ignored.
+case_refuses "17f the window is renamed in prose and the digits are dropped" "does not state the window in DIGITS" \
+  python3 -c '
+import io, sys
+p = sys.argv[1]
+s = io.open(p, encoding="utf-8").read()
+old = """three days later** — 3 days, counted from when you registered."""
+new = """after a fourteen-day period.** We have kept the same three days internally."""
+assert s.count(old) == 1
+io.open(p, "w", encoding="utf-8").write(s.replace(old, new))
+' "$FIXTURE/docs/privacy-notice.md"
+
+case_refuses "17g a second period is added in words past the old list" "also names a period the estate does not apply" \
+  python3 -c '
+import io, sys
+p = sys.argv[1]
+s = io.open(p, encoding="utf-8").read()
+old = "**If you want to keep the account, confirm your email address.**"
+new = "We may in future keep it for thirty days.\n\n" + old
+assert s.count(old) == 1
+io.open(p, "w", encoding="utf-8").write(s.replace(old, new))
+' "$FIXTURE/docs/privacy-notice.md"
+
+# The mixed case: the digits stay correct AND a hyphenated wrong period is added beside them. Neither
+# layer catches this alone — the digit requirement is satisfied, so it is the ban that has to fire.
+case_refuses "17h a hyphenated wrong period beside the correct digits" "also names a period the estate does not apply" \
+  python3 -c '
+import io, sys
+p = sys.argv[1]
+s = io.open(p, encoding="utf-8").read()
+old = "**If you want to keep the account, confirm your email address.**"
+new = "We are moving to a fourteen-day window.\n\n" + old
+assert s.count(old) == 1
+io.open(p, "w", encoding="utf-8").write(s.replace(old, new))
+' "$FIXTURE/docs/privacy-notice.md"
+
+# A PUBLIC DOOR WHOSE PATH IS A CONSTANT. The derivation reads string literals, so a constant is
+# invisible to it — the reviewer's point, and the same family as the wrapped call in 17b: the check
+# printed ok about a door it could not see. It is an error naming the call now, rather than a limit
+# stated in a comment.
+case_refuses "17i a permitAll path that is not a literal" "permits a path this check cannot read" \
+  sed -i 's#\.pathMatchers("/api/register")\.permitAll()#.pathMatchers("/api/register").permitAll()\n                    .pathMatchers(API_SIGNUP).permitAll()#' \
+    "$FIXTURE/java/jojoaddison/config/SecurityConfiguration.java"
+
+# And the control for 17i: the HttpMethod-prefixed form is Spring idiom, is used elsewhere in this
+# gateway, and must NOT be refused — otherwise the fix above is a check that refuses correct code.
+copy_tree "$FIXTURE"
+sed -i 's#\.pathMatchers("/api/register")\.permitAll()#.pathMatchers(HttpMethod.POST, "/api/register").permitAll()#' \
+  "$FIXTURE/java/jojoaddison/config/SecurityConfiguration.java"
+method_form="$(run_check)"
+if printf '%s' "$method_form" | grep -q "lifecycle guards: ok"; then
+  report ok "17j an HttpMethod-prefixed permitAll is still read as a literal path"
+else
+  report bad "17j the HttpMethod form was refused: $(printf '%s' "$method_form" | grep '::error' | head -1)"
 fi
 
 # --- 19. the stripper's absence, and the one thing it must NOT see ------------------------------

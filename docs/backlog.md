@@ -4814,6 +4814,62 @@ the exception earlier in `DomainUserDetailsService`, which would take the metric
 ---
 
 
+## NEW-62 — `npm run prettier:format` rewrites seventeen files it was not asked to, every time · READY
+
+**Opened 2026-09-17 at NEW-47's review**, which is the point: the tax had been paid by hand in three
+successive rounds and the only record of it was in reports nobody will read again.
+
+`CLAUDE.md` tells every package to run `npm run prettier:format` after editing Java, because prettier
+formats Java here. Run it in `gateway/` today and it reformats **17 files this package never
+touched** — hand-written classes and tests from D74, D79, D84 and D85:
+
+```
+config/{InternalApiSecurityConfiguration,MarketplacePublicRouteConfiguration,
+        PaymentWebhookRouteConfiguration,dbmigrations/InitialSetupMigration}.java
+management/GatewayIdentityMeters.java   service/IdentityMetricsRefresher.java
+web/rest/InternalCustomerContactResource.java      + 10 test classes
+```
+
+The changes are prettier-java's method-chain rules, not anybody's mistake:
+`Counter\n.builder(...)` becomes `Counter.builder(...)`, and a wrapped `new AtomicReference<>(...)`
+is joined onto one line.
+
+**The versions are pinned, which is what makes this worth an item rather than a shrug.**
+`package.json` names `prettier` **3.9.5** and `prettier-plugin-java` **2.10.2** exactly, and
+`./node_modules/.bin/prettier --version` reports 3.9.5 — so this is not a floating dependency that
+will settle. **There is no committed lockfile** (`gateway/package-lock.json` is untracked and
+`node_modules/` is gitignored), so what actually resolves is whatever npm picks for the plugin's own
+transitive `java-parser` on the day, and that is the most likely source of the drift. **CI does not
+run `prettier:check`**, so nothing has ever been red about it.
+
+**What it costs, measured over three rounds of one package**: every `prettier:format` produces a diff
+across four earlier packages' files, which has to be restored by hand before committing — and the
+failure mode if somebody does not notice is a commit whose scope silently spans five packages,
+which is exactly what the review process looks for and what `git add -A` would have shipped.
+
+**Three answers, and the cheapest is not obviously right.**
+
+1. **Commit a lockfile and reformat once.** `npm install` already writes one; committing it pins the
+   transitive parser, and one commit then brings the tree to what the pinned prettier produces. Cost:
+   one 17-file formatting commit touching four packages' files, which is ugly in `git blame` for
+   exactly the files whose comments are load-bearing here. Benefit: the instruction in `CLAUDE.md`
+   becomes true, and `prettier:check` could then join CI.
+2. **Add `prettier:check` to CI without reformatting.** Immediately red, so it is only option 1 with
+   the order reversed.
+3. **`WON'T`, and say so in `CLAUDE.md`.** Tell the next package to run prettier and restore
+   everything it did not edit — which is what three rounds have done already. Cost: the tax
+   continues, and it is a tax on attention rather than time: the restoring is mechanical, noticing is
+   not.
+
+**Recommended: 1, in a commit of its own that touches nothing else**, so the formatting churn is
+separable from any package's diff and reviewable as "only whitespace and line joins". It is not this
+package's to take — it changes four earlier packages' files and adds a committed lockfile, which is a
+dependency-management decision for the repository rather than for a backlog item.
+
+**Not blocked.** It needs the architect to pick one.
+
+---
+
 ## Not a package: standing constraints
 
 - **Production is off limits.** The pipeline is not ready; `deploy/deploy-prod.sh --dry-run` is the
