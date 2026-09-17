@@ -85,6 +85,28 @@ export HC_GATEWAY_PORT=18200 HC_CATALOG_PORT=18201 HC_BOOKING_PORT=18202 \
        HC_MESSAGING_PORT=18203 HC_PAYOUT_PORT=18204
 ```
 
+`MAILPIT_HTTP_PORT` (quality, default **18104**) and `HC_MAILPIT_HTTP_PORT` (dev, default 8025) join
+that family since D94 — the mail catcher's web UI, which is where every activation and password-reset
+message lands. **Its SMTP port is deliberately not published on either estate**: nothing outside the
+compose project sends through it, and an unauthenticated SMTP listener on this LAN is an open relay.
+
+**To walk the account lifecycle end to end** — the path that answered 201 and swallowed people until
+NEW-47 (D94). Nothing here needs a real provider:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' -H 'Content-Type: application/json' \
+  -X POST http://127.0.0.1:15509/api/register \
+  -d '{"login":"walk.one","email":"walk.one@example.test","password":"at-least-four-chars","langKey":"en"}'
+curl -s http://127.0.0.1:18104/api/v1/messages | jq -r '.messages[0].ID'     # the catcher's API
+curl -s http://127.0.0.1:18104/api/v1/message/<ID> | jq -r '.Text'           # the link, and the key in it
+curl -s -o /dev/null -w '%{http_code}\n' 'http://127.0.0.1:15509/api/activate?key=<KEY>'
+```
+
+**The link in the message is NOT the path that activates** — it is `${baseUrl}/account/activate?key=…`,
+a frontend route, which answers **401** on an API-only estate (NEW-60). `GET /api/activate?key=…` is the
+one that answers 200. And an account that has registered but not activated answers **500** to its own
+correct password — NEW-61, which the walk found.
+
 There is no `HC_CONSUL_PORT` and no `HC_KAFKA_PORT` any more: this repository publishes neither,
 because it runs neither. `hc-infra` publishes them once, on **18510** (Consul UI) and **19192**
 (broker, from the host). Override *which* shared plane a stack uses with `HC_SHARED_CONSUL`,
@@ -433,6 +455,9 @@ regeneration.
 | The `healthconnect.privacy` block with its `${HC_RETENTION_*}` placeholders | booking `config/application.yml` | **silent.** The periods bind to `null`, the desk reports `null` for all three, and the estate's answer to "what is your retention policy" becomes "none" — with every test still green, because the test config carries its own copy |
 | The `healthconnect.brokerage.founding` block | payout `config/application.yml` | **silent, and the only row here that is HARMLESS by design** (D57). The five `${HC_BROKERAGE_*}` placeholders are the only way an estate can name its own founding terms; without them `FoundingTerms`' Java defaults — the prototype's 12% and 3-day lag — still found the estate correctly, so nothing breaks and nothing goes red. What is lost is the *overridability*, silently: `HC_BROKERAGE_COMMISSION_RATE=0.15` in `secrets.env` would bind to nothing and the estate would price at 12% while its operator believed otherwise. The defaults being in Java rather than in this file is deliberate for exactly this reason, and CI checks the placeholders by name |
 | `definition: kafkaConsumer` (not `kafkaConsumer;kafkaProducer`) | **all five** `config/application-kafka.yml` | **silent, and what comes back is 432,000 messages a day onto somebody else's infrastructure** (D62, NEW-21). `--force` restores `kafkaProducer` in the `spring.cloud.function.definition` of every service, which binds the generated `broker.KafkaProducer` — a `Supplier<String>` returning the constant `"kafka_producer"` — and Spring Cloud Stream polls a bound supplier on `spring.integration.poller.fixed-delay`, **defaulted to 1s** by the framework and configured nowhere here. So each service resumes putting one message a second onto the broker four products borrow (D27), on `kafkaProducer-out-0`, which **no consumer group on that broker is registered against**. Measured before the fix: 5.9/s across six such publishers, five of them ours, past an end offset of **5.78 million**. Nothing about it is visible from inside: no log line at any level either service runs at, no health indicator, no test, and the only symptom is a broker filling up in a repository nobody working here would open. `kafkaConsumer` **must stay named** — an explicit definition is the only thing stopping Spring Cloud Function auto-discovering a lone function bean and binding the supplier again. The orphaned `kafkaProducer-out-0` binding block below it is left exactly as generated and is deliberately *not* part of this row: a binding whose function is not in `definition` is never bound and provisions nothing, which `binding-out-0` has demonstrated on that broker for the estate's whole life. **CI catches this one** — *"No service may bind the generated Kafka sample supplier"*, derived from `messageBroker kafka` in `jdl/*.jdl` — and so does `KafkaSampleSupplierIsNotPolledIT`, which is a new file and therefore survives the regeneration that undoes the config |
+| The **removal of `@Scheduled`** from `UserService.removeNotActivatedUsers` | gateway `service/` | **the estate acquires a SECOND retention sweep and nothing fails** (D94, NEW-47). `--force` restores `@Scheduled(cron = "0 0 1 * * ?")` over a hard-coded `Instant.now().minus(3, ChronoUnit.DAYS)`, so an estate that configured 14 days deletes at 3 — while `UnactivatedAccountSweep` keeps running, keeps logging, and keeps reporting the operator's window at `/management/info`, and `docs/privacy-notice.md` §7.1 states a period the estate does not keep. It destroys a login, both names, an email address and a password hash, and the generated method **logs the whole `User`** at DEBUG, which is the level `net.jojoaddison` runs at under `dev` — which is what the quality box runs. **Two things catch it**: `ThereIsOneAccountSweepTest` (ArchUnit, no `@Scheduled` anywhere in the gateway) and `account-lifecycle-guards.sh` part 1. Do not "restore" the annotation because the method looks orphaned — it is kept only so two *generated* ITs still compile |
+| The `healthconnect.accounts` block with its two `${HC_UNACTIVATED_ACCOUNT_*}` placeholders | gateway `config/application.yml` | **silent, and it takes away a policy rather than breaking one** (D94). Both values fall back to their Java defaults in `AccountRetention` — 3 days and `0 0 1 * * ?`, which is the ratified policy — so the estate keeps deleting exactly what it should and nothing goes red. What is lost is the **overridability**: `HC_UNACTIVATED_ACCOUNT_RETENTION_DAYS=14` binds to nothing and the estate deletes at three days while its operator believes otherwise, which is D57's brokerage row one service along. The defaults are in Java rather than in the yml for exactly this reason, and because the generated test copy shadows this file |
+| The mail placeholders — `host: ${SPRING_MAIL_HOST}`, `port: ${SPRING_MAIL_PORT}`, `base-url: ${JHIPSTER_MAIL_BASE_URL}` | gateway `config/application-prod.yml` | **the front door swallows people again** (D94, NEW-47). `--force` restores `host: localhost`, `port: 25` and `base-url: http://my-server-url-to-change`, and every one of them is a value that looks configured: `POST /api/register` answers **201 without waiting for the mail**, `MailService` catches the failure and logs one **WARN**, and the sweep deletes the account three days later. `MailServiceIT` mocks `JavaMailSender`, so no test in the estate can see it. What survives the regeneration is `MailDeliveryGuard` (a new file), which refuses loopback and the placeholder under `prod` — so the estate refuses to start rather than swallowing registrations. CI checks the three placeholders by name and bans the placeholder string in every `.yml` |
 | The **whole of** `InitialSetupMigration` | gateway `config/dbmigrations/` | **the worst row in this table, because what comes back is a working credential** (D61, NEW-22). This is the only entry here that is a Java class rather than config, and it is here because the generated version is not a stub to fill in — it is the defect. `--force` restores `@ChangeUnit(id = "users-initialization")` with **no `@Profile`**, creating `admin` with a committed bcrypt hash of the string `admin`, activated, carrying `ROLE_ADMIN`. `mongock.migration-scan-package` is in the **base** `application.yml`, so it runs in `prod` too, and a first production deploy creates exactly the empty database it seeds. **Completely silent**: the estate comes up, every test passes, and `admin`/`admin` works against the gateway that issues tokens all five services accept. What is lost is the `ApplicationRunner` rewrite — the not-production gate on the demo accounts, the configured `gateway.admin-password`, the refusal to create an administrator without one, and `saveUserIfMissing`'s idempotency, which is what stops a restart resetting a rotated password. **CI catches this one**, and deliberately by sweeping for the *hash* rather than for the logic (`.github/checks/admin-seed-wiring.sh`), because a check reasoning about the new logic would be matching a file that no longer contains any of it |
 
 **Per app — generated classes to delete.** Each would otherwise win or tie an ambiguous mapping
@@ -568,6 +593,73 @@ under "Working here"; do not read it as a third instance of the same gap.
 gateway** — D84 added four more and they are a different subject. **Enumerate rather than quoting
 either number**: `config/`, `web/rest/`, `management/`, `security/` and `service/` all hold
 hand-written classes now, and this file has had a count of them wrong before.
+
+**The account lifecycle is configured, rate-limited and stated, and none of it was** (D94, backlog
+NEW-47). Four more new files in `service/` — `AccountRetention`, `UnactivatedAccountSweep`,
+`MailDeliveryGuard` and `MailDeliveryInfoContributor` — plus the **one edit to a generated file** this
+package could not avoid: the `@Scheduled` is gone from `UserService.removeNotActivatedUsers`, which is
+the top row of the regeneration table above.
+
+The composite it closes is the one worth carrying, because every part of it was generated code doing
+exactly what it was generated to do: `POST /api/register` is `permitAll`, writes the account
+`activated = false`, and answers **201 without waiting for the mail**; `MailService` catches
+`MailException` and logs **WARN**; `spring.mail.host` was the committed `localhost:25` and no compose
+file in any environment passed a single `SPRING_MAIL_*`; production's `jhipster.mail.base-url` was
+JHipster's own `http://my-server-url-to-change`; and the generated sweep then deleted the unactivated
+account after three days. **201, no mail, cannot authenticate, gone in three days, one WARN line** —
+and `MailServiceIT` mocks `JavaMailSender`, so **no message had ever left this estate** and nothing
+was red.
+
+Four things about it that are decisions rather than shape:
+
+- **Three days did not change.** D91's objection was that an undecided framework default was destroying
+  personal data unrecorded, not that the number is wrong, so the number is now a *stated* policy with
+  the same value: `healthconnect.accounts.unactivated-retention-days`, default `3`, and an estate that
+  configures nothing behaves byte-identically to every estate that has ever run. **The number is quoted
+  to a data subject in `docs/privacy-notice.md` §7.1 and to a regulator in `docs/processing-record.md`
+  §3.1, and CI refuses a build where the code and those two documents disagree.** `0`, a negative and
+  an unreadable value refuse startup; **there is deliberately no "never delete"** (D94 §5).
+- **The sweep registers through `SchedulingConfigurer`, not `@Scheduled`, and that is forced.**
+  Compose's `${X:-}` sets an *empty* variable, and an empty cron is not a missing cron but an invalid
+  one — `@Scheduled(cron = "${...:0 0 1 * * ?}")` prefers the empty value to its own default and fails
+  the context on every estate that passes the variable through without setting it. Blank-handling is in
+  Java, in one place, where a test drives it.
+- **`prod` requires `HC_MAIL_HOST`, `HC_MAIL_PORT` and `HC_MAIL_BASE_URL` and defaults none of them**,
+  in the compose file (`:?`) and again in `application-prod.yml` (a defaultless placeholder, which
+  fails the context naming the variable). `localhost` is **refused** under `prod`: inside a container
+  that is its own loopback, and it is the committed default this closes. Dev and quality run **mailpit**
+  — on the project network only, with the SMTP port deliberately **unpublished**, because an
+  unauthenticated SMTP listener on the LAN is an open relay.
+- **Nothing opens an SMTP connection and `management.health.mail.enabled` stays `false`.** A mail health
+  indicator sits inside the aggregate `/management/health`, which is what both compose healthchecks grep
+  for `UP`, so an unreachable relay would take the gateway unhealthy and `deploy-prod.sh`'s gate would
+  revert a healthy deployment over somebody else's outage (D57's argument, one service along).
+  `MailDeliveryInfoContributor` puts `mail.configured`, the relay, the base-url, `mail.authenticated`
+  and the retention window on `/management/info` instead, and the smoke test **fails the deploy** on the
+  first of those. The username and the password are never published there — that endpoint is
+  `permitAll`.
+
+**The rate limits are PROVIDED AND NOT INSTALLED, and there are two zone files now.** `hc_market_login`
+(1/s, burst 5) and `hc_market_account` (10/min, burst 3) cover `/api/authenticate`, `/api/register` and
+`/api/account/reset-password/init`, keyed through a `map` so the single `location /` is not duplicated —
+hc-patient's pattern, and its reasoning: a location per path duplicates the proxy headers and a copy
+that drifts is how `X-Forwarded-Proto` goes missing. Production's zones are in a **new**
+`deploy/prod-server/nginx-conf.d/hc-market-account.conf` because `limit_req_zone` and `map` are
+http-scope and that vhost is a snippet included inside `server { }`; quality's are in `host-site.conf`
+itself, which **is** at http scope. `/etc/nginx` is the architect's on both machines — the sudo lines are
+printed and nothing is installed, so **no ceiling is in force anywhere yet**.
+
+**`/api/activate` and `/api/account/reset-password/finish` are `permitAll` and deliberately NOT limited**
+(D94 §5, recommended for widening). CI derives the set from `SecurityConfiguration`'s own matchers and
+demands the difference be **exactly** those two, so a sixth public door is red in the pull request that
+adds it.
+
+**And the link in the mail points at a page nothing serves — NEW-60.** The templates compose
+`${baseUrl}/account/activate?key=…` and `${baseUrl}/account/reset/finish?key=…`, which are *frontend*
+routes; this estate has no frontend (NEW-48), so following the activation link gives **401** — measured,
+not 404, because reactive Spring Security denies an exchange no rule matched — while the key in it
+activates the account perfectly well through `GET /api/activate?key=…` (**200**). Nobody is harmed until
+a provider is configured, which is why it is an item rather than a patch to a generated template.
 
 **The gateway counts registrations and logins, and the seam is the authentication manager** (D84,
 backlog NEW-43). `GatewayIdentityMeters` (management), `CountingReactiveAuthenticationManager`
@@ -1314,7 +1406,14 @@ the deployed image is the built one.
 - **`consistency`** — the checks with no sibling equivalent, each guarding a drift that has already
   happened here: the seed still regenerates identically from the prototype, the spec appendices
   still match the deploy scripts, all three compose files still interpolate, every shell script
-  still parses, and the quality vhost still agrees with its compose about the upstream port.
+  still parses, and the quality vhost still agrees with its compose about the upstream port. Since
+  D94 it also holds the **account lifecycle** together — `account-lifecycle-guards.sh`, six parts and
+  36 assertions: the gateway's only scheduled work, the retention window's placeholders and its
+  default against **both privacy documents**, mail required in production and a catcher in dev and
+  quality, the placeholder base-url banned estate-wide, `deploy-prod.sh`'s array and its smoke-test
+  question, and the rate limits at both edges with the unlimited set pinned **exactly**. Its own test
+  drives 20 broken states, and three of the six parts were rewritten because running that test showed
+  them passing a broken tree.
 
 **Any check that matches source text must strip comments with `.github/checks/strip-comments.awk`,
 and never its own expression.** *"A check whose reach depends on prose is not a check"* has been the

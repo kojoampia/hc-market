@@ -36,10 +36,12 @@
 #  2. THE NETWORK ARM, lifted out of preflight and driven through the same stub. Six causes, each
 #     asserted by the words it names, plus the positive control and `--dry-run`.
 #
-#  3. SECRETS.ENV AND ITS TWELVE VALUES, against real fixtures. This part exists because of the one
+#  3. SECRETS.ENV AND EVERY VALUE IT REQUIRES, against real fixtures BUILT FROM THE SCRIPT'S OWN
+#     ARRAYS — twelve when this was written, fifteen since decisions.md D94, and the count is
+#     printed rather than claimed. This part exists because of the one
 #     mutation in this whole family whose result is a PASS rather than a wrong message: empty the
 #     remote-status arm of that loop and `grep`'s exit 2 — a file the account cannot read — matches
-#     nothing, the loop walks all twelve values, and preflight approves a secrets file it never
+#     nothing, the loop walks every value, and preflight approves a secrets file it never
 #     read. Every other defect here is a refusal naming the wrong cause; this one is not a refusal.
 #
 #  4. THE PREVIOUS TAG A ROLLBACK NEEDS, same treatment. rollback() is where every FAILED deploy
@@ -146,11 +148,11 @@ LIFT_NET_ARM="$(awk '/^  log "checking host networks"$/,/^  done$/' "$SCRIPT")"
 # REMOTE-STATUS arms, and emptying one of those is a smaller edit than the defect this check was
 # written for — and a worse one. Measured, on the secrets loop: with its `*)` arm gutted, `grep`'s
 # exit 2 (the unreadable-0600 state the code's own comment names as live) matches an empty branch,
-# the loop proceeds past all twelve values, and preflight PASSES on a secrets file it could not read.
+# the loop proceeds past every value, and preflight PASSES on a secrets file it could not read.
 # The original at least died with the wrong message.
 LIFT_SECRETS="$(awk 'index($0, "  log \"checking $REMOTE_PATH/$SECRETS_FILE on $HOST\"") == 1, $0 == "  fi"' "$SCRIPT")"
 [[ -n "$LIFT_SECRETS" ]] \
-  || err "$SCRIPT has no secrets.env block this check can read between 'log \"checking \$REMOTE_PATH/\$SECRETS_FILE on \$HOST\"' and its 'fi', so part 3 established nothing about what an operator is told when the twelve values cannot be read. See decisions.md D75."
+  || err "$SCRIPT has no secrets.env block this check can read between 'log \"checking \$REMOTE_PATH/\$SECRETS_FILE on \$HOST\"' and its 'fi', so part 3 established nothing about what an operator is told when the required values cannot be read. See decisions.md D75."
 LIFT_ROLLBACK="$(awk '$0 == "  local prev", index($0, "  [[ -n \"$prev\" ]]") == 1' "$SCRIPT")"
 [[ -n "$LIFT_ROLLBACK" ]] \
   || err "$SCRIPT has no previous-tag read this check can read between 'local prev' and the '[[ -n \"\$prev\" ]]' refusal, so part 4 established nothing about the function every FAILED deploy lands in. See decisions.md D75."
@@ -167,13 +169,14 @@ lift_ends_with() { # lift_ends_with <lifted text> <marker the last line must car
 }
 lift_ends_with "$LIFT_SECRETS" "fi" "part 3" "secrets.env block"
 lift_ends_with "$LIFT_ROLLBACK" '[[ -n "$prev" ]]' "part 4" "previous-tag read"
-# The real key list and the real hint, so part 3 exercises what a deploy would: twelve values, and
-# the message each one carries. `secret_hint` is called by the not-set arm.
+# The real key list and the real hint, so part 3 exercises what a deploy would: every required
+# value, and the message each one carries. Part 3 builds its fixture from these arrays too, so the
+# list is read once and the count is never restated. `secret_hint` is called by the not-set arm.
 LIFT_KEYS="$(grep -E '^SECRET_KEYS=\(' "$SCRIPT" || true)"$'\n'"$(awk 'index($0, "CONNECTION_KEYS=(") == 1, $0 == ")"' "$SCRIPT")"
 LIFT_HINT="$(lift secret_hint)"
 case "$LIFT_KEYS" in
   *"SECRET_KEYS=("*"CONNECTION_KEYS=("*) : ;;
-  *) err "$SCRIPT no longer declares SECRET_KEYS and CONNECTION_KEYS as top-level arrays, so part 3 could not drive the twelve-value loop at all. See decisions.md D75." ;;
+  *) err "$SCRIPT no longer declares SECRET_KEYS and CONNECTION_KEYS as top-level arrays, so part 3 could neither drive the value loop nor build a fixture for it. See decisions.md D75." ;;
 esac
 [[ -n "$LIFT_HINT" ]] \
   || err "$SCRIPT declares no secret_hint, so part 3's not-set arm would report a message this check cannot distinguish from the others. See decisions.md D75."
@@ -645,22 +648,47 @@ case "$n_dry" in
   *) err "$SCRIPT's host-network preflight under --dry-run answered '$(one "$n_dry")'; it must say the host was not contacted. See decisions.md D75." ;;
 esac
 
-# ---- 3. secrets.env: the twelve-value loop, and the arm that must not be empty --------------------
+# ---- 3. secrets.env: the required-value loop, and the arm that must not be empty -----------------
 #
 # THE FAIL-OPEN IN THIS FILE, and the only assertion here whose mutant PASSES preflight rather than
-# refusing for the wrong reason. Fixtures are real: a file with all twelve values, one missing a key,
+# refusing for the wrong reason. Fixtures are real and DERIVED: a file with every required value, one
+# missing a key,
 # a path that is not there, and a DIRECTORY — which `test -s` answers 0 for and `grep` answers **2**
 # for, so it constructs the unreadable-file state without `chmod`, which does not constrain root and
 # would make this state unbuildable in a root container (red on a correct tree). Measured both ways.
-printf '\n%s: secrets.env, twelve values\n' "$SCRIPT"
+# THE FIXTURE IS DERIVED FROM THE SCRIPT'S OWN ARRAYS, AND IT WAS HAND-WRITTEN UNTIL D94's REVIEW.
+#
+# It listed the twelve values of the day, so the day a thirteenth required key appeared —
+# HC_MAIL_HOST, HC_MAIL_PORT and HC_MAIL_BASE_URL, decisions.md D94 — preflight correctly REFUSED
+# this check's own fixture, died before the scp, and every per-site assertion in part 7 failed
+# because each is read off a run that reached the end (D80 built it that way so a truncated run
+# cannot satisfy them by never asking). Nothing was wrong with either the check or the new keys: the
+# fixture was short. That is this repository's enumerated-list family, in the file whose whole
+# subject is derivation, and it cost a red CI run on a correct branch.
+#
+# So `eval "$LIFT_KEYS"` here — the same shipped bytes the probe evaluates — and the fixture, the
+# counts and the prose all come from SECRET_KEYS + CONNECTION_KEYS. A key added to deploy-prod.sh
+# cannot stale this again.
+eval "$LIFT_KEYS"
+REQUIRED_KEYS=("${SECRET_KEYS[@]}" "${CONNECTION_KEYS[@]}")
+REQUIRED_COUNT=${#REQUIRED_KEYS[@]}
+(( REQUIRED_COUNT >= 12 )) \
+  || err "$SCRIPT's SECRET_KEYS and CONNECTION_KEYS together yield only $REQUIRED_COUNT values, which cannot be right — the estate has required at least twelve since 2026-09-05. The arrays were lifted but not parsed, so part 3 would be driving a fixture that proves nothing. See decisions.md D75, D94."
+# The ONE key part 3 deliberately omits, to prove the refusal names the value that is missing. Named
+# rather than derived (the last element of an array is not a subject), and asserted to BE in the list
+# so a rename is red here rather than silently dropping nothing from the short fixture.
+MISSING_KEY="HC_PAYOUT_DB_PASSWORD"
+case " ${REQUIRED_KEYS[*]} " in
+  *" $MISSING_KEY "*) : ;;
+  *) err "$SCRIPT no longer requires $MISSING_KEY, which is the value part 3 removes from its fixture to prove the refusal names one. Pick another key from SECRET_KEYS or CONNECTION_KEYS and say why in decisions.md D75." ;;
+esac
+printf '\n%s: secrets.env, %s required values\n' "$SCRIPT" "$REQUIRED_COUNT"
 FIX="$(mktemp -d)"
 trap 'rm -rf "$BIN" "$FIX"' EXIT
 mkdir -p "$FIX/full" "$FIX/short" "$FIX/unreadable/secrets.env"
-{ printf 'JWT_BASE64_SECRET=x\nHC_PRIVACY_PEPPER=x\nHC_GATEWAY_ADMIN_PASSWORD=x\n'
-  printf 'HC_GATEWAY_MONGODB_URI=x\n'
-  for s in CATALOG BOOKING MESSAGING PAYOUT; do printf 'HC_%s_DB_URL=x\nHC_%s_DB_PASSWORD=x\n' "$s" "$s"; done
-} > "$FIX/full/secrets.env"
-grep -v '^HC_PAYOUT_DB_PASSWORD=' "$FIX/full/secrets.env" > "$FIX/short/secrets.env"
+: > "$FIX/full/secrets.env"
+for k in "${REQUIRED_KEYS[@]}"; do printf '%s=x\n' "$k" >> "$FIX/full/secrets.env"; done
+grep -v "^$MISSING_KEY=" "$FIX/full/secrets.env" > "$FIX/short/secrets.env"
 printf 'x\n' > "$FIX/unreadable/secrets.env/decoy"
 
 s_all="$(HC_PROBE_PATH="$FIX/full" probe connected ok "$LIFT_SECRETS")"
@@ -669,27 +697,32 @@ s_absent="$(HC_PROBE_PATH="$FIX/nowhere" probe connected ok "$LIFT_SECRETS")"
 s_unread="$(HC_PROBE_PATH="$FIX/unreadable" probe connected ok "$LIFT_SECRETS")"
 s_ssh="$(HC_PROBE_PATH="$FIX/full" probe keyrefused ok "$LIFT_SECRETS")"
 s_dry="$(HC_PROBE_PATH="$FIX/full" probe connected ok "DRY_RUN=1; $LIFT_SECRETS")"
-printf '  all twelve present:  %s\n  one missing:         %s\n' \
+printf '  all %s present:      %s\n  one missing:         %s\n' "$REQUIRED_COUNT" \
   "$(one "$s_all")" "$(one "$s_short")"
 printf '  file absent:         %s\n  file unreadable:     %s\n  ssh key refused:     %s\n' \
   "$(one "$s_absent")" "$(one "$s_unread")" "$(one "$s_ssh")"
 
 # `*DIE*` AND NOT `DIE*` IN THIS PART, which is a bug fix rather than a style: the loop prints an
-# `ok` per value it confirms, so a refusal on the twelfth arrives with eleven lines above it and a
-# prefix-anchored pattern misses it entirely. Caught by mutating the not-set arm and watching the
+# `ok` per value it confirms, so a refusal on the last one arrives with every other line above it and
+# a prefix-anchored pattern misses it entirely. Caught by mutating the not-set arm and watching the
 # check report "ACCEPTED a secrets file missing HC_PAYOUT_DB_PASSWORD" about a refusal it was
 # looking straight at.
 present_count="$(printf '%s\n' "$s_all" | { grep -c ' present$' || true; })"
 case "$s_all" in
-  *DIE*) err "$SCRIPT's secrets check refuses a file that holds all twelve values: '$(one "$s_all")'. A refusal that fires on the correct state is not a check, and every refusal below would then be firing for the wrong reason. See decisions.md D75." ;;
-  *) (( present_count == 12 )) \
-      && ok "the secrets check passes, and confirms all twelve values, when they are all there" \
-      || err "$SCRIPT's secrets check accepted a file holding all twelve values but reported $present_count of them present. Each value is confirmed by name because the receipt of that loop is what an operator reads before a deploy. See decisions.md D75." ;;
+  *DIE*) err "$SCRIPT's secrets check refuses a file that holds all $REQUIRED_COUNT required values: '$(one "$s_all")'. A refusal that fires on the correct state is not a check, and every refusal below would then be firing for the wrong reason. See decisions.md D75." ;;
+  *) (( present_count == REQUIRED_COUNT )) \
+      && ok "the secrets check passes, and confirms all $REQUIRED_COUNT required values, when they are all there" \
+      || err "$SCRIPT's secrets check accepted a file holding all $REQUIRED_COUNT required values but reported $present_count of them present. Each value is confirmed by name because the receipt of that loop is what an operator reads before a deploy. See decisions.md D75." ;;
 esac
 case "$s_short" in
-  *"DIE HC_PAYOUT_DB_PASSWORD is not set"*) ok "a value that really is absent is still reported as not set, by name" ;;
-  *DIE*) err "$SCRIPT refused a secrets file missing HC_PAYOUT_DB_PASSWORD without saying which value is missing: '$(one "$s_short")'. Twelve values are checked one at a time precisely so the refusal names one. See decisions.md D75." ;;
-  *) err "$SCRIPT ACCEPTED a secrets file missing HC_PAYOUT_DB_PASSWORD ('$(one "$s_short")'). Every one of the twelve is ':?' in docker-compose.prod.yml, so the deploy would die at 'up' with .env already overwritten and .env.previous rotated. See decisions.md D75." ;;
+  # $MISSING_KEY, NOT THE LITERAL, and both err arms below already derived it. With the name written
+  # out here, changing MISSING_KEY — which the membership guard above positively invites, by telling
+  # you to pick another key — left this arm unable to match: fail-closed, but reporting "refused
+  # without saying which value is missing" about a refusal that named it perfectly. A misattributing
+  # message is the defect this whole file exists to prevent (D75).
+  *"DIE $MISSING_KEY is not set"*) ok "a value that really is absent is still reported as not set, by name" ;;
+  *DIE*) err "$SCRIPT refused a secrets file missing $MISSING_KEY without saying which value is missing: '$(one "$s_short")'. All $REQUIRED_COUNT values are checked one at a time precisely so the refusal names one. See decisions.md D75." ;;
+  *) err "$SCRIPT ACCEPTED a secrets file missing $MISSING_KEY ('$(one "$s_short")'). Every one of the $REQUIRED_COUNT is ':?' in docker-compose.prod.yml, so the deploy would die at 'up' with .env already overwritten and .env.previous rotated. See decisions.md D75." ;;
 esac
 case "$s_absent" in
   *"DIE"*"is missing or empty"*) ok "a secrets.env that is not there is reported as missing" ;;
@@ -697,18 +730,18 @@ case "$s_absent" in
   *) err "$SCRIPT ACCEPTED a host with no secrets.env at all ('$(one "$s_absent")'). See decisions.md D75." ;;
 esac
 # THE ONE THAT PASSES WHEN IT BREAKS. grep exits 2 for a file it cannot read; with the `*)` arm
-# emptied there is no output at all and the loop walks all twelve values, so this assertion has to
+# emptied there is no output at all and the loop walks every value, so this assertion has to
 # be about a refusal ARRIVING, not about which words it used.
 case "$s_unread" in
   *"could not be read while looking for"*) ok "a secrets.env that cannot be READ is refused, and not reported as a value being unset" ;;
   *DIE*"is not set"*) err "$SCRIPT reported a secrets.env it could not read as a value being unset: '$(one "$s_unread")'. grep answers 2 for a file it cannot read — a 0600 file owned by another account is the live case — and 'add HC_… to this file' is advice about a file the operator cannot open. See decisions.md D75." ;;
   *DIE*) err "$SCRIPT refused an unreadable secrets.env but named neither cause: '$(one "$s_unread")'. See decisions.md D75." ;;
-  *) err "$SCRIPT ACCEPTED a secrets.env it could not read, and walked all twelve values past it: '$(one "$s_unread")'. This is WORSE than the message NEW-33 was about: preflight passes, the deploy proceeds, and nothing established that any of the twelve values is there. The remote status arm must refuse anything that is neither 0 nor 1. See decisions.md D75." ;;
+  *) err "$SCRIPT ACCEPTED a secrets.env it could not read, and walked every value past it: '$(one "$s_unread")'. This is WORSE than the message NEW-33 was about: preflight passes, the deploy proceeds, and nothing established that any of the twelve values is there. The remote status arm must refuse anything that is neither 0 nor 1. See decisions.md D75." ;;
 esac
 case "$s_ssh" in
   *DIE*"no answer from a shell"*) ok "an ssh the host refused is reported as that, not as a missing secrets.env" ;;
   *DIE*) err "$SCRIPT reported an ssh the host refused as a fact about secrets.env: '$(one "$s_ssh")'. Nothing on the host was read, so neither the file nor any value in it is established. See decisions.md D75." ;;
-  *) err "$SCRIPT ACCEPTED twelve values it never asked about ('$(one "$s_ssh")'). See decisions.md D75." ;;
+  *) err "$SCRIPT ACCEPTED every value without asking about any of them ('$(one "$s_ssh")'). See decisions.md D75." ;;
 esac
 case "$s_dry" in
   *" present"*) err "$SCRIPT's secrets check reports values present under --dry-run: '$(one "$s_dry")'. It contacted nothing." ;;
@@ -813,7 +846,7 @@ printf '\n%s: the call sites\n' "$SCRIPT"
     "{{.Health}}:what state the services are in once the health gate has timed out"
     "logs --no-color --tail:the log lines the rollback is about to destroy"
     "test -s:secrets.env being there at all"
-    "grep -qE:each of the twelve values in secrets.env"
+    "grep -qE:each required value in secrets.env"
     "docker network inspect:the three host networks"
     "ps -a --format:the five stores in the data tier"
     "grep -m1 '^HC_TAG=:the previous tag a rollback needs"
@@ -1180,7 +1213,13 @@ case "$sub" in
       *'/management/info'*)
         case "$argv" in
           *hc-market-payout*) printf '{"brokerage":{"termsInForce":true,"commissionRate":"0.12"}}\n'; exit 0 ;;
-          *) printf '{"build":{"version":"%s"}}\n' "${HC_FAKE_TAG:-0.0.0}"; exit 0 ;;
+          # THE GATEWAY ANSWERS A MAIL BLOCK TOO, since decisions.md D94: smoke_test asks this
+          # endpoint whether the estate can send an activation mail at all and FAILS CLOSED on the
+          # answer, because a front door that answers 201 and discards the registration must not
+          # ship. A stub that answered only `build.version` made the mail gate refuse, the deploy
+          # roll back, and part 7 report that the run "never got as far as the gateway version
+          # probe" — the failure being the stub's, one probe upstream of the one it named.
+          *) printf '{"build":{"version":"%s"},"mail":{"configured":true,"host":"smtp.probe.invalid","baseUrl":"https://market.abofonsa.com","authenticated":false},"accounts":{"unactivatedRetentionDays":3}}\n' "${HC_FAKE_TAG:-0.0.0}"; exit 0 ;;
         esac ;;
     esac
     # ONE STATUS, TWO SENTENCES, AND THE SENTENCE IS UNOBSERVABLE HERE — measured by D78 §1: `exec`
@@ -1240,10 +1279,14 @@ chmod +x "$B7"/*
 # deployment recorded" and the rollback-phase gate is never reached at all.
 seed_host7() {
   mkdir -p "$1"
-  { printf 'JWT_BASE64_SECRET=x\nHC_PRIVACY_PEPPER=x\nHC_GATEWAY_ADMIN_PASSWORD=x\n'
-    printf 'HC_GATEWAY_MONGODB_URI=x\n'
-    for s in CATALOG BOOKING MESSAGING PAYOUT; do printf 'HC_%s_DB_URL=x\nHC_%s_DB_PASSWORD=x\n' "$s" "$s"; done
-  } > "$1/secrets.env"
+  # DERIVED FROM THE SCRIPT'S OWN ARRAYS, exactly as part 3's fixture is, and for a reason this check
+  # demonstrated the hard way: it was a hand-written list of the twelve values of the day, so when
+  # decisions.md D94 added three more required keys the shipped preflight — correctly — refused this
+  # fixture, `main`'s green check went red on a correct branch, and the run died before the scp. Part
+  # 7 reads its assertions off a run that REACHED THE END (D80), so a short fixture does not fail one
+  # assertion, it fails all of them, and the first reading of the log is "the deploy script broke".
+  : > "$1/secrets.env"
+  for k in "${REQUIRED_KEYS[@]}"; do printf '%s=x\n' "$k" >> "$1/secrets.env"; done
   printf 'HC_TAG=1.3.9\n'  > "$1/.env"
   printf 'HC_TAG=1.3.9\n'  > "$1/.env.previous"
   printf 'services: {}\n' > "$1/data-compose.yml"
@@ -1488,7 +1531,7 @@ else
     "the compose file upload (scp):SCP"
     "the ssh and compose-v2 gate:docker compose version"
     "secrets.env being there at all:test -s"
-    "each of the twelve values in secrets.env:grep -qE"
+    "each required value in secrets.env:grep -qE"
     "the three host networks:docker network inspect"
     "the five stores in the data tier:data-compose.yml"
     "the remote directory:mkdir -p"
@@ -1531,8 +1574,19 @@ else
   for label7 in "${!bare7[@]}"; do bad7+="; $label7"; done
   if [[ -n "$bad7" ]]; then
     err "$SCRIPT hands these remote invocations something other than the whole of SSH_OPTS, in order${bad7//;/,}. The array is '$(printf '%s' "$opts7" | tr '\037' ' ')'. An ssh with no ConnectTimeout waits 136s per attempt against a host that drops packets (measured) and the health gate makes 24 × one-per-service of them; one with no BatchMode can stop halfway waiting for a passphrase. The preamble's count cannot see this: removing the expansion from any eleven of the twelve leaves it at two and green. See decisions.md D78 §7, §15 and D80."
-  elif (( unknown7 == 0 )); then
-    ok "all ${#seen7[@]} remote invocation sites received the whole of SSH_OPTS, in order — asked of the arguments each site was handed, per site"
+  elif (( unknown7 == 0 )) && [[ -z "$missing7" ]]; then
+    # THE COUNT IS THE FILE'S SITE LIST, NOT THE RUN'S, AND THE `missing7` CONDITION IS NEW — D94's
+    # review, round 3. This line used to print `${#seen7[@]}` and fire whenever no site had been
+    # handed a bare invocation, INCLUDING on a run that reached only some of the sites: when D94's
+    # preflight refused this check's own short fixture and the deploy died before the scp, it printed
+    # `ok all 7 remote invocation sites received the whole of SSH_OPTS` for a run that covered 7 of
+    # 20. The aggregate was red — `missing7` had already erred about the other thirteen — so it was
+    # not a hole; it was an `ok` line asserting coverage it had not established, which is the same
+    # over-claim the window check's `and no other` was.
+    #
+    # So: the number comes from the enumerated sites, and the line does not appear at all on a run
+    # that did not reach them. An operator reading a log has "all 20" mean twenty.
+    ok "all ${#sites7[@]} remote invocation sites received the whole of SSH_OPTS, in order — asked of the arguments each site was handed, per site"
   fi
 fi
 

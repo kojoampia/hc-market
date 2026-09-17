@@ -38,7 +38,7 @@
 | **Source** | Provided by the subject at registration |
 | **Where** | Gateway service, MongoDB. `gateway/…/domain/User.java` |
 | **Retention** | **Split.** An *activated* account is not categorised — **see §6.1, this is a gap**. An account never activated is **deleted after 3 days**, automatically — §3.1 |
-| **Recipients** | None outside the platform |
+| **Recipients** | **An outbound mail relay, from 2026-09-17** (`decisions.md` D94). Activation and password-reset mail carries the sign-in name and is addressed to the email address, so whoever relays it processes both on our behalf. **No relay is configured on any system yet** — the provider has not been chosen (a budget decision, `decisions.md` D90 §7) — and a system with none configured refuses to start rather than accepting registrations it cannot answer. **Whoever is chosen is a processor and needs a contract and a §4 entry**; §6.7 carries that. Nothing else leaves the platform |
 
 ### 2.2 Taking and managing a booking
 
@@ -149,18 +149,33 @@ removed: it governed no data.
 | | |
 | --- | --- |
 | **What** | An account created but never activated |
-| **Deleted after** | **3 days**, swept daily at 01:00 UTC |
-| **Where** | `gateway/…/service/UserService.java:291` — `@Scheduled(cron = "0 0 1 * * ?")`, deleting `activated = false` accounts with an activation key older than three days |
+| **Deleted after** | **3 days**, swept daily at 01:00 in the running system's own time zone — `Etc/UTC` in every container we deploy, which is also Accra time |
+| **Where** | `gateway/…/service/UnactivatedAccountSweep.java` — a cron task registered through `SchedulingConfigurer`, deleting accounts that are `activated = false`, hold an activation key, and were **created** longer ago than the configured window (it filters on the creation date; an unactivated account with no key — one an administrator created for somebody — is left alone) |
 | **Data destroyed** | Sign-in name, first and last name, email address, password hash |
-| **Decided by** | **Nobody here.** It is JHipster's generated behaviour and was never a decision of this project |
+| **Decided by** | **The organisation, since 2026-09-17** (`decisions.md` D94). Until then: nobody here — it was JHipster's generated behaviour, a literal in a generated file, and was never a decision of this project |
+| **Configured by** | `healthconnect.accounts.unactivated-retention-days` / `…-sweep-cron`, from `HC_UNACTIVATED_ACCOUNT_RETENTION_DAYS` and `HC_UNACTIVATED_ACCOUNT_SWEEP_CRON`. Both blank on every system, so **3 days is what is applied**; a value that is set and unreadable, or zero, or negative, stops the service starting |
 | **Runs today** | Yes. Verified live: the quality gateway started 2026-09-11T21:22Z, so it has swept four times |
+| **Watched deleting** | Yes, since 2026-09-17 — at the boundary, against a real database, in `UnactivatedAccountSweepIT`: an account past the window is removed, one an hour inside it is not, an activated account is never touched however old it is, and an unactivated account with no activation key is left alone. Watched again on a live gateway, deleting one real account and leaving a recent one |
 
 Recorded because it destroys a real person's personal data on a timer, and because **this document
-asserted the opposite until 2026-09-15.** It is a *de facto* retention period for one class of account
-and it has never been put to counsel. Two things follow, both in backlog **NEW-47** and **NEW-56**: no
-activation mail can currently be sent on any estate, so the three days cannot be survived; and §6.1's
-"accounts have no retention category" is not quite right — unactivated ones have one, imposed by a
-framework default.
+asserted the opposite until 2026-09-15.** It was a *de facto* retention period for one class of account
+and it has still never been put to counsel — what changed on 2026-09-17 is that it is a **stated** one:
+the same three days, moved out of a generated file into configuration, reported at
+`GET /management/info` as `accounts.unactivatedRetentionDays`, and stated to the data subject in
+`docs/privacy-notice.md` §7.1. A check in CI refuses a build whose code and whose two documents
+disagree about the number.
+
+**The number was deliberately not changed.** `decisions.md` D94 §2 records why: the objection D91
+raised was that an undecided framework default was destroying personal data unrecorded, not that three
+days is wrong, and lengthening the window holds a name and an email address for longer under a position
+nobody has taken. Extending it, and stopping the deletion altogether, are both argued there as rejected
+alternatives — the second one because it would make §6.1's gap bigger rather than smaller.
+
+Two things that followed from the old entry are **closed**: the activation mail could not be sent on any
+system, so the three days could not be survived (**NEW-47**, fixed — mail is now required before a
+system can be deployed and a system that cannot send it refuses to start); and §6.1's "accounts have no
+retention category" remains not quite right, because unactivated ones have one — now by decision rather
+than by default.
 
 > **⚠ NOTHING ENFORCES ANY OF THIS — but not for the reason this document gave until 2026-09-15.**
 > It said *"there is no scheduler in this estate"*, and that is false: `@EnableScheduling` is active in
@@ -179,6 +194,12 @@ Production is intended to run on a virtual server at `199.247.5.252`, outside Gh
 processing above would therefore involve a transfer. **See `docs/data-transfer-basis.md`** — a separate
 draft. The host also runs the other five BridgeCare services, so the same transfer affects them.
 
+**A second transfer arrives with the mail relay, and it is not chosen yet** (§2.1, `decisions.md` D94).
+Every activation and password-reset message carries a sign-in name to an email address, through
+whoever relays it; most candidate providers are outside Ghana. The provider is a budget decision that
+has not been taken (`decisions.md` D90 §7), which means this is the rare case where the
+data-protection position can be settled **before** the processing starts rather than after. §6.7.
+
 ## 5. Security measures
 
 | Measure | State |
@@ -190,7 +211,9 @@ draft. The host also runs the other five BridgeCare services, so the same transf
 | Each service owns its own database instance | **Implemented** |
 | Databases unreachable from other products | **Implemented** — they join no shared network |
 | Payment provider callbacks authenticated by signature over the raw body | **Implemented** (HMAC-SHA512, constant-time comparison) |
-| Retention enforcement | **Not implemented** — §3. The scheduling capability exists and is running; the sweep does not — §3.1, D91 |
+| Retention enforcement | **Not implemented** — §3. The scheduling capability exists and is running, and one sweep now runs on it: unactivated accounts, §3.1, by decision since `decisions.md` D94. The three configured periods still have no sweep behind them — D91, NEW-52 |
+| Rate limits on the public account paths | **Provided, not installed** (`decisions.md` D94). Registration, password-reset-request and sign-in are capped per source address at both edges — 10/min and 1/s — which is what stops open self-registration being an account-creation and mail-sending amplifier. The configuration is in this repository; `/etc/nginx` belongs to the architect, so it is installed by a person and **is not in force on any system until they do** |
+| A registration cannot be answered if mail cannot be sent | **Implemented** (`decisions.md` D94). A system with no mail configuration refuses to start rather than answering 201, discarding the message and deleting the account three days later |
 | Audit log of staff access to customer records | **Not implemented.** §6.3 |
 
 ## 6. Known gaps, each needing a decision or work
@@ -200,13 +223,18 @@ draft. The host also runs the other five BridgeCare services, so the same transf
 neither a financial record nor operational data, and a review is published indefinitely by design.
 **Needs counsel:** whether an account and a published review need stated periods, and what they are.
 
-**One correction since 2026-09-15:** an *unactivated* account does have a period — three days, applied
-automatically, never decided here (§3.1). So the question to counsel is sharper than it was: the
-organisation has an unexamined 3-day rule for one class of account and no rule at all for the rest.
+**One correction since 2026-09-15:** an *unactivated* account does have a period — three days (§3.1).
+Since 2026-09-17 it is one the organisation has *taken* rather than inherited (`decisions.md` D94), and
+the question to counsel is sharper than it was rather than answered: **the organisation now holds a
+3-day rule for one class of account, has never examined it, and has no rule at all for the rest.**
+D94 §5 also asks whether "never delete" should be expressible at all, and deliberately does not answer
+it — it is the one option that would make this gap bigger.
 
 ### 6.2 Retention is not enforced
-§3. Engineering work — a scheduler this estate does not have. It is the largest gap in this record and
-it is stated in the notice as well.
+§3. Engineering work, and **not** a scheduler this estate lacks — that claim was false and is corrected
+in §3.1's box (`decisions.md` D91). Two scheduled tasks already run, one of them a deletion of personal
+data (§3.1), so what is missing is a sweep for the three configured periods rather than the ability to
+run one. It is the largest gap in this record and it is stated in the notice as well.
 
 ### 6.3 No audit log of staff access
 A member of the brokerage desk can read any customer's records and perform an erasure. The erasure is
@@ -226,3 +254,14 @@ and on what terms.
 ### 6.6 This record covers one of six services
 The other five process customer data on the same host. **Needs a decision:** one record for the
 platform, or six.
+
+### 6.7 The mail relay is a processor nobody has chosen
+New on 2026-09-17, `decisions.md` D94. §2.1 now names an outbound relay as a recipient of a sign-in
+name and an email address, and §4 as a probable transfer — but **no provider is configured on any
+system**, because choosing one is a budget decision that has not been taken (`decisions.md` D90 §7).
+
+That order is unusually favourable and worth using rather than regretting: the processing has not
+started, so the contract, the transfer basis and the retention the provider applies to message logs can
+all be settled before the first message is sent. **Needs a decision, then a processor entry here.**
+Until one exists, no system can be deployed that would accept a registration — a system with no mail
+configuration refuses to start.

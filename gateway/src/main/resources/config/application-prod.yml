@@ -43,9 +43,29 @@ spring:
         prefer-ip-address: true
       host: localhost
       port: 8500
+  # --- NO DEFAULT, AND THAT IS THE FIX (decisions.md D94, backlog NEW-47) -----------------------
+  #
+  # This was `host: localhost` and `port: 25`, which is a value that looks configured and mails
+  # nowhere: inside a container that is the container's own loopback, and no compose file in any of
+  # the three environments passed a single SPRING_MAIL_* variable. Registration answers 201 without
+  # waiting for the mail, MailService catches MailException and logs WARN, and the unactivated
+  # account is then deleted by the sweep — so a customer registered, received nothing, could never
+  # log in, and disappeared.
+  #
+  # Both placeholders are DELIBERATELY DEFAULTLESS. An unresolved placeholder fails the context while
+  # Spring evaluates the mail autoconfiguration's condition, and the message names the variable —
+  # which is the loudest available failure and the opposite of what a default does. A default is
+  # exactly how `http://my-server-url-to-change` survived in the base-url below.
+  #
+  # docker-compose.prod.yml requires both as `:?` variables, so a production deploy refuses to
+  # interpolate before a container is created; deploy-prod.sh checks both by name on the host before
+  # it touches the stack; and service/MailDeliveryGuard refuses the values a placeholder cannot see
+  # (present-and-empty, and loopback under prod). The port is required rather than defaulted because
+  # 25, 465 and 587 are three different sets of assumptions and a wrong one fails exactly as
+  # silently as a wrong host.
   mail:
-    host: localhost
-    port: 25
+    host: ${SPRING_MAIL_HOST}
+    port: ${SPRING_MAIL_PORT}
   mongodb:
     uri: mongodb://localhost:27017/healthconnectGateway
   thymeleaf:
@@ -95,7 +115,24 @@ jhipster:
         token-validity-in-seconds: 86400
         token-validity-in-seconds-for-remember-me: 2592000
   mail: # specific JHipster mail property, for standard properties see MailProperties
-    base-url: http://my-server-url-to-change # Modify according to your server's URL
+    # REQUIRED, with no default — decisions.md D94. This line read
+    # `base-url: http://my-server-url-to-change`, JHipster's own placeholder and the only occurrence
+    # of that string in any .yml in this repository. It is the origin every activation and
+    # password-reset link is composed against, so a wrong one produces a mail that is DELIVERED and
+    # whose link is dead — the one value here that fails silently after delivery works, which is why
+    # it must be stated rather than defaulted. MailDeliveryGuard refuses the placeholder on every
+    # profile, refuses a blank one under prod, and refuses anything that is not an absolute http(s)
+    # URL without a trailing slash.
+    #
+    # It points at the ORIGIN A PERSON BROWSES, not at the API: the templates compose
+    # `${baseUrl}/account/activate?key=…`, which is a frontend route. This estate has no frontend yet
+    # (NEW-48), so today that link answers 401 — MEASURED, and not the 404 the first version of this
+    # comment reasoned its way to: reactive Spring Security denies an exchange no authorizeExchange
+    # rule matched, so a person following it is asked to authenticate in order to reach the page that
+    # exists to let them authenticate. The key in it activates the account perfectly well through
+    # `GET /api/activate?key=…`, which answers 200. Named in D94 §5 and opened as NEW-60 rather than
+    # papered over by rewriting a generated template.
+    base-url: ${JHIPSTER_MAIL_BASE_URL}
   logging:
     use-json-format: false # By default, logs are not in Json format
     logstash: # Forward logs to logstash over a socket, used by LoggingConfiguration

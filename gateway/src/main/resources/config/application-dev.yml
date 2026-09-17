@@ -54,9 +54,16 @@ spring:
           - git-branch=${git.branch:}
       host: localhost
       port: 8500
+  # The local mail catcher, not a real relay — decisions.md D94, backlog NEW-47. Both compose files
+  # run mailpit and point SPRING_MAIL_HOST at it; these defaults are for `./mvnw` on a workstation,
+  # where the catcher is reached on loopback.
+  #
+  # The port default is 1025 (mailpit's, and every catcher's) rather than the generated 25, which
+  # needs root to bind and has therefore never worked for anybody. `prod` requires both with no
+  # default at all, and MailDeliveryGuard refuses loopback there.
   mail:
-    host: localhost
-    port: 25
+    host: ${SPRING_MAIL_HOST:localhost}
+    port: ${SPRING_MAIL_PORT:1025}
   messages:
     cache-duration: PT1S # 1 second, see the ISO 8601 standard
   mongodb:
@@ -99,7 +106,10 @@ jhipster:
         token-validity-in-seconds: 86400
         token-validity-in-seconds-for-remember-me: 2592000
   mail: # specific JHipster mail property, for standard properties see MailProperties
-    base-url: http://127.0.0.1:8080
+    # Overridable, because the dev and quality estates publish the gateway on a port this default does
+    # not know (HC_GATEWAY_PORT, GATEWAY_PORT) and a link to :8080 there points at another product's
+    # application. `prod` requires it with no default — decisions.md D94.
+    base-url: ${JHIPSTER_MAIL_BASE_URL:http://127.0.0.1:8080}
   logging:
     use-json-format: false # By default, logs are not in Json format
     logstash: # Forward logs to logstash over a socket, used by LoggingConfiguration

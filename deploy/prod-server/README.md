@@ -5,10 +5,11 @@ nginx edge, and the three scripts that provision, back up and restart the estate
 
 ```
 compose.yml                       the five stores — 4x PostgreSQL 17, 1x MongoDB 8
-secrets.env.example               the eleven required values, every one of them empty
+secrets.env.example               the fifteen required values, every one of them empty
 market.abofonsa.com.conf          the pre-Certbot vhost. Installed ONCE, then owned by certbot
 hc-market-app.conf                the snippet it includes. This is the file that ships on a change
 nginx-conf.d/hc-market-webhook.conf   the payment webhook's rate-limit zone (http scope)
+nginx-conf.d/hc-market-account.conf   the account paths' two zones and their maps (http scope, D94)
 infra.sh                          creates hcmarketnet; refuses if infranet or monitoring is absent
 backup.sh                         dumps all five databases; prunes by RETAIN_DAYS
 start                             brings the stores up, then the applications. NOT a deploy
@@ -249,7 +250,7 @@ umask 077 && cat > secrets.env      # paste, filled in, then Ctrl-D
 chmod 600 secrets.env
 ```
 
-Three of the eleven need saying out loud.
+Four of the fifteen need saying out loud.
 
 **`JWT_BASE64_SECRET` is generated fresh and is NOT the platform key.**
 
@@ -275,6 +276,34 @@ as those rows are concerned: messaging stops recognising its own erased subjects
 it. If this host has ever run an erasure, the existing value is the only correct one and it cannot be
 recovered from the data — so it belongs in whatever the organisation uses for key escrow, and this is
 the only line in the file for which that is true.
+
+**The three mail values are the difference between having customers and appearing to.**
+`HC_MAIL_HOST`, `HC_MAIL_PORT` and `HC_MAIL_BASE_URL` (`decisions.md` D94, backlog NEW-47). Until
+then no compose file in any environment passed a single `SPRING_MAIL_*`, so production would have run
+on `application-prod.yml`'s committed `localhost:25` — the gateway container's own loopback — with
+`jhipster.mail.base-url` still set to JHipster's `http://my-server-url-to-change`.
+
+Every step of what follows is generated code doing what it was generated to do: `POST /api/register`
+is `permitAll`, answers **201 without waiting for the mail**, `MailService` catches the failure and
+logs one **WARN** line, and the unactivated account is deleted by the sweep three days later. So a
+customer registers, receives nothing, cannot log in, and disappears — with nothing red anywhere and
+no test in the estate able to see it (`MailServiceIT` mocks `JavaMailSender`).
+
+`HC_MAIL_BASE_URL` is the one of the three that fails **after** delivery works: a wrong host sends a
+message the relay accepts and the customer receives, carrying a link to somewhere that does not
+answer. It names the origin a **person browses**, not the API — the mail composes
+`${baseUrl}/account/activate?key=…`, a frontend route — and **this estate has no frontend yet**
+(NEW-48), so that link answers **401** today — measured, not 404: reactive Spring Security denies an
+exchange no rule matched, so somebody following it is asked to authenticate in order to reach the page
+that exists to let them. The key in it activates the account through `GET /api/activate?key=…`, which
+answers **200**. Backlog **NEW-60**.
+
+The credentials, `HC_MAIL_USERNAME` and `HC_MAIL_PASSWORD`, are **optional** and are not in
+preflight's list: a relay on this host's own network authenticates nobody, and refusing a deploy over
+a value an estate legitimately does not have is how a required variable becomes a placeholder
+somebody invents. `GET /management/info` reports `mail.configured`, the relay, the base-url and
+`mail.authenticated` — the smoke test **fails the deploy** on the first of those and prints the rest
+for a human.
 
 **The Mongo password must be hex, not base64.** It is interpolated into a `mongodb://` URI where
 base64's `+`, `/` and `=` are not legal unescaped: the `/` ends the userinfo section and the driver
@@ -329,22 +358,43 @@ stages them; installing, symlinking, `nginx -t` and reloading are done by a pers
 **Read the installed file before you overwrite anything.** The installed copy drifts from the
 repository's, and sometimes deliberately.
 
-The zone file goes **first**. `limit_req_zone` is `http`-scope, so enabling the snippet without it
-fails `nginx -t` with "unknown limit_req zone" — and a failed test refuses the reload for **every
-site on this host**, not only this one.
+**BOTH zone files go first, and there are two of them since `decisions.md` D94.**
+`limit_req_zone` and `map` are `http`-scope, so enabling the snippet without them fails `nginx -t` —
+and a failed test refuses the reload for **every site on this host**, not only this one. The snippet
+names three zones: `payment_webhook` from `hc-market-webhook.conf`, and `hc_market_login` plus
+`hc_market_account` from `hc-market-account.conf`.
+
+What it fails with was **measured** on nginx/1.28.3, with the account file absent and the snippet's
+`limit_req` lines in place — and it is not the message the older headers here quote:
+
+```
+nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+[emerg] zero size shared memory zone "hc_market_login"
+nginx: configuration file /etc/nginx/nginx.conf test failed
+```
+
+"unknown limit_req zone" is what older nginx said, and may be what the production host says — the
+version on the workstation is not the version there. **Syntax is ok and the test fails** either way,
+which is the half to remember.
 
 ```bash
 scp deploy/prod-server/nginx-conf.d/hc-market-webhook.conf webserver:/tmp/
+scp deploy/prod-server/nginx-conf.d/hc-market-account.conf webserver:/tmp/
 scp deploy/prod-server/hc-market-app.conf                  webserver:/tmp/
 scp deploy/prod-server/market.abofonsa.com.conf            webserver:/tmp/
 
 ssh webserver
 sudo mv /tmp/hc-market-webhook.conf   /etc/nginx/conf.d/
+sudo mv /tmp/hc-market-account.conf   /etc/nginx/conf.d/
 sudo mv /tmp/hc-market-app.conf       /etc/nginx/snippets/
 sudo mv /tmp/market.abofonsa.com.conf /etc/nginx/sites-available/hc-market.conf
 sudo ln -sfn /etc/nginx/sites-available/hc-market.conf /etc/nginx/sites-enabled/hc-market.conf
 sudo nginx -t && sudo systemctl reload nginx
 ```
+
+**Re-shipping the snippet alone is only safe while the zones it names are already installed.** A
+release that adds a `limit_req` to the snippet is a two-file change, in this order, or the reload it
+ends with takes every other site on the host down with it.
 
 Then TLS, which **rewrites the vhost in place**:
 
@@ -420,7 +470,7 @@ skips (`○ [dry-run] … NOT contacted`) rather than printing a tick beside a c
 `--rollback --dry-run` is safe too; it used to read the previous tag over ssh, which is a dry run
 touching the host, and no longer does.
 
-What the deploy does, in order: preflight (registry login, ssh, **all eleven `secrets.env` keys by
+What the deploy does, in order: preflight (registry login, ssh, **all fifteen `secrets.env` keys by
 name**, all three networks, **and the five stores running**) → verify the images are in the registry
 → upload the compose file and generate `.env`, keeping the old one as `.env.previous` → pull →
 `up -d` → health gate → smoke test. If the gates fail it **rolls back by itself** and exits non-zero.
@@ -585,7 +635,7 @@ curl -sI https://market.abofonsa.com/services/healthconnectcatalog/api/professio
 | symptom | likely cause |
 |---|---|
 | `502` from nginx, gateway healthy | the port is written twice and they disagree — `hc-market-app.conf` against `HC_GATEWAY_PORT` |
-| every service dies at `up` naming a variable | a key missing from `secrets.env`. All eleven are checked in preflight *before* the stack is touched, so this means someone ran `docker compose` by hand |
+| every service dies at `up` naming a variable | a key missing from `secrets.env`. All fifteen are checked in preflight *before* the stack is touched, so this means someone ran `docker compose` by hand |
 | `UnknownHostException: hc-market-catalog-db` | the app container is not on `hcmarketnet`, or `infra.sh` was never run |
 | services healthy, nothing ever happens | **the broker.** A missing one is silent: everything produced goes nowhere. `MessageDeliveryException` on a timer is the *only* signal — its absence after a change to how the broker is addressed is worth checking for |
 | the erasure desk answers `503` | `HC_PRIVACY_PEPPER` is absent. The services start deliberately rather than refusing to boot, so that an outage behind one value does not have somebody paste in a plausible one |
@@ -652,7 +702,7 @@ highest-value item in the outstanding list below: an unrestored backup is a beli
 
 ## Rotating a credential
 
-**Read this before changing any value in `secrets.env`.** Three of the eleven behave differently and
+**Read this before changing any value in `secrets.env`.** Three of the fifteen behave differently and
 two of them are traps.
 
 **`HC_PRIVACY_PEPPER` — do not.** Nothing re-keys an alias already written. If anything has ever been

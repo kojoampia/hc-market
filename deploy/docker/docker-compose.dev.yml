@@ -225,6 +225,36 @@ services:
       timeout: 5s
       retries: 20
 
+  # --- THE MAIL CATCHER (decisions.md D94, backlog NEW-47) ----------------------------
+  #
+  # No compose file in any of the three environments passed a single SPRING_MAIL_* until D94, and
+  # MailServiceIT mocks JavaMailSender — so no message has ever left this estate. Registration
+  # answered 201, the account was written unactivated, the send failed against the container's own
+  # loopback with one WARN line, and the sweep deleted the account three days later.
+  #
+  # `dev-mailpit`, like every other application service here, because compose publishes a service
+  # name as a DNS alias on every network it joins and `mailpit` is a name a sibling product could
+  # claim. It stays on `default` (off hcnet) for the same reason the databases do — and one more:
+  # its SMTP port is deliberately NOT published, since an unauthenticated SMTP listener reachable
+  # from the LAN is an open relay. The web UI is, so a developer can read what was sent:
+  #     http://127.0.0.1:8025   (HC_MAILPIT_HTTP_PORT)
+  dev-mailpit:
+    image: axllent/mailpit:v1.21
+    container_name: hc-market-dev-mailpit
+    restart: unless-stopped
+    networks: [default]
+    ports:
+      - '${HC_MAILPIT_HTTP_PORT:-8025}:8025'
+    environment:
+      MP_MAX_MESSAGES: 500
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+    healthcheck:
+      test: ['CMD', '/mailpit', 'readyz']
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
   catalog-db: &postgres
     image: postgres:17
     environment:
@@ -299,6 +329,29 @@ services:
       # gateway dies in Mongock with "Connection refused ... localhost:27017" -- a message that points
       # at the database, not at the variable name. The sibling stacks use SPRING_MONGODB_URI too.
       SPRING_MONGODB_URI: mongodb://gateway-db:27017/healthconnectGateway
+      # --- MAIL: THE CATCHER, NOT A RELAY (decisions.md D94, backlog NEW-47) ------------------
+      #
+      # The container name, not `mailpit`, for the reason every other address in this file is a
+      # container name: a short name resolves across every network a container is on, and this stack
+      # shares hcnet with four others.
+      #
+      # HC_MAIL_BASE_URL MUST MOVE WITH HC_GATEWAY_PORT. The link in the mail is composed against
+      # this origin, so an estate published on 18200 and mailing links to :8080 sends people at
+      # whatever else this workstation is running there — the same "override them together" rule the
+      # ports and the database containers already have (D46).
+      SPRING_MAIL_HOST: ${HC_MAIL_HOST:-hc-market-dev-mailpit}
+      SPRING_MAIL_PORT: ${HC_MAIL_PORT:-1025}
+      SPRING_MAIL_USERNAME: ${HC_MAIL_USERNAME:-}
+      SPRING_MAIL_PASSWORD: ${HC_MAIL_PASSWORD:-}
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH: ${HC_MAIL_SMTP_AUTH:-false}
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE: ${HC_MAIL_SMTP_STARTTLS:-false}
+      JHIPSTER_MAIL_BASE_URL: ${HC_MAIL_BASE_URL:-http://127.0.0.1:8080}
+      # The estate's retention policy for an account that is never activated — three days by
+      # default, JHipster's generated figure, kept deliberately (decisions.md D94 §2). Blank means
+      # the default; passed through so the variable this repository documents is not one that
+      # silently does nothing (D46, D50).
+      HEALTHCONNECT_ACCOUNTS_UNACTIVATED_RETENTION_DAYS: ${HC_UNACTIVATED_ACCOUNT_RETENTION_DAYS:-}
+      HEALTHCONNECT_ACCOUNTS_UNACTIVATED_SWEEP_CRON: ${HC_UNACTIVATED_ACCOUNT_SWEEP_CRON:-}
       # No GATEWAY_ADMIN_PASSWORD here, and its absence is the decision rather than an omission —
       # decisions.md D61. This stack runs `test,dev`, so the seeder creates `admin` and `user` with
       # passwords derived from their own logins by a rule written in InitialSetupMigration — in a

@@ -81,16 +81,24 @@ production. Phases are sequential where stated and their items are independent w
 
 | phase | what | items | depends on |
 |---|---|---|---|
-| **1** | a person can hold an account | NEW-47 | nothing — **start here** |
+| **1** | a person can hold an account | ~~NEW-47~~ **DONE** (D94) | — |
 | **2** | the application | NEW-48 | phase 1 for anything behind a token; D90 §3 for its shape |
 | **3** | the promises the API already makes | NEW-49, NEW-50, NEW-51, NEW-52, NEW-53 | nothing; cheaper with phase 2's screens |
 | **4** | money for real | WP-13, NEW-54 | Act 987, provider credentials, a callback route |
 | **5** | deploy | WP-18, WP-19, NEW-55 | the four gates below |
 
-**Phase 1 is first and it is not a judgement call.** The gateway's account lifecycle is generated,
-unconfigured, and has never been exercised by anybody: a customer registers, is told to check their
-email, receives nothing, can never log in, and is deleted three days later — `201 Created` and one
-`WARN` line. NEW-47. Every screen in phase 2 that is not a public read sits behind it.
+**Phase 1 is DONE as of 2026-09-17 — NEW-47, `decisions.md` D94.** It was first and it was not a
+judgement call: the gateway's account lifecycle was generated, unconfigured and had never been
+exercised by anybody, so a customer registered, was told to check their email, received nothing, could
+never log in, and was deleted three days later — `201 Created` and one `WARN` line. Mail is now
+required before any environment can be deployed, the three days are a stated and configurable policy
+rather than a generated literal, the three public account paths have ceilings, and **the whole path was
+walked for real** against a live gateway and a real SMTP catcher. One thing it could not close and one
+it opened: **no message has reached a real provider**, because none is chosen (D90 §7, a budget item),
+and the link in the mail points at a frontend route nothing serves yet — **NEW-60**, which is phase 2's
+to close.
+
+**Phase 2 is therefore unblocked for everything behind a token.**
 
 **Phase 3 is not first, deliberately.** None of its five items blocks the frontend, and each is
 cheaper to build against a screen that exercises it. They are all *claims the estate currently makes
@@ -105,7 +113,7 @@ by IP, `market.abofonsa.com` pointed at nothing. D90 §2.
 **The four gates a first production deploy may not go without** (D90 §4) — everything else here may
 follow a deploy:
 
-1. a working account lifecycle — **NEW-47**;
+1. a working account lifecycle — **NEW-47, closed 2026-09-17** (D94). What remains of this gate is not engineering: **an SMTP provider has to be chosen and paid for**, because an environment with no mail configuration now refuses to start rather than swallowing registrations;
 2. WP-19's blocking six, in `deploy/prod-server/README.md` — ssh target, port 8086, `infranet` and
    `monitoring`, `secrets.env`, DNS, nginx and certbot;
 3. **a restored backup** — no dump this repository produces has ever been restored, which makes every
@@ -3821,7 +3829,7 @@ assertion is its sole carrier.
 
 ---
 
-## NEW-47 — a customer who registers can never log in, and is deleted three days later · READY
+## NEW-47 — a customer who registers can never log in, and is deleted three days later · DONE (D94)
 
 **Phase 1, and the first thing to pick up.** Opened by D90 §2. Nothing in this repository has ever
 recorded it, which is the point: every part of it is generated code doing exactly what it was generated
@@ -3877,6 +3885,62 @@ the mail works.
 
 **Blocked on one outside fact** — an SMTP provider and credentials (D90 §7). Everything else is
 engineering and can be built against a local catcher while that is obtained.
+
+---
+
+### CLOSED 2026-09-17 — `decisions.md` D94
+
+**What was built**, against the five "done means" bullets above:
+
+- **the three mail values, in all three compose files.** `HC_MAIL_HOST`, `HC_MAIL_PORT` and
+  `HC_MAIL_BASE_URL` are `:?` in `docker-compose.prod.yml` and defaultless placeholders in
+  `application-prod.yml`; `deploy-prod.sh` checks all three by name on the host before it touches the
+  stack (`CONNECTION_KEYS`, now fifteen values); dev and quality default them at a **mailpit** catcher
+  whose SMTP port is deliberately unpublished. The username, password and the two STARTTLS properties
+  are **optional** — a relay may need none of them, and D94 §3 argues why that is not laxness.
+  `application-prod.yml`'s `http://my-server-url-to-change` is gone and CI refuses its return;
+- **the deletion is a decision now.** `healthconnect.accounts.unactivated-retention-days`, **default
+  3**, so a default estate behaves byte-identically to every estate that has ever run. The architect
+  ratified keeping the number and making it configurable; D94 §2 argues the two rejected shapes
+  (extend it, stop deleting) rather than listing them. `@Scheduled` is out of the generated
+  `UserService` and the schedule is in a new `UnactivatedAccountSweep` via `SchedulingConfigurer` —
+  `0` and a negative window refuse startup, and there is deliberately no "never delete";
+- **`limit_req` on the three paths, at both edges** — `hc_market_login` (1/s, burst 5) and
+  `hc_market_account` (10/min, burst 3), keyed through a `map` so the single `location /` is not
+  duplicated, which is hc-patient's pattern and its reasoning. Production's zones are a new
+  `deploy/prod-server/nginx-conf.d/hc-market-account.conf`; quality's are in `host-site.conf` itself,
+  because that file is a whole site at http scope. **Provided, printed, not installed** — `/etc/nginx`
+  is the architect's;
+- **exercised end to end, for real.** Registration → the message in the catcher → activation → sign-in,
+  against a live gateway from this branch, a real MongoDB and a real SMTP catcher on this workstation:
+  **`201`**, a message whose link carries the activation key, **`200` from `GET /api/activate`**, and a
+  token from `/api/authenticate` — where the same credentials had answered **500** before activation,
+  which is NEW-61. The sweep was then watched deleting a real unactivated account and leaving a recent
+  one alone;
+- **both privacy documents amended in the same commit** — `privacy-notice.md` §7.1 (the deletion is a
+  policy we hold; the confirmation mail is no longer a known defect; contact us if it does not arrive)
+  and `processing-record.md` §3.1, §2.1's recipients, §4's second transfer, §5's three new rows and a
+  new §6.7. CI refuses a build whose code and whose two documents disagree about the number.
+
+**Seven guards, 22 driven states**: `AccountRetentionUnitTest`, `UnactivatedAccountSweepUnitTest`,
+`UnactivatedAccountSweepIT`, `MailDeliveryGuardUnitTest`, `MailDeliveryInfoContributorUnitTest`,
+`ThereIsOneAccountSweepTest` (ArchUnit — no `@Scheduled` anywhere in the gateway, which is what a
+regeneration brings back) and `.github/checks/account-lifecycle-guards.sh` with its own test.
+Gateway: **97 unit / 140 IT / 0 Checkstyle**, from 67/135.
+
+**What it did NOT close, and it is the same outside fact as before:** no message has reached a real
+provider, because none is chosen. That is D90 §7's budget item. The difference is that an environment
+with no mail configuration now **refuses to start** rather than answering 201 and discarding the
+registration, so the gap can no longer be deployed through.
+
+**Three things surfaced rather than taken, and D94 §5 is titled for all three**: whether
+`/api/activate` and `/api/account/reset-password/finish` — also `permitAll` — should be rate-limited
+too (recommended; hc-patient limits all four of its account paths, and CI pins the exclusion as an
+exact set so the answer has to be written down); whether the window should be able to mean "never
+delete", which is a sentinel rather than a number and would make `processing-record.md` §6.1's gap
+bigger; and whether a registration whose mail fails should still answer 201 (it does, unchanged).
+**A fourth was found by the walk and is NEW-61**, which is not a surfaced question but a measured
+defect.
 
 ---
 
@@ -4604,6 +4668,254 @@ worth naming before anyone starts:
 only because the integration tests run sequentially, and the class javadoc says so.
 
 **Not blocked.** No decision, no outside fact.
+
+---
+
+## NEW-60 — the activation link points at a page nothing serves · READY
+
+**Opened by NEW-47's own walk, 2026-09-17**, `decisions.md` D94 §5. Small, and it is the last step
+between "the mail arrives" and "a person can use it".
+
+`templates/mail/activationEmail.html` composes the link as `${baseUrl}/account/activate?key=…` and
+`passwordResetEmail.html` as `${baseUrl}/account/reset/finish?key=…` — **frontend routes**, which is
+the right convention and is what `JHIPSTER_MAIL_BASE_URL` names. Note that the second one is not the
+API's path with the origin changed: the API is `POST /api/account/reset-password/finish`, so the two
+differ by more than a prefix and a screen has to know both. This estate has no frontend (**NEW-48**), so the origin an
+operator can honestly put there is the API's own edge, where `/account/activate` matches no route and
+answers **401**.
+
+**401 and not 404, and the first draft of this item said 404 twice** — reasoned from "no such path"
+rather than measured, and corrected by NEW-47's review. Reactive Spring Security *denies* an exchange
+that no `authorizeExchange` rule matched (D74 measured the same default from the other direction), so
+what a person following the link meets is a credential challenge for the page that exists to let them
+authenticate. That is worse than a 404 for a customer and identical for a prober.
+
+**Measured during NEW-47's walk**, against a live gateway with a real catcher:
+
+| | |
+| --- | --- |
+| the link in the message | `http://127.0.0.1:18907/account/activate?key=l7WERmeOHkbVw8FG6znc` |
+| following it, as a person would | **401** — not 404. Reactive Spring Security denies an exchange no `authorizeExchange` rule matched (D74 measured the same default), so the estate answers a *credential challenge* for a link it told somebody to click |
+| `GET /api/activate?key=<the same key>` | **200**, and the account is activated |
+| `POST /api/authenticate` after that | **200 with a token** |
+
+**The 401 rather than a 404 is the part to keep**, and it was written here as a 404 from reasoning
+before it was measured: a person following the link is asked to authenticate in order to reach the
+page that exists to let them authenticate. There is no wording of that a customer can act on.
+
+So the lifecycle works and the mail is one hop short of being usable by a person who is not holding a
+terminal. Nobody is harmed today — no estate can send a message at all until a provider is chosen
+(D90 §7) — which is exactly why this is an item rather than a patch: the first person to receive one
+of these should not be the one who finds this.
+
+**Why the generated template was NOT edited in NEW-47.** Pointing it at `/api/activate` would make
+the link work today and be wrong the day NEW-48 lands: a person clicking it would get a bare `200`
+with an empty body and no page, and JHipster's convention — which the frontend will implement — is the
+SPA route. The template is also a generated file, so the edit would be discarded by a regeneration
+while looking permanent.
+
+**The fix, therefore, is a screen and belongs with phase 2**: NEW-48 stage B or C serves
+`/account/activate` and `/account/reset/finish` — the two routes the shipped templates actually
+compose, measured out of two real messages rather than read off the templates — calls
+`GET /api/activate` and `POST /api/account/reset-password/finish` behind them, and
+`JHIPSTER_MAIL_BASE_URL` then names the frontend's origin, which is what it was always for.
+
+**Until then, two things are true and both are written down where they will be read.**
+`deploy/prod-server/secrets.env.example`, `deploy-prod.sh`'s hint for `HC_MAIL_BASE_URL`,
+`quality/compose.yml`, `application-prod.yml` and `deploy/prod-server/README.md` all say that the link
+answers 401 and that the key in it activates the account through `GET /api/activate`. An operator
+activating an account for somebody does it with the key out of the link.
+
+**Five of those said 404 for one commit**, because the correction reached this item's table and
+nothing else — the house failure mode, inside the commit that made the measurement. `deploy-prod.sh`'s
+copy is the one that mattered: it is **printed to a production operator** during preflight, and it is
+byte-embedded in the spec's Appendix B, where `sync-appendices.sh --check` was **green over the wrong
+sentence in both places**. That check verifies byte-identity, not truth, and this is the first time
+that limit has cost anything.
+
+**Not blocked.** It needs NEW-48 to exist, and nothing else.
+
+---
+
+## NEW-61 — an unactivated login is identifiable by anyone, with no password, and answers 500 to its owner · READY, and a decision with it
+
+**Opened by NEW-47's walk, 2026-09-17; corrected the same day by NEW-47's review, and the correction
+is the item.** The first version of this entry called the disclosure *"a narrow oracle (it needs the
+password)"*. **It does not need the password**, which makes it an unauthenticated enumeration oracle
+rather than a curiosity — and the first version therefore invited the architect to weigh option 2's
+cost against a status quo it described as narrower than option 2, when the status quo is **wider**.
+
+**The mechanism, read in code rather than inferred from the statuses.**
+`DomainUserDetailsService.createSpringSecurityUser` throws `UserNotActivatedException` **inside the
+lookup's `.map()`**, and `UserDetailsService.findByUsername` is called by the authentication manager
+*before* `BCryptPasswordEncoder` sees the request. So the outcome is decided by the lookup alone and
+the supplied password cannot affect it. `ExceptionTranslator:111-118` then maps every
+`AuthenticationException` to the title *"Unauthorized"* and the detail *"Invalid credentials"* — under
+a comment reading *"Ensure no information about existing users is revealed via failed authentication
+attempts"* — while taking the **status** from `toStatus(ex)`, and `UserNotActivatedException` is a
+custom `AuthenticationException` with no `@ResponseStatus`, so it falls through to **500**.
+
+**Measured live, twice by two people, on fresh accounts** (`POST /api/authenticate` unless noted):
+
+| what was sent | status | detail |
+| --- | --- | --- |
+| unactivated login, **wrong** password | **500** | `Invalid credentials` |
+| unactivated login, **right** password | **500** | `Invalid credentials` |
+| unactivated account probed **by its email address**, any password | **500** | `Invalid credentials` |
+| activated login, wrong password | 401 | `Invalid credentials` |
+| a login that does not exist | 401 | `Invalid credentials` |
+| an email address that does not exist | 401 | `Invalid credentials` |
+| activated login, right password | 200 | a token |
+| `POST /api/account/reset-password/init`, **known** address | 200 | — |
+| `POST /api/account/reset-password/init`, **unknown** address | 200 | — |
+
+**Three facts follow, and only the first was in the original entry.**
+
+1. **A customer meets a 500 that says their password is wrong.** Somebody who registers, does not
+   click the link, and tries to sign in is told the platform is broken *and* that their credentials
+   are bad. Both are false, and this is the very next thing that happens after NEW-47's path.
+2. **Anyone can enumerate unactivated accounts, by login or by email, with no credential at all** —
+   `500` means "registered here and never activated", `401` means "not registered". Registration is
+   open (`permitAll`), so the two together are a way to ask "is this person on this platform"
+   about any address, at the rate limit's ceiling. The comment above the mapping claims this cannot
+   happen; for one of the four buckets it is measured false.
+3. **The estate already closed the same surface one endpoint along, deliberately.**
+   `/api/account/reset-password/init` answers **200 whether or not the address exists** — JHipster's
+   own choice, and the precedent for what this platform's answer to the tradeoff has been so far.
+
+**The decision, which is not engineering's.** One line either way; what to *say* is the question, and
+the review's correction moves the recommendation:
+
+- **401 with `Invalid credentials`, identical to the other three.** Closes the enumeration oracle,
+  matches the reset path's existing convention, and costs the customer nothing they did not already
+  have — they were being told "invalid credentials" anyway, just with a 500 beside it.
+  **Recommended.** The original entry recommended this only as "the floor"; with the oracle measured
+  as unauthenticated, the disclosure argument now points the same way as the simplicity argument
+  rather than against it.
+- **A distinct answer — 403, or 401 with `account not activated`.** The customer can act on it and
+  support load drops. It no longer "publishes the oracle", because the oracle is already open: what
+  it does is make it *legible*, which is a smaller step than the first version of this item implied.
+  Still a deliberate disclosure, and it should be taken as one rather than inherited from a status
+  code nobody chose.
+- **Either, plus "send me the link again".** The genuinely useful version. It needs a screen and its
+  own rate limit, so it is NEW-48's; and if it lands, option 2's disclosure arrives with it anyway,
+  because a resend form that only works for registered addresses is the same oracle wearing a
+  button.
+
+**A test has to come with it, and the shape matters.** Assert the status **and** — if option 1 is
+chosen — that all four failure modes are indistinguishable from outside, including the by-email
+probe, which is the row this item was missing. `GatewayIdentityMetricsIT` already measures that
+`UserNotActivatedException` survives the authentication manager (D84), so the platform can keep
+counting this outcome whichever answer is chosen — but that means **not** "fixing" this by converting
+the exception earlier in `DomainUserDetailsService`, which would take the metric with it.
+
+**Not blocked.** It needs the architect to pick one of the three.
+
+---
+
+
+## NEW-62 — `npm run prettier:format` rewrites seventeen files it was not asked to, every time · READY
+
+**Opened 2026-09-17 at NEW-47's review**, which is the point: the tax had been paid by hand in three
+successive rounds and the only record of it was in reports nobody will read again.
+
+`CLAUDE.md` tells every package to run `npm run prettier:format` after editing Java, because prettier
+formats Java here. Run it in `gateway/` today and it reformats **17 files this package never
+touched** — hand-written classes and tests from D74, D79, D84 and D85:
+
+```
+config/{InternalApiSecurityConfiguration,MarketplacePublicRouteConfiguration,
+        PaymentWebhookRouteConfiguration,dbmigrations/InitialSetupMigration}.java
+management/GatewayIdentityMeters.java   service/IdentityMetricsRefresher.java
+web/rest/InternalCustomerContactResource.java      + 10 test classes
+```
+
+The changes are prettier-java's method-chain rules, not anybody's mistake:
+`Counter\n.builder(...)` becomes `Counter.builder(...)`, and a wrapped `new AtomicReference<>(...)`
+is joined onto one line.
+
+**The versions are pinned, which is what makes this worth an item rather than a shrug.**
+`package.json` names `prettier` **3.9.5** and `prettier-plugin-java` **2.10.2** exactly, and
+`./node_modules/.bin/prettier --version` reports 3.9.5 — so this is not a floating dependency that
+will settle. **There is no committed lockfile** (`gateway/package-lock.json` is untracked and
+`node_modules/` is gitignored), so what actually resolves is whatever npm picks for the plugin's own
+transitive `java-parser` on the day, and that is the most likely source of the drift. **CI does not
+run `prettier:check`**, so nothing has ever been red about it.
+
+**What it costs, measured over three rounds of one package**: every `prettier:format` produces a diff
+across four earlier packages' files, which has to be restored by hand before committing — and the
+failure mode if somebody does not notice is a commit whose scope silently spans five packages,
+which is exactly what the review process looks for and what `git add -A` would have shipped.
+
+**Three answers, and the cheapest is not obviously right.**
+
+1. **Commit a lockfile and reformat once.** `npm install` already writes one; committing it pins the
+   transitive parser, and one commit then brings the tree to what the pinned prettier produces. Cost:
+   one 17-file formatting commit touching four packages' files, which is ugly in `git blame` for
+   exactly the files whose comments are load-bearing here. Benefit: the instruction in `CLAUDE.md`
+   becomes true, and `prettier:check` could then join CI.
+2. **Add `prettier:check` to CI without reformatting.** Immediately red, so it is only option 1 with
+   the order reversed.
+3. **`WON'T`, and say so in `CLAUDE.md`.** Tell the next package to run prettier and restore
+   everything it did not edit — which is what three rounds have done already. Cost: the tax
+   continues, and it is a tax on attention rather than time: the restoring is mechanical, noticing is
+   not.
+
+**Recommended: 1, in a commit of its own that touches nothing else**, so the formatting churn is
+separable from any package's diff and reviewable as "only whitespace and line joins". It is not this
+package's to take — it changes four earlier packages' files and adds a committed lockfile, which is a
+dependency-management decision for the repository rather than for a backlog item.
+
+**Not blocked.** It needs the architect to pick one.
+
+---
+
+## NEW-63 — nothing cross-checks preflight's required keys against the compose file's `:?` variables · READY
+
+**Opened 2026-09-17 by NEW-47's fourth review round**, which found it as a residual and explicitly
+declined to have it built in that package. Small, derived, and it guards a defect this estate has
+already had once.
+
+`deploy-prod.sh`'s preflight checks a list — `SECRET_KEYS` + `CONNECTION_KEYS` — by name on the host
+before it touches the stack. `docker-compose.prod.yml` refuses to interpolate without its `:?`
+variables. **Those are two hand-maintained lists of the same requirement, and nothing compares them.**
+
+**Measured today, and they agree** — which is why this is a guard rather than a fix:
+
+| | |
+| --- | --- |
+| preflight requires | **15** — `SECRET_KEYS` 3 + `CONNECTION_KEYS` 12 |
+| the prod compose requires | **15** distinct names — 14 `HC_*` plus `JWT_BASE64_SECRET` |
+| the two sets | **identical**, name for name |
+
+(The nineteen the review counted is `:?` *occurrences*: the signing key and the pepper appear in
+several services. Occurrences are not the subject; names are.)
+
+**Why it matters in each direction**, because they are not symmetrical:
+
+- **A `:?` variable with no preflight entry is the 2026-09-05 defect** — the one `deploy-prod.sh`'s own
+  header records as *"THE PREFLIGHT CHECKED TWO OF THE ELEVEN"*. The deploy passes preflight,
+  **overwrites `.env` and rotates `.env.previous`**, and then dies at `up` on the compose file's own
+  message, leaving the host half-rolled over a variable nothing in the pipeline ever supplied.
+- **A preflight entry with no `:?`** is milder and still wrong: a deploy refused over a value nothing
+  reads, which is how a required variable becomes a placeholder somebody invents.
+
+**And NEW-47's round three is the proof that the lists drift:** three keys were added to both places
+in one commit, and a *third* copy of the same list — `host-probe-attribution.sh`'s fixture — was
+missed, turning CI red on a correct branch. That fixture is derived now; these two are not.
+
+**The shape, and it is about fifteen lines.** In `build.yml`'s `consistency` job: lift the two arrays
+from `deploy-prod.sh` exactly as `host-probe-attribution.sh` already does, extract
+`\$\{([A-Z_]+):\?` from `docker-compose.prod.yml`, and require the two **sets** to be equal, printing
+both counts. Refuse an empty extraction on either side — a check that reads nothing must not pass.
+
+**Two things to decide while writing it, not before:** whether `deploy/prod-server/compose.yml`'s own
+`:?` variables belong in the comparison (it is a second compose project on the host, installed once,
+and its variables are read from the same `secrets.env` — so probably yes, as a third set), and
+whether `secrets.env.example` should be held to the same list (it is the operator's copy of it, and
+it has been stale before).
+
+**Not blocked.**
 
 ---
 

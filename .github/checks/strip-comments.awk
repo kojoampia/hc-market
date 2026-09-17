@@ -3,7 +3,14 @@
 # ELEVEN steps in build.yml match against source text and call this — counted with
 # `awk '/^      - name: /{n=$0} /strip-comments\.awk/{print n}' build.yml | sort -u`, because this
 # header said "four" for four decisions after it had stopped being four, and the number in a sentence
-# like this one is the first thing to rot. Every one of them is only as good as this file:
+# like this one is the first thing to rot.
+#
+# THAT MEASURE COUNTS STEPS IN build.yml AND NOT CALLERS, and since decisions.md D94 those differ:
+# `.github/checks/account-lifecycle-guards.sh` calls this from inside a script, so the awk above
+# cannot see it and the eleven is still exactly true about what it counts. Add
+# `grep -rlF strip-comments.awk .github/checks` to the count if you want callers — the point of this
+# paragraph is that the number and its measure travel together, which is the same discipline the
+# checks themselves are held to. Every one of them is only as good as this file:
 # "A CHECK WHOSE REACH DEPENDS ON PROSE IS NOT A CHECK" (D53's review) has now been the finding in
 # NINE successive fail-opens, and each time the fix was to strip comments before matching. This is
 # that stripper, in one place, because three of the callers had each grown their own and two of them

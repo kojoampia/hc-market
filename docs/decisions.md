@@ -16817,3 +16817,434 @@ count slower than a minute. The defect was reproduced in a unit test and observe
 unrelated docs-only branch. It has not been seen on the quality box, and production has never been
 deployed. The fix is right regardless of how often it would bite, which is the argument for making it
 rather than deferring it — not an argument that it was biting.
+
+---
+
+## D94 — The front door swallowed people, and three days was nobody's decision
+
+**Recorded 2026-09-17**, against `main` at `d90a7a2`. Closes backlog **NEW-47**; opens **NEW-60**.
+The retention question in §2 was **answered by the architect on 2026-09-17** and is recorded here as
+settled; §5's three questions are surfaced and not answered.
+
+### §1 What was wrong, as a composite rather than as five defects
+
+Every part of this was generated code doing exactly what it was generated to do, which is why nobody
+had read any of it:
+
+| | where | behaviour |
+| --- | --- | --- |
+| `POST /api/register` | `SecurityConfiguration.java:73` | `permitAll` — open self-registration |
+| `registerUser` | `UserService.java:121` | writes the account with `activated = false` |
+| the response | `AccountResource.registerAccount` | **201 CREATED, without waiting for the mail** |
+| the send | `MailService.java:79-80` | catches `MailException \| MessagingException`, logs **`LOG.warn`** |
+| the relay | `application-dev.yml`, `application-prod.yml` | `spring.mail.host: localhost`, `port: 25` |
+| the links | `application-prod.yml` | `jhipster.mail.base-url: http://my-server-url-to-change` |
+| every compose file | all three | **passed no `SPRING_MAIL_*` and no `JHIPSTER_MAIL_BASE_URL` at all** |
+| then | `UserService.java:291` | `@Scheduled(cron = "0 0 1 * * ?")` deletes it after three days |
+
+**So: 201, no mail, cannot authenticate, deleted in three days, and one WARN line.** Each row is
+defensible on its own. The composite is a front door that swallows people.
+
+**And nothing could see it.** `MailServiceIT` has ten `@Test`s and mocks `JavaMailSender` with
+`@MockitoBean` — re-derived here rather than taken from the brief — so **no message has ever left
+this estate**, on any environment, in the project's whole life. A green `MailServiceIT` is not
+coverage of delivery, and it is the reason the local catcher in §3 is not a convenience.
+
+`POST /api/account/reset-password/init` is the same defect with a worse ending: also `permitAll`, also
+silent, and a reset that never arrives generates support load rather than a deletion. It is fixed by
+the same three variables.
+
+### §2 The decision: the three days STAY, and become configurable and documented
+
+**Ratified by the architect, 2026-09-17.** Three days is now a policy this organisation holds:
+`healthconnect.accounts.unactivated-retention-days`, defaulting to **3**, so **an estate that
+configures nothing behaves byte-identically to every estate that has ever run.**
+
+**The reasoning, which is the part worth keeping.** D91's objection was that *an undecided framework
+default was destroying personal data unrecorded* — not that the number is wrong. Making it a stated,
+changeable policy answers that objection exactly. Changing the number would be a different decision
+with a counsel dimension, and it is not this package's to take.
+
+Two alternatives were considered and are rejected rather than merely unchosen:
+
+- **Extend it — 14 or 30 days.** Fewer people lose an account they meant to create, which is a real
+  benefit now that the mail actually arrives. The cost is that a longer window holds a name and an
+  email address for longer under **no counsel position at all**: `processing-record.md` §6.1 records
+  that accounts have no ratified retention category, so lengthening the one period that exists would
+  be widening an unexamined rule rather than applying a decided one. If the product later wants this,
+  it is one variable — and it is one line in two outward-facing documents, which CI now enforces.
+- **Stop deleting automatically.** Nobody loses an account. But names and email addresses then
+  accumulate under **no stated period whatsoever**, which makes §6.1's open question strictly bigger:
+  the organisation would go from "an unexamined 3-day rule for one class of account" to "no rule for
+  any account". That is the wrong direction for the one gap this document set already flags as its
+  largest.
+
+**What "configurable" cost, in shape rather than in lines.** `UserService` is a **generated** file, so
+the policy could not live there: `--force` discards edits to it silently. The annotation is removed
+from it (the smallest possible edit to a generated file) and the schedule lives in a new
+`UnactivatedAccountSweep`, which registers a cron task through `SchedulingConfigurer` rather than
+through `@Scheduled`.
+
+**That indirection is not taste, and the reason is compose.** A variable this repository documents and
+no compose file passes is a variable that silently does nothing (D46, D50), so both values are passed
+through in all three files — and compose's `${X:-}` sets an **empty** variable rather than leaving it
+unset. `@Scheduled(cron = "${healthconnect.accounts.unactivated-sweep-cron:0 0 1 * * ?}")` prefers
+that empty value to its own default and **fails the context on every estate that passes the variable
+without setting it**: an empty cron is not a missing cron, it is an invalid one. Blank-handling
+therefore lives in one place, in Java, where a test can drive it — the same arrangement `FoundingTerms`
+has in payout for the same measured reason (D57).
+
+Two consequences, both deliberate:
+
+- **A malformed window refuses startup**, and so do `0` and a negative number. Zero means "delete an
+  account registered a second ago on the next sweep" and a negative window puts the cutoff in the
+  future, which is the same thing said differently. Both are one keystroke from a plausible policy.
+- **There is no value meaning "never delete"** — see §5.
+
+**`removeNotActivatedUsers` is KEPT in the generated file, annotation removed.** Two *generated*
+integration tests call it (`UserServiceIT`), and a regeneration brings them back; deleting the method
+would break the build at exactly the wrong moment. The consequence is stated rather than hidden: those
+two tests now cover a method **the estate does not schedule**, so they are no longer statements about
+this estate's behaviour. `UnactivatedAccountSweepIT` is.
+
+**And the generated method logs the row it deletes** — `LOG.debug("Deleted User: {}", user)`, where
+`User.toString()` renders the login, both names, the email address and the activation key, at DEBUG,
+which is the level `net.jojoaddison` runs at under `dev` — which is what the quality box runs. Nothing
+has ever leaked, because no unactivated account has ever existed on any estate for it to delete
+(D91 §7). The sweep the estate runs logs **a count and a window** at INFO and no personal data at all.
+The generated line is left where it is: it is a generated file, it is now reachable only from those two
+tests, and D94's answer to it is the guard in §4 that makes its return visible.
+
+### §3 The second decision: build against a catcher, require the values in production
+
+**Also settled by the architect.** Dev and quality run **mailpit**; production requires
+`HC_MAIL_HOST`, `HC_MAIL_PORT` and `HC_MAIL_BASE_URL` with **no default anywhere**.
+
+Four choices inside that, each of which could reasonably have gone the other way:
+
+- **The port is required too, not defaulted.** 25, 465 and 587 are three different sets of
+  assumptions about TLS and authentication, and a wrong one fails exactly as silently as a wrong
+  host. An operator who knows their relay knows its port.
+- **The credentials are OPTIONAL and are in neither required list.** A relay on the estate's own
+  network authenticates nobody; a provider over the public internet needs both. Refusing a deploy
+  over a value an estate legitimately does not have is how a required variable becomes a placeholder
+  somebody invents (the whole of `my-server-url-to-change`). `HC_MAIL_PASSWORD` is a secret and is
+  deliberately not in `SECRET_KEYS` for that reason. `mail.smtp.auth` and `starttls` default **true**
+  in production and **false** on the two estates with a catcher: an estate whose relay cannot do
+  STARTTLS then fails to send rather than sending a credential in clear.
+- **`localhost` is REFUSED under `prod`.** It is the committed default that reached the production
+  profile, and inside a container it is the container's own loopback, where no SMTP server has ever
+  listened. An estate really relaying through an MTA on the host names it. The escape is documented
+  at the refusal: a compose service name, a hostname, or the host's gateway address.
+- **The catcher's SMTP port is not published, on either estate.** Only its web UI, on loopback. An
+  unauthenticated SMTP listener reachable from the LAN is an open relay, and nothing outside the
+  compose project needs to send through it.
+
+**No connection is opened, and `management.health.mail.enabled` stays `false`.** That is D57's
+argument one service along, and the edge is sharper here: a mail health indicator sits inside the
+aggregate `/management/health`, which is exactly what both compose healthchecks grep for `UP` and what
+docker decides a container's health from — so an unreachable relay would take the gateway **unhealthy**
+and `deploy-prod.sh`'s health gate would **revert a healthy deployment over somebody else's outage**.
+What replaces it is configuration made *visible*: `MailDeliveryInfoContributor` puts `mail.configured`,
+the relay, the base-url, `mail.authenticated` and the retention window on `GET /management/info`, and
+the smoke test **fails the deploy** on the first of those. A deploy that refuses because mail is
+unconfigured is the right failure; an estate that goes down because a mail server blinked is not.
+
+**The username and password are never published there**, and the assertion is over the whole rendered
+document rather than one key: `/management/info` is `permitAll` in the gateway's own chain, and the
+username is half a credential.
+
+**What is NOT changed, deliberately.** A registration whose mail fails is still `201` and still one
+WARN line. Making the response depend on delivery is a different decision with a worse failure mode —
+a registration rolled back because a relay was slow — and it is surfaced in §5 rather than taken here.
+
+### §4 What now goes red, and the one thing that cannot
+
+Seven mechanisms, and the split between them is deliberate: a **test** for behaviour, a **CI check**
+for the moment somebody runs a generator rather than a test suite.
+
+| | guards |
+| --- | --- |
+| `AccountRetentionUnitTest` | the window and the cron **bind** through a real Spring binder, blank counts as absent, `0` and a negative are refused, and the two defaults are the generated figures |
+| `UnactivatedAccountSweepUnitTest` | the task is actually **registered**, on the configured expression — delete one line and every other test stays green while nothing is ever deleted |
+| `UnactivatedAccountSweepIT` | the **boundary**, against a real database: four days old goes, 71 hours against a 72-hour cutoff stays, an activated account is never touched, an unactivated one with no activation key is left alone |
+| `MailDeliveryGuardUnitTest` | each refusal, **and a positive control beside it** — a configured production estate starts, and a dev estate on loopback with no catcher still starts |
+| `MailDeliveryInfoContributorUnitTest` | `configured` is present and false rather than absent, and no credential is in the rendered document |
+| `ThereIsOneAccountSweepTest` | ArchUnit over the whole main tree: **no `@Scheduled` anywhere in the gateway** |
+| `account-lifecycle-guards.sh` | six parts, 36 assertions, driven against 20 broken states by its own test |
+
+**The CI check's part 6 is derived, and that is the NEW-15 lesson applied.** The rate-limited set is
+read out of `SecurityConfiguration`'s own `permitAll` matchers, and the difference between that set and
+what the two nginx files limit must be **exactly** the two paths §5 argues. A sixth public door is red
+in the pull request that adds it.
+
+**Three of this package's own guards were found to be worthless by running them**, which is the
+discipline this file keeps recording:
+
+- part 5 greped the whole (stripped) `deploy-prod.sh` for each variable name, which is satisfied by
+  `smoke_test`'s own WARN listing all three in prose — so emptying `CONNECTION_KEYS` left preflight
+  checking nothing and the check green. It reads the **array** now (D78 §13's `SSH_OPTS` lesson);
+- part 4's placeholder sweep greped raw text and reported three files, two of which were *this
+  decision's own comments* explaining the placeholder and one a stale `gateway/target` copy;
+- the catcher check greped the rendered compose config for `mailpit`, so replacing the image left the
+  service name and `container_name` still matching. It asks whether `SPRING_MAIL_HOST`'s default
+  **names a container in the same file** now, which also catches a typo in the host.
+
+**And the check killed itself silently**: a `grep` that matches nothing exits 1, `pipefail` hands that
+to the substitution and `errexit` ends the run with **no error line and no summary** — measured, on the
+state where production stops passing `SPRING_MAIL_PORT`. Every branch has to be able to say what is
+missing, which is what `|| true` on those substitutions buys.
+
+**What no mechanism here covers**: that a relay actually accepts and delivers. Nothing in CI can, and
+nothing should try — see §3 on why a connection attempt does not belong in a health aggregate. What
+replaced it is a walk, §6.
+
+### §5 Three questions this package surfaced and did not answer
+
+1. **Should `/api/activate` and `/api/account/reset-password/finish` be rate-limited too?** Both are
+   `permitAll`; NEW-47 named three paths and this package limited exactly those three.
+   **hc-patient's equivalent nginx file limits all four of its account paths**, so widening is house
+   practice rather than an invention, and it is **one line in each of the two maps**. Against it: both
+   consume a single-use key rather than sending mail, so the amplifier argument does not apply, and
+   `/api/activate` is the path a person follows out of an email they just received — a 429 there is a
+   customer who cannot finish registering. **Recommendation: widen, at the account zone's 10/min.**
+   Not taken here; CI pins the exclusion as an exact set, so the answer has to be written down either
+   way.
+2. **Should the window be able to mean "never delete"?** A different shape from a number — a sentinel
+   rather than a value — and it is the one option that makes `processing-record.md` §6.1 bigger rather
+   than smaller. Deliberately not expressible: an operator who wants it today has to say so.
+3. **Should a registration whose mail fails still answer 201?** It does, unchanged. Waiting for the
+   send would turn a slow relay into a failed registration, and `MailService`'s whole shape — fire and
+   forget on a `Mono.defer(...).subscribe()` — is built the other way. The honest middle is a
+   different response for "we could not send it" and a way to ask for it again, which is a screen and
+   therefore NEW-48's.
+
+### §5b What the review found, because three of these were wrong in the direction that matters
+
+Recorded here rather than only in the commit message, because two of them change what an architect
+reading §5 would decide:
+
+- **NEW-61's disclosure was understated, and §5's option 2 was mis-costed because of it.** The item
+  called the 500 *"a narrow oracle (it needs the password)"*. It does not: re-read in code and
+  re-measured live, `DomainUserDetailsService.createSpringSecurityUser` throws inside the **lookup's**
+  `.map()`, before the password encoder is reached, so **unactivated + wrong password is also 500**
+  and **so is a probe by email address**, while a nonexistent login or address is 401. That is
+  unauthenticated enumeration of logins *and* email addresses on an estate with open registration. The
+  first version therefore asked the architect to weigh option 2's *"publishes the oracle"* cost
+  against a status quo it described as narrower than option 2 — when the status quo is **wider**.
+  NEW-61 now carries all nine measured rows and a **changed recommendation**: close it at 401, which
+  is also what `/api/account/reset-password/init` already does (200 for a known and an unknown
+  address alike, measured).
+- **The 404→401 correction reached two places and left five behind, inside the same commit** — the
+  house failure mode, in the commit that made the measurement. The one that mattered is
+  `deploy-prod.sh`'s hint, which is **printed to a production operator** during preflight and is
+  byte-embedded in the spec's Appendix B: **`sync-appendices.sh --check` was green over the wrong
+  sentence in both copies**, because it verifies byte-identity and not truth. That limit is worth
+  knowing before trusting it again.
+- **Two of this decision's own guards were fail-open, and prettier is what triggers the first.**
+  Part 6's permitAll derivation was a line-bound grep, so
+  `.pathMatchers("/api/signup")\n.permitAll()` — the shape a formatter produces — passed with a new
+  unlimited public door, while the same path on one line was refused; the asymmetry is the harmful
+  direction. It is D60's alternation in another language, and it now also sees a multi-path
+  `pathMatchers("/a", "/b")` call, which the old regex missed too. And the document-agreement
+  assertion was **document-wide**: §7.1 rewritten to fourteen days passed because "three days" appears
+  in the paragraph explaining the decision. It is section-scoped now **and** requires every period
+  figure in that section to be the applied one — scoping alone was still green, measured, which is why
+  §3.1's "four days old" test fixture had to be reworded out of a section that defines a period.
+- **One judgement call taken from the reviewer**: §7.1 promised the period is *"the same on every one
+  of our systems"*, which no mechanism can keep — the variable is settable per environment where no
+  check can see it. It is an **as-of** statement now, with the obligation to update the notice named,
+  which is how `processing-record.md` §3.1 already worded it.
+- And the guard's own INFO said *"Mail is configured … will be attempted"* on a dev estate with no
+  catcher running. It says **ADDRESSED**, names that nothing has been contacted, and off production
+  points at the catcher.
+
+### §5c Round two: the shape, not a third patch
+
+The second review pass confirmed both guard rewrites — the permitAll one it could not break, and it
+tested further than I had: an intervening comment, a comment *mentioning* `permitAll`, an
+`HttpMethod`-prefixed call, and an absent `python3`, which falls into "no permitAll path found" and
+is therefore fail-closed. It then found **two more escapes in the window assertion**, both natural
+English and both measured:
+
+| planted in §7.1 | round-1 check |
+| --- | --- |
+| *"deleted after a fourteen-day period"*, digits dropped | **passed** — hyphenated, so the grep never matched |
+| *"We may in future keep it for thirty days."* added | **passed** — `thirty` was past the end of a word list that stopped at fourteen |
+
+**The instruction was to widen and to stop the `ok` line over-claiming. I did the second and replaced
+the first with a different shape**, which the reviewer explicitly left open. Widening a list of wrong
+spellings closes the ones somebody thought of; the version here has three layers and only the first is
+exact:
+
+- **REQUIRED, with no English parsing at all: the section must state the window in DIGITS beside the
+  word day** — `3 days`, `3-day`, `**3 days**`. A positive requirement for one unambiguous form cannot
+  be escaped by a *spelling*, which is what both escapes were. Escape A fails here.
+- **BANNED: any other number-like figure beside `day`/`days`** — a digit sequence that is not the
+  applied one, or a number word from a list that now runs one…twenty plus the tens to a hundred.
+  Escape B fails here, and so does the mixed case the reviewer did not plant: correct digits with
+  `fourteen-day` added beside them.
+- **IGNORED, and the header says so**: a token that is not number-like ("it runs once a day",
+  "calendar days" — flagging grammar is how a check gets weakened), a number word outside that list,
+  and any other unit — "72 hours", "two weeks". What stands behind those is the digit requirement and
+  nothing else.
+
+`and no other` is gone from the success line, which now reports how many figures it inspected — five
+in each document today. **An `ok` that asserts more than the code delivers is the over-trust the
+header exists to prevent**, and that was the more important half of the finding.
+
+**The rewrite introduced a defect of its own and the control caught it in one run.** The new function
+was written as `python3 - "$1" <<'PY'`, which reads the *program* from stdin — so the piped section
+was consumed by the heredoc, `sys.stdin.read()` saw nothing, and every assertion would have been made
+against an empty string. The real documents failed immediately, which is what a control is for; part 6
+had already had it right on `-c`. It is worth recording because the fail-open version of that mistake
+is invisible: had the rule been "refuse if a wrong figure is found", an empty string would have found
+none and printed `ok`.
+
+**And the `pathMatchers(CONSTANT)` limit is closed rather than stated.** The reviewer offered either.
+A door whose path is a constant — or built by concatenation — yields no matching literal, so the
+derivation did not see it and the whole check printed `ok`: the same family as the wrapped call, one
+step further out, and my new comment ("the formatter cannot hide a door") invited exactly that
+over-trust. Any argument to a `permitAll` `pathMatchers` call that is not a plain string literal is now
+an **error naming the call**, with a leading `HttpMethod.X` as the one permitted exception because it
+is Spring idiom this gateway already uses elsewhere — and 17j is the control that keeps that exception
+honest.
+
+The test drives **29** broken states now (31 assertions, two of them controls). Case 17d was kept and
+its expected message updated rather than retuned: the mutation replaces `3 days` with `14 days`, so it
+trips the digit requirement before the ban, and a case asserting a message the check no longer
+produces is a case passing for the wrong reason.
+
+**One item opened rather than fixed: NEW-62.** `npm run prettier:format` rewrites 17 files from four
+earlier packages every time, with `prettier` and `prettier-plugin-java` pinned exactly and **no
+committed lockfile**, so the drift is most likely in the plugin's own transitive parser. Three rounds
+of this package restored those files by hand; the recommendation is to commit a lockfile and reformat
+once, in a commit that touches nothing else, which is a dependency decision rather than a backlog
+item's to take.
+
+### §5d Round three: this decision turned another check's fixture stale, and it was the fixture's own subject
+
+**CI went red on PR #71 with the five service matrices green.** `host-probe-attribution.sh` failed —
+and the cause was this package's preflight working, not being wrong.
+
+That check builds a fixture `secrets.env` and drives the **real** `deploy-prod.sh` end to end against
+stubbed `ssh`, `scp`, `docker`, `curl` and `git`. Its fixture was a **hand-written list of the twelve
+values of the day**, so the three keys §3 made required — `HC_MAIL_HOST`, `HC_MAIL_PORT`,
+`HC_MAIL_BASE_URL` — were absent from it, preflight correctly refused it, and the driven run died
+before the `scp`. D80 wrote part 7's assertions to be read off a run that **reached the end**, exactly
+so a truncated run cannot satisfy them by never asking — so a short fixture does not fail one
+assertion, it fails thirteen, and the first reading of the log is "the deploy script is broken".
+
+**Fixed by deriving, not by adding three lines.** Both fixtures — part 3's and part 7's `seed_host7`
+— are generated from `SECRET_KEYS` + `CONNECTION_KEYS`, the same shipped bytes the probe already
+`eval`s, so a key added to `deploy-prod.sh` cannot stale them again. Every count is printed from
+`${#REQUIRED_KEYS[@]}` rather than restated, in eleven places that said "twelve". Two guards go with
+it: the arrays must yield at least twelve values (so arrays lifted but **not parsed** refuse before
+anything is driven, rather than driving an empty fixture), and `HC_PAYOUT_DB_PASSWORD` — the one key
+part 3 deliberately omits, to prove the refusal names the value that is missing — is asserted to be
+**in** the list, so a rename is red here rather than silently dropping nothing.
+
+**A second fixture was short in a different way: the stub's `/management/info`.** It answered only
+`build.version`, so §3's new mail gate — which fails closed, because a front door that answers 201 and
+discards the registration must not ship — refused, the deploy rolled back, and part 7 reported that
+the run *"never got as far as the gateway version probe"*: the failure being the stub's, one probe
+upstream of the one it named. The stub answers a mail block now.
+
+**And one `ok` line was over-claiming, which the reviewer caught by reading the red log rather than
+the code.** Part 7 printed `all 7 remote invocation sites received the whole of SSH_OPTS` on the run
+that reached 7 of 20, because the number came from the run and the line fired whenever no *reached*
+site had been handed a bare invocation — while `missing7` had already erred about the other thirteen.
+The aggregate was red, so it was not a hole; it was **the same over-claim §5c removed from the window
+check's `ok` line**, in a file whose whole subject is attribution. The count is the enumerated site
+list's now and the line does not appear at all on a run that did not reach them all.
+
+**Proved at three states** (control green, restored byte-identical): as shipped → green, `all 20`;
+the derived list three keys short → red at the compose upload, **and no site line at all**; the arrays
+unparsed → red before anything is driven. Part 3's own refusals still fire for their own reasons —
+a value absent is named, an absent file is "missing or empty", an unreadable one is not reported as
+unset — and the check's 52-mutation test is 53 ok / 0 failed, after one expected-message fragment in
+it was updated to the derived wording rather than left greping text the check no longer prints.
+
+### §5e Round four: the ban cannot be finished, so it stopped claiming to be
+
+Two more escapes, measured with a correct `3 days` left in place so the **ban** was under test rather
+than the requirement — which is the subtlety that makes this round's finding real, because deleting
+the digits trips the requirement and produces a false "caught":
+
+| planted in §7.1 | round-3 check |
+| --- | --- |
+| *"deleted on the **14th** day"* | **passed** — `14th` is neither `isdigit()` nor a word, so it took the arm meant for grammar |
+| *"deleted at **day 14**"* | **passed** — the number on the other side of the unit |
+
+**Four rounds, four families: document-wide, the word list, the spelling, the position.** The
+conclusion is not a fifth pattern. **Banning wrong prose requires enumerating wrongness, and English
+is unbounded.** So this round separated the two halves and said so in the header and in the output:
+
+- **The positive requirement — the section must state the applied window in DIGITS beside the word
+  `day` — cannot be escaped by a spelling, and it is unchanged.** It is the half that works, and
+  keeping it exact is why the ordinal fix deliberately does **not** let `3rd day` satisfy it: the
+  requirement exists to insist on one canonical spelling, and `UnactivatedAccountSweep`'s own
+  documents are read by a data subject and a regulator.
+- **The ban is best-effort and now says so.** The ordinal and the postfix position are closed
+  (cheap, natural English, not adversarial), and the header enumerates what it knowingly misses —
+  fullwidth digits, markup between the number and the unit, any other unit, number words outside the
+  list, and grammar. It over-flags where it can: a figure in a code span or an HTML comment is a
+  finding, because a wrong period explained in prose is still a wrong period.
+
+**The success line was the actual defect this round**, not the ordinal. It read *"N period figure(s)
+inspected, all of them the applied one"*, which a reader takes as "there is no wrong period in this
+section" — a claim the code cannot make. **That is `and no other` from round two, returning in
+different words**, which is worth recording as its own lesson: an over-claim removed once came back
+because the replacement was written to describe the mechanism rather than to bound it. It now reads
+
+> `states 3 days in digits (required, exact); the best-effort ban inspected 5 period figure(s) there
+> and flagged none — it does not establish that the section names no other period, see this file's
+> header`
+
+**One limit is stated rather than closed, and the distinction is the point**: a door that is not a
+`pathMatchers` call at all — `.anyExchange().permitAll()`, a widened `securityMatcher`, a second
+`SecurityWebFilterChain` bean — opens every path in one line, derives no path, and leaves this check
+at exit 0. §5c said non-literal doors were "closed rather than stated"; that is true of a constant
+and **not** of this, so the header says so. What backstops it is partial and elsewhere:
+`InternalApiPermitIT`, `PaymentWebhookRoutePermitIT`, and D74's measurement that an unmatched
+reactive exchange is a 401. Note what would be missing in that case is **authentication**, not a rate
+limit.
+
+**And one misattributing message in `host-probe-attribution.sh`**: part 3's success arm matched the
+literal `HC_PAYOUT_DB_PASSWORD` while both refusal arms derived `$MISSING_KEY` — so changing that
+key, which §5d's own membership guard invites you to do, left the arm unable to match and the check
+reported *"refused a secrets file missing HC_CATALOG_DB_URL without saying which value is missing"*
+about a refusal that named it perfectly. Fail-closed, and misattributing, which is the one thing that
+file exists to prevent. Measured in all three states.
+
+**NEW-63 opened**, from a residual the review named and declined to have built here: nothing
+cross-checks preflight's required keys against `docker-compose.prod.yml`'s `:?` variables. They are
+**equal today** — 15 names each, measured — so it is a guard rather than a fix; a `:?` with no
+preflight entry is the 2026-09-05 defect (deploy rotates `.env`, then dies at `up`), and §5d is the
+evidence that this list drifts across copies.
+
+### §6 Verified, assumed, not exercised
+
+**Verified by running it.** Registration through activation to sign-in, walked end to end against a
+real gateway, a real MongoDB and a real SMTP catcher on this workstation — the statuses and the
+message body are in the package's report and in NEW-47. The sweep watched deleting a real account at
+the boundary against a real database. Both nginx files parsed by nginx itself in a scratch prefix,
+including the negative control with the zone file absent (`[emerg] zero size shared memory zone`,
+which is **not** the message this repository's other two headers quote — 1.28.3 here, and the
+production host's version is not known). The three compose files rendered, production refusing without
+each mail value and rendering with them. The gateway's `clean verify`, and every guard above mutated
+and watched going red.
+
+**Assumed, from reading.** That the production host's nginx would say `unknown limit_req zone` rather
+than 1.28.3's wording. That a real provider's relay behaves as its documentation says about STARTTLS
+and authentication.
+
+**Not exercised.** **No message has reached a real mail provider**, because none is chosen — that is
+D90 §7's open budget item and it is the one thing NEW-47 could not close. Production has still never
+been deployed, so the `:?` refusals, the preflight check and the smoke test's mail gate are asserted
+against fixtures and a rendered compose file rather than a host (D49). **And the quality box's own
+gateway was not recreated**: it is D73's evidence, it is healthy at `d90a7a2`, and recreating it is a
+live-environment change for the architect to authorise — the walk was therefore done against a
+throwaway gateway built from this branch, on the same daemon, with the same configuration the quality
+compose file now carries. **`/etc/nginx` is untouched on both machines**: the rate limits are provided,
+printed and not installed, so they are in force nowhere until a person installs them.
