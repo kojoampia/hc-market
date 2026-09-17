@@ -2728,8 +2728,28 @@ state D65's "no volumes is a first run and still generates" and D67's "no contai
 first run and proceeds" branches were written for and which nothing had ever exercised. That was the
 reason this shape beat the containers-only recommendation, and it is now available to be used.
 
-Status is `BLOCKED` rather than `READY` because what remains is a person with root, not engineering.
-Nothing was destroyed by the attempt — five containers and five volumes are exactly as they were.
+**That closing sentence read "Status is `BLOCKED` rather than `READY` because what remains is a person
+with root, not engineering. Nothing was destroyed by the attempt — five containers and five volumes
+are exactly as they were." until 2026-09-17, and it contradicted this item's own heading.** It was
+written before the `CLEARED` paragraph above it and never revised, so an item whose `## ` heading said
+`DONE (D72)` closed by declaring itself blocked on a person who had already done the thing. The heading
+wins by the rule at the top of this file — and the general lesson is the one this file keeps recording
+about itself: **a status in prose beside a status in a heading is one fact in two places**, and the
+prose copy is the one nobody updates. Nothing else in this item is changed; the record of what was
+wedged, why, and what cleared it is what it is for.
+
+**RE-VERIFIED 2026-09-17, independently, and it has stayed cleared**: `docker ps -a` names **no**
+`healthconnect-dev` or `hc-market-dev` container, `docker volume ls` holds **0** `healthconnect-dev_*`
+volumes, and `docker compose ls -a` does not list the `healthconnect-dev` **project** at all — the
+third of those being the probe this repository's own guidance says to use, because a filter built from
+the name you expected cannot find what you did not expect. The control in the same output:
+`hc-market-quality` reads `running(11)`, so the daemon was answering and a zero means something.
+
+**It was resolved by an act outside these work packages** and this item claims no credit for it: D72
+records the architect restarting the daemon on 2026-09-10 and a `down --clean` taking two runs. What
+2026-09-17 adds is only that the state did not come back in the week since — which matters because
+*five containers the daemon would not release* is exactly the kind of state that gets cleared once and
+quietly returns.
 
 ---
 
@@ -2797,7 +2817,10 @@ repair is guarded too.
 
 **What did not run is the script.** Everything was measured on the shipped function lifted out by
 `awk`, as in D66, D67 and D69: D65 and D67 both correctly refuse this worktree, and `deploy-dev.sh`
-cannot run at all while NEW-31 stands. Three folded reads survive in the two files deliberately — a
+could not run at all while NEW-31 stood — **which it no longer does, cleared 2026-09-10 and
+re-verified 2026-09-17.** So the reason this package measured a lifted function is a fact about the
+week it was written in and not a standing constraint: the dev estate is now a genuine first run, and
+the refusal paths D66 and D69 could reach only by `awk` are available to be exercised for real. Three folded reads survive in the two files deliberately — a
 `warn`, a poll and `running()` — because the rule is *a `die` may not fold; a `warn` and a poll may*
 (D71 §5), and "always check the status" would have made a transient flake fatal in the health-wait
 loop. **That poll has an edge, stated at review**: its exhaustion *is* a `die`, so a daemon dying
@@ -5044,7 +5067,146 @@ integration test in that JVM shares — a different kind of test from anything i
 which is the other half of why it was not written speculatively.
 
 **Not blocked**, and not urgent while no estate has settled anything — production has never been
-deployed and the dev estate is wedged (NEW-31), so no batch exists anywhere to be owed back or to fail.
+deployed and there is **no dev estate at all** (NEW-31, cleared 2026-09-10, re-verified 2026-09-17:
+zero containers, zero volumes, no compose project), so no batch exists anywhere to be owed back or to
+fail. **The quality box is the exception to that sentence as of 2026-09-17** and it is worth naming
+here rather than leaving the reader to infer it: it holds `PAY-202602-p1-01`, `PAID`, 31 ledger rows
+attached and 235 unsettled — the first payout batch this platform has ever recorded. So "no batch
+exists anywhere" was true when this was written and is now false of one estate.
+
+---
+
+## NEW-65 — a deliberate business refusal logs at ERROR with its arguments, in all five services · READY
+
+**Found 2026-09-17** while opening NEW-52, and it is **pre-existing and generated** rather than
+anything a recent package introduced — which is the first thing to establish about it, because it
+lands on a signal NEW-51 has just started moving.
+
+**Verified at `payout/src/main/java/net/jojoaddison/aop/logging/LoggingAspect.java:113`**, and the same
+line at the same number in **all five** services (`grep -rn "Illegal argument" --include=LoggingAspect.java`
+answers five files, every one at `:113`):
+
+```java
+} catch (IllegalArgumentException e) {
+    log.error("Illegal argument: {} in {}()", Arrays.toString(joinPoint.getArgs()), joinPoint.getSignature().getName());
+    throw e;
+}
+```
+
+**Two things are absent and both matter.** There is **no `isDebugEnabled` guard** — unlike the two
+`log.debug` calls eleven and six lines above it in the same method, which are guarded — and there is
+**no profile gate** on the advice, so this fires on `prod` exactly as it fires on `dev`. The pointcut
+is `applicationPackagePointcut() && springBeanPointcut()`, so its subject is our own beans.
+
+**So a refusal this estate makes ON PURPOSE is logged at ERROR, with the arguments that caused it.**
+`IllegalArgumentException` is the ordinary spelling of "the caller asked for something that is not
+allowed" throughout these services, and `Arrays.toString(joinPoint.getArgs())` renders whatever was
+passed. A settle refusal put a **bank reference** in the log by this route. That is the disclosure
+half, and it is the smaller half.
+
+**The larger half is a signal this repository has written down as load-bearing.**
+`quality/compose.yml:150` calls payout's zero-ERROR count *"the estate's one free signal"* and *"the
+load-bearing half"* — the argument being D64/D73's: all five quality services have carried **zero**
+ERROR lines across their entire life, so an ERROR line means something, and that is the only way an
+unattached OTel agent or a dead collector is visible at all. **NEW-51 ships a desk that refuses by
+design** (D95: a period past the payout lag, a batch netting zero or below, a `PAID` batch re-stamped,
+a `FAILED` one settled) — every one of those an `IllegalStateException` or an `IllegalArgumentException`
+depending on the site. The moment the desk is used, ERROR stops being zero **in normal operation**, and
+the signal is spent.
+
+**What bounds the harm.** No alert fires: `deploy/observability/hc-market-rules.yaml` keys on 5xx rates
+and these refusals are 4xx, so nothing pages anybody. And no estate has exercised the desk in anger
+yet. So the cost today is a *lost* signal and arguments in a log, not an incident.
+
+**Done means** deciding what an ERROR is for in this estate and making the aspect agree with it. The
+obvious repair — drop it to WARN, or guard it, or exclude `web.rest` — is **not** obviously right and
+should not be applied without answering the question underneath: *is a deliberate refusal an error?*
+Three candidate positions, and the middle one is probably right:
+
+- **WARN with the arguments** — keeps the diagnostic, frees the signal, still prints the bank
+  reference;
+- **WARN without the arguments, naming the method and the exception message only** — the message is
+  ours and is composed at the boundary (D44's rule, already the house style for provider prose), so
+  it says what was wrong without echoing what was sent. This is the one that fits the rules already
+  written down;
+- **remove the advice** — it is generated, it duplicates what the exception translator already
+  reports, and nothing in this repository has ever read one of its lines.
+
+**It is a GENERATED file in all five services**, so whatever is chosen belongs in the regeneration
+table in `CLAUDE.md` with the symptom spelled out, or `--force` puts it back in silence. Note the
+asymmetry that makes this survivable to find late: the two `debug` calls beside it are guarded, so the
+*enter/exit* tracing everybody worries about is already off at INFO — it is only the failure arm that
+was left unguarded, which is why nobody reading the class casually would notice.
+
+**Not blocked.** No decision from a person, no outside fact — but it does want the question answered
+rather than the line edited.
+
+---
+
+## NEW-66 — `--dry-run` cannot run without production credentials, and ends by claiming the tag is live · READY
+
+**Found 2026-09-17**, two defects in one command, both verified twice at the source. `deploy-prod.sh
+--dry-run` is documented in `CLAUDE.md` as *"safe; prints everything, changes nothing"* and is the one
+thing anybody runs **before** touching production. Neither defect changes anything on a host; both
+attack the one command whose whole value is that it can be trusted.
+
+**One — it dies without a registry token.** `deploy/deploy-prod.sh:556`:
+
+```
+  if (( DO_PUSH )); then
+    [[ -n "$REGISTRY_TOKEN" ]] || die "registry credentials missing — set $CRED_HINT"
+```
+
+`DO_PUSH` defaults to `1` (`:179`) and `--dry-run` does not clear it (`:282` sets `DRY_RUN=1` and
+nothing else), so the `die` is reached on a plain `--dry-run`. The `if (( DRY_RUN ))` branch that
+prints *"would authenticate to $REGISTRY_HOST"* is at **`:562`** — six lines **below** the gate that
+already refused. So reading a plan requires exporting a real production registry token, which is
+pressure to put a live credential in a shell for a command that contacts nothing. **`--no-push` is the
+way round** and is not documented as being necessary.
+
+**The irony is the record worth keeping.** The comment at **`:558`**, immediately under that `die`,
+documents fixing this exact pattern *at this exact login*: *"A tick here used to print under
+--dry-run too, while the login it claims was skipped. That is false confidence in the one command
+somebody runs BEFORE touching production."* The fix was applied to the **tick** and the **gate above
+it** was left where it was — so the same command is still unusable for the same reason the comment
+gives for caring.
+
+**Two — a dry run ends by asserting the deployment is live.** `deploy/deploy-prod.sh:1376`:
+
+```
+  if health_gate deploy && smoke_test; then
+    record_success
+    step "Done"
+    ok "HealthConnect $TAG live on $HOST via the '$CHANNEL' channel ($IMAGE_PREFIX)"
+```
+
+Under `--dry-run`, `health_gate` returns 0 at `:914` (`[dry-run] skipped`) and `smoke_test` returns 0
+at `:1073` (same), so the branch is **always** taken; `record_success` is correctly guarded at `:1326`
+(`(( DRY_RUN )) && return 0`) and contacts nothing. **So the defect is the claim, not the action** —
+nothing is deployed, nothing is recorded, and the last line an operator reads is a green `✓` saying a
+tag is live on the production host. This is D78/D80's subject one line further on: every refusal in
+that file was taught to say which hop answered, and the success line was never asked the same question.
+
+**Done means** `--dry-run` runs with no credential of any kind, and every terminal claim it prints is
+true of a run that contacted nothing. Two small changes and one judgement:
+
+- move the `REGISTRY_TOKEN` gate **inside** the non-dry-run arm, or skip it when `DRY_RUN` — and keep
+  it fatal for a real push, which is the direction it exists for;
+- guard the `Done` line, printing what a dry run actually established (*the plan resolved, the tag
+  resolved, nothing was contacted*) rather than the deployment's sentence;
+- decide whether `--dry-run` should imply `--no-push`. It probably should not: *"would push to X"* is
+  part of the plan an operator wants to read, and the answer is to stop needing the token rather than
+  to stop printing the intent.
+
+**And whatever is done needs a test that runs the program**, not a grep. D80 established that parts
+1-6 of `host-probe-attribution.sh` drive lifted functions and part 7 is the only one that **executes**
+the file — and that three successive guards on this script were each one step short of the binding
+because of it. A dry run that contacts nothing is precisely a property only execution can assert:
+part 7 already stubs `ssh`, `scp`, `docker`, `curl` and `git` and already refuses a run that asked the
+host nothing, so the scenario belongs there and the harness for it exists.
+
+**Not blocked**, and it must be fixed **without ever supplying a credential to pass the gate** — the
+gate being unpassable is the finding.
 
 ---
 

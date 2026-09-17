@@ -152,9 +152,22 @@ red until it is argued in the decision. **What it matches is a DIRECT call in th
 "direct calls" rather than "reaches". Keep the call direct.
 
 **Verified by lifting the function out of the file against the real daemon, never by
-running `deploy-dev.sh`**: the dev estate is wedged (backlog **NEW-31** — five containers `restarting`
-since 2026-08-30, off `hcnet`, looping on `http://consul:8500`, the Consul D27 removed), so no package
-since D66 has been able to run that script at all.
+running `deploy-dev.sh`**: the dev estate was wedged (backlog **NEW-31** — five containers
+`restarting` since 2026-08-30, off `hcnet`, looping on `http://consul:8500`, the Consul D27 removed),
+so no package between D66 and D95 was able to run that script at all.
+
+**THAT IS PAST TENSE SINCE 2026-09-10, and this paragraph asserted it as a live state until
+2026-09-17.** NEW-31 was cleared by the architect restarting the daemon, and it has stayed cleared —
+re-verified independently: **no** `healthconnect-dev` or `hc-market-dev` container, **0**
+`healthconnect-dev_*` volumes, and no `healthconnect-dev` **project** in `docker compose ls -a`, with
+`hc-market-quality` reading `running(11)` in the same output as the control that makes those zeros
+mean something. So the next `up` there is a **genuine first run** — the case D65's "no volumes is a
+first run and still generates" and D67's "no containers at all is a first run and proceeds" branches
+were written for and which nothing has ever exercised. **Two things follow.** The `awk`-lifting above
+is a record of how those packages had to work and no longer a constraint on how you must; and the
+plane preflight's refusal arms, which no test in CI can reach, are now reachable against a real
+estate. What has not changed is that `deploy-dev.sh` is still refused from **a worktree** by D65 and
+D67, which is a different guard with a different cause.
 
 **Both membership probes fail closed and both say WHY, since D71 (backlog NEW-32) — and so does the
 line above each of them.** A `2>/dev/null` piped into a `grep` hands the pipeline grep's status, so an
@@ -949,11 +962,14 @@ compose **project** is `name: healthconnect-dev`, and that is what actually deci
 - **volumes take the project name and never a `container_name`** — they are
   `healthconnect-dev_{gateway,catalog,booking,messaging,payout}-data`, with no `hc-market` anywhere;
 - any container started **before** that directive was added carries the compose-derived
-  `healthconnect-dev-<svc>-1`, and five such containers have been sitting in `Restarting` on this
-  workstation since 2026-08-30. **D69 read why**: they are on `healthconnect-dev_default` alone, off
+  `healthconnect-dev-<svc>-1`, and five such containers sat in `Restarting` on this workstation from
+  2026-08-30 to 2026-09-10. **D69 read why**: they were on `healthconnect-dev_default` alone, off
   `hcnet`, dying in Hazelcast's discovery on `http://consul:8500` — this stack's own bundled Consul,
-  which D27 removed. They are a pre-D27 estate, and while they are there nothing can run
-  `deploy-dev.sh` (backlog **NEW-31**, which also names the remedy the script already documents).
+  which D27 removed. They were a pre-D27 estate, and while they were there nothing could run
+  `deploy-dev.sh` (backlog **NEW-31**). **They are gone** — cleared 2026-09-10, re-verified
+  2026-09-17 at zero containers, zero volumes and no such compose project. The naming trap this
+  section is actually about is unchanged and is the reason to keep reading: there is no dev estate to
+  find today, and on the day there is one again, `grep -i market` will not find it.
 
 So `docker volume ls | grep -i market` and `docker ps -a | grep -i market` both answer with the
 **quality** stack alone, which reads as "there is no dev estate here" rather than as "you asked the
@@ -1544,6 +1560,18 @@ time.**
   that prompted it was live: `docker compose ls` named **two** config files for the one
   `hc-market-quality` project, the five application containers from the main checkout and the five
   **databases** from a git worktree that has since been pruned.
+  **THE SPLIT HAS RESOLVED — measured 2026-09-17.** `docker compose ls -a` now names **one** config
+  file for `hc-market-quality`, the main checkout's, at `running(11)`; the roll to `414966f` recreated
+  every service from one place and relabelled all of them, which is exactly the `down`/`up` remedy
+  D67's refusal prints. **The guard stays and is not weakened by that**: what has gone is the *state*,
+  not the mechanism that produces it, and an `up` from a worktree would split the project again
+  tomorrow. Two reasons this is worth writing down rather than deleting the paragraph. The guard has
+  **never refused anything** — it was written against a live split and the split cleared before it
+  ever fired, so its refusal path has been exercised only by its own test; and a reader who checks
+  `docker compose ls` today and finds one config file should not conclude the guard is obsolete. A
+  sibling's is split right now: the same command reads **two** config files for `hc-admin-quality`,
+  which is that product's business and not ours, and is the standing evidence that this is a thing
+  that happens rather than a thing that happened.
   **The label is the evidence; the bind mount is the damage.** `env_for_compose` sets
   `SEED_DIR="$ROOT/deploy/demo"`, so an `up` from a worktree repoints four **live** containers at a
   host directory that vanishes when it is pruned. Two packages in a row declined to restart the stack
