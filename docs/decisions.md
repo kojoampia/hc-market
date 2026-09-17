@@ -17165,6 +17165,64 @@ a value absent is named, an absent file is "missing or empty", an unreadable one
 unset — and the check's 52-mutation test is 53 ok / 0 failed, after one expected-message fragment in
 it was updated to the derived wording rather than left greping text the check no longer prints.
 
+### §5e Round four: the ban cannot be finished, so it stopped claiming to be
+
+Two more escapes, measured with a correct `3 days` left in place so the **ban** was under test rather
+than the requirement — which is the subtlety that makes this round's finding real, because deleting
+the digits trips the requirement and produces a false "caught":
+
+| planted in §7.1 | round-3 check |
+| --- | --- |
+| *"deleted on the **14th** day"* | **passed** — `14th` is neither `isdigit()` nor a word, so it took the arm meant for grammar |
+| *"deleted at **day 14**"* | **passed** — the number on the other side of the unit |
+
+**Four rounds, four families: document-wide, the word list, the spelling, the position.** The
+conclusion is not a fifth pattern. **Banning wrong prose requires enumerating wrongness, and English
+is unbounded.** So this round separated the two halves and said so in the header and in the output:
+
+- **The positive requirement — the section must state the applied window in DIGITS beside the word
+  `day` — cannot be escaped by a spelling, and it is unchanged.** It is the half that works, and
+  keeping it exact is why the ordinal fix deliberately does **not** let `3rd day` satisfy it: the
+  requirement exists to insist on one canonical spelling, and `UnactivatedAccountSweep`'s own
+  documents are read by a data subject and a regulator.
+- **The ban is best-effort and now says so.** The ordinal and the postfix position are closed
+  (cheap, natural English, not adversarial), and the header enumerates what it knowingly misses —
+  fullwidth digits, markup between the number and the unit, any other unit, number words outside the
+  list, and grammar. It over-flags where it can: a figure in a code span or an HTML comment is a
+  finding, because a wrong period explained in prose is still a wrong period.
+
+**The success line was the actual defect this round**, not the ordinal. It read *"N period figure(s)
+inspected, all of them the applied one"*, which a reader takes as "there is no wrong period in this
+section" — a claim the code cannot make. **That is `and no other` from round two, returning in
+different words**, which is worth recording as its own lesson: an over-claim removed once came back
+because the replacement was written to describe the mechanism rather than to bound it. It now reads
+
+> `states 3 days in digits (required, exact); the best-effort ban inspected 5 period figure(s) there
+> and flagged none — it does not establish that the section names no other period, see this file's
+> header`
+
+**One limit is stated rather than closed, and the distinction is the point**: a door that is not a
+`pathMatchers` call at all — `.anyExchange().permitAll()`, a widened `securityMatcher`, a second
+`SecurityWebFilterChain` bean — opens every path in one line, derives no path, and leaves this check
+at exit 0. §5c said non-literal doors were "closed rather than stated"; that is true of a constant
+and **not** of this, so the header says so. What backstops it is partial and elsewhere:
+`InternalApiPermitIT`, `PaymentWebhookRoutePermitIT`, and D74's measurement that an unmatched
+reactive exchange is a 401. Note what would be missing in that case is **authentication**, not a rate
+limit.
+
+**And one misattributing message in `host-probe-attribution.sh`**: part 3's success arm matched the
+literal `HC_PAYOUT_DB_PASSWORD` while both refusal arms derived `$MISSING_KEY` — so changing that
+key, which §5d's own membership guard invites you to do, left the arm unable to match and the check
+reported *"refused a secrets file missing HC_CATALOG_DB_URL without saying which value is missing"*
+about a refusal that named it perfectly. Fail-closed, and misattributing, which is the one thing that
+file exists to prevent. Measured in all three states.
+
+**NEW-63 opened**, from a residual the review named and declined to have built here: nothing
+cross-checks preflight's required keys against `docker-compose.prod.yml`'s `:?` variables. They are
+**equal today** — 15 names each, measured — so it is a guard rather than a fix; a `:?` with no
+preflight entry is the 2026-09-05 defect (deploy rotates `.env`, then dies at `up`), and §5d is the
+evidence that this list drifts across copies.
+
 ### §6 Verified, assumed, not exercised
 
 **Verified by running it.** Registration through activation to sign-in, walked end to end against a

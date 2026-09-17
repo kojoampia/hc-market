@@ -308,6 +308,73 @@ else
   report bad "17j the HttpMethod form was refused: $(printf '%s' "$method_form" | grep '::error' | head -1)"
 fi
 
+# --- 17k-17n. ROUND FOUR: ordinals, the postfix position, and the two controls -------------------
+#
+# Round 3's shape — digits REQUIRED, other number-like figures banned — was escaped twice more, both
+# with a correct `3 days` left in place so the requirement was satisfied and only the ban was under
+# test (the reviewer's first attempt deleted the digits and got a false "caught" off the requirement):
+#
+#   17k  "deleted on the 14th day"  — `14th` is neither isdigit() nor a word, so it took the arm
+#                                     meant for grammar
+#   17l  "deleted at day 14"        — the number on the other side of the unit
+#
+# Both are closed. The review's conclusion is that this cannot be finished by enumeration, so the
+# success line no longer claims the section is clean — see the check's header, and 17m/17n, which are
+# the controls that keep the two halves honest in opposite directions.
+case_refuses "17k an ORDINAL period the estate does not apply" "14th" \
+  python3 -c '
+import io, sys
+p = sys.argv[1]
+s = io.open(p, encoding="utf-8").read()
+old = "**If you want to keep the account, confirm your email address.**"
+assert s.count(old) == 1
+io.open(p, "w", encoding="utf-8").write(s.replace(old, "Accounts are deleted on the 14th day.\n\n" + old))
+' "$FIXTURE/docs/privacy-notice.md"
+
+case_refuses "17l a period AFTER the unit — 'at day 14'" "also names a period the estate does not apply" \
+  python3 -c '
+import io, sys
+p = sys.argv[1]
+s = io.open(p, encoding="utf-8").read()
+old = "**If you want to keep the account, confirm your email address.**"
+assert s.count(old) == 1
+io.open(p, "w", encoding="utf-8").write(s.replace(old, "Accounts are deleted at day 14.\n\n" + old))
+' "$FIXTURE/docs/privacy-notice.md"
+
+# THE REQUIREMENT STAYS EXACT: the applied number in ordinal form is NOT the canonical spelling, so
+# "deleted on the 3rd day" with the digits dropped is red. Without this case the ordinal fix could
+# have been made by treating `3rd` as satisfying the requirement, which would have widened the one
+# half of this check that cannot be escaped.
+case_refuses "17m the applied number in ordinal form only" "does not state the window in DIGITS" \
+  python3 -c '
+import io, sys
+p = sys.argv[1]
+s = io.open(p, encoding="utf-8").read()
+old = "three days later** — 3 days, counted from when you registered."
+new = "on the 3rd day** after you registered."
+assert s.count(old) == 1
+io.open(p, "w", encoding="utf-8").write(s.replace(old, new))
+' "$FIXTURE/docs/privacy-notice.md"
+
+# AND THE NEW PATTERN MUST NOT REFUSE A CORRECT STATEMENT. "Deletion happens on day 3" beside the
+# canonical form is right, and a ban that flagged it would be a check that refuses accurate prose —
+# which is how a check gets deleted rather than fixed.
+copy_tree "$FIXTURE"
+python3 -c '
+import io, sys
+p = sys.argv[1]
+s = io.open(p, encoding="utf-8").read()
+old = "**If you want to keep the account, confirm your email address.**"
+assert s.count(old) == 1
+io.open(p, "w", encoding="utf-8").write(s.replace(old, "Deletion happens on day 3.\n\n" + old))
+' "$FIXTURE/docs/privacy-notice.md"
+postfix_ok="$(run_check)"
+if printf '%s' "$postfix_ok" | grep -q "lifecycle guards: ok"; then
+  report ok "17n a CORRECT period after the unit is not a finding"
+else
+  report bad "17n a correct 'on day 3' was refused: $(printf '%s' "$postfix_ok" | grep '::error' | head -1)"
+fi
+
 # --- 19. the stripper's absence, and the one thing it must NOT see ------------------------------
 #
 # Every text-matching check in this repository trusts one file; absent it, the two whose subject is a

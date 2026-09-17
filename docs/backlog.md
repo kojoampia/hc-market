@@ -4870,6 +4870,55 @@ dependency-management decision for the repository rather than for a backlog item
 
 ---
 
+## NEW-63 — nothing cross-checks preflight's required keys against the compose file's `:?` variables · READY
+
+**Opened 2026-09-17 by NEW-47's fourth review round**, which found it as a residual and explicitly
+declined to have it built in that package. Small, derived, and it guards a defect this estate has
+already had once.
+
+`deploy-prod.sh`'s preflight checks a list — `SECRET_KEYS` + `CONNECTION_KEYS` — by name on the host
+before it touches the stack. `docker-compose.prod.yml` refuses to interpolate without its `:?`
+variables. **Those are two hand-maintained lists of the same requirement, and nothing compares them.**
+
+**Measured today, and they agree** — which is why this is a guard rather than a fix:
+
+| | |
+| --- | --- |
+| preflight requires | **15** — `SECRET_KEYS` 3 + `CONNECTION_KEYS` 12 |
+| the prod compose requires | **15** distinct names — 14 `HC_*` plus `JWT_BASE64_SECRET` |
+| the two sets | **identical**, name for name |
+
+(The nineteen the review counted is `:?` *occurrences*: the signing key and the pepper appear in
+several services. Occurrences are not the subject; names are.)
+
+**Why it matters in each direction**, because they are not symmetrical:
+
+- **A `:?` variable with no preflight entry is the 2026-09-05 defect** — the one `deploy-prod.sh`'s own
+  header records as *"THE PREFLIGHT CHECKED TWO OF THE ELEVEN"*. The deploy passes preflight,
+  **overwrites `.env` and rotates `.env.previous`**, and then dies at `up` on the compose file's own
+  message, leaving the host half-rolled over a variable nothing in the pipeline ever supplied.
+- **A preflight entry with no `:?`** is milder and still wrong: a deploy refused over a value nothing
+  reads, which is how a required variable becomes a placeholder somebody invents.
+
+**And NEW-47's round three is the proof that the lists drift:** three keys were added to both places
+in one commit, and a *third* copy of the same list — `host-probe-attribution.sh`'s fixture — was
+missed, turning CI red on a correct branch. That fixture is derived now; these two are not.
+
+**The shape, and it is about fifteen lines.** In `build.yml`'s `consistency` job: lift the two arrays
+from `deploy-prod.sh` exactly as `host-probe-attribution.sh` already does, extract
+`\$\{([A-Z_]+):\?` from `docker-compose.prod.yml`, and require the two **sets** to be equal, printing
+both counts. Refuse an empty extraction on either side — a check that reads nothing must not pass.
+
+**Two things to decide while writing it, not before:** whether `deploy/prod-server/compose.yml`'s own
+`:?` variables belong in the comparison (it is a second compose project on the host, installed once,
+and its variables are read from the same `secrets.env` — so probably yes, as a third set), and
+whether `secrets.env.example` should be held to the same list (it is the operator's copy of it, and
+it has been stale before).
+
+**Not blocked.**
+
+---
+
 ## Not a package: standing constraints
 
 - **Production is off limits.** The pipeline is not ready; `deploy/deploy-prod.sh --dry-run` is the

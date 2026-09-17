@@ -715,7 +715,12 @@ case "$s_all" in
       || err "$SCRIPT's secrets check accepted a file holding all $REQUIRED_COUNT required values but reported $present_count of them present. Each value is confirmed by name because the receipt of that loop is what an operator reads before a deploy. See decisions.md D75." ;;
 esac
 case "$s_short" in
-  *"DIE HC_PAYOUT_DB_PASSWORD is not set"*) ok "a value that really is absent is still reported as not set, by name" ;;
+  # $MISSING_KEY, NOT THE LITERAL, and both err arms below already derived it. With the name written
+  # out here, changing MISSING_KEY — which the membership guard above positively invites, by telling
+  # you to pick another key — left this arm unable to match: fail-closed, but reporting "refused
+  # without saying which value is missing" about a refusal that named it perfectly. A misattributing
+  # message is the defect this whole file exists to prevent (D75).
+  *"DIE $MISSING_KEY is not set"*) ok "a value that really is absent is still reported as not set, by name" ;;
   *DIE*) err "$SCRIPT refused a secrets file missing $MISSING_KEY without saying which value is missing: '$(one "$s_short")'. All $REQUIRED_COUNT values are checked one at a time precisely so the refusal names one. See decisions.md D75." ;;
   *) err "$SCRIPT ACCEPTED a secrets file missing $MISSING_KEY ('$(one "$s_short")'). Every one of the $REQUIRED_COUNT is ':?' in docker-compose.prod.yml, so the deploy would die at 'up' with .env already overwritten and .env.previous rotated. See decisions.md D75." ;;
 esac

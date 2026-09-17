@@ -134,34 +134,49 @@ fi
 # default that does not reach both of them makes two outward-facing documents false, and the whole
 # point of D94 is that this deletion is stated rather than inherited.
 #
-# WHAT THIS CAN AND CANNOT SEE — because parsing English for periods is inherently approximate, and
-# two rounds of review found one escape each. Version 1 looked anywhere in the document; version 2
-# scoped it to the section and banned other periods with a word list that stopped at fourteen. Both
-# of these are natural English and both passed version 2, measured:
+# WHAT THIS CAN AND CANNOT SEE. Four review rounds found one escape family each, and the fourth
+# round drew the conclusion that matters more than any of them:
 #
-#     "deleted after a fourteen-day period"        — hyphenated, so the grep never matched
-#     "We may in future keep it for thirty days."  — past the end of the list
+#   round 1  the figure anywhere in the document        — "three days" in the paragraph below the drift
+#   round 2  scoped to the section, wrong periods banned by a word list stopping at fourteen
+#            → "a fourteen-day period" (hyphenated) and "thirty days" (past the list) both passed
+#   round 3  the DIGIT REQUIREMENT added, which is the half that cannot be escaped by a spelling
+#   round 4  → "on the 14th day" (ordinal) and "at day 14" (the number after the unit) both passed
 #
-# So it no longer rests on enumerating the spellings somebody thought of. Three layers, and only the
-# first is exact:
+# THE TWO HALVES ARE NOT EQUALLY SOUND, AND SAYING SO IS THE POINT:
 #
-#   REQUIRED, and this part needs no English at all: the section must state the applied window in
-#   DIGITS beside the word day — `3 days`, `3-day`, `**3 days**`. A positive requirement for one
-#   unambiguous form cannot be escaped by a spelling, which is what the two escapes above both were.
-#   A section that renames the period in prose and drops the digits is red.
+#   REQUIRED — "the section must state the applied window in DIGITS beside the word day" (`3 days`,
+#   `3-day`, `**3 days**`). This needs no English at all. It is a positive requirement for one
+#   unambiguous form, so no spelling of anything else can satisfy it, and a section that renames the
+#   period in prose and drops the digits is red. **This is the half that works.**
 #
-#   BANNED: any OTHER number-like figure beside `day`/`days` — a digit sequence that is not the
-#   applied one, or a number word from the list in the python below, which runs one…twenty plus the
-#   tens to a hundred. Both measured escapes fall inside it.
+#   BEST-EFFORT — the ban on any OTHER number-like figure beside `day`/`days`. It has failed four
+#   times, and it cannot be otherwise: banning wrong prose means enumerating wrongness, and English
+#   is unbounded. It closes what it closes and the success line must not imply more.
 #
-#   IGNORED, AND STATED RATHER THAN PRETENDED AWAY: a token that is not number-like at all, because
-#   "it runs once a day" and "calendar days" are grammar and flagging them would drive somebody to
-#   weaken this check; a number word outside that list; and a period in any other unit — "72 hours",
-#   "two weeks", "a month" — which this check does not read. What stands behind those is the digit
-#   requirement above, and nothing else does.
+# WHAT THE BAN READS: a digit sequence (ordinals stripped, so `14th` counts as 14), a number word
+# from the list in the python below (one…twenty plus the tens to a hundred), on either side of the
+# unit — `14 days` and `at day 14` both.
 #
-# The success line reports how many figures it inspected and does NOT say "and no other": an `ok`
-# claiming more than the code delivers is the over-trust this header exists to prevent.
+# WHAT IT KNOWINGLY MISSES, so that nobody has to rediscover it in round five:
+#
+#   * FULLWIDTH AND NON-ASCII DIGITS — `１４ days` is not matched. Not closed, stated.
+#   * EMPHASIS OR MARKUP BETWEEN THE NUMBER AND THE UNIT — `14**&nbsp;**days`, a footnote marker, an
+#     HTML tag. A plain NBSP between them IS caught (measured); markup between them is not.
+#   * ANY OTHER UNIT — "72 hours", "two weeks", "a month", "one business quarter". This check reads
+#     the word `day` and nothing else, so a period expressed in another unit is invisible to it.
+#   * A NUMBER WORD OUTSIDE THE LIST, and words that are not number-like at all: "it runs once a
+#     day" and "calendar days" are grammar, and flagging grammar is how a check gets weakened until
+#     it is deleted.
+#
+# It over-flags rather than misses where it can: a figure inside a code span or an HTML comment is
+# still a finding (measured), because a wrong period explained in prose is still a wrong period a
+# data subject reads.
+#
+# WHAT STANDS BEHIND ALL OF IT is the digit requirement and a person reading the section — not this
+# ban. The success line therefore reports what it inspected and makes no claim about what it did
+# not: an `ok` that outruns its code is what makes the next reader trust it too far, and this file
+# has now removed that twice (`and no other` in round 2, `all of them the applied one` in round 4).
 #
 # SCOPED TO THE SECTION THAT STATES IT, AND IT WAS DOCUMENT-WIDE UNTIL NEW-47's REVIEW. Measured:
 # with §7.1's headline rewritten to "fourteen days later — 14 days" and the code still applying 3,
@@ -205,16 +220,29 @@ WORDS = {
     "ninety": 90, "hundred": 100,
 }
 
-# The token immediately before `day`/`days`, separated by a space or a hyphen, with the word not
-# running on into another word (so `daily` is not a period). [0-9A-Za-z]+ excludes the separator, so
-# `fourteen-day` yields `fourteen` rather than `fourteen-day`.
-pattern = re.compile(r"(?<![0-9A-Za-z])([0-9A-Za-z]+)[-–—\s]+days?(?![A-Za-z])", re.I)
+# TWO POSITIONS, because round 4 found the number on the other side of the unit. The first pattern
+# is the token immediately BEFORE `day`/`days` — separated by a space or a hyphen, with the word not
+# running on into another word, so `daily` is not a period and `fourteen-day` yields `fourteen`. The
+# second is `day 14` / `at day 14`, which read as naturally in a retention sentence and which the
+# first cannot see. Over-flagging is the accepted direction here, so a phrase like "day 1 of the
+# month" would be a finding; neither section says anything of the kind and the control proves it.
+PREFIX = re.compile(r"(?<![0-9A-Za-z])([0-9A-Za-z]+)[-–—\s]+days?(?![A-Za-z])", re.I)
+POSTFIX = re.compile(r"(?<![A-Za-z])days?[-–—\s]+([0-9]+(?:st|nd|rd|th)?)(?![0-9A-Za-z])", re.I)
+
+# ORDINALS COUNT AS DIGITS — `on the 14th day` passed every earlier version, because `14th` is
+# neither isdigit() nor a word in the list, so it took the `continue` arm meant for grammar. It is
+# natural English for a deletion date rather than an adversarial spelling, which is why it is closed
+# rather than listed as a miss.
+ORDINAL = re.compile(r"^([0-9]+)(st|nd|rd|th)$")
 
 figures = 0
 bad = []
 digits_present = False
-for match in pattern.finditer(text):
+for match in list(PREFIX.finditer(text)) + list(POSTFIX.finditer(text)):
     token = match.group(1).lower()
+    ordinal = ORDINAL.match(token)
+    if ordinal:
+        token = ordinal.group(1)
     if token.isdigit():
         value = int(token)
     elif token in WORDS:
@@ -223,10 +251,13 @@ for match in pattern.finditer(text):
         continue                      # grammar, or a number word outside the list — see the header
     figures += 1
     if value == int(applied):
-        if token.isdigit():
+        # An ordinal or a postfix occurrence does NOT satisfy the digit requirement: what that
+        # requirement is for is one canonical spelling a reader cannot mistake, and "deleted on the
+        # 3rd day" is not it.
+        if token.isdigit() and not ordinal and match.re is PREFIX:
             digits_present = True
     else:
-        bad.append(token)
+        bad.append(match.group(1).lower())
 
 print("figures %d" % figures)
 for token in bad:
@@ -260,7 +291,11 @@ if [ -n "$default_days" ]; then
     elif [ -n "$others" ]; then
       err "$doc's section at '$heading' also names a period the estate does not apply: $others. The code applies $default_days days (AccountRetention.DEFAULT_RETENTION_DAYS). Two periods in the section that defines one is how a headline drifts from the paragraph under it — measured twice, in two review rounds. If a second period genuinely has to be named there, say so in D94 and widen this deliberately." "$doc"
     else
-      ok "$doc's section at '$heading' states $default_days days in digits; $figures period figure(s) inspected, all of them the applied one"
+      # WHAT IT INSPECTED, AND NO CLAIM ABOUT WHAT IT DID NOT. "all of them the applied one" read as
+      # "there is no wrong period in this section", which this check cannot know — the same
+      # over-claim as round 2's "and no other", in different words. The digit requirement is the
+      # part that is exact, so that is what the line asserts; the ban is reported as what it is.
+      ok "$doc's section at '$heading' states $default_days days in digits (required, exact); the best-effort ban inspected $figures period figure(s) there and flagged none — it does not establish that the section names no other period, see this file's header"
     fi
   done
 fi
@@ -463,6 +498,16 @@ if [ -f "$SECURITY_CONFIG" ]; then
   # idiom rather than a hidden path — PaymentWebhookRouteConfiguration uses that form — and it still
   # requires every remaining argument to be a literal. The cost of the strictness is that a future
   # constant has to be inlined or argued; that is the intended direction.
+  #
+  # WHAT IS STILL ONLY STATED, because "closed rather than stated" is true of the constant and not of
+  # this: A DOOR THAT IS NOT A `pathMatchers` CALL AT ALL. `.anyExchange().permitAll()` — or a
+  # `securityMatcher` widening what this chain governs, or a second `SecurityWebFilterChain` bean
+  # permitting everything — opens every path in one line, derives no path, and leaves this check at
+  # exit 0 with nothing to say. The estate backstops it elsewhere and only partly:
+  # `InternalApiPermitIT` and `PaymentWebhookRoutePermitIT` ask the running container about specific
+  # paths, and D74's measurement of the reactive default-deny is what makes an unmatched exchange a
+  # 401 rather than a pass — but nothing here would notice the line. A rate limit is not what would
+  # be missing in that case; authentication would be.
   permit_report="$(java_src "$SECURITY_CONFIG" | python3 -c '
 import re, sys
 
