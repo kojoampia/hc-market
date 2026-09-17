@@ -76,6 +76,33 @@ x-service-base: &service-base
     HC_RETENTION_FINANCIAL_DAYS: ${HC_RETENTION_FINANCIAL_DAYS:-2190}
     HC_RETENTION_OPERATIONAL_DAYS: ${HC_RETENTION_OPERATIONAL_DAYS:-365}
     HC_DPC_REGISTRATION: ${HC_DPC_REGISTRATION:-}
+    # --- The two sweeps that apply those promises -- decisions.md D96, backlog NEW-52 -----------
+    #
+    # PASSED WITH NO DEFAULT: `${X:-}` sets an EMPTY variable, blank counts as absent, and every
+    # default lives in Java (PrivacyProperties.Retention, DisputeSlaProperties) -- not because a
+    # default here would be wrong, but because compose's empty string WINS over a Spring
+    # `${VAR:default}`, so a placeholder default would be skipped on exactly the estates that pass
+    # the variable through. D94's finding, and an empty cron is an invalid one rather than a missing
+    # one.
+    #
+    # THIS IS THE ONLY ESTATE WHERE ENABLING THE RETENTION SWEEP IS A REAL DECISION, and it stays
+    # off until somebody takes it. It is off by default and, when enabled, in dry run by default --
+    # two independent decisions between this file and an irreversible erasure of a customer's
+    # record, on a timer, with nobody watching. The sequence to take it is: set
+    # HC_RETENTION_SWEEP_ENABLED=true in secrets.env, read the nightly WARN count for as long as it
+    # takes to believe it, and only then set HC_RETENTION_SWEEP_DRY_RUN=false. GET /api/desk/privacy
+    # reports `enforced` from those two values, so the desk agrees with what the estate does.
+    #
+    # Note that on a fresh production estate the count is legitimately 0 for six years: nothing has
+    # a booking old enough. A zero here is the honest answer and not evidence the sweep works.
+    HC_RETENTION_SWEEP_ENABLED: ${HC_RETENTION_SWEEP_ENABLED:-}
+    HC_RETENTION_SWEEP_DRY_RUN: ${HC_RETENTION_SWEEP_DRY_RUN:-}
+    HC_RETENTION_SWEEP_CRON: ${HC_RETENTION_SWEEP_CRON:-}
+    # The dispute sweep is ON by default and mutates nothing -- one WARN line naming the references
+    # of disputes past the resolution promise. Production never seeds, so it is silent until a real
+    # dispute goes late, which is exactly when somebody should hear about it.
+    HC_DISPUTE_OVERDUE_SWEEP_ENABLED: ${HC_DISPUTE_OVERDUE_SWEEP_ENABLED:-}
+    HC_DISPUTE_OVERDUE_SWEEP_CRON: ${HC_DISPUTE_OVERDUE_SWEEP_CRON:-}
     # The seed loader is unreachable under prod regardless; this is the second, explicit lock.
     HEALTHCONNECT_SEED_ENABLED: ${HEALTHCONNECT_SEED_ENABLED:-false}
     # --- OpenTelemetry -----------------------------------------------------------------------

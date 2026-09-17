@@ -50,7 +50,7 @@
 | **Categories of subject** | Customers, professionals |
 | **Source** | The customer, at booking. Price, service name and the professional's sign-in name are taken from the catalogue rather than from the request (D22, D28) |
 | **Where** | Booking service, PostgreSQL. `jdl/booking.jdl`, `booking/…/domain/Booking.java` |
-| **Retention** | **Financial — 2,190 days (6 years).** Configured, not enforced |
+| **Retention** | **Financial — 2,190 days (6 years).** Configured; a sweep exists since `decisions.md` D96 and is **switched off on every system**, so not applied. §3, §6.2 |
 | **Recipients** | The professional booked |
 
 > **No health data.** `careSummaryShared` is a `Boolean`. No field, column or entity in this estate
@@ -68,7 +68,7 @@
 | **Categories of subject** | Customers, professionals |
 | **Source** | Written by the parties |
 | **Where** | Messaging service, PostgreSQL. `jdl/messaging.jdl` |
-| **Retention** | **Operational — 365 days.** Configured, not enforced |
+| **Retention** | **Operational — 365 days.** Configured, not enforced, and **no sweep exists** — D96 built one for the financial period only, in a different service. §6.2, backlog NEW-68 |
 | **Recipients** | The other party to the conversation |
 
 ### 2.4 Reviews
@@ -144,6 +144,22 @@
 **There is no third category.** A `care-summary-days` period of 90 days existed until D88 and is
 removed: it governed no data.
 
+> **A SWEEP EXISTS SINCE 2026-09-17 AND IS SWITCHED OFF — `decisions.md` D96, backlog NEW-52. The
+> heading above is still true of every system, and it is true for a different reason now, so read
+> this before quoting either.** What changed and what did not:
+>
+> | | |
+> | --- | --- |
+> | The **financial** period (2,190 days) | **Has a sweep.** `RetentionSweep` in booking erases every customer with no booking activity for that long, by calling the same erasure the desk calls, recorded on the same register (§3, D39) |
+> | Is it running anywhere? | **No.** It is **off by default** and, when switched on, is in **dry run** by default — two independent decisions between a system and an irreversible erasure. All three compose files pass the switches with no value |
+> | The **operational** period (365 days) | **Still has no sweep at all**, genuinely unchanged. It governs message bodies, notifications and conversations, which live in a different service; applying booking's six-year clock to them would be six times too long and would file a receipt saying otherwise. §6.2 |
+> | `enforced: false` on the policy endpoint | **Now derived** from the sweep's own two switches rather than returned as a literal. So this document's claim is checkable against a running system instead of taken on trust, and it cannot silently go stale the day somebody enables the sweep |
+>
+> **The honest summary is therefore a third thing, neither "not implemented" nor "implemented":** the
+> organisation now has the means to apply the financial period and has not chosen to. That is a
+> materially better position than having no means — the gap is a decision rather than engineering — and
+> it is **not** the same as applying it. Nothing has been erased by a timer on any system.
+
 ### 3.1 One erasure that IS automatic, and is not one of the periods above
 
 | | |
@@ -187,7 +203,7 @@ than by default.
 > the environment at start-up with the ratified figures as the committed default, the internal policy
 > endpoint reports them beside `enforced: false`, and a test pins that honesty so the day a sweep
 > exists it must be changed deliberately.
-
+>
 ## 4. Transfers outside Ghana
 
 Production is intended to run on a virtual server at `199.247.5.252`, outside Ghana. All of the
@@ -211,7 +227,7 @@ data-protection position can be settled **before** the processing starts rather 
 | Each service owns its own database instance | **Implemented** |
 | Databases unreachable from other products | **Implemented** — they join no shared network |
 | Payment provider callbacks authenticated by signature over the raw body | **Implemented** (HMAC-SHA512, constant-time comparison) |
-| Retention enforcement | **Not implemented** — §3. The scheduling capability exists and is running, and one sweep now runs on it: unactivated accounts, §3.1, by decision since `decisions.md` D94. The three configured periods still have no sweep behind them — D91, NEW-52 |
+| Retention enforcement | **Available and not switched on** — §3, and this row read "**Not implemented**" until 2026-09-17. The scheduling capability exists and is running, and two sweeps now run on it by decision: unactivated accounts (§3.1, `decisions.md` D94) and, since D96, the **financial** period — which is off by default and in dry run when enabled, so it is applied on no system. The **operational** period still has no sweep. NEW-52 is closed; what remains is a decision to enable it and NEW-68 for the other period |
 | Rate limits on the public account paths | **Provided, not installed** (`decisions.md` D94). Registration, password-reset-request and sign-in are capped per source address at both edges — 10/min and 1/s — which is what stops open self-registration being an account-creation and mail-sending amplifier. The configuration is in this repository; `/etc/nginx` belongs to the architect, so it is installed by a person and **is not in force on any system until they do** |
 | A registration cannot be answered if mail cannot be sent | **Implemented** (`decisions.md` D94). A system with no mail configuration refuses to start rather than answering 201, discarding the message and deleting the account three days later |
 | Audit log of staff access to customer records | **Not implemented.** §6.3 |
@@ -230,11 +246,25 @@ the question to counsel is sharper than it was rather than answered: **the organ
 D94 §5 also asks whether "never delete" should be expressible at all, and deliberately does not answer
 it — it is the one option that would make this gap bigger.
 
-### 6.2 Retention is not enforced
-§3. Engineering work, and **not** a scheduler this estate lacks — that claim was false and is corrected
-in §3.1's box (`decisions.md` D91). Two scheduled tasks already run, one of them a deletion of personal
-data (§3.1), so what is missing is a sweep for the three configured periods rather than the ability to
-run one. It is the largest gap in this record and it is stated in the notice as well.
+### 6.2 Retention is not enforced — and since 2026-09-17 that is a decision, not missing work
+§3. **The shape of this gap changed with `decisions.md` D96** and it is worth stating precisely,
+because it has now been wrong in two different directions in this document.
+
+It was never a scheduler this estate lacked — that claim was false and is corrected in §3.1's box
+(D91). It is no longer missing engineering either, for the **financial** period: `RetentionSweep`
+applies it, through the same erasure the desk performs and onto the same register. **It is off on every
+system**, by a default this repository chose deliberately, and enabling it takes two separate switches.
+So for that period the question is now *"will the organisation apply its own stated policy, and from
+when"* — which is a decision for a person, and one that can be taken with a dry run's count in hand
+rather than blind.
+
+**What is still missing work** is the **operational** period (365 days): message bodies, notifications
+and conversations, in messaging, with nothing sweeping them. That is **NEW-68**, and it is not a copy of
+what D96 built — a shorter period over a different service's tables, where the data is the substance of
+what people wrote to each other rather than a financial record. Six years of message bodies under a
+policy that says one year is the larger exposure of the two, and it is the one that remains.
+
+Still stated in the notice as well, and still the largest gap in this record.
 
 ### 6.3 No audit log of staff access
 A member of the brokerage desk can read any customer's records and perform an erasure. The erasure is

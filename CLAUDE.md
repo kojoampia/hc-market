@@ -466,6 +466,8 @@ regeneration.
 | The `healthconnect.privacy.retention` block | booking **`src/test/resources/config/application.yml`** | same shadowing, different symptom: the three periods bind to `null` under test and `PrivacyResourceIT` fails asserting counsel's ratified figures against nothing, which reads as a broken assertion rather than a lost block |
 | The `healthconnect.payments` block | booking `config/application.yml` | **silent, and only on an estate that had a provider.** Every `enabled` flag binds to false, so the three adapters vanish from the registry: a booking naming one is refused 409 as an unknown provider, and every callback addressed to it is 401 — which reads as the provider having changed something. On today's estate, where all three are off anyway, losing it changes nothing at all, so nothing here will tell you |
 | The `healthconnect.privacy` block with its `${HC_RETENTION_*}` placeholders | booking `config/application.yml` | **silent.** The periods bind to `null`, the desk reports `null` for all three, and the estate's answer to "what is your retention policy" becomes "none" — with every test still green, because the test config carries its own copy |
+| The three `${HC_RETENTION_SWEEP_*}` placeholders beside them | booking `config/application.yml` | **silent, and it takes away a policy rather than breaking one** (D96, NEW-52) — D57's brokerage row and D94's account row for a third value, and **failing in the SAFE direction**, which is why nothing will tell you. All three fall back to their Java defaults in `PrivacyProperties.Retention`, and those defaults are **off** and **dry run**, so the estate keeps behaving exactly as every estate does today and nothing goes red. What is lost is the *ability to enable it*: `HC_RETENTION_SWEEP_ENABLED=true` in `secrets.env` binds to nothing, the retention sweep stays off, and an operator who believes they have switched on their own stated policy has not — while `GET /api/desk/privacy` correctly reports `enforced: false`, which they will read as the sweep not working rather than as a lost config block. **The defaults are in Java rather than in this file for exactly this reason** (compose's `${X:-}` sets an *empty* variable, and an empty cron is an invalid one, not a missing one), and the test copy shadows this file, so no test in booking can see it |
+| The `healthconnect.disputes.overdue-sweep-*` block | booking `config/application.yml` | **silent, and the mildest row in this table** (D96). Both values fall back to their Java defaults in `DisputeSlaProperties` — **on**, daily at 07:00 — so the overdue-dispute report keeps running and keeps warning. What is lost is the ability to *silence* it, which is the one thing that switch is for: an estate digging out from under a backlog of overdue disputes cannot turn the morning WARN off, and `working-days-to-resolve` is not in this block (it is a `@Value` in `DisputeWorkflow`) so a regeneration does not touch the deadline itself |
 | The `healthconnect.brokerage.founding` block | payout `config/application.yml` | **silent, and the only row here that is HARMLESS by design** (D57). The five `${HC_BROKERAGE_*}` placeholders are the only way an estate can name its own founding terms; without them `FoundingTerms`' Java defaults — the prototype's 12% and 3-day lag — still found the estate correctly, so nothing breaks and nothing goes red. What is lost is the *overridability*, silently: `HC_BROKERAGE_COMMISSION_RATE=0.15` in `secrets.env` would bind to nothing and the estate would price at 12% while its operator believed otherwise. The defaults being in Java rather than in this file is deliberate for exactly this reason, and CI checks the placeholders by name |
 | `definition: kafkaConsumer` (not `kafkaConsumer;kafkaProducer`) | **all five** `config/application-kafka.yml` | **silent, and what comes back is 432,000 messages a day onto somebody else's infrastructure** (D62, NEW-21). `--force` restores `kafkaProducer` in the `spring.cloud.function.definition` of every service, which binds the generated `broker.KafkaProducer` — a `Supplier<String>` returning the constant `"kafka_producer"` — and Spring Cloud Stream polls a bound supplier on `spring.integration.poller.fixed-delay`, **defaulted to 1s** by the framework and configured nowhere here. So each service resumes putting one message a second onto the broker four products borrow (D27), on `kafkaProducer-out-0`, which **no consumer group on that broker is registered against**. Measured before the fix: 5.9/s across six such publishers, five of them ours, past an end offset of **5.78 million**. Nothing about it is visible from inside: no log line at any level either service runs at, no health indicator, no test, and the only symptom is a broker filling up in a repository nobody working here would open. `kafkaConsumer` **must stay named** — an explicit definition is the only thing stopping Spring Cloud Function auto-discovering a lone function bean and binding the supplier again. The orphaned `kafkaProducer-out-0` binding block below it is left exactly as generated and is deliberately *not* part of this row: a binding whose function is not in `definition` is never bound and provisions nothing, which `binding-out-0` has demonstrated on that broker for the estate's whole life. **CI catches this one** — *"No service may bind the generated Kafka sample supplier"*, derived from `messageBroker kafka` in `jdl/*.jdl` — and so does `KafkaSampleSupplierIsNotPolledIT`, which is a new file and therefore survives the regeneration that undoes the config |
 | The **removal of `@Scheduled`** from `UserService.removeNotActivatedUsers` | gateway `service/` | **the estate acquires a SECOND retention sweep and nothing fails** (D94, NEW-47). `--force` restores `@Scheduled(cron = "0 0 1 * * ?")` over a hard-coded `Instant.now().minus(3, ChronoUnit.DAYS)`, so an estate that configured 14 days deletes at 3 — while `UnactivatedAccountSweep` keeps running, keeps logging, and keeps reporting the operator's window at `/management/info`, and `docs/privacy-notice.md` §7.1 states a period the estate does not keep. It destroys a login, both names, an email address and a password hash, and the generated method **logs the whole `User`** at DEBUG, which is the level `net.jojoaddison` runs at under `dev` — which is what the quality box runs. **Two things catch it**: `ThereIsOneAccountSweepTest` (ArchUnit, no `@Scheduled` anywhere in the gateway) and `account-lifecycle-guards.sh` part 1. Do not "restore" the annotation because the method looks orphaned — it is kept only so two *generated* ITs still compile |
@@ -1651,6 +1653,53 @@ time.**
   has to compare before it counts. And **every row the sweep touches gets a number on the receipt** —
   catalog deleted favourites and reported nothing about them for a week. The nine counters and which
   two were wrong are tabulated in D39.
+- **There are TWO new sweeps and they are two different kinds of thing** (`decisions.md` D96, backlog
+  NEW-52). `RetentionSweep` applies the **financial** retention period by calling the same
+  `ErasureWorkflow.eraseCustomer` the desk calls; `DisputeSlaSweep` reports disputes past `Dispute.dueBy`
+  and changes nothing. They share a trigger and nothing else — separate classes, separate properties
+  holders (`PrivacyProperties.Retention` and `DisputeSlaProperties`), separate repositories, opposite
+  defaults — and `DisputeSlaSweepIT.twoSweepsNotOne` asserts the separation, because a refactor folding
+  them together would leave every behavioural assertion in both files true. Six things about them are
+  decisions rather than shape:
+  - **The retention sweep is OFF by default and DRY RUN by default when enabled**, so reaching a
+    deletion takes two independent switches. It is the one scheduled task in the estate that destroys
+    real people's records on a timer with nobody watching, and "enabled" is the kind of flag somebody
+    sets while reading a different document — with one switch the first thing a misreading produces is a
+    deletion, with two it is a count. **The dispute sweep is ON by default** and that asymmetry is the
+    decision: a promise kept by nothing is not made safer by a sweep shipped switched off.
+  - **`enforced` on `GET /api/desk/privacy` is DERIVED and must not go back to a literal.**
+    `Retention.isEnforcing()` is `sweep-enabled AND NOT sweep-dry-run` — the only combination that
+    deletes a row. A dry run is **not** enforcement. `PrivacyResourceIT` still asserts `false` and
+    **cannot see the derivation being wrong** (it passes against a restored literal, measured); the
+    three-state case is `TheRetentionSweepIsOffUntilTwoDecisionsUnitTest.theDeskReportsTheDerivation`,
+    which is where a widening belongs.
+  - **The booleans are parsed strictly and a typo refuses startup.** `Boolean.parseBoolean` answers
+    `false` for everything that is not "true", so `sweep-dry-run=fales` would read as *dry run off* —
+    an estate deleting records because somebody mistyped a word. Only `true`/`false`, case-insensitively.
+  - **The eligibility rule is customer-level, and the plausible query is wrong.** A customer is erased
+    only when **no** booking of theirs shows activity inside the window, across all four instants —
+    because `eraseCustomer` takes a *login* and redacts everything under it, so selecting old *bookings*
+    and erasing their customers takes last week's booking along with the six-year-old one. Measured:
+    the row-level version is red. And the `erased_subject` exclusion is **not** an optimisation — the
+    alias inherits the row's instants, so without it the sweep re-erases the alias every night into a
+    second, different pseudonym.
+  - **`sweep()` is NOT `@Transactional` and must not become so.** One transaction per customer, so a
+    failure rolls back one person rather than the night's work. That is also the only reason the `catch`
+    in its loop is legitimate rather than CLAUDE.md's standing `UnexpectedRollbackException` trap: the
+    transaction being rolled back is the inner one and has already ended.
+  - **Neither sweep logs a login, and the dispute one logs no customer text.** The dry-run line prints a
+    count and not the logins of the people about to be erased; the dispute line prints references and
+    never `reason` or `raisedByLogin`. A log is a place the erasure sweep does not reach and cannot
+    re-key. And it is **WARN, never ERROR**, deliberately — see the zero-ERROR argument in
+    `quality/compose.yml` and NEW-65, which is the generated `LoggingAspect` making that mistake by
+    accident.
+  **Three decisions were surfaced rather than taken**: NEW-67 (the register records an alias and an
+  instant, so it cannot say *why* — a subject's request and a clock expiring now write identical rows),
+  NEW-68 (the **operational** period still has no sweep, in messaging, and fanning this one out would
+  apply a six-year clock to one-year data and file a receipt saying so), NEW-69 (who is told about an
+  overdue dispute — `ROLE_BROKERAGE` lives in the gateway's account store and booking cannot enumerate
+  it). **`prod` still refuses to seed and that is untouched** — these sweeps are not seed data and share
+  no namespace with `healthconnect.seed`.
 - **FIVE families of file are copied verbatim across services, and CI diffs the copies.** There is no
   shared library here, so a derivation whose answers must match across services is duplicated instead;
   edit one copy and you must edit them all identically, **comments included**. All are new files, so a

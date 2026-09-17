@@ -39,11 +39,28 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <h2>The five working days</h2>
  *
- * <p>{@code dueBy} is recorded and <strong>not enforced</strong>. There is no scheduler anywhere in
- * this estate, so nothing can escalate when it expires — the desk can sort by it, and that is all.
- * Recorded rather than dropped so the gap is visible; the prototype's promise of a five-working-day
- * resolution is not kept by anything here, and pretending otherwise in code would be worse than
- * saying so.
+ * <p>{@code dueBy} is stamped here, from {@code healthconnect.disputes.working-days-to-resolve}, and
+ * <strong>{@link DisputeSlaSweep} reads it back</strong> — {@code decisions.md} D96, backlog NEW-52.
+ *
+ * <p>This section read <em>"{@code dueBy} is recorded and not enforced. There is no scheduler anywhere
+ * in this estate, so nothing can escalate when it expires — the desk can sort by it, and that is
+ * all."</em> The second sentence was false when it was written: {@code @EnableScheduling} has been
+ * active in all five services since the estate's first boot, and one of the two {@code @Scheduled}
+ * methods in the whole tree is this service's own outbox poll (D91). The gap was real and its stated
+ * cause was not.
+ *
+ * <p><strong>What the sweep does is report, and "enforced" is still the wrong word for it.</strong>
+ * Nothing escalates, no status changes, no {@code DisputeStatusChange} is written — a deadline passing
+ * is not an act anybody took, and that table records acts (D34/D39). A WARN line naming the count and
+ * the references is the whole of it, because <em>who</em> should be told is a decision nobody has
+ * taken: the promise binds the brokerage, and {@code ROLE_BROKERAGE} is an authority in the gateway's
+ * account store that this service cannot enumerate. Backlog NEW-69. So the promise is now
+ * <em>observed</em> rather than kept, which is one step and not two, and the gap that remains is named
+ * instead of being attributed to a scheduler that was always there.
+ *
+ * <p>Nothing on this path changed. The deadline is still computed at raise time from the configured
+ * window, so each dispute carries the period that was in force the day it was raised — which is why
+ * the sweep's log line quotes {@code dueBy} and never today's setting.
  */
 @Service
 public class DisputeWorkflow {

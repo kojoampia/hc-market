@@ -83,7 +83,7 @@ production. Phases are sequential where stated and their items are independent w
 |---|---|---|---|
 | **1** | a person can hold an account | ~~NEW-47~~ **DONE** (D94) | — |
 | **2** | the application | NEW-48 | phase 1 for anything behind a token; D90 §3 for its shape |
-| **3** | the promises the API already makes | NEW-49, NEW-50, ~~NEW-51~~ **DONE** (D95), NEW-52, NEW-53 | nothing; cheaper with phase 2's screens |
+| **3** | the promises the API already makes | NEW-49, NEW-50, ~~NEW-51~~ **DONE** (D95), ~~NEW-52~~ **DONE** (D96), NEW-53 | nothing; cheaper with phase 2's screens |
 | **4** | money for real | WP-13, NEW-54 | Act 987, provider credentials, a callback route |
 | **5** | deploy | WP-18, WP-19, NEW-55 | the four gates below |
 
@@ -4279,7 +4279,53 @@ the whole of the internal record, and only *automated* settlement waits on couns
 
 ---
 
-## NEW-52 — two configured promises with no SWEEP behind either · READY
+## NEW-52 — two configured promises with no SWEEP behind either · DONE (D96)
+
+> **CLOSED 2026-09-17 — `decisions.md` D96. Two sweeps, built as two things, and one of them is
+> deliberately switched off.**
+>
+> | | |
+> | --- | --- |
+> | **retention** | `RetentionSweep` + `RetentionSweepRepository` in booking. Erases every customer with **no booking activity** for the financial period, through the same `ErasureWorkflow.eraseCustomer` the desk calls — so it is recorded on the `erased_subject` register like any other erasure (D39), for free rather than by a second mechanism. **Off by default**, and **dry run by default when enabled**: two independent decisions between an estate and an irreversible deletion. `GET /api/desk/privacy`'s `enforced` is **derived** from those two switches instead of the literal `false` it returned before, so the desk cannot disagree with what the estate will do |
+> | **`Dispute.dueBy`** | `DisputeSlaSweep` + `DisputeSlaRepository` + `DisputeSlaProperties`. Reports unresolved disputes past their recorded deadline, **on by default**, at **WARN**, mutating nothing — no status change and no `DisputeStatusChange`, because a deadline passing is not an act anybody took |
+>
+> **The asymmetry is the decision, not an oversight.** One destroys records on a timer with nobody
+> watching; the other reads two columns and writes a log line. They share a trigger and nothing else:
+> separate classes, separate properties holders, separate repositories, separate defaults — and a test
+> asserts the separation, because a later refactor folding them together would leave every behavioural
+> assertion in both files still true.
+>
+> **Gates**: `cd booking && ./mvnw clean verify` — **279** unit and **146** integration tests, 0
+> failures, modernizer clean. **Nine mutations run, each separately, all red**: the two defaults
+> inverted, `parseStrictBoolean` replaced by `Boolean.parseBoolean` (which reads a mistyped
+> `sweep-dry-run` as *dry run off* — the direction that deletes), `isEnforcing()` losing its dry-run
+> conjunct, the desk reverted to a literal, the dry-run branch removed, the register exclusion dropped
+> from the eligibility query, the query rewritten row-level, and `UNDER_REVIEW` dropped from the
+> overdue predicate. All five mutated files restored byte-identical.
+>
+> **Three things it settled that the item did not anticipate**, each opened rather than taken:
+> **NEW-67** (the register cannot say *why* somebody was erased — two callers now write identical
+> rows meaning opposite things), **NEW-68** (the **operational** period still has no sweep, in
+> messaging, and fanning this one out would apply a six-year clock to one-year data), **NEW-69** (who
+> is told about an overdue dispute — the brokerage cannot be named from booking).
+>
+> **The brief's own anticipated decision does not arise**, and that is worth recording: it expected
+> `eraseCustomer` to record an acting staff member with nothing for a sweep to put there. Verified —
+> `ErasedSubject` holds a pseudonym and an instant, `ErasureRun` holds no actor, and nothing on that
+> path reads `SecurityUtils`. Which is *why* NEW-67 exists: the absence of that column is the gap.
+>
+> **Both counsel-facing drafts are corrected.** `docs/processing-record.md` §3/§5/§6.2 and
+> `docs/privacy-notice.md` §7 said "configured, not enforced"; the honest statement is now a third
+> thing — the means exist for one period and are switched off, and the other period has nothing. A
+> regulator-facing document understating a capability is as wrong as one overstating it.
+>
+> **Also verified rather than assumed**, from §5 of the brief: `@EnableScheduling` is live in booking
+> under `@Profile("!testdev & !testprod")` (so active in dev, test and prod, and — note —
+> **inactive under the test suite**, which is why no scheduled erasure can fire inside a build); the
+> three period property names and their committed fallbacks; that `PrivacyResourceIT` was the test
+> pinning `enforced: false`; and that `eraseCustomer` needs no HTTP request in scope.
+
+**The item as it was written follows.**
 
 **Phase 3.** `@Scheduled` appears in exactly **two** places in all five services' main sources, measured:
 `booking/.../OutboxPublisher.java:69` (the outbox poll) and `gateway/.../UserService.java:291` (the
@@ -5207,6 +5253,138 @@ host nothing, so the scenario belongs there and the harness for it exists.
 
 **Not blocked**, and it must be fixed **without ever supplying a credential to pass the gate** — the
 gate being unpassable is the finding.
+
+---
+
+## NEW-67 — the erasure register cannot say WHY somebody was erased · READY, and a decision with it
+
+**Surfaced by D96 / NEW-52 rather than found**, and it is a decision before it is work. The brief that
+opened NEW-52 predicted a different version of this — *"`eraseCustomer` records an acting staff member,
+and a sweep has no staff member, so what goes in that column is a decision"* — and **there is no such
+column**: verified, `ErasedSubject` holds `pseudonym` and `erasedAt` and nothing else, `ErasureRun`
+holds a fan-out attempt's outcome and no actor, and nothing on the erasure path reads `SecurityUtils`.
+So that decision does not arise. The one underneath it does.
+
+**The register is now written by two callers that mean different things.** Until D96 every row in
+`erased_subject` was a data subject request that a person at the desk had identity-checked and acted on
+(D40: erasure is desk-operated by decision, not self-service). Since D96 a row may also be the financial
+retention period expiring on a timer. **The rows are identical** — an alias and an instant — so an
+operator asked *"why was this customer erased?"* has nothing to read, and the two answers have opposite
+implications: one is a right exercised, the other is a policy applied.
+
+**Why it matters more than it looks.** `docs/processing-record.md` §6.3 already records that nothing
+audits staff access; this is the same shape one step along, on the estate's one irreversible act. And an
+erasure receipt is *the artefact filed against a legal request* (D31/D39) — if a subject asks whether
+their request was honoured, a register that cannot distinguish their request from a clock cannot answer.
+
+**The decision, and it is not just "add a column":**
+
+- **what the values may be.** `SUBJECT_REQUEST` and `RETENTION` are the two that exist today. A third
+  arrives with every new caller, and an enum in an append-only legal record is a schema commitment;
+- **whether an actor goes on beside it.** For a desk erasure the acting login is knowable and would make
+  §6.3's audit gap smaller in exactly the place it matters most. It is also a *staff member's* identity
+  in a table that must be kept for ever, which is a disclosure decision of D47's kind — the reviewer's
+  login is deliberately kept off the public profile for the same reason;
+- **what happens to the rows already there.** Everything written before D96 is a subject request, and
+  that is knowable only because the sweep did not exist. A nullable column reading `null` for those is
+  honest; backfilling them is a claim, and this repository's rule is that a retrospective fact nobody
+  measured does not get written down.
+
+**Cost.** A JDL change to `ErasedSubject` in three services (booking, catalog, messaging — it is one of
+the copied families' neighbours and all three hold the table), and therefore an **additive** Liquibase
+changelog rather than a regenerated entity one: regenerating the entity changelog invalidates the
+checksum every existing database recorded, which is D87's `meeting_link` lesson and the
+`ValidationFailedException` CLAUDE.md warns about. Not large. The decision is the expensive half.
+
+**Not blocked on a person** in the sense that the recommendation is clear — **`reason`, nullable, the
+two values, no actor until §6.3 is answered as a whole** — but it should be *taken* rather than
+implemented by whoever picks it up.
+
+---
+
+## NEW-68 — the operational retention period has no sweep, and it is the shorter one · READY
+
+**The other half of NEW-52, left undone deliberately and named rather than folded in** — D96 §scope.
+
+D96 built `RetentionSweep` in **booking**, which holds the financial rows (bookings, disputes) and
+applies the **financial** period, 2,190 days. The **operational** period — 365 days, six times shorter
+— governs *message bodies, notifications and conversations*, which live in **messaging**. Nothing
+sweeps them and nothing ever has.
+
+**Why it was not done by fanning the existing sweep out.** `ErasureFanout` exists (D38) and booking can
+already mint a token messaging accepts, so one call would have reached them. It would also have applied
+**booking's six-year clock to data whose stated period is one year** — and then filed a receipt saying
+the customer had been erased, which is D39's "a count that is too large reads as data was still
+exposed" in its worst form: the receipt would be right about what it did and wrong about what the
+policy required. Two periods need two cutoffs, and a sweep with one cutoff cannot have two.
+
+**It is the larger exposure of the two, which is the argument for doing it.** Six years of message
+bodies is the substance of what people wrote to each other, under a policy that says one year. The
+financial rows the D96 sweep covers are the ones the platform is *obliged* to keep.
+
+**Done means** a sweep in messaging on the operational period, and the shape is mostly settled by D96 —
+off by default, dry-runnable with a count, recorded on messaging's own `erased_subject` register, its
+own properties holder, its own class. Three things are genuinely different and want thinking about
+rather than copying:
+
+- **there is no `eraseCustomer` in messaging that the operational period alone should call.** Its
+  `ErasureWorkflow` erases a *subject*, and a subject's conversations are not the same selection as
+  "message bodies older than a year" — a live thread with one old message in it is the case to get
+  right, and deleting a body out of a thread the other party can still read is a different act from
+  pseudonymising a person;
+- **the other party.** A conversation has two people and a professional's retention interest is not the
+  customer's. Booking's sweep had no equivalent question because a booking has one customer;
+- **messaging's register is CONSULTED, not merely written** (`ErasureRegisterGuard`, D32) — the one
+  place in the estate where an erasure record changes later behaviour, so adding rows to it by a timer
+  needs its guard re-read rather than assumed.
+
+**Not blocked.** No decision from a person, and worth pairing with NEW-67 since both touch the register.
+
+---
+
+## NEW-69 — nobody is told when a dispute misses its five working days · READY, and a decision with it
+
+**Surfaced by D96 / NEW-52, which closed half of it.** `Dispute.dueBy` was recorded and read back by
+nothing; `DisputeSlaSweep` now reads it and reports. What it cannot do is **notify a person**, and that
+is a decision this estate cannot take inside a payment or a sweep.
+
+**The promise is the prototype's**: a customer who raises a dispute is offered a resolution in five
+working days. It binds *the brokerage*.
+
+**Why the sweep logs instead.** Each alternative needs somebody else's answer, and the cheapest is not
+obviously right:
+
+- **the brokerage cannot be named.** The desk is `ROLE_BROKERAGE`, an authority granted in the
+  **gateway's** account store; booking holds no list of its holders and has no business acquiring one.
+  Messaging's notification rows are keyed by *login*, so there is no recipient to write. Enumerating
+  them would be a third internal cross-service lookup of D74's kind — a disclosure decision, not a
+  plumbing one;
+- **an outbox event reaches messaging and is dropped.** Its consumer's `default ->` arm logs
+  `no notification defined for {}` at DEBUG, so publishing `dispute.overdue` today is a published event
+  nothing consumes — the silent nothing this repository keeps finding (D59, D62). Adding a consumer
+  needs a recipient, which is the first question again;
+- **telling the customer** is a product decision with a commercial edge: it is the platform announcing
+  it has missed its own commitment, and possibly inviting a remedy nobody has priced.
+
+**So the interim recipient is the estate's log** — one WARN line naming the count and the references,
+greppable and alertable by whoever runs the box, deliberately **not** ERROR (NEW-65's subject, and
+`quality/compose.yml` rests an argument on the zero-ERROR count). That is a real reader and it is not
+the brokerage.
+
+**Done means** deciding who is told and how. **Recommended: the desk screens, as part of NEW-53** —
+which is already ratified for after phase 2 (D92 §5) and is where a person who works disputes will
+actually be looking. An overdue count on that screen needs no recipient, no event and no new
+disclosure; the sweep's log covers the gap until then. **What would change my mind**: if the brokerage
+turns out to be one or two people with an email address, a notification is cheaper than a screen — but
+then the address is configuration, and configuration naming a person is its own small decision.
+
+**Also worth settling with it**: whether an overdue dispute should *escalate* rather than merely be
+reported. D96 deliberately wrote no transition into an "overdue" state — there is none in
+`DisputeStatus`, and inventing one would put a value in an append-only audit trail that no desk
+decision produced. If the answer is that it should, that is a state-machine change with a migration
+behind it, not a sweep change.
+
+**Not blocked on engineering.** The report exists; the recipient is the open question.
 
 ---
 

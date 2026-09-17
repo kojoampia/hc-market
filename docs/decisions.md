@@ -17721,3 +17721,267 @@ and the harm is two batches over one set of rows. A `FAILED` transition that ret
 writes `payout_id = null` from a second place, and at that point the interleavings multiply and no
 amount of reasoning about one writer transfers. **The sentence is repeated in NEW-64's own entry**, so
 whoever picks that item reads it there rather than here.
+
+---
+
+## D96 — Two configured promises acquire two sweeps, and one of them is switched off
+
+**Recorded 2026-09-17**, against `main` at `414966f`. Closes backlog **NEW-52**; opens **NEW-65**,
+**NEW-66**, **NEW-67**, **NEW-68** and **NEW-69**. The first two are unrelated findings, committed
+separately and first; the last three come out of this work and are surfaced rather than taken.
+
+### §1 What was wrong, and what the item had right
+
+Two promises were configured and neither was kept.
+
+**Retention.** `PrivacyProperties` has carried counsel's ratified periods since D42 —
+financial 2,190 days, operational 365 — read from `HC_RETENTION_*` with the ratified figures as the
+committed fallback, and reported by `GET /api/desk/privacy` beside `enforced: false`. Its javadoc named
+the remedy with unusual precision: *"when one exists it calls `ErasureWorkflow.eraseCustomer` on
+everything past the window; the erasure semantics are already decided and tested, so what is missing is
+the trigger and nothing else."* **That was right.** Nothing in `ErasureWorkflow` had to change: measured
+rather than assumed, `eraseCustomer` takes a login as a parameter, and nothing on its path reads
+`SecurityUtils`, a request, or a clock it did not already read.
+
+**`Dispute.dueBy`.** `DisputeWorkflow` stamps a five-working-day deadline on every dispute it raises,
+from `healthconnect.disputes.working-days-to-resolve`, and **nothing had ever read it back**.
+
+**Both sites gave the same false reason** — *"there is no scheduler anywhere in this estate"* — which
+D91 had already falsified: `@EnableScheduling` is active in all five services and one of the two
+`@Scheduled` methods in the whole tree is booking's own outbox poll. Re-established here rather than
+inherited: booking's `AsyncConfiguration` carries it under `@Profile("!testdev & !testprod")`, so it is
+active in `dev`, `test` and `prod` — and **inactive under the test suite**, whose profiles are
+`test,testdev`. That last clause is not a footnote: it is why no scheduled erasure can fire inside a
+build, and it is why every case in these tests drives the task directly.
+
+So the work was **two sweeps and no infrastructure**, which is what NEW-52's own correction box said.
+
+### §2 The shape was given; what had to be decided is how many switches "off" is
+
+The item specified: the retention sweep is irreversible and must be **off by default**,
+**dry-runnable with a count**, and **recorded on the erasure register like any other erasure**; the
+dispute sweep only notifies; and *do not build them as one thing because they share a trigger.* None of
+that was ours to change.
+
+**The answer here is two switches.** `sweep-enabled` decides whether the sweep runs at all;
+`sweep-dry-run` decides whether a run that happens deletes. An estate turns the sweep on and gets a
+**report**; letting it act is a second, separate decision.
+
+That is not ceremony, and the argument is about which mistake is available. "Enabled" is the kind of
+flag somebody sets while reading a different document — and this is the one scheduled task in the
+estate that destroys real people's records, on a timer, with nobody watching. With one switch, the
+first thing a misreading produces is a deletion. With two, it is a count.
+
+**`enforced` on the wire is therefore DERIVED, and that is the more interesting half.** It returned a
+hardcoded `false`, which was honest when the estate had no sweep and would have become a lie the moment
+one was switched on — a literal cannot track a deployment. `Retention.isEnforcing()` is
+`sweep-enabled AND NOT sweep-dry-run`: the only combination under which a row is actually deleted. **A
+dry run is not enforcement**, and a desk that said it was would be D42's own confusion one layer up.
+This is "derived, never stored" applied to a *claim* rather than to a figure.
+
+On every estate that configures nothing the answer is still `false`, which is still the truth.
+
+### §3 Two sweeps, and the separation is structural rather than stated
+
+| | retention | disputes |
+| --- | --- | --- |
+| class | `RetentionSweep` | `DisputeSlaSweep` |
+| properties | `PrivacyProperties.Retention` (`healthconnect.privacy`) | `DisputeSlaProperties` (`healthconnect.disputes`) |
+| repository | `RetentionSweepRepository` | `DisputeSlaRepository` |
+| default | **off**, then **dry run** | **on** |
+| what it changes | five tables, irreversibly | **nothing** |
+
+**The properties are separate holders and that was a deliberate refusal to save a file.**
+`healthconnect.privacy` is the retention and erasure policy — counsel's figures, a regulator's
+registration number, and a switch governing an irreversible deletion. The hour at which a warning is
+logged about a missed service promise belongs to none of it. Put them together and the next person to
+widen one widens both.
+
+**The dispute sweep is ON by default, and the asymmetry is the decision.** The cautious default is the
+wrong one for a task that reads two columns and writes a log line: the five-working-day promise is
+currently kept by *nothing*, and a sweep shipped switched off would leave it kept by nothing while
+looking as though it had been addressed. The switch exists so an estate drowning in overdue disputes
+can silence it while it digs out — a different situation from the one the default serves.
+
+**And the separation is asserted, because no behavioural test can see it.** A later refactor folding
+the retention task into the dispute class would leave every assertion in both files true.
+`DisputeSlaSweepIT.twoSweepsNotOne` asserts the two classes are distinct and that neither holds a field
+of the other's properties type — the cheapest honest guard for a property that is otherwise a
+convention.
+
+### §4 `SchedulingConfigurer`, and a second reason D94 did not have
+
+D94's reason transfers unchanged: compose's `${X:-}` sets an **empty** variable rather than leaving one
+unset, so `@Scheduled(cron = "${...:0 30 2 * * ?}")` prefers the empty environment value to its own
+default and fails the context on every estate that passes the variable through — and passing it through
+is what stops it being a variable that silently does nothing (D46, D50). An empty cron is not a missing
+cron, it is an invalid one. Blank-handling lives in Java, in one place, where a test drives it.
+
+**The second reason is particular to a dangerous task: an annotation cannot decline to register.** A
+`@Scheduled` method always runs and has to check a flag on the way in, so a disabled sweep is still a
+task the scheduler wakes up and still one edit away from acting. `configureTasks` registers **nothing**
+when the sweep is off, so "off" is the *absence of a task* rather than a task that returns early —
+asserted directly, against `ScheduledTaskRegistrar.getCronTaskList()`.
+
+Every value is read at registration, so an unusable one fails at startup rather than at 02:30 on a
+morning nobody is watching. **The financial period's presence is checked only when the sweep is
+enabled**: an estate that is not sweeping needs no window, and refusing to start over a blanked number
+nothing reads would be a guard that fires on a correct state.
+
+**And the booleans are parsed strictly, which is the guard whose direction matters most.**
+`Boolean.parseBoolean` answers `false` for every string that is not "true" — so `sweep-dry-run=fales`
+reads as *dry run off*, which is an estate deleting its customers' records because somebody mistyped a
+word. Only `true` and `false` are accepted, case-insensitively; anything else refuses startup. Measured:
+swapping in `Boolean.parseBoolean` turns that case red, which is the whole reason the case exists.
+
+### §5 The eligibility rule is the design, and the plausible query is wrong
+
+**A customer is eligible only when they have no booking activity inside the window** — not when a
+*booking* is old.
+
+The distinction is the whole thing. `eraseCustomer` takes a **login** and redacts every row belonging
+to it, so a sweep that selected bookings past the window and erased their customers would take last
+week's booking along with the six-year-old one that qualified. So the predicate is a customer-level
+exclusion, not a row-level selection, and `RetentionSweepIT` gives one customer a booking **older** than
+the eligible customer's so that the wrong query is red rather than plausible. Measured: rewriting it
+row-level fails exactly that case.
+
+**Four instants, any one of which keeps a person.** A booking's financial life does not end when it is
+raised, so the clock is read from `raisedAt`, `respondedAt`, `completedAt` and `cancelledAt` together.
+Deliberately not a `GREATEST` over the four: as written it is **monotone in the safe direction by
+construction** — every instant is a reason to keep somebody and none is a reason to erase them, so an
+instant this query forgets to read can only ever make it keep a person *longer*. The `raisedAt is null`
+arm is unreachable (`@NotNull`, `nullable = false`) and free, which is D53's idiom.
+
+**Already-erased subjects are excluded, and that is not an optimisation.** The alias inherits the row's
+instants, so without it the sweep selects the alias on its next run and erases *it* — deriving an HMAC
+**of the alias**, a second and different pseudonym, every night, destroying the one property D34/D35
+built the pseudonym for. Excluded by asking the `erased_subject` register, which is the exact record of
+who has been erased here (D39), rather than by matching the `erased-` prefix, which is a guess about a
+format. Measured: dropping the subquery puts a second alias in the table and two register rows against
+one person.
+
+### §6 One transaction per customer, and why catching is legitimate here
+
+`sweep()` is **not** `@Transactional` and must not become so. `eraseCustomer` carries its own
+transaction across its five tables — D31's rule that a partial erasure is worse than a failed one is
+about one *person*, and it still holds — while the sweep's loop is a sequence of them. A customer whose
+erasure fails rolls back alone and the rest are still erased, instead of the night's work being
+abandoned at the first bad row.
+
+That is also the **only** reason the `catch` in the loop is legitimate. CLAUDE.md's standing trap is
+that catching inside a transaction poisons it and the commit fails afterwards as an
+`UnexpectedRollbackException` naming nothing; here the transaction rolled back is the inner one and has
+already ended by the time control returns. The comment says so at the site, because the next reader's
+correct instinct is that this is the trap.
+
+**The failure log prints the alias, never the login** — it is the identity the task exists to remove —
+through a `safeAlias` that cannot throw a second exception out of a failure path when no pepper is
+configured.
+
+### §7 It counts what it erased, never what it selected
+
+D39's rule, and `Swept` reports **both numbers separately** rather than one. Equal on a clean run, and
+different in exactly the case worth seeing: a single figure could not tell *"nothing was eligible"* from
+*"nothing was applied"*, and those are opposite facts about an estate's compliance. A dry run reports
+`selected` and `erased = 0`, which is the count NEW-52 asked for.
+
+**The dry-run log prints the count and not the logins.** The point of a dry run is to see the size of
+what is about to happen; printing the logins would put the identities of the people about to be erased
+into a log that outlives them — the one place the erasure cannot reach.
+
+The register entry comes for free, because this calls the same `eraseCustomer` the desk calls. That is
+asserted anyway: a well-meant "faster" sweep redacting rows directly would pass every other assertion
+and leave the estate with no record that an irreversible act had happened on a timer.
+
+### §8 The dispute sweep reports, and WARN is a decision
+
+It writes one WARN line naming the count, the worst overdue-by in days, and the references. It changes
+no status, writes no `DisputeStatusChange`, and is not transactional — **a deadline passing is not an
+act anybody took**, and that table records acts (D34/D39). There is no transition into an "overdue"
+state and inventing one would put a value in an append-only audit trail no desk decision produced.
+
+**WARN and deliberately not ERROR.** `quality/compose.yml` rests an argument on these services carrying
+**zero** ERROR lines across their whole life — the estate's one free signal, and the only way an
+unattached agent or a dead collector is visible (D64, D73). An overdue dispute is ordinary business on a
+busy marketplace, so ERROR would spend that signal on routine traffic every morning for ever. **NEW-65,
+committed separately, records the generated `LoggingAspect` doing exactly that by accident**; this is
+the same mistake declined on purpose, which is why the two are worth reading together.
+
+**`UNDER_REVIEW` counts as overdue beside `OPEN`**: a dispute that has been *looked at* and not decided
+has still missed the promise. The statuses are **named rather than negated**, so a sixth value added to
+`DisputeStatus` is excluded until somebody decides it belongs — the fail-closed direction for a query
+that drives a warning.
+
+**The log line does not name the window**, and that is not an omission.
+`working-days-to-resolve` is configurable and is applied when a dispute is *raised*, so each row carries
+the period in force the day it was raised; printing today's number beside them would state a period
+none of them was judged against. `dueBy` is the authority.
+
+**No customer text and no login ever reaches the line** — references only. `Dispute.reason` is a
+thousand characters the customer typed, and a log is a place the erasure sweep does not reach and cannot
+re-key, so an identity written there survives the erasure of the row it came from.
+
+### §9 What is surfaced and not taken
+
+- **NEW-67 — the register cannot say WHY.** Two callers now write identical rows meaning opposite
+  things: a right exercised and a policy applied. **The brief's anticipated decision was a different
+  one and does not arise** — it expected `eraseCustomer` to record an acting staff member with nothing
+  for a sweep to put there, and there is no such column (verified: `ErasedSubject` is a pseudonym and
+  an instant; `ErasureRun` holds no actor). The absence *is* the gap. Recommended: `reason`, nullable,
+  two values, no actor until the staff-access audit is answered whole (processing record §6.3).
+- **NEW-68 — the operational period still has no sweep.** It is the **shorter** one (365 days against
+  2,190) and governs message bodies in messaging. Not folded in: fanning this sweep out through
+  `ErasureFanout` would apply a six-year clock to one-year data **and file a receipt saying the customer
+  had been erased** — D39's "a count that is too large reads as data was still exposed" in its worst
+  form. Two periods need two cutoffs, and a sweep with one cutoff cannot have two.
+- **NEW-69 — who is told about an overdue dispute.** The brokerage cannot be named from booking
+  (`ROLE_BROKERAGE` lives in the gateway's account store); an outbox event reaches messaging's
+  `default ->` arm and is dropped at DEBUG; telling the customer is a product decision with a
+  commercial edge. Recommended: the desk screens already ratified in D92 §5.
+
+### §10 Two counsel-facing drafts corrected, and the honest statement is a third thing
+
+`docs/processing-record.md` (§3's box, §5's table, §6.2, both activity rows) and
+`docs/privacy-notice.md` (§7 and its summary) said *"configured, not enforced"* and *"enforcing them is
+outstanding engineering work"*. Neither sentence is right now:
+
+- **"not implemented"** understates it — the means exist for the financial period;
+- **"implemented"** would overstate it — nothing is running on any estate.
+
+So both say the third thing: *the means exist for one period and are switched off; the other period has
+nothing.* A regulator-facing document understating a capability is as wrong as one overstating it, and
+the row that read "Not implemented" now reads "Available and not switched on" with the reason. §6.2 also
+changes **shape** rather than closing: the gap is now a **decision** for the financial period and
+**work** for the operational one, which are different things to ask a person for.
+
+### §11 What was measured, and what was not
+
+**Measured.** `cd booking && ./mvnw clean verify` on `jdk-25.0.2-oracle-x64` — **279** unit and **146**
+integration tests, 0 failures, 0 errors, modernizer clean. **Nine mutations, each applied separately
+from a pristine copy and each red**, listed in NEW-52's closing box; all five mutated files restored
+byte-identical, verified with `diff -r` against those copies rather than with `git`. All three compose
+files still `config` with CI's own variable sets, and the five new keys render at the same count as the
+`HC_RETENTION_*` pair beside them (6 each). `backlog-table-agrees.sh`,
+`sync-appendices.sh --check`, `account-lifecycle-guards.sh` and `bash -n` over all 36 shell scripts:
+green.
+
+**Not exercised, and each for a reason.**
+
+- **No sweep has run on a timer anywhere.** Every case drives the task or the registrar directly, and
+  `@EnableScheduling` is inactive under the test profiles — so *that the cron fires* is asserted by
+  nothing here. What is asserted is that a task is registered, on the configured expression, and what
+  it does when it is called.
+- **No estate has run either sweep**, because none is deployed and the quality box was deliberately not
+  touched (it holds the estate's first payout batch). The compose edits change the five app services'
+  environment, so the **next** roll will recreate them — expected, and per D68 a recreate restores the
+  alias set rather than harming it.
+- **`prettier` was not run.** This worktree has no `node_modules`, CI runs no prettier gate, and NEW-62
+  records that the repo-wide formatter rewrites seventeen files it was not asked to. Formatting follows
+  the neighbouring files by hand.
+- **No CI check was added for the five new placeholders.** The house pattern (D57, D94) would check them
+  by name, and the risk they are lost to a regeneration is real — so the consequence is written into
+  CLAUDE.md's regeneration table instead, with the symptom, and the check is named as work rather than
+  half-built. **Losing the block is silent in the safe direction**: every switch falls back to its Java
+  default, which is *off*, so what is lost is the ability to enable the sweep — not a sweep that starts
+  deleting.

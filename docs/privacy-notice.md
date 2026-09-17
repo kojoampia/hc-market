@@ -18,7 +18,10 @@
 > - **Retention periods are stated, not enforced.** See §7. Nothing deletes a booking, a message or a
 >   review on a schedule. **One thing IS deleted on a schedule** and it is not a retention period: an
 >   account that is never activated is removed three days after it is created (§7.1). That was found on
->   2026-09-15 and this notice said the opposite until then — `decisions.md` **D91**.
+>   2026-09-15 and this notice said the opposite until then — `decisions.md` **D91**. Since 2026-09-17
+>   we can apply the 6-year financial period and have chosen not to switch it on yet (§7,
+>   `decisions.md` **D96**) — so the sentence above is still true of every system, and it is now true
+>   by decision rather than for want of the ability.
 > - **Erasure is operated by a person, not by the customer.** See §8. There is no self-service button.
 
 > **⚠ SCOPE**
@@ -117,8 +120,16 @@ We do not sell your data, and we do not share it with anyone else except where t
 
 > **⚠ These periods are a stated policy, not an applied one.** Nothing in our systems deletes a
 > booking, a message, a notification or a review when its period expires. The periods above are what we
-> have decided and configured; enforcing them is outstanding engineering work, and this notice says so
-> rather than implying otherwise. Our internal policy endpoint reports the same caveat.
+> have decided and configured; our internal policy endpoint reports the same caveat, and it now
+> **derives** that answer from what the systems will actually do rather than stating it as a fixed
+> sentence — so if this ever stops being true, that endpoint changes with it.
+>
+> **Since 17 September 2026 we have the means to apply the 6-year financial period and have not
+> switched it on** (`decisions.md` D96). It is deliberately off, and turning it on takes two separate
+> settings, because deleting somebody's records cannot be undone and we would rather count first than
+> discover afterwards. **Nothing has been deleted by it on any of our systems.** The 1-year operational
+> period — messages and notifications — still has nothing behind it at all. We would rather tell you
+> that than let "we have a mechanism" be read as "we have applied it".
 
 ### 7.1 One deletion that does happen automatically
 

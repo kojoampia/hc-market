@@ -95,12 +95,29 @@ import org.springframework.transaction.annotation.Transactional;
  * <em>fan-out attempt</em>, which is a different fact with a different lifecycle, is
  * {@link net.jojoaddison.domain.ErasureRun}.
  *
- * <h2>What this does NOT do</h2>
+ * <h2>It has TWO callers now, and one of them is a timer</h2>
  *
- * <p>It is on demand. Nothing schedules it, because there is no scheduler anywhere in this estate —
- * the same gap {@code Dispute.dueBy} records. {@code healthconnect.privacy.retention-days} exists as
- * configuration with <strong>no default</strong> precisely so that nothing here implies a retention
- * period nobody with legal standing has set. Counsel supplies numbers; this supplies the mechanism.
+ * <p>This section read <em>"It is on demand. Nothing schedules it, because there is no scheduler
+ * anywhere in this estate"</em> until {@code decisions.md} D96, and both clauses have since been
+ * falsified — the second by D91, which found {@code @EnableScheduling} live in all five services for
+ * the estate's whole life, and the first by {@link RetentionSweep}, which calls
+ * {@link #eraseCustomer(String)} on every customer the financial retention window has run out for.
+ *
+ * <p><strong>Nothing about this class changed to make that work</strong>, which was the prediction
+ * {@code PrivacyProperties} recorded and is worth confirming rather than assuming: the method takes a
+ * login as a parameter, nothing on its path reads {@code SecurityUtils}, a request or a clock it did
+ * not already read, and the {@code ErasedSubject} row it writes carries an alias and a timestamp and
+ * no actor. So a swept erasure and a desk erasure are the same act, recorded identically. <strong>That
+ * identity is also the gap</strong>: the register cannot say whether a person asked or a clock expired,
+ * and an operator asked "why was this customer erased" has no answer here. Surfaced as backlog
+ * NEW-67 rather than answered, because a {@code reason} column is a JDL change with a changelog behind
+ * it and a decision about what the values may be.
+ *
+ * <p>The two callers differ in one way the reader should know about: the desk's runs inside a request
+ * and one customer at a time, while the sweep loops and is <strong>not</strong> transactional, so each
+ * customer's erasure commits or rolls back alone. Do not add class-level transactional semantics here
+ * to "help" the sweep — the five-table atomicity this method already guarantees is per person, which
+ * is what D31 asks for.
  */
 @Service
 public class ErasureWorkflow {
