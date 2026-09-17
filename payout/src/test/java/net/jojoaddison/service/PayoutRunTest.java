@@ -409,7 +409,7 @@ class PayoutRunTest {
     @Test
     @DisplayName("a settlement records the day and the bank's own reference, and moves the batch to PAID")
     void aSettlementRecordsTheDayAndTheBankReference() {
-        when(payouts.findByReference("PAY-202608-p1-01")).thenReturn(Optional.of(openBatch()));
+        when(payouts.findByReferenceForUpdate("PAY-202608-p1-01")).thenReturn(Optional.of(openBatch()));
 
         BatchView settled = run.settle("PAY-202608-p1-01", LocalDate.parse("2026-08-19"), "  GTB-99887766  ");
 
@@ -423,7 +423,7 @@ class PayoutRunTest {
     @Test
     @DisplayName("PAID needs a bank reference — a settlement nobody can check is not a settlement")
     void paidNeedsABankReference() {
-        when(payouts.findByReference("PAY-202608-p1-01")).thenReturn(Optional.of(openBatch()));
+        when(payouts.findByReferenceForUpdate("PAY-202608-p1-01")).thenReturn(Optional.of(openBatch()));
 
         assertThatThrownBy(() -> run.settle("PAY-202608-p1-01", LocalDate.parse("2026-08-19"), "   "))
             .isInstanceOf(IllegalArgumentException.class)
@@ -434,7 +434,7 @@ class PayoutRunTest {
     @Test
     @DisplayName("PAID needs the day the transfer was made")
     void paidNeedsTheDay() {
-        when(payouts.findByReference("PAY-202608-p1-01")).thenReturn(Optional.of(openBatch()));
+        when(payouts.findByReferenceForUpdate("PAY-202608-p1-01")).thenReturn(Optional.of(openBatch()));
 
         assertThatThrownBy(() -> run.settle("PAY-202608-p1-01", null, "GTB-99887766"))
             .isInstanceOf(IllegalArgumentException.class)
@@ -445,7 +445,7 @@ class PayoutRunTest {
     @Test
     @DisplayName("a settlement cannot be dated in the future")
     void aSettlementCannotBeDatedInTheFuture() {
-        when(payouts.findByReference("PAY-202608-p1-01")).thenReturn(Optional.of(openBatch()));
+        when(payouts.findByReferenceForUpdate("PAY-202608-p1-01")).thenReturn(Optional.of(openBatch()));
 
         assertThatThrownBy(() -> run.settle("PAY-202608-p1-01", TODAY.plusDays(1), "GTB-99887766"))
             .isInstanceOf(IllegalArgumentException.class)
@@ -456,7 +456,7 @@ class PayoutRunTest {
     @DisplayName("a batch already settled is refused rather than re-stamped")
     void aBatchAlreadySettledIsRefused() {
         Payout paid = openBatch().status(PayoutStatus.PAID).settledOn(LocalDate.parse("2026-08-18")).bankReference("GTB-11112222");
-        when(payouts.findByReference("PAY-202608-p1-01")).thenReturn(Optional.of(paid));
+        when(payouts.findByReferenceForUpdate("PAY-202608-p1-01")).thenReturn(Optional.of(paid));
 
         assertThatThrownBy(() -> run.settle("PAY-202608-p1-01", LocalDate.parse("2026-08-19"), "GTB-99887766"))
             .isInstanceOf(PayoutRun.NotSettleable.class)
@@ -472,7 +472,7 @@ class PayoutRunTest {
     @Test
     @DisplayName("a FAILED batch is refused, because what happens to its rows is undecided")
     void aFailedBatchIsRefused() {
-        when(payouts.findByReference("PAY-202608-p1-01")).thenReturn(Optional.of(openBatch().status(PayoutStatus.FAILED)));
+        when(payouts.findByReferenceForUpdate("PAY-202608-p1-01")).thenReturn(Optional.of(openBatch().status(PayoutStatus.FAILED)));
 
         assertThatThrownBy(() -> run.settle("PAY-202608-p1-01", LocalDate.parse("2026-08-19"), "GTB-99887766"))
             .isInstanceOf(PayoutRun.NotSettleable.class)
@@ -482,10 +482,126 @@ class PayoutRunTest {
     @Test
     @DisplayName("a reference no batch carries is a 404's worth of refusal, not a malformed request")
     void anUnknownReferenceIsItsOwnRefusal() {
-        when(payouts.findByReference("PAY-NOPE")).thenReturn(Optional.empty());
+        when(payouts.findByReferenceForUpdate("PAY-NOPE")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> run.settle("PAY-NOPE", LocalDate.parse("2026-08-19"), "GTB-99887766")).isInstanceOf(
             PayoutRun.NoSuchBatch.class
         );
+    }
+
+    /**
+     * The race {@code open}'s lock closes, in the method next door — D95 as reviewed, and it was
+     * genuinely open.
+     *
+     * <p>{@code settle} reads the batch, refuses {@code PAID}, refuses {@code FAILED}, refuses a
+     * non-positive net, and then writes. Two settlements of one {@code OPEN} batch arriving together
+     * both read {@code OPEN}, both pass all four and both answer 200 — and the last writer's
+     * {@code bankReference} survives, so the first settlement's record is gone, which is the loss
+     * {@code settle}'s own javadoc says must not be reachable by sending the request twice.
+     *
+     * <p><strong>This assertion is behavioural and the property it protects is not.</strong> What is
+     * asserted here is that {@code settle} reads through the <em>locking</em> finder and not the
+     * unlocked one — which no structural check can see, and which the unlocked finder being kept for
+     * the desk's read makes a live possibility. That the lock then excludes a second writer is
+     * PostgreSQL's under {@code READ COMMITTED} and is measured nowhere; see
+     * {@link #theSettlementReadDeclaresAWriteLock} for the structural half, and D95 §11 for the
+     * standing caveat covering both locks.
+     */
+    @Test
+    @DisplayName("settle reads through the LOCKING finder — check-then-act otherwise, and the first settlement is lost")
+    void settleReadsThroughTheLockingFinder() {
+        when(payouts.findByReferenceForUpdate("PAY-202608-p1-01")).thenReturn(Optional.of(openBatch()));
+
+        run.settle("PAY-202608-p1-01", LocalDate.parse("2026-08-19"), "GTB-99887766");
+
+        verify(payouts).findByReferenceForUpdate("PAY-202608-p1-01");
+        verify(payouts, never()).findByReference(anyString());
+    }
+
+    /** The structural half of the above, and the same caveat: an annotation, not an observed race. */
+    @Test
+    @DisplayName("the settlement read declares a write lock — structural, and it does not prove a race is impossible")
+    void theSettlementReadDeclaresAWriteLock() throws Exception {
+        var locked = PayoutQueryRepository.class
+            .getMethod("findByReferenceForUpdate", String.class)
+            .getAnnotation(org.springframework.data.jpa.repository.Lock.class);
+        assertThat(locked).as("without a lock, two simultaneous settlements both answer 200 and one record is lost").isNotNull();
+        assertThat(locked.value()).isEqualTo(LockModeType.PESSIMISTIC_WRITE);
+
+        assertThat(
+            PayoutQueryRepository.class
+                .getMethod("findByReference", String.class)
+                .getAnnotation(org.springframework.data.jpa.repository.Lock.class)
+        )
+            .as("the desk's READ must stay unlocked, or a read can block a settlement")
+            .isNull();
+    }
+
+    /**
+     * A batch that nets nothing — or owes it the other way — may not be marked {@code PAID}.
+     *
+     * <p>D95 §6 says in as many words that such a batch is "not something a desk can transfer", and
+     * until this refusal existed it was settleable against a bank reference. The harm compounds rather
+     * than staying local: an operator clearing the {@code OPEN} list settles a −15,000 batch with the
+     * next period's reference, the debt then reads as <em>paid to</em> the professional, the following
+     * period settles in full, and 15,000 is overpaid with every record internally consistent.
+     *
+     * <p>Interim, and named as such in the message: refusing is recoverable when NEW-64 ratifies how
+     * such a batch is finally disposed of, and settling is not.
+     */
+    @Test
+    @DisplayName("a batch that nets nothing may not be settled — there was no transfer to record")
+    void aBatchThatNetsNothingMayNotBeSettled() {
+        when(payouts.findByReferenceForUpdate("PAY-202608-p1-01")).thenReturn(
+            Optional.of(openBatch().grossMinor(0L).commissionMinor(0L).netMinor(0L))
+        );
+
+        assertThatThrownBy(() -> run.settle("PAY-202608-p1-01", LocalDate.parse("2026-08-19"), "GTB-99887766"))
+            .isInstanceOf(PayoutRun.NotSettleable.class)
+            .hasMessageContaining("no transfer to record")
+            .hasMessageContaining("NEW-64");
+        verify(payouts, never()).save(any(Payout.class));
+    }
+
+    @Test
+    @DisplayName("nor may a batch that nets BELOW nothing — the case the overpayment runs through")
+    void aBatchThatNetsBelowNothingMayNotBeSettled() {
+        when(payouts.findByReferenceForUpdate("PAY-202608-p1-01")).thenReturn(
+            Optional.of(openBatch().grossMinor(-GROSS_A).commissionMinor(-COMMISSION_A).netMinor(-NET_A))
+        );
+
+        assertThatThrownBy(() -> run.settle("PAY-202608-p1-01", LocalDate.parse("2026-08-19"), "GTB-99887766"))
+            .isInstanceOf(PayoutRun.NotSettleable.class)
+            .hasMessageContaining(String.valueOf(-NET_A));
+        verify(payouts, never()).save(any(Payout.class));
+    }
+
+    /**
+     * A period whose reversals exceed what is left to earn, which is STRICTLY negative rather than
+     * zero — a review finding, because {@code aPeriodThatCancelsOutIsStillABatch} takes the same
+     * {@code <= 0} branch and nothing asserted this side of it.
+     *
+     * <p>Linearity makes it near-certain; the point of pinning it is that the batch is still
+     * <em>written</em> rather than refused, which is D95 §6's decision and the thing NEW-64 may
+     * overturn.
+     */
+    @Test
+    @DisplayName("a reversal larger than the period's remaining earnings still opens a batch, netting below zero")
+    void aStrictlyNegativePeriodStillOpensABatch() {
+        unsettled(
+            earning("b-2", GROSS_B, COMMISSION_B, NET_B, LocalDate.parse("2026-08-11")),
+            reversal("d-1", "b-1", GROSS_A, COMMISSION_A, NET_A, LocalDate.parse("2026-08-14"))
+        );
+
+        BatchView batch = open();
+
+        assertThat(batch.grossMinor()).isEqualTo(GROSS_B - GROSS_A);
+        assertThat(batch.commissionMinor()).isEqualTo(COMMISSION_B - COMMISSION_A);
+        assertThat(batch.netMinor())
+            .as("strictly below zero, not merely zero")
+            .isEqualTo(NET_B - NET_A)
+            .isNegative();
+        assertThat(batch.status()).isEqualTo(PayoutStatus.OPEN.name());
+        assertThat(batch.entries()).isEqualTo(2);
     }
 }

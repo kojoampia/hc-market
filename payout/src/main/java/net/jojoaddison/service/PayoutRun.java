@@ -130,7 +130,20 @@ public class PayoutRun {
         }
     }
 
-    /** This batch has already been settled, or is in a state settlement has no answer for. */
+    /**
+     * This batch has already been settled, or is in a state settlement has no answer for.
+     *
+     * <p>Three arms, and the enumeration is the contract: already {@code PAID}, {@code FAILED} (§7.2
+     * of D95 — undecided, NEW-64), and a net of zero or below (D95 §6, also NEW-64).
+     *
+     * <p><strong>{@code IN_PROGRESS} is deliberately NOT one of them and falls through to
+     * {@code PAID}</strong>, which is a decision rather than an omission — a review finding, because
+     * an unstated fall-through in a money transition is indistinguishable from a forgotten case.
+     * Nothing in the estate writes that status, so the path is unreachable today; if anything ever
+     * does, it will mean "a transfer has been initiated and not yet confirmed", and the correct next
+     * state for a confirmed transfer is exactly {@code PAID}. Refusing it would make a batch somebody
+     * had begun paying impossible to finish.
+     */
     public static class NotSettleable extends IllegalStateException {
 
         private static final long serialVersionUID = 1L;
@@ -284,14 +297,34 @@ public class PayoutRun {
      * second settlement against the same batch is either a duplicate transfer or a lost record of the
      * first, and neither should be reachable by sending the request twice.
      *
+     * <p><strong>The read takes a write lock, and without it this method is check-then-act.</strong>
+     * Two settlements of one {@code OPEN} batch arriving together would both read {@code OPEN}, both
+     * pass every refusal below and both answer 200 — and the last writer's {@code bankReference}
+     * survives, so the first settlement's record is silently overwritten, which is exactly the loss
+     * the paragraph above says must not be reachable. The mechanism is
+     * {@code BookingQueryRepository.findByReferenceForUpdate}'s, one service along (D43), and the rule
+     * is the same: what must not happen twice is the <em>transition</em>, not the request.
+     *
      * <p>{@link PayoutStatus#FAILED} is refused too, and that is where this stops deliberately.
      * Nothing in the estate puts a batch in {@code FAILED} today, and what should happen to its rows
      * — return to unsettled, or stay attached — is a decision nobody has taken. A transition written
      * on a guess would decide it silently, in the direction that is either a double payment or a
-     * professional who is never paid. D95 poses it.
+     * professional who is never paid. D95 poses it; NEW-64 carries it.
+     *
+     * <p><strong>A batch whose net is zero or below is refused, and that is an interim door rather
+     * than a settled answer</strong> (D95 §6, NEW-64). Such a batch exists so that its rows are not
+     * carried into a later period, and D95's own text says there is nothing to transfer — so allowing
+     * it to be marked {@code PAID} against a bank reference produces a record stating money was sent
+     * for a debt, and the harm compounds: an operator clearing the {@code OPEN} list settles the
+     * −15,000 batch with the next period's reference, the debt then reads as *paid to* the
+     * professional, the following period settles in full, and 15,000 is overpaid with every record
+     * internally consistent. Refusing is recoverable in a way settling is not — the door can be opened
+     * when the carry-forward question is ratified, and nothing that ratification could want is lost by
+     * closing it now.
      *
      * @throws NoSuchBatch   if no batch carries that reference
-     * @throws NotSettleable if the batch is already {@code PAID}, or is {@code FAILED}
+     * @throws NotSettleable if the batch is already {@code PAID}, is {@code FAILED}, or nets zero or
+     *                       less
      */
     @Transactional
     public BatchView settle(String reference, LocalDate settledOn, String bankReference) {
@@ -306,7 +339,10 @@ public class PayoutRun {
             throw new IllegalArgumentException("settledOn " + settledOn + " has not happened yet — today is " + today);
         }
 
-        Payout batch = payouts.findByReference(reference).orElseThrow(() -> new NoSuchBatch("no such payout batch: " + reference));
+        // findByReferenceForUpdate, NOT findByReference: everything below is a check on a value this
+        // method goes on to write, so the row has to be held for the whole transaction. The unlocked
+        // finder exists for the desk's read and must not be used here.
+        Payout batch = payouts.findByReferenceForUpdate(reference).orElseThrow(() -> new NoSuchBatch("no such payout batch: " + reference));
 
         if (batch.getStatus() == PayoutStatus.PAID) {
             throw new NotSettleable(
@@ -323,6 +359,20 @@ public class PayoutRun {
                 "payout " +
                     batch.getReference() +
                     " is FAILED, and what happens to a failed batch's ledger rows is undecided (decisions.md D95)"
+            );
+        }
+        if (zeroIfNull(batch.getNetMinor()) <= 0) {
+            throw new NotSettleable(
+                "payout " +
+                    batch.getReference() +
+                    " nets " +
+                    zeroIfNull(batch.getNetMinor()) +
+                    " " +
+                    batch.getCurrency() +
+                    ", so there was no transfer to record — marking it PAID against a bank reference would " +
+                    "state that money was sent for a period that owes nothing or owes it the other way. " +
+                    "It holds its ledger rows, so nothing is carried into a later period; how such a batch " +
+                    "is finally disposed of is backlog NEW-64 (decisions.md D95)"
             );
         }
 

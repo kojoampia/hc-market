@@ -4156,7 +4156,7 @@ of the browser report was wrong: **`fromPriceMinor` is present on the detail end
 > and two methods on an existing hand-written repository. **No JDL change, no changelog, no compose
 > change** — every column it uses was already generated and already in the schema.
 >
-> **38 new tests, and all eighteen guards were mutated one at a time and watched going red**, restored
+> **44 new tests, and all twenty-five guards were mutated one at a time and watched going red**, restored
 > byte-identical after each. `GET /api/pro/payouts` now has something to show, asserted end to end.
 >
 > **`payout is null` ALONE IS FALSE AS A GUARD, found in this package's own first draft.** It stops a
@@ -4166,6 +4166,28 @@ of the browser report was wrong: **`fromPriceMinor` is present on the detail end
 > nothing anywhere disagreeing. The batch query is `@Lock(PESSIMISTIC_WRITE)` now — and that property is
 > **reasoned, not measured**: no test drives two concurrent runs, `theBatchQueryTakesAWriteLock` is
 > structural and says so on itself.
+>
+> **REVIEW FOUND THE SAME RACE ONE METHOD ALONG, and that is the finding worth carrying** (D95 §12).
+> This package wrote three paragraphs about check-then-act in `open` and left **`settle`** doing exactly
+> it: read, refuse `PAID`, refuse `FAILED`, write. Two settlements of one `OPEN` batch both answer 200
+> and **the first settlement's `bankReference` is silently overwritten** — the loss `settle`'s own
+> javadoc said was unreachable. Fixed with `findByReferenceForUpdate`, which is
+> `BookingQueryRepository`'s shape from D43, keeping the unlocked finder for the desk's read. The red-first
+> evidence was better than a new test: switching the read broke **three existing tests immediately**,
+> because they stubbed the unlocked finder.
+>
+> **And review found a negative-net batch could be marked `PAID`** (D95 §13). `settle` refused `PAID`
+> and `FAILED` and nothing else, so the batch D95 §6 calls *"not something a desk can transfer"* was
+> settleable. The harm compounds: an operator clears the `OPEN` list by settling a −15,000 batch with the
+> next period's reference, **the debt then reads as paid *to* the professional**, the next period settles
+> in full, and 15,000 is overpaid with every record internally consistent. `settle` refuses
+> `netMinor <= 0` now, naming this item — an interim door, because refusing is recoverable and a `PAID`
+> row stating money moved is not.
+>
+> **The reviewer's own mutation is in the harness now and is the sharpest of the 25**: `Math.abs()` around
+> the three sums keeps `gross - commission == net` **true**, so the invariant guard cannot see it, while a
+> negated reversal is added rather than subtracted. A guard against wrong signs is not a guard against a
+> *discarded* sign, and the two are one function call apart.
 >
 > **One grounded fact below is off by one, and the correction widens the gap.** `new Payout()` occurs
 > **zero** times in `payout/src/main` — *including* the seeder, which never constructed one, and
@@ -4959,14 +4981,14 @@ it has been stale before).
 argued it at the site rather than stopping. Neither is a defect today; both are answers somebody
 other than the implementer should confirm, and the second one is a door deliberately left shut.
 
-**One: a batch whose rows sum to zero or below is still written.** D95 §6. A period holding a
-reversal of an earning that was already paid in an *earlier* period sums negative, and that is not
-something a desk can transfer.
+**One: a batch whose rows sum to zero or below is still written — and CANNOT be settled.** D95 §6 and
+**§13**. A period holding a reversal of an earning that was already paid in an *earlier* period sums
+negative, and that is not something a desk can transfer.
 
 | | |
 | --- | --- |
-| **as built** | the batch is created in `OPEN`, logged at **WARN** naming it, and the desk carries it forward by hand |
-| **the alternative** | refuse it — and then that reversal stays `payout is null` **for ever**, silently discounting some later, unrelated period |
+| **as built** | the batch is created in `OPEN`, logged at **WARN** naming it, and **`settle` refuses it** (`netMinor <= 0`, message naming this item) |
+| **the alternative for the open half** | refuse to create it — and then that reversal stays `payout is null` **for ever**, silently discounting some later, unrelated period |
 | **the third option, which is the real one** | a status or a field that records what is owed *back*, so the carry-forward is a row rather than an operator's memory |
 
 **The argument for what was built is visibility, not correctness**: a batch nobody can pay is on the
@@ -4974,6 +4996,20 @@ screen; a reversal that quietly shortens next quarter is not. **The cost of the 
 JDL change with a Liquibase changelog behind it, which is why it was not taken inside an item. **What
 would settle it**: whether the brokerage actually ever expects to reclaim money from a professional,
 or whether in practice a reversal is always absorbed against a later positive period.
+
+> **REVIEW CLOSED THE SETTLE HALF as an interim door, 2026-09-17 — D95 §13.** As first built, such a
+> batch was **settleable against a bank reference**, and the harm compounds rather than staying local:
+> an operator clearing the `OPEN` list settles a −15,000 batch with the next period's reference, **the
+> debt then reads as paid *to* the professional**, the following period settles in full, and 15,000 is
+> overpaid with every record internally consistent — the machine's whole account of that debt having
+> been one WARN line and an `OPEN` row nobody must tidy.
+>
+> So this item is **no longer a live overpayment route**; what is left of it is the disposal question.
+> The refusal is `<= 0` rather than `< 0` because a zero-net batch had no transfer either, and it
+> **never needs to be `PAID`**: it holds its rows, so nothing is carried forward, and `OPEN` is the
+> honest state. **Refusing is recoverable and settling is not** — this decision can open the door, and
+> a `PAID` row stating money moved cannot be un-said, since there is no endpoint to delete one.
+> Whatever is ratified here should say what such a batch finally *becomes*.
 
 **Two: `PayoutStatus.FAILED` has no transition into it, and `settle` refuses one saying so.** D95
 §7.2. The undecided question is **what happens to a failed batch's ledger rows** — return to
@@ -4989,8 +5025,23 @@ the direction that is either a double payment or a professional who is never pai
 estate puts a batch there; `IN_PROGRESS` is equally unreachable, and both were before D95 too.
 
 **Done means** an answer to each recorded in `decisions.md`, and then: for the first, either nothing
-(ratifying what is built) or the third option with its changelog; for the second, the transition plus
-whichever row treatment was chosen, with a test that goes red if the other one is implemented.
+(ratifying what is built, plus whatever a zero-or-below batch finally *becomes*) or the third option
+with its changelog; for the second, the transition plus whichever row treatment was chosen, with a test
+that goes red if the other one is implemented.
+
+**AND THE TWO-THREAD TEST GOES IN WITH THE `FAILED` TRANSITION — this is where that sentence lives**
+(D95 §16, and the reviewer and the architect agree it was right to defer). Both of D95's locks —
+`SettlementLedgerRepository.unsettledBetween` and `PayoutQueryRepository.findByReferenceForUpdate` —
+rest on documented PostgreSQL semantics plus a structural pin, with **no test anywhere driving two
+concurrent transactions**. That was proportionate while `PayoutRun.open` is the estate's **only writer
+of `payout_id`**: one contender, and the harm is two batches over one set of rows.
+
+**A `FAILED` transition that returns rows to unsettled writes `payout_id = null` from a second place**,
+and at that point the interleavings multiply and no amount of reasoning about a single writer carries
+over. So the item that adds the second writer is the item that owes the test: a class that is **not**
+`@Transactional`, with its own transaction management, committing into the database every other
+integration test in that JVM shares — a different kind of test from anything in this repository today,
+which is the other half of why it was not written speculatively.
 
 **Not blocked**, and not urgent while no estate has settled anything — production has never been
 deployed and the dev estate is wedged (NEW-31), so no batch exists anywhere to be owed back or to fail.

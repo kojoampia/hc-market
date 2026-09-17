@@ -1948,7 +1948,23 @@ time.**
   *simultaneous* one, where two runs both write a batch and one ends up holding **no rows and still
   reporting the money**. Hence `@Lock(PESSIMISTIC_WRITE)` on that query, and hence the caveat: the
   exclusion is PostgreSQL's under `READ COMMITTED`, **reasoned and measured nowhere** — the test beside
-  it is structural and says so. **A period running past the payout lag is refused rather than narrowed** to
+  it is structural and says so.
+  **`settle` HAD THE SAME DEFECT and review found it there** (D95 §12): three paragraphs were written
+  about check-then-act in `open` while the method immediately below it read the batch unlocked, refused
+  `PAID`, refused `FAILED` and wrote — so two settlements of one `OPEN` batch both answer 200 and **the
+  first settlement's `bankReference` is silently overwritten**. It reads through
+  `PayoutQueryRepository.findByReferenceForUpdate` now, which is `BookingQueryRepository`'s shape from
+  D43 and the same rule — *what must not happen twice is the transition, not the request*. **There are
+  deliberately TWO finders**: the unlocked `findByReference` serves the desk's read, because a read must
+  not block a settlement, so a lock added to one method instead would have been wrong. `settle` calling
+  the locking one is asserted **behaviourally** (no structural check can see which finder a method
+  calls); the mode and the read's *absence* of a lock are asserted structurally.
+  **A batch netting zero or below cannot be settled at all** (D95 §13) — it was settleable until
+  review, and the harm compounds: settle a −15,000 batch to clear the `OPEN` list and the debt reads as
+  paid *to* the professional, so the next period settles in full and 15,000 is overpaid with every
+  record internally consistent. An interim door named in the refusal, because refusing is recoverable
+  and a `PAID` row is not (NEW-64).
+  **A period running past the payout lag is refused rather than narrowed** to
   the cutoff: a batch whose period claims days whose rows were excluded is a record that disagrees with
   itself, and the amounts would be right for the rows that were taken while the period said something
   else. The lag comes from the `BrokerageConfig` in force, read at the start of the marketplace day

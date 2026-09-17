@@ -17472,7 +17472,7 @@ nothing.
 
 ### §8 What is asserted, and how each guard was established
 
-**38 new tests: 23 in `PayoutRunTest` and 15 in `PayoutDeskResourceIT`.** The split is deliberate and
+**44 new tests: 28 in `PayoutRunTest` and 16 in `PayoutDeskResourceIT`.** The split is deliberate and
 §9 is why it had to be measured rather than reasoned.
 
 `PayoutDeskResourceIT` runs against real Postgres through the real chain, and **writes its own
@@ -17484,7 +17484,8 @@ move an outcome; the lag **boundary** is pinned in the unit test, against a cloc
 `America/New_York`, where the number cannot be anybody else's.
 
 **Every guard was mutated one at a time, watched going red, restored, and the tree verified
-byte-identical after each.** Eighteen mutations, all red:
+byte-identical after each.** Twenty-five mutations, all red — **the count is the harness's own and it
+printed it**; do not quote it from here, which is this repository's standing rule about counts:
 
 | | mutation | test that went red |
 | --- | --- | --- |
@@ -17506,6 +17507,21 @@ byte-identical after each.** Eighteen mutations, all red:
 | M16 | the reference names no month | `theReferenceNamesTheMonthAndTheProfessional` |
 | M17 | the `@Lock` deleted from the batch query | `theBatchQueryTakesAWriteLock` |
 | M18 | the lock weakened to `PESSIMISTIC_READ`, which does not exclude a second reader | `theBatchQueryTakesAWriteLock` |
+| M19 | `settle` reads through the **unlocked** finder — §12's defect restored | `settleReadsThroughTheLockingFinder` |
+| M20 | the `@Lock` deleted from `findByReferenceForUpdate` | `theSettlementReadDeclaresAWriteLock` |
+| M21 | the desk's **read** given a write lock too, so a read can block a settlement | `theSettlementReadDeclaresAWriteLock` |
+| M22 | a batch netting zero or below may be settled — §13's defect restored | `aBatchThatNetsNothingMayNotBeSettled` |
+| M23 | only a *negative* net refused, so a zero-net batch is settleable | `aBatchThatNetsNothingMayNotBeSettled` |
+| M24 | `open` refuses a non-positive period instead of writing the batch | `aStrictlyNegativePeriodStillOpensABatch` |
+| M25 | **the reviewer's, not mine** — `Math.abs()` around the three sums | `aReversalReducesTheBatch` |
+
+**M25 is the sharpest of the set and it is worth knowing why it is not M3's.** `abs()` around all
+three sums keeps `gross - commission == net` **true**, so the invariant check cannot see it, while a
+negated reversal is *added* rather than subtracted — an overpayment invisible to the guard written to
+catch sign errors. It was the reviewer's construction rather than mine; it is in the harness now so
+the claim belongs to something that can be re-run, and the exactness argument in
+`aReversalReducesTheBatch`'s javadoc is what catches it. **A guard against wrong signs is not a guard
+against a discarded sign**, and the two are one function call apart.
 
 The harness lives in a uniquely-named directory, refuses to run unless it is in a directory of its own
 name and unless every subject resolves under this worktree, and **re-verifies the restored file against
@@ -17537,15 +17553,16 @@ query**, and a mock is not a weaker version of a database, it is a different sub
 - **No batch-everybody endpoint.** A single call that moves every professional's money is one button
   with no undo, and nothing has asked for it.
 - **No screen.** §7.3, NEW-53.
-- **No change to `Ledger`, to the JDL, to any Liquibase changelog, or to any compose file.** The
-  relationship and every column this uses were already generated and already in the schema, which is
-  why this is an item and not a work package.
+- **No change to `Ledger`, to any Liquibase changelog, or to any compose file.** The relationship and
+  every column this uses were already generated and already in the schema, which is why this is an
+  item and not a work package. **`jdl/payout.jdl` gained comments only** (§14) — no field, no entity,
+  no relationship, so no changelog and no checksum.
 
 ### §11 Verified, assumed, not exercised
 
-**Verified, by running it.** payout's `./mvnw clean verify` on JDK 25 — **161 unit tests and 74
-integration tests**, `TechnicalStructureTest` and modernizer and checkstyle among them, all green. All 38
-new tests, the 15-test IT against Postgres in Testcontainers. The eighteen mutations above, each
+**Verified, by running it.** payout's `./mvnw clean verify` on JDK 25 — **166 unit tests and 75
+integration tests**, `TechnicalStructureTest` and modernizer and checkstyle among them, all green. All
+44 new tests, the 16-test IT against Postgres in Testcontainers. The twenty-five mutations above, each
 watched going red and each restored byte-identical. `new Payout()` counted across `payout/src` — zero
 in `src/main`, five in `src/test`. The `payout_id` column and its foreign key read out of the two
 Liquibase changelogs. The seed file's keys enumerated, with no `payouts` among them. Nine of
@@ -17566,7 +17583,141 @@ start of today; the periods are set far enough back that it would not change an 
 quality stack was deliberately not touched — a release agent was rolling it while this was written — so
 there is no `verify-cycle.sh`-style walk of a real batch, and the endpoint has never answered a request
 over a gateway route. **Concurrency is reasoned throughout and measured nowhere**: no test drives two
-runs at once, so both the write lock's exclusion (§3) and the unique-reference collision (§4) rest on
-PostgreSQL's behaviour rather than on anything here — the assertions that exist are structural and say
-so on themselves. And no payout has ever been settled against a real bank reference, by anybody,
-anywhere — production has never been deployed (D49).
+runs or two settlements at once, so **both** locks' exclusion (§3, §12) and the unique-reference
+collision (§4) rest on PostgreSQL's behaviour rather than on anything here. The assertions that exist
+are structural, except `settleReadsThroughTheLockingFinder`, which is behavioural about *which finder
+is called* and still says nothing about a race — and every one of them says so on itself. §16 records
+when the two-thread test gets written and why that moment rather than this one. And no payout has ever
+been settled against a real bank reference, by anybody, anywhere — production has never been deployed
+(D49).
+
+### §12 REVIEW FINDING 1 — the race `open` closed was still open in `settle`, one method along
+
+**The worst of it is that this package found the shape and then did not look next door.** §3 argues
+at length that `payout is null` alone is false as a guard because it stops a later run and not a
+simultaneous one, adds `@Lock(PESSIMISTIC_WRITE)` to the batch query, and writes three paragraphs
+about it. `settle` — the method immediately below `open` in the same class — was **check-then-act
+with a plain unlocked read**, and D95's own concurrency paragraph covered `open` and said nothing
+about it. So the asymmetry was undocumented as well as unguarded, which is worse than either.
+
+The sequence: read the batch, refuse `PAID`, refuse `FAILED`, refuse a non-positive net, write. Two
+settlements of one `OPEN` batch arriving together both read `OPEN`, both pass every refusal and both
+answer **200** — and the last writer's `bankReference` survives, so **the first settlement's record
+is silently overwritten**. That is the precise loss `settle`'s own javadoc said must not be reachable
+by sending the request twice. The window is not hypothetical: two desk operators, or one operator and
+a retrying client with a corrected body. The reconciliation against the bank statement then fails on
+a record everybody was told was written.
+
+**The estate already had the mechanism and it is one service along**:
+`BookingQueryRepository.findByReferenceForUpdate`, D43's idempotency for the payment webhook, where
+the rule is recorded as *"what must not happen twice is the transition rather than the callback"*.
+Here the transition is `OPEN → PAID` and the sentence transfers without alteration. Copied as-is,
+including keeping the **unlocked** finder beside it — `findByReference` still serves the desk's read,
+because a read must not be able to block a settlement or be blocked by one, and that is why this is
+two repository methods rather than a lock added to one.
+
+**Two tests, and the division between them is the point.** `settleReadsThroughTheLockingFinder` is
+**behavioural**: it verifies `settle` calls `findByReferenceForUpdate` and never `findByReference`,
+which no structural check can see and which keeping the unlocked finder makes a live possibility — a
+lock declared on a method nobody calls is a lock that does nothing.
+`theSettlementReadDeclaresAWriteLock` is **structural** and asserts both halves: the annotation and
+its mode on the locking finder, *and* that the desk's read has no lock (M21). Both say on themselves
+that they do not observe a race.
+
+**Red-first, and the red was better evidence than a new test.** Switching `settle` to the locking
+finder made **three existing tests fail immediately** — they stubbed the unlocked finder, so
+`NoSuchBatch` came back for a batch that was there. That is behavioural proof the read really moved,
+before a single new assertion was written. Worth noting which tests did *not* break: three settle
+tests refuse before the lookup, and `anUnknownReferenceIsItsOwnRefusal` passed under both finders
+because a lenient mock answers empty either way — so that test would not have distinguished them,
+which is exactly the gap the two new tests fill.
+
+### §13 REVIEW FINDING 2 — a negative-net batch could be marked PAID, and the harm compounds
+
+§6 decided that a batch summing to zero or below is written rather than refused, and argued it: a
+refused batch leaves its reversal `payout is null` for ever, silently discounting a later unrelated
+period. That argument stands. **What §6 did not do is stop such a batch being settled**, and `settle`
+refused `PAID` and `FAILED` and nothing else — so the batch D95's own text calls *"not something a
+desk can transfer"* was settleable against a bank reference.
+
+**The harm is not local, and that is what makes it worth an interim door rather than a note.** Period
+P+1 sums to −15,000 and opens with one WARN. An operator working through the `OPEN` list settles it
+with the next period's bank reference to clear the screen. **The debt now reads as paid *to* the
+professional.** Period P+2's 20,000 then settles in full. **15,000 overpaid, every record internally
+consistent, nothing anywhere disagreeing with anything.** And since a claimed reversal's rows are
+attached and can never offset a later period, the machine's entire account of that debt was one WARN
+line plus an `OPEN` row nobody must tidy.
+
+**So `settle` refuses `netMinor <= 0`**, in the shape of the `FAILED` refusal beside it and naming
+NEW-64 in the message. Three things about that choice:
+
+- **`<= 0` and not `< 0`.** A zero-net batch had no transfer either, so marking it `PAID` against a
+  bank reference is also a false record. It never *needs* to be `PAID`: it holds its rows, so nothing
+  is carried forward, and leaving it `OPEN` is the honest state. M23 is the mutation that pins this.
+- **Refusing is recoverable and settling is not.** The door can be opened the day NEW-64 ratifies how
+  such a batch is finally disposed of; a `PAID` row stating money moved cannot be un-said, and there
+  is no endpoint to delete one. Nothing the ratification could want is lost by closing it now.
+- **It does not touch `open`.** A negative period still produces a batch, still at WARN, because §6's
+  argument for that is unchanged — and `aStrictlyNegativePeriodStillOpensABatch` (M24) pins it, which
+  nothing did before: `aPeriodThatCancelsOutIsStillABatch` covers net == 0 and takes the *same*
+  `<= 0` branch, so "a reversal larger than the remaining earnings" was asserted nowhere.
+
+### §14 Three nits, taken
+
+- **`jdl/payout.jdl` no longer illustrates a format that cannot be used.** Line 120 read
+  `// PAY-202607-AM` — the format §4 deliberately departed from — so the model of record showed a dead
+  spelling while §4 quoted the line without amending it. The comment now carries the real format and
+  both halves of why the illustrated one is unusable rather than merely awkward, and `Payout` gained
+  an entity-level comment saying what a batch is, that nobody is paid by it, and that `IN_PROGRESS`
+  and `FAILED` are unwritten. **Comments only** — no field, no relationship, so no changelog and no
+  Liquibase checksum moves.
+- **`IN_PROGRESS`'s fall-through to `PAID` is now decided rather than merely unreachable.**
+  `NotSettleable`'s javadoc enumerated `PAID` and `FAILED`, so the third status falling through was
+  indistinguishable from a forgotten case — in a money transition, which is where an unstated
+  fall-through is least acceptable. It is stated: nothing writes that status, and if anything ever
+  does it will mean "a transfer has been initiated and not yet confirmed", whose correct next state is
+  exactly `PAID`. Refusing it would make a batch somebody had begun paying impossible to finish.
+- **The strictly-negative open case is pinned** — see §13's third bullet.
+
+### §15 What the review confirmed, so nobody re-litigates it
+
+Recorded because these were measured independently and some go further than §1–§11 claimed, and
+because the cheapest failure mode from here is somebody "improving" one of them:
+
+- **The reversal arithmetic is correct at the source.** `DisputeEventConsumer:143-145` writes
+  `-gross`, `-commission`, `-(gross - commission)`, so every reversal satisfies the invariant and the
+  batch's version follows by linearity. That is the premise §3 rests on, now checked rather than
+  assumed.
+- **The lock in `open` is sufficient and the transaction boundary is where it needs to be.**
+  `@Transactional` is on `PayoutRun.open` and **not** on the resource, so the locking select, the
+  insert, the attachment and the flush commit as one unit. Both queries order by `earnedOn, id`, so
+  two runs cannot deadlock each other.
+- **Not catching the unique-reference collision is right**, and naming the
+  `UnexpectedRollbackException` trap at the site is why it will stay that way.
+- **Money types are clean**: `long` minor units throughout, `mapToLong`, no division, no rounding, and
+  `zeroIfNull` fails closed *through* the invariant rather than beside it.
+- **§11's `effectiveFrom`-same-second caveat is over-cautious**, which is the right direction to be
+  wrong in: a committed config from another test class cannot have `effectiveFrom` later than the
+  start of today and still be selected at that instant, and on a tie the newest-id tie-break favours
+  this class's row because sequence ids are monotonic and it persists last. It is **not** a D76-style
+  cross-context exposure. The caveat stays as written — an over-cautious note costs nothing and
+  removing it would be asserting the absence of a hazard on somebody else's measurement.
+- **`@EnableMethodSecurity` is on payout's generated `SecurityConfiguration:18`**, so the class-level
+  `@PreAuthorize` is live and the IT's 403 goes through the real filter chain rather than through a
+  mock.
+
+### §16 The two-thread test: not now, and exactly when
+
+**Deferred deliberately, and agreed by the reviewer and the architect.** Both locks rest on documented
+PostgreSQL semantics plus a structural pin plus — for `settle` — a behavioural assertion that the
+locking read is the one called. A real two-thread IT needs a class that is **not** `@Transactional`,
+with its own transaction management, committing rows into the database every other integration test in
+this JVM shares. That is a different kind of test from anything in this repository.
+
+**Write it when NEW-64's `FAILED` transition is built**, and the reason is structural rather than a
+matter of appetite: **that is the commit in which a second writer of `payout_id` appears.** Today
+`PayoutRun.open` is the only thing in the estate that sets that column, so the lock has one contender
+and the harm is two batches over one set of rows. A `FAILED` transition that returns rows to unsettled
+writes `payout_id = null` from a second place, and at that point the interleavings multiply and no
+amount of reasoning about one writer transfers. **The sentence is repeated in NEW-64's own entry**, so
+whoever picks that item reads it there rather than here.

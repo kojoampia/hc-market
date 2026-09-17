@@ -116,11 +116,29 @@ entity Ledger {
                                       // original here.
 }
 
+/**
+ * One settlement of one professional's unsettled Ledger rows for one period.
+ *
+ * `status` is OPEN -> PAID, recorded by PayoutRun (decisions.md D95). Nothing writes IN_PROGRESS or
+ * FAILED, and what a FAILED batch's ledger rows should become is undecided — backlog NEW-64.
+ *
+ * Nobody is PAID by this platform: Act 987 gates a broker MOVING money, which is why PaymentProvider
+ * has no settlement call. `settledOn` and `bankReference` record a transfer a human already made by
+ * bank, and that needs no licence — which is the whole reason this entity was buildable.
+ */
 entity Payout {
-  reference String required unique    // PAY-202607-AM
+  // PAY-<yyyyMM>-<professionalRef>-<nn>, from periodEnd's month. This comment read `PAY-202607-AM`
+  // until D95 and that format cannot be produced or used: payout holds no professional's NAME to take
+  // initials from (Ledger carries a ref and a login), and initials are not unique on a unique column —
+  // two professionals sharing them in one month would collide. The `nn` sequence is what lets a run be
+  // something other than monthly; see PayoutRun.mintReference, which argues both halves.
+  reference String required unique
   professionalRef String required
   periodStart LocalDate required
   periodEnd LocalDate required
+  // Stored rather than derived, for the same reason Ledger's money columns are: a batch must keep
+  // saying what was PAID even after a later reversal changes what the same period would sum to today.
+  // A total ACROSS batches is still forbidden — there is no professional.total_paid.
   grossMinor Long required
   commissionMinor Long required
   netMinor Long required

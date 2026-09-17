@@ -388,6 +388,35 @@ class PayoutDeskResourceIT {
             .andExpect(jsonPath("$.entries").value(1));
     }
 
+    /**
+     * A batch that nets nothing may not be marked {@code PAID} — D95 §6, as reviewed, backlog NEW-64.
+     *
+     * <p>Through the real chain, because the refusal has to reach the desk as a 409 rather than as a
+     * 500: the operator's remedy is to leave the batch alone, and the message names NEW-64. The
+     * arithmetic that produces the zero is asserted in {@code PayoutRunTest}; what is asserted here is
+     * that a batch which really exists in the database in that state cannot be settled.
+     */
+    @Test
+    @WithMockUser(username = "the.desk", authorities = { MarketplaceAuthorities.BROKERAGE })
+    @DisplayName("a batch whose reversals cancel its earnings may not be settled")
+    void aBatchThatNetsNothingMayNotBeSettled() throws Exception {
+        em.persist(reversalOf("DSP-DESK-51-A", "BKG-DESK-51-A", today.minusDays(90)));
+        em.flush();
+
+        String reference = theDeskOpensABatch();
+        assertThat(columnOf(reference, "p.netMinor", Long.class))
+            .as("the batch really does net zero")
+            .isZero();
+
+        settle(reference, "GTB-CLEARING-THE-SCREEN").andExpect(status().isConflict());
+
+        assertThat(columnOf(reference, "p.status", PayoutStatus.class)).isEqualTo(PayoutStatus.OPEN);
+        assertThat(columnOf(reference, "p.bankReference", String.class))
+            .as("no bank reference may be recorded against a transfer that did not happen")
+            .isNull();
+        assertThat(rowsAttachedTo(reference)).as("and it still holds its rows, so nothing moves into a later period").isEqualTo(2);
+    }
+
     @Test
     @WithMockUser(username = "the.desk", authorities = { MarketplaceAuthorities.BROKERAGE })
     @DisplayName("a second attempt to settle the same batch is refused")
