@@ -479,7 +479,7 @@ against the hand-written resource that replaced it:
 | `MessageResource`, `ConversationResource` | messaging `web/rest/` | `MessagingResource` — the **singular/plural** trap again, and the only thing that stopped these being name collisions. Generated CRUD returns **200 with every message in the estate to any `ROLE_USER`**: the body a customer wrote to a professional, and who wrote it to whom, unscoped by anything. The write half puts words in a named person's mouth in a thread there is no endpoint to delete from. It is an erasure surface too — a fresh row naming an erased customer makes a receipt (D31/D39) a statement about a moment rather than about the estate |
 | `BrokerageConfigResource` | payout `web/rest/` | **nothing on the wire — `BrokerageBootstrap` off it** (D57). A terms-change screen would need an **append-only** resource behind `ROLE_BROKERAGE`, not this: D53 prices every completed booking against the config in force at the booking's own instant, so `POST` of a backdated row reprices history, and `PUT`/`DELETE` on the config a ledger row was priced under destroys the only record of what that rate was. Generated CRUD would let **any authenticated user set this platform's commission rate**. D54 said deleting it cost nothing and was wrong: it was the estate's last writer of a `BrokerageConfig`, and an empty table means the consumer retries every completed booking for ever while every receipt answers 503 (NEW-18). The founding row is written at startup now, by a class with no HTTP door at all |
 | `LedgerResource` | payout `web/rest/` | `ProEarningsResource`, scoped to the caller's own login. Generated CRUD returns **every professional's earnings in the estate to any `ROLE_USER`** — gross, commission and net per booking, with `professionalLogin` on every row — and lets the same token **write an earning nobody worked for, or delete a commission**, in the table that is this platform's money record |
-| `PayoutResource` | payout `web/rest/` | `ProEarningsResource.payouts`, scoped to the caller — **and that reads a table nothing writes.** `grep -rn "new Payout()" payout/src/main` finds nothing outside the seeder: the deleted resource was the estate's only writer, so on an unseeded estate `/api/pro/payouts` returns `[]` and always will. Not a regression — the CRUD was never how a payout should be created — but do not read this row as "the replacement covers the use". Generated CRUD disclosed **every professional's settlement history** and let any token **record a payment that never happened, or mark an unpaid batch `PAID`** |
+| `PayoutResource` | payout `web/rest/` | `ProEarningsResource.payouts` for the professional's own read, scoped to the caller, **and `PayoutDeskResource` for the write** (D95, backlog NEW-51). This row read *"and that reads a table nothing writes"* until 2026-09-17 and it was true for a month: the deleted CRUD had been the estate's only writer, so `/api/pro/payouts` answered `[]` on **every** estate — including a seeded one, because `new Payout()` occurred **zero** times in `payout/src/main`, the seeder included, and `seed-data.json` has no `payouts` key. The writer is now `PayoutRun` behind `POST /api/desk/payouts` and `POST /api/desk/payouts/{reference}/settled`, `ROLE_BROKERAGE`, and **it is not a rehabilitation of the CRUD**: the double-payment guard is `payout is null` on the ledger row rather than anything the caller sends, the period is refused if it runs past the payout lag, and a `PAID` batch cannot be re-stamped. Generated CRUD disclosed **every professional's settlement history** and let any token **record a payment that never happened, or mark an unpaid batch `PAID`** |
 | `HealthconnectBookingKafkaResource` | booking `web/rest/` | **nothing, deliberately** (D59). Not an entity resource — `messageBroker kafka` in the JDL generates one of these per application, which is why the entity-derived check above could never see it. `POST /publish` took a `message` request parameter and put it on **the broker four products borrow** (D27), on `binding-out-0`, a topic auto-created on demand; `GET /register` attached the caller to `broker.KafkaConsumer`, whose `accept` fans every message it receives to **every** registered emitter with no per-user filter at all. The estate's real event path is `OutboxPublisher` → a `@KafkaListener` in `service`, and the durable per-user record is messaging's notification table |
 | `HealthconnectCatalogKafkaResource` | catalog `web/rest/` | **nothing, deliberately** (D59). Same three mappings, same argument |
 | `HealthconnectMessagingKafkaResource` | messaging `web/rest/` | **nothing, deliberately** (D59). Same three mappings, same argument |
@@ -1927,6 +1927,39 @@ time.**
   does not visit it**; adding a customer field there without adding it to `ErasureWorkflow` in the same
   commit is how that stops being true, and `attention_note` is composed by the platform rather than
   copied from a provider's message for the same reason.
+- **A payout batch is a record of a settlement, and `payout is null` is the whole double-payment
+  guard** (D95, backlog NEW-51). A deliberate exception to "derived, never stored" — the list is now
+  `Professional.verification` (D16), `payment_attempt.providerReference` (D41) and this one, and
+  **enumerate it rather than quoting a count**, which is this file's rule and its own recurring
+  defect. It is the same kind as `Ledger`'s own money columns, which the JDL argues as "not a
+  contradiction" rather than as a fourth entry: `Payout`'s `grossMinor`/`commissionMinor`/`netMinor` must
+  keep saying what was paid even after a later reversal changes what the same period would sum to
+  today. **What is still forbidden is a total ACROSS batches** — there is no `professional.total_paid`
+  and there must never be one.
+  Three things about it that are decisions rather than shape, and the first is the one to read before
+  touching the query. **A reversal is one of the batch's rows and has to be**: D23's compensating
+  entries carry negative amounts and the professional is paid the *sum*, and a reversal is not shaped
+  like an earning — `bookingReference` is unique, so a compensating entry carries the **dispute**
+  reference there and names the booking in `reversalOf`. **So a batch query filtering on the shape of
+  `bookingReference` drops every reversal silently and overpays somebody for a booking that was
+  refunded.** `SettlementLedgerRepository.unsettledBetween` selects on `payout is null` and on nothing
+  else about what a row is — **and on its own that predicate is not the guard**, which D95 found in its
+  own first draft: it stops a *later* run claiming a settled row and does nothing about a
+  *simultaneous* one, where two runs both write a batch and one ends up holding **no rows and still
+  reporting the money**. Hence `@Lock(PESSIMISTIC_WRITE)` on that query, and hence the caveat: the
+  exclusion is PostgreSQL's under `READ COMMITTED`, **reasoned and measured nowhere** — the test beside
+  it is structural and says so. **A period running past the payout lag is refused rather than narrowed** to
+  the cutoff: a batch whose period claims days whose rows were excluded is a record that disagrees with
+  itself, and the amounts would be right for the rows that were taken while the period said something
+  else. The lag comes from the `BrokerageConfig` in force, read at the start of the marketplace day
+  through `BrokerageTerms.inForceAt` — never from `FoundingTerms`, which is only ever written into an
+  empty table (D57). And **`PayoutStatus.FAILED` has no transition into it, deliberately** — what
+  happens to a failed batch's ledger rows is undecided and either answer is a double payment or a
+  professional who is never paid, so `settle` refuses one and says so (NEW-64).
+  Nobody is paid by any of this: **Act 987 gates the platform moving money**, which is why
+  `PaymentProvider` has no settlement call and must not gain one, and `settledOn` + `bankReference`
+  record a transfer a human already made. `PayoutRun` is the class, **never `PayoutService`** — the
+  JDL generates that name.
 - **An adapter that throws is a provider that `FAILED`** (D44). `BookingPayments.take` catches
   `RuntimeException` around `provider.authorize`, so a timed-out HTTP client answers the customer with
   the same 502 a provider politely answering `FAILED` always got, instead of a 500 and a stack trace.

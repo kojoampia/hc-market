@@ -17248,3 +17248,325 @@ live-environment change for the architect to authorise — the walk was therefor
 throwaway gateway built from this branch, on the same daemon, with the same configuration the quality
 compose file now carries. **`/etc/nginx` is untouched on both machines**: the rate limits are provided,
 printed and not installed, so they are in force nowhere until a person installs them.
+
+---
+
+## D95 — The ledger earned for the estate's whole life and nothing ever settled
+
+**Recorded 2026-09-17**, against `main` at `7f6b21b`. Closes backlog **NEW-51**; opens **NEW-64**.
+Three questions are **surfaced and not answered** — §7 — and two decisions are **taken with their
+argument written down** rather than deferred, because the code cannot be written without an answer to
+either.
+
+### §1 What was wrong, and the fact the item had slightly wrong
+
+`Ledger` has accumulated an earning per completed booking since the estate was built. `Payout` — the
+table that says a professional was paid — **had no writer at all.** So `GET /api/pro/payouts`, which
+`ProEarningsResource.payouts` serves scoped to the caller, returned `[]` on every estate and always
+would, while the amount owed grew without bound and with no mechanism anywhere to discharge it.
+
+It is a consequence of D54, and the deletion D54 made was right. The generated `PayoutResource`
+disclosed every professional's settlement history to any token the estate accepts, and let the same
+token record a payment that never happened or mark an unpaid batch `PAID`. What was never built is the
+replacement.
+
+**Re-derived, and one of the grounded facts is off by one in a way worth correcting.** NEW-51's box
+and the brief that carried it both said `new Payout()` occurs **once, in the seeder**. It occurs
+**zero** times in `payout/src/main` — the seeder does not construct one either, and
+`deploy/demo/seed-data.json` has no `payouts` key, so **even a seeded estate has never had a payout
+row**. Every occurrence in the repository is in a test:
+
+```
+payout/src/test/.../domain/PayoutTest.java:18
+payout/src/test/.../domain/PayoutTestSamples.java:13,25,37
+payout/src/test/.../web/rest/GeneratedCrudIsNotAnApiIT.java:116
+```
+
+That makes the gap wider than the item stated rather than narrower: the quality box, which seeds, could
+not have demonstrated the endpoint working either, and `PayoutQueryRepository` has been reading an
+empty table on every estate that has ever run.
+
+The other three facts hold as grounded. `jdl/payout.jdl:133-135` declares
+`relationship ManyToOne { Ledger{payout} to Payout{entries} }`; it is generated through to
+`Ledger.java:97` and to the schema — `20231204031935_added_entity_Ledger.xml:53` has the `payout_id`
+column and `..._constraints_Ledger.xml:13-17` the foreign key — so `payout is null` is a real
+predicate over a real column and not a declaration. `EarningsRepository.professionalRefsFor` is what
+scopes `/api/pro/payouts` to the caller's own login. And `EarningsRepository.lifetime`'s
+`List<Object[]>`-not-`Object[]` comment is accurate; nothing here declares a one-row aggregate at all,
+for a related reason given in §3.
+
+### §2 Act 987 does not block this, and `bankReference` is the model's own answer
+
+Act 987 gates this platform **moving** money — pushing a transfer through a provider API. That is why
+`PaymentProvider` has no method that pays a professional and must not gain one (WP-13, D45, D86):
+keeping the interface free of a settlement call is what lets the payment seam survive the Act 987
+answer either way.
+
+**Recording a transfer a human already made by bank needs no licence.** `Payout.settledOn` and
+`Payout.bankReference` exist for exactly that, which is the JDL's own answer to the question, so the
+unblocked version of this item is the whole of the internal record and only *automated* settlement
+waits on counsel. Nothing in this package pays anybody or talks to anybody.
+
+### §3 What was built
+
+Six new files in payout — all new, so a regeneration leaves them alone — and two methods added to an
+existing hand-written repository:
+
+| file | what it is |
+| --- | --- |
+| `service/PayoutRun.java` | compute, record, settle. **Never `PayoutService`**, which the JDL generates |
+| `repository/SettlementLedgerRepository.java` | the unsettled rows, and the count attached to a batch |
+| `web/rest/PayoutDeskResource.java` | `/api/desk/payouts`, behind `ROLE_BROKERAGE` |
+| `service/dto/PayoutDeskDtos.java` | `OpenBatch`, `Settle`, `BatchView` |
+| `security/MarketplaceAuthorities.java` | payout's copy of the `ROLE_BROKERAGE` literal |
+| `repository/PayoutQueryRepository.java` (existing) | `findByReference`, `countByProfessionalRefAndReferenceStartingWith` |
+
+Two endpoints and one read: `POST /api/desk/payouts` (201),
+`POST /api/desk/payouts/{reference}/settled` (200), `GET /api/desk/payouts/{reference}`.
+
+**`payout is null` is the whole double-payment guard and it must not be anything else.** The brief's
+subtle part is real and it is the one place this could have gone wrong invisibly. A reversal is a
+`Ledger` row like any other (D23) carrying negative amounts, and the professional is paid the *sum*, so
+a reversal left out of the query pays somebody for a booking that was refunded. It is easy to leave
+out, because a reversal is not shaped like an earning: `bookingReference` is unique and that
+uniqueness is the guard against a replayed `booking.completed` double-crediting, so a compensating
+entry cannot reuse the booking's reference and carries the **dispute** reference there instead, naming
+the booking in `reversalOf`. **A query filtering on the shape of `bookingReference` therefore drops
+every reversal silently and overpays.** `unsettledBetween` selects on `payout is null` and on nothing
+else about what a row is, and that sentence is written at the query rather than only in a decision
+nobody opens.
+
+**And `payout is null` alone is FALSE as a guard, which this package found in its own first draft.**
+The predicate stops a *later* run claiming a settled row. It does nothing whatever about a
+*simultaneous* one: two runs read the same rows, both see them unclaimed, both compute the same
+amounts, both write a batch — and because the attachment is last-writer-wins, one batch ends up
+holding the rows while the other holds **none and still reports the money**. Settle both and the
+professional is paid twice, with nothing in either batch disagreeing with anything. `unsettledBetween`
+is therefore `@Lock(PESSIMISTIC_WRITE)`: the second reader blocks, then re-evaluates the predicate
+against the committed row under `READ COMMITTED`, finds `payout_id` no longer null, and its run
+refuses with `NothingToSettle`. It contends with nothing else, because `DisputeEventConsumer` only
+ever *inserts* a compensating row and never updates the one it reverses — which is the append-only
+discipline D23 exists for, paying off somewhere it was not designed to.
+
+**That property is reasoned and not measured, and it is labelled as such in three places.** No test
+drives two concurrent runs; it rests on PostgreSQL's row locking rather than on anything here.
+`theBatchQueryTakesAWriteLock` asserts the annotation is present and that its mode is the write one —
+structural, red if either is removed (M17, M18), and it does not observe a race. *"A lock is
+declared"* and *"a race was ruled out"* are different claims and only the first is established.
+
+**Summed in Java, as `long`.** Not because a JPQL `sum` would be wrong but because the rows are loaded
+anyway — the run has to attach each one — so an aggregate query would be a *second answer* that could
+disagree with the one the attachment is based on. A batch is one professional's rows for one period:
+tens of rows, not a scan. That is also why `EarningsRepository.lifetime`'s wrapped-array trap does not
+arise here.
+
+**`gross - commission == net` is re-derived over the batch and a failure is refused.** Every ledger row
+satisfies it, a reversal included, because a reversal's three numbers are the original's negated. So
+the sums must satisfy it too, and if they do not then one of the rows is wrong. The case this exists
+for is **a reversal written with the sign applied to two of its three columns** — internally plausible,
+every row still looks like a row, and only the batch disagrees with itself. It is also the direction
+that *overpays*. These three columns are what a reconciliation against a bank statement is done
+against, so a total that does not add up is refused rather than recorded.
+
+**A batch's three money columns are stored, and that is a stated exception to "derived, never
+stored".** It is the same kind as `Ledger`'s own money columns and it is argued the same way: the
+figure has to keep saying what was paid, even after a later reversal changes what the same period
+would sum to today. What is still forbidden is a total **across** batches — there is no
+`professional.total_paid`, there is no column on `Professional`, and there must never be either.
+
+**The day is `MarketCalendar`'s, never `LocalDate.now()`** — D51, and the CI check that bans an
+implicit zone scans all five services. The payout cutoff is a bound on `ledger.earned_on`, which is
+written in that calendar, so a cutoff read in the JVM's zone would include or exclude a day of
+earnings depending on where the container was started. `MarketCalendar` itself is **untouched**: it is
+a byte-identical copied family across payout, booking and catalog with CI diffing the copies, so
+`PayoutRun` composes the instant it needs from `today().atStartOfDay(MARKET_ZONE)` rather than adding a
+method there.
+
+### §4 `Payout.reference`: a decision, and it departs from the JDL's illustration on both halves
+
+`jdl/payout.jdl:120` illustrates the format as `PAY-202607-AM` — month plus initials. This mints
+**`PAY-<yyyyMM>-<professionalRef>-<nn>`**, from `periodEnd`'s month.
+
+- **Not initials, and not because they are inconvenient.** Payout holds no professional's name —
+  `Ledger` carries a reference and a login and nothing else — so initials would need a round trip to
+  catalog for a value that is **not unique**: two professionals sharing initials in one month collide
+  on a unique column. The illustrated format is therefore unusable as a key rather than merely awkward.
+  `professionalRef` is what the row is keyed by and what a desk operator already has in hand.
+- **A sequence, so a run need not be monthly.** Two batches in one month are a real thing — a
+  corrected period, a professional paid off-cycle — and a format that cannot express them forces
+  either a second run to fail or a reference to lie about its period. The item named this risk and did
+  not resolve it.
+- **`periodEnd`'s month**, so a period straddling a boundary is filed under the month it ends in. Its
+  own test pins that.
+- **Formatted from the year and month values, not a `DateTimeFormatter` pattern.** `ofPattern` without
+  a locale formats numbers in the JVM's default locale, and a reference is an identifier rather than
+  something rendered for a reader.
+- **The sequence comes from a count, and a count is not a lock.** Two concurrent runs for the same
+  professional and month compute the same number and the loser collides on the unique index. That is
+  the direction to fail in, the guarantee is the schema's, and the collision is deliberately **not
+  caught**: catching a `DataIntegrityViolationException` inside `@Transactional` does not work here
+  anyway — the violation marks the transaction rollback-only and the response fails at commit as an
+  `UnexpectedRollbackException`, which is a 500 with no obvious cause.
+
+### §5 The payout lag bounds the period, and a period past it is REFUSED rather than narrowed
+
+NEW-51's own "done means" says to select rows *"earned on or before today minus the payout lag"*, from
+`FoundingTerms`' `HC_BROKERAGE_PAYOUT_LAG_DAYS` (D57). The brief handed the same thing back as an open
+question — does the lag bound eligibility, or does the desk simply choose a period. **Both are
+implemented, in combination, and the combination is the part that needed deciding:** the desk names
+the period (`periodStart` and `periodEnd` are not-null columns, so a period has to come from
+somewhere), and a period whose `periodEnd` is later than `today - lag` is **refused**, naming the last
+day it may run to.
+
+**Silently narrowing it to the cutoff was the obvious alternative and it is the worse one.** A batch
+whose period claims days whose rows were excluded is a record that disagrees with itself, and the
+disagreement is invisible: the amounts are right for the rows that *were* taken and the period says
+something else. Nothing downstream could ever detect it. Refusing costs the desk one more request.
+
+**The lag comes from the `BrokerageConfig` in force, not from `FoundingTerms`.** Those are the
+founding defaults and are only ever written into an empty table (D57); the live terms are a row, and
+`BrokerageTerms.inForceAt` is the estate's one selector for them (D56). The moment asked about is the
+**start of today** in the marketplace's calendar, which is the same convention D56 gives a caller who
+supplies a day and no moment. **Nothing on the pricing path reads a clock (D53) and that is
+unchanged**: this is not a price. "Is this earning old enough to pay" is a question about today by
+construction, and the run is the only thing in the estate that asks it. No config in force is a
+`NoTermsInForce` and a **503** rather than a guess — unreachable on any estate `BrokerageBootstrap`
+has started, which is when a closed door is free.
+
+### §6 A batch that sums to zero or below is still a batch — taken, with the argument
+
+The third surfaced question. **Rows present but summing to zero, or to a negative number, get a
+batch**; no unsettled rows at all gets **no batch**, refused rather than written as a settlement of
+nothing.
+
+- **No rows is no batch** because a `Payout` row that settles nothing is a line on a professional's
+  earnings screen saying they were paid, and there is no endpoint to delete one.
+- **Zero is honest.** Those rows *were* settled and nothing was transferred, which is exactly what a
+  period holding an earning and its reversal means.
+- **Negative is the hard one, and refusing it is worse.** A period holding a reversal of an earning
+  that was paid in an *earlier* period sums below zero, and that is not something a desk can transfer.
+  But refusing leaves that reversal `payout is null` for ever, so it silently discounts some later,
+  unrelated period instead — a professional's next quarter quietly short by an amount with no line
+  explaining it. A batch nobody can pay is **visible** and can be carried forward; a reversal that
+  quietly discounts next quarter is not. It is logged at **WARN** naming the batch for exactly that
+  reason.
+
+**This is the one of the three that most deserves a second opinion**, and it is §7's first question.
+
+### §7 Three things surfaced and NOT taken
+
+1. **Is a negative-net batch the right answer, or should the desk carry reversals forward
+   explicitly?** §6 implements the first and argues it. The alternative worth costing is a third
+   status — a batch that records what is owed *back* — which is a JDL change and a changelog.
+2. **What happens to a `FAILED` batch's ledger rows: return to unsettled, or stay attached?**
+   **Nothing here puts a batch in `FAILED`**, deliberately: a transition written on a guess decides
+   this silently, in the direction that is either a double payment or a professional who is never
+   paid. `settle` **refuses** a `FAILED` batch and says so, naming this decision. Until it is
+   answered, `PayoutStatus.FAILED` and `IN_PROGRESS` are unreachable — which is what they were before
+   this package too.
+3. **Does the desk get a screen?** This is the fifth `ROLE_BROKERAGE` surface in the estate and the
+   fourth with no screen in the acceptance target — NEW-53, ratified as "screens, after Phase 2"
+   (D92 §5). Settling a professional by hand-minted JWT and `curl` is worse than reading a dispute
+   queue that way, because it moves money. The `GET` was added for the same reason: "did that
+   settlement land" is otherwise a question somebody answers in `psql`.
+
+### §8 What is asserted, and how each guard was established
+
+**38 new tests: 23 in `PayoutRunTest` and 15 in `PayoutDeskResourceIT`.** The split is deliberate and
+§9 is why it had to be measured rather than reasoned.
+
+`PayoutDeskResourceIT` runs against real Postgres through the real chain, and **writes its own
+`BrokerageConfig`** with `effectiveFrom` at the start of today — the largest value the selector still
+accepts for a run made today, newest by id among any tie — because the integration tests here share one
+database and some of them *commit* config rows (`AFreshEstateCanPriceABookingIT` says so on itself).
+Its periods are then set 60 to 120 days back so that no plausible lag another class left behind could
+move an outcome; the lag **boundary** is pinned in the unit test, against a clock fixed to
+`America/New_York`, where the number cannot be anybody else's.
+
+**Every guard was mutated one at a time, watched going red, restored, and the tree verified
+byte-identical after each.** Eighteen mutations, all red:
+
+| | mutation | test that went red |
+| --- | --- | --- |
+| M1 | `payout is null` dropped from the query | `aRowAlreadyInABatchIsNotBatchedAgain` |
+| M2 | `and l.reversalOf is null` added to the query | `aReversalIsInsideTheArithmetic` |
+| M3 | the `gross - commission != net` refusal removed | `rowsThatDoNotAddUpAreRefused` |
+| M4 | the nothing-to-settle refusal removed | `nothingUnsettledIsNoBatch` |
+| M5 | the payout lag never bounds the period | `aPeriodPastTheLagIsRefused` |
+| M6 | a settlement needs no bank reference | `paidNeedsABankReference` |
+| M7 | a `PAID` batch may be re-stamped | `aBatchAlreadySettledIsRefused` |
+| M8 | the `@PreAuthorize` removed from the resource | `aPlainUserMayNotRunAPayout` |
+| M9 | the rows are summed but never attached | `everySummedRowIsAttached` |
+| M10 | the lag hard-coded to 3 instead of read from the config | `theLagComesFromTheConfig` |
+| M11 | a settlement needs no day | `paidNeedsTheDay` |
+| M12 | a `FAILED` batch may be settled | `aFailedBatchIsRefused` |
+| M13 | the reference sequence always `01` | `asecondBatchInAMonthIsTheNextInSequence` |
+| M14 | a settlement may be dated in the future | `aSettlementCannotBeDatedInTheFuture` |
+| M15 | two currencies collapse into one | `twoCurrenciesAreRefused` |
+| M16 | the reference names no month | `theReferenceNamesTheMonthAndTheProfessional` |
+| M17 | the `@Lock` deleted from the batch query | `theBatchQueryTakesAWriteLock` |
+| M18 | the lock weakened to `PESSIMISTIC_READ`, which does not exclude a second reader | `theBatchQueryTakesAWriteLock` |
+
+The harness lives in a uniquely-named directory, refuses to run unless it is in a directory of its own
+name and unless every subject resolves under this worktree, and **re-verifies the restored file against
+its pristine copy after every single mutation**, aborting the whole run rather than continuing if one
+does not match. Another agent is working in this repository; a mutation left behind on the money path
+is the failure that matters.
+
+### §9 The one measurement that changed a claim: a mocked query cannot see a query defect
+
+**M2 was first run against `PayoutRunTest` and came back GREEN.** `PayoutRunTest` mocks
+`SettlementLedgerRepository`, so adding `and l.reversalOf is null` to the JPQL changes nothing it can
+observe: the unit test asserts the **arithmetic given the rows** and says nothing whatever about
+**which rows are selected**. Those are two different properties and `aReversalReducesTheBatch` covers
+only the first.
+
+This matters more than a harness bookkeeping error, because it is the reversal semantics — the one
+thing NEW-51 named as the subtle part — and the unit test's own name reads as though it covered them.
+The property is asserted where it can be: `aReversalIsInsideTheArithmetic` in the IT, against the real
+query and the real schema, which is red under M2. **A test whose subject is a query must run the
+query**, and a mock is not a weaker version of a database, it is a different subject.
+
+### §10 What is NOT in this package
+
+- **Nobody is paid.** §2.
+- **No sweep and no schedule.** A payout run is an act the desk takes, and NEW-52 is where a
+  `@Scheduled` anything belongs. `@EnableScheduling` is already live in all five services (D91), so
+  nothing here needed to stand one up and nothing here uses one.
+- **No `FAILED` transition.** §7.2.
+- **No batch-everybody endpoint.** A single call that moves every professional's money is one button
+  with no undo, and nothing has asked for it.
+- **No screen.** §7.3, NEW-53.
+- **No change to `Ledger`, to the JDL, to any Liquibase changelog, or to any compose file.** The
+  relationship and every column this uses were already generated and already in the schema, which is
+  why this is an item and not a work package.
+
+### §11 Verified, assumed, not exercised
+
+**Verified, by running it.** payout's `./mvnw clean verify` on JDK 25 — **161 unit tests and 74
+integration tests**, `TechnicalStructureTest` and modernizer and checkstyle among them, all green. All 38
+new tests, the 15-test IT against Postgres in Testcontainers. The eighteen mutations above, each
+watched going red and each restored byte-identical. `new Payout()` counted across `payout/src` — zero
+in `src/main`, five in `src/test`. The `payout_id` column and its foreign key read out of the two
+Liquibase changelogs. The seed file's keys enumerated, with no `payouts` among them. Nine of
+`build.yml`'s `consistency` steps lifted out and run against this tree — the CRUD gate (which still
+reports `payout/Payout — deleted, and CLAUDE.md's delete table says so`, because `PayoutDeskResource`
+is not `PayoutResource`), the Kafka sample gate, the implicit-zone scan, the zone-write scan, the
+filter-chain gate, the appointment-zone gate, the calendar diff, the seed-clock scan and the
+OpenTelemetry gate. `.github/checks/backlog-table-agrees.sh`, `./deploy/sync-appendices.sh --check`,
+and `bash -n` over all 36 tracked shell scripts.
+
+**Assumed, from reading.** That `payouts.save` assigning a sequence id before flush is what makes the
+entry count answerable in the same transaction — it is exercised, but through Hibernate's auto-flush
+rather than by an assertion about when the id appears. That another integration test in the same JVM
+cannot have committed a `BrokerageConfig` whose `effectiveFrom` falls inside the same second as the
+start of today; the periods are set far enough back that it would not change an assertion if one had.
+
+**Not exercised.** **Nothing has run against a live estate.** The dev estate is wedged (NEW-31) and the
+quality stack was deliberately not touched — a release agent was rolling it while this was written — so
+there is no `verify-cycle.sh`-style walk of a real batch, and the endpoint has never answered a request
+over a gateway route. **Concurrency is reasoned throughout and measured nowhere**: no test drives two
+runs at once, so both the write lock's exclusion (§3) and the unique-reference collision (§4) rest on
+PostgreSQL's behaviour rather than on anything here — the assertions that exist are structural and say
+so on themselves. And no payout has ever been settled against a real bank reference, by anybody,
+anywhere — production has never been deployed (D49).

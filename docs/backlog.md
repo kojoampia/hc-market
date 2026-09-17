@@ -83,7 +83,7 @@ production. Phases are sequential where stated and their items are independent w
 |---|---|---|---|
 | **1** | a person can hold an account | ~~NEW-47~~ **DONE** (D94) | — |
 | **2** | the application | NEW-48 | phase 1 for anything behind a token; D90 §3 for its shape |
-| **3** | the promises the API already makes | NEW-49, NEW-50, NEW-51, NEW-52, NEW-53 | nothing; cheaper with phase 2's screens |
+| **3** | the promises the API already makes | NEW-49, NEW-50, ~~NEW-51~~ **DONE** (D95), NEW-52, NEW-53 | nothing; cheaper with phase 2's screens |
 | **4** | money for real | WP-13, NEW-54 | Act 987, provider credentials, a callback route |
 | **5** | deploy | WP-18, WP-19, NEW-55 | the four gates below |
 
@@ -4000,7 +4000,9 @@ would name files that may not exist.
   is built without an id in it. This stage
   **supersedes NEW-8** rather than fixing it — that item is the prototype's workspace rendering demo
   figures under a LIVE banner, and it stops mattering the day a real screen exists. Two things to fold
-  in here rather than open as items: `/api/pro/payouts` returns `[]` for ever until **NEW-51**, and the
+  in here rather than open as items: `/api/pro/payouts` returned `[]` for ever until **NEW-51**, which
+  is **DONE** (D95) — so the payout table on that screen now has rows to draw whenever the desk has run
+  a batch, and the screen no longer has to explain an empty one — and the
   meeting-link write D87 §8 deliberately declined to open — *"one write on a resource that already
   exists rather than a package"* — belongs on the services or schedule screen.
 - **Stage E — the brokerage desk.** **NEW-53**; the prototype specifies no desk at all.
@@ -4145,7 +4147,39 @@ of the browser report was wrong: **`fromPriceMinor` is present on the detail end
 
 ---
 
-## NEW-51 — the ledger earns and nothing ever settles: no writer for `Payout` · READY
+## NEW-51 — the ledger earns and nothing ever settles: no writer for `Payout` · DONE (D95)
+
+> **CLOSED 2026-09-17 — `decisions.md` D95**, on branch `new-51-a-payout-run-that-settles` off `7f6b21b`.
+> `PayoutRun` (never `PayoutService` — the JDL generates that) computes a batch from
+> `payout is null` rows, attaches them, and records a settlement against a `bankReference` a human
+> supplies; `PayoutDeskResource` is `/api/desk/payouts` behind `ROLE_BROKERAGE`. Six new files in payout
+> and two methods on an existing hand-written repository. **No JDL change, no changelog, no compose
+> change** — every column it uses was already generated and already in the schema.
+>
+> **38 new tests, and all eighteen guards were mutated one at a time and watched going red**, restored
+> byte-identical after each. `GET /api/pro/payouts` now has something to show, asserted end to end.
+>
+> **`payout is null` ALONE IS FALSE AS A GUARD, found in this package's own first draft.** It stops a
+> *later* run claiming a settled row and does nothing about a *simultaneous* one: two runs both see the
+> rows unclaimed, both write a batch, and because the attachment is last-writer-wins one batch ends up
+> holding **no rows and still reporting the money**. Settle both and the professional is paid twice, with
+> nothing anywhere disagreeing. The batch query is `@Lock(PESSIMISTIC_WRITE)` now — and that property is
+> **reasoned, not measured**: no test drives two concurrent runs, `theBatchQueryTakesAWriteLock` is
+> structural and says so on itself.
+>
+> **One grounded fact below is off by one, and the correction widens the gap.** `new Payout()` occurs
+> **zero** times in `payout/src/main` — *including* the seeder, which never constructed one, and
+> `seed-data.json` has no `payouts` key. So **even a seeded estate has never held a payout row**, and the
+> quality box could not have demonstrated the endpoint either.
+>
+> **THREE QUESTIONS SURFACED AND NOT TAKEN → NEW-64.** A negative-net batch is created and logged at WARN
+> rather than refused (argued in D95 §6, and it is the one most deserving a second opinion); `FAILED` has
+> no transition at all, so what happens to a failed batch's rows stays undecided and `settle` refuses one
+> saying so; and the desk still has no screen (NEW-53).
+>
+> **`Payout.reference` is `PAY-<yyyyMM>-<professionalRef>-<nn>`**, which departs from the JDL's
+> illustrated `PAY-202607-AM` on both halves — payout holds no name to take initials from, and initials
+> are not unique on a unique column. D95 §4.
 
 > **GROUNDED 2026-09-16, read-only, and it is smaller than this item costed it.** The model **already has
 > the double-payment guard**: `jdl/payout.jdl` declares
@@ -4153,7 +4187,7 @@ of the browser report was wrong: **`fromPriceMinor` is present on the detail end
 > settled"** and a ledger row already in a batch cannot be batched again. With `PayoutStatus`
 > `{OPEN, IN_PROGRESS, PAID, FAILED}` and `settledOn` + `bankReference`, the whole
 > settled-by-hand flow is already expressible. Measured: **`new Payout()` occurs zero times outside the
-> seeder.**
+> seeder** — *corrected above: zero times in `src/main` at all.*
 >
 > **THE SUBTLE PART, which was written down nowhere until now: `Ledger.reversalOf`.** D23's compensating
 > entries for resolved disputes must be **inside** the batch arithmetic, or a professional is paid for a
@@ -4916,6 +4950,50 @@ whether `secrets.env.example` should be held to the same list (it is the operato
 it has been stale before).
 
 **Not blocked.**
+
+---
+
+## NEW-64 — a payout batch can be owed *back*, and nothing says what a `FAILED` one means · READY, and two decisions with it
+
+**Opened 2026-09-17 by NEW-51 / D95**, which implemented a defensible reading of each of these and
+argued it at the site rather than stopping. Neither is a defect today; both are answers somebody
+other than the implementer should confirm, and the second one is a door deliberately left shut.
+
+**One: a batch whose rows sum to zero or below is still written.** D95 §6. A period holding a
+reversal of an earning that was already paid in an *earlier* period sums negative, and that is not
+something a desk can transfer.
+
+| | |
+| --- | --- |
+| **as built** | the batch is created in `OPEN`, logged at **WARN** naming it, and the desk carries it forward by hand |
+| **the alternative** | refuse it — and then that reversal stays `payout is null` **for ever**, silently discounting some later, unrelated period |
+| **the third option, which is the real one** | a status or a field that records what is owed *back*, so the carry-forward is a row rather than an operator's memory |
+
+**The argument for what was built is visibility, not correctness**: a batch nobody can pay is on the
+screen; a reversal that quietly shortens next quarter is not. **The cost of the third option** is a
+JDL change with a Liquibase changelog behind it, which is why it was not taken inside an item. **What
+would settle it**: whether the brokerage actually ever expects to reclaim money from a professional,
+or whether in practice a reversal is always absorbed against a later positive period.
+
+**Two: `PayoutStatus.FAILED` has no transition into it, and `settle` refuses one saying so.** D95
+§7.2. The undecided question is **what happens to a failed batch's ledger rows** — return to
+`payout is null`, or stay attached:
+
+- **return them** and a batch that failed for a reason unrelated to the rows (a wrong account number)
+  can be re-run cleanly — and if the transfer had in fact gone out, the rows are payable **twice**;
+- **keep them attached** and no row is ever paid twice — and a batch marked `FAILED` by mistake strands
+  those earnings permanently, because nothing else can ever claim them.
+
+Both readings are reachable by one line, and **a transition written on a guess decides it silently, in
+the direction that is either a double payment or a professional who is never paid.** So nothing in the
+estate puts a batch there; `IN_PROGRESS` is equally unreachable, and both were before D95 too.
+
+**Done means** an answer to each recorded in `decisions.md`, and then: for the first, either nothing
+(ratifying what is built) or the third option with its changelog; for the second, the transition plus
+whichever row treatment was chosen, with a test that goes red if the other one is implemented.
+
+**Not blocked**, and not urgent while no estate has settled anything — production has never been
+deployed and the dev estate is wedged (NEW-31), so no batch exists anywhere to be owed back or to fail.
 
 ---
 
