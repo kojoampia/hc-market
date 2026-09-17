@@ -3913,9 +3913,10 @@ engineering and can be built against a local catcher while that is obtained.
   is the architect's;
 - **exercised end to end, for real.** Registration → the message in the catcher → activation → sign-in,
   against a live gateway from this branch, a real MongoDB and a real SMTP catcher on this workstation:
-  `201`, a message whose link carries the activation key, `204` from `/api/activate`, and a token from
-  `/api/authenticate` where the same credentials had answered **401** before activation. The sweep was
-  then watched deleting a real unactivated account and leaving a recent one alone;
+  **`201`**, a message whose link carries the activation key, **`200` from `GET /api/activate`**, and a
+  token from `/api/authenticate` — where the same credentials had answered **500** before activation,
+  which is NEW-61. The sweep was then watched deleting a real unactivated account and leaving a recent
+  one alone;
 - **both privacy documents amended in the same commit** — `privacy-notice.md` §7.1 (the deletion is a
   policy we hold; the confirmation mail is no longer a known defect; contact us if it does not arrive)
   and `processing-record.md` §3.1, §2.1's recipients, §4's second transfer, §5's three new rows and a
@@ -3932,11 +3933,14 @@ provider, because none is chosen. That is D90 §7's budget item. The difference 
 with no mail configuration now **refuses to start** rather than answering 201 and discarding the
 registration, so the gap can no longer be deployed through.
 
-**Two things surfaced rather than taken** (D94 §5): whether `/api/activate` and
-`/api/account/reset-password/finish` — also `permitAll` — should be rate-limited too (recommended;
-hc-patient limits all four of its account paths, and CI pins the exclusion as an exact set so the
-answer has to be written down), and whether a registration whose mail fails should still answer 201
-(it does, unchanged).
+**Three things surfaced rather than taken, and D94 §5 is titled for all three**: whether
+`/api/activate` and `/api/account/reset-password/finish` — also `permitAll` — should be rate-limited
+too (recommended; hc-patient limits all four of its account paths, and CI pins the exclusion as an
+exact set so the answer has to be written down); whether the window should be able to mean "never
+delete", which is a sentinel rather than a number and would make `processing-record.md` §6.1's gap
+bigger; and whether a registration whose mail fails should still answer 201 (it does, unchanged).
+**A fourth was found by the walk and is NEW-61**, which is not a surfaced question but a measured
+defect.
 
 ---
 
@@ -4678,7 +4682,13 @@ the right convention and is what `JHIPSTER_MAIL_BASE_URL` names. Note that the s
 API's path with the origin changed: the API is `POST /api/account/reset-password/finish`, so the two
 differ by more than a prefix and a screen has to know both. This estate has no frontend (**NEW-48**), so the origin an
 operator can honestly put there is the API's own edge, where `/account/activate` matches no route and
-**404s**.
+answers **401**.
+
+**401 and not 404, and the first draft of this item said 404 twice** — reasoned from "no such path"
+rather than measured, and corrected by NEW-47's review. Reactive Spring Security *denies* an exchange
+that no `authorizeExchange` rule matched (D74 measured the same default from the other direction), so
+what a person following the link meets is a credential challenge for the page that exists to let them
+authenticate. That is worse than a 404 for a customer and identical for a prober.
 
 **Measured during NEW-47's walk**, against a live gateway with a real catcher:
 
@@ -4699,10 +4709,10 @@ terminal. Nobody is harmed today — no estate can send a message at all until a
 of these should not be the one who finds this.
 
 **Why the generated template was NOT edited in NEW-47.** Pointing it at `/api/activate` would make
-the link work today and be wrong the day NEW-48 lands: a person clicking it would get a bare `204`
-and no page, and JHipster's convention — which the frontend will implement — is the SPA route. The
-template is also a generated file, so the edit would be discarded by a regeneration while looking
-permanent.
+the link work today and be wrong the day NEW-48 lands: a person clicking it would get a bare `200`
+with an empty body and no page, and JHipster's convention — which the frontend will implement — is the
+SPA route. The template is also a generated file, so the edit would be discarded by a regeneration
+while looking permanent.
 
 **The fix, therefore, is a screen and belongs with phase 2**: NEW-48 stage B or C serves
 `/account/activate` and `/account/reset/finish` — the two routes the shipped templates actually
@@ -4711,67 +4721,98 @@ compose, measured out of two real messages rather than read off the templates �
 `JHIPSTER_MAIL_BASE_URL` then names the frontend's origin, which is what it was always for.
 
 **Until then, two things are true and both are written down where they will be read.**
-`deploy/prod-server/secrets.env.example` and `deploy-prod.sh`'s hint for `HC_MAIL_BASE_URL` both say
-the link 404s and that the key in it activates the account through `GET /api/activate`; so does
-`quality/compose.yml`. An operator activating an account for somebody does it with the key out of the
-link.
+`deploy/prod-server/secrets.env.example`, `deploy-prod.sh`'s hint for `HC_MAIL_BASE_URL`,
+`quality/compose.yml`, `application-prod.yml` and `deploy/prod-server/README.md` all say that the link
+answers 401 and that the key in it activates the account through `GET /api/activate`. An operator
+activating an account for somebody does it with the key out of the link.
+
+**Five of those said 404 for one commit**, because the correction reached this item's table and
+nothing else — the house failure mode, inside the commit that made the measurement. `deploy-prod.sh`'s
+copy is the one that mattered: it is **printed to a production operator** during preflight, and it is
+byte-embedded in the spec's Appendix B, where `sync-appendices.sh --check` was **green over the wrong
+sentence in both places**. That check verifies byte-identity, not truth, and this is the first time
+that limit has cost anything.
 
 **Not blocked.** It needs NEW-48 to exist, and nothing else.
 
 ---
 
-## NEW-61 — an unactivated account's own login answers 500, and that is the one failure that identifies it · READY, and a decision with it
+## NEW-61 — an unactivated login is identifiable by anyone, with no password, and answers 500 to its owner · READY, and a decision with it
 
-**Opened by NEW-47's walk, 2026-09-17.** Small to fix, not mine to decide, and it is two defects
-sharing one line.
+**Opened by NEW-47's walk, 2026-09-17; corrected the same day by NEW-47's review, and the correction
+is the item.** The first version of this entry called the disclosure *"a narrow oracle (it needs the
+password)"*. **It does not need the password**, which makes it an unauthenticated enumeration oracle
+rather than a curiosity — and the first version therefore invited the architect to weigh option 2's
+cost against a status quo it described as narrower than option 2, when the status quo is **wider**.
 
-**Measured, live, against a running gateway** — four authentication outcomes, one of which is not like
-the others:
+**The mechanism, read in code rather than inferred from the statuses.**
+`DomainUserDetailsService.createSpringSecurityUser` throws `UserNotActivatedException` **inside the
+lookup's `.map()`**, and `UserDetailsService.findByUsername` is called by the authentication manager
+*before* `BCryptPasswordEncoder` sees the request. So the outcome is decided by the lookup alone and
+the supplied password cannot affect it. `ExceptionTranslator:111-118` then maps every
+`AuthenticationException` to the title *"Unauthorized"* and the detail *"Invalid credentials"* — under
+a comment reading *"Ensure no information about existing users is revealed via failed authentication
+attempts"* — while taking the **status** from `toStatus(ex)`, and `UserNotActivatedException` is a
+custom `AuthenticationException` with no `@ResponseStatus`, so it falls through to **500**.
 
-| what was sent | status | body's `detail` |
+**Measured live, twice by two people, on fresh accounts** (`POST /api/authenticate` unless noted):
+
+| what was sent | status | detail |
 | --- | --- | --- |
-| an activated account, wrong password | **401** | `Invalid credentials` |
-| a login that does not exist | **401** | `Invalid credentials` |
-| **a registered account that was never activated, with the RIGHT password** | **500** | `Invalid credentials` |
-| an activated account, right password | 200 | a token |
+| unactivated login, **wrong** password | **500** | `Invalid credentials` |
+| unactivated login, **right** password | **500** | `Invalid credentials` |
+| unactivated account probed **by its email address**, any password | **500** | `Invalid credentials` |
+| activated login, wrong password | 401 | `Invalid credentials` |
+| a login that does not exist | 401 | `Invalid credentials` |
+| an email address that does not exist | 401 | `Invalid credentials` |
+| activated login, right password | 200 | a token |
+| `POST /api/account/reset-password/init`, **known** address | 200 | — |
+| `POST /api/account/reset-password/init`, **unknown** address | 200 | — |
 
-`ExceptionTranslator:111-118` maps every `AuthenticationException` to the title *"Unauthorized"* and
-the detail *"Invalid credentials"* — under a comment reading *"Ensure no information about existing
-users is revealed via failed authentication attempts"* — but takes the **status** from
-`toStatus(ex)`, and `UserNotActivatedException` is a custom `AuthenticationException` with no
-`@ResponseStatus`, so it falls through to **500**.
+**Three facts follow, and only the first was in the original entry.**
 
-**So the comment is false for exactly one of the four buckets, and it is the informative one.** A
-prober who knows a password learns from the status alone that the login exists and the password is
-right — which is precisely the disclosure JHipster converts `UsernameNotFoundException` into
-`BadCredentialsException` to prevent. It is a narrow oracle (it needs the password) and it is still an
-oracle, and it is the one the comment claims not to be there.
+1. **A customer meets a 500 that says their password is wrong.** Somebody who registers, does not
+   click the link, and tries to sign in is told the platform is broken *and* that their credentials
+   are bad. Both are false, and this is the very next thing that happens after NEW-47's path.
+2. **Anyone can enumerate unactivated accounts, by login or by email, with no credential at all** —
+   `500` means "registered here and never activated", `401` means "not registered". Registration is
+   open (`permitAll`), so the two together are a way to ask "is this person on this platform"
+   about any address, at the rate limit's ceiling. The comment above the mapping claims this cannot
+   happen; for one of the four buckets it is measured false.
+3. **The estate already closed the same surface one endpoint along, deliberately.**
+   `/api/account/reset-password/init` answers **200 whether or not the address exists** — JHipster's
+   own choice, and the precedent for what this platform's answer to the tradeoff has been so far.
 
-**And it is what a real customer meets.** Somebody who registers, does not click the link, and tries to
-sign in is told the platform is broken *and* that their password is wrong. Both are false. This is the
-next thing that happens after NEW-47's path, which is how it was found.
+**The decision, which is not engineering's.** One line either way; what to *say* is the question, and
+the review's correction moves the recommendation:
 
-**The decision, which is not engineering's.** The fix is one line either way; what to say is the
-question:
+- **401 with `Invalid credentials`, identical to the other three.** Closes the enumeration oracle,
+  matches the reset path's existing convention, and costs the customer nothing they did not already
+  have — they were being told "invalid credentials" anyway, just with a 500 beside it.
+  **Recommended.** The original entry recommended this only as "the floor"; with the oracle measured
+  as unauthenticated, the disclosure argument now points the same way as the simplicity argument
+  rather than against it.
+- **A distinct answer — 403, or 401 with `account not activated`.** The customer can act on it and
+  support load drops. It no longer "publishes the oracle", because the oracle is already open: what
+  it does is make it *legible*, which is a smaller step than the first version of this item implied.
+  Still a deliberate disclosure, and it should be taken as one rather than inherited from a status
+  code nobody chose.
+- **Either, plus "send me the link again".** The genuinely useful version. It needs a screen and its
+  own rate limit, so it is NEW-48's; and if it lands, option 2's disclosure arrives with it anyway,
+  because a resend form that only works for registered addresses is the same oracle wearing a
+  button.
 
-- **401 with `Invalid credentials`** — smallest change, tells the customer nothing they can act on,
-  keeps the enumeration surface closed. Recommended as the floor.
-- **A distinct answer — 403, or 401 with `account not activated`** — the customer can act on it, and
-  support load drops. It also *publishes* the oracle rather than closing it: an unactivated account
-  becomes distinguishable by anyone holding the password. D84's registration gauges already count this
-  outcome, so the platform can see it without telling the caller.
-- **Either, plus "send me the link again"** — the genuinely useful version, and it needs a screen and a
-  rate limit, so it is NEW-48's rather than this item's.
-
-**A test has to come with it**, and the shape matters: assert the status **and** that the three failure
-modes are indistinguishable from outside if that is the answer chosen. `GatewayIdentityMetricsIT`
-already measures that `UserNotActivatedException` survives the authentication manager (D84), so the
-metric does not depend on whichever answer is chosen — but it does depend on the exception still being
-thrown, so do not "fix" this by converting it earlier in `DomainUserDetailsService`.
+**A test has to come with it, and the shape matters.** Assert the status **and** — if option 1 is
+chosen — that all four failure modes are indistinguishable from outside, including the by-email
+probe, which is the row this item was missing. `GatewayIdentityMetricsIT` already measures that
+`UserNotActivatedException` survives the authentication manager (D84), so the platform can keep
+counting this outcome whichever answer is chosen — but that means **not** "fixing" this by converting
+the exception earlier in `DomainUserDetailsService`, which would take the metric with it.
 
 **Not blocked.** It needs the architect to pick one of the three.
 
 ---
+
 
 ## Not a package: standing constraints
 

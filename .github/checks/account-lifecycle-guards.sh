@@ -152,16 +152,69 @@ number_word() {
     *) printf '' ;;
   esac
 }
+#
+# SCOPED TO THE SECTION THAT STATES IT, AND IT WAS DOCUMENT-WIDE UNTIL NEW-47's REVIEW. Measured:
+# with §7.1's headline rewritten to "fourteen days later — 14 days" and the code still applying 3,
+# the document-wide grep printed `ok … states the window the code applies (3 days)` — because both
+# documents mention three days several times elsewhere, including in the paragraph that explains the
+# decision. That is what made the drift plausible AND invisible, and the comment here used to claim
+# the check "cannot pass a document stating a period the estate does not apply", which was false.
+#
+# What it can see, stated precisely so the next person does not over-trust it again: the number in
+# THE SECTION THAT DEFINES THE PERIOD. A wrong figure in some other paragraph of the same document is
+# still invisible to it, and so is a section that has been renumbered out from under the pattern —
+# which is why the section is missing-means-error below rather than missing-means-skip.
+section_of() {                        # $1 = file, $2 = heading regex
+  awk -v pat="$2" '
+    $0 ~ pat { inside = 1; print; next }
+    inside && /^#{1,3} / { exit }
+    inside { print }
+  ' "$1"
+}
+NOTICE_SECTION="${HC_NOTICE_SECTION:-^### 7\.1}"
+RECORD_SECTION="${HC_RECORD_SECTION:-^### 3\.1}"
+
 if [ -n "$default_days" ]; then
   word="$(number_word "$default_days")"
-  for doc in "$PRIVACY_NOTICE" "$PROCESSING_RECORD"; do
+  for pair in "$PRIVACY_NOTICE:$NOTICE_SECTION" "$PROCESSING_RECORD:$RECORD_SECTION"; do
+    doc="${pair%%:*}"; heading="${pair#*:}"
     if [ ! -f "$doc" ]; then
       err "$doc does not exist — the retention period this estate applies is stated in it"
-    elif grep -qiE "(^|[^0-9a-z])$default_days[^0-9]{0,3}(days|day)" "$doc" \
-      || { [ -n "$word" ] && grep -qiE "(^|[^a-z])$word (days|day)" "$doc"; }; then
-      ok "$doc states the window the code applies ($default_days days)"
+      continue
+    fi
+    section="$(section_of "$doc" "$heading")"
+    if [ -z "$section" ]; then
+      err "$doc has no section matching '$heading', so the period this estate applies is stated nowhere this check can find — and a check that cannot see its own subject reports success. That section is where the unactivated-account window is told to a data subject or a regulator (decisions.md D94, D91 §5); if it has been renumbered, move HC_NOTICE_SECTION/HC_RECORD_SECTION with it." "$doc"
     else
-      err "$doc states neither '$default_days days' nor '$word days'. The gateway deletes an unactivated account after $default_days days (AccountRetention.DEFAULT_RETENTION_DAYS) and this document is what tells a data subject or a regulator how long that is — decisions.md D94, D91 §5. If the window has changed, both documents change with it." "$doc"
+      # EVERY PERIOD IN THE SECTION, NOT "DOES IT MENTION THE RIGHT ONE" — and that is the second
+      # tightening, from the same review round. Scoping to §7.1 was not enough on its own: the
+      # section legitimately says "we have kept the same three days" in the paragraph explaining the
+      # decision, so a headline rewritten to "fourteen days later — 14 days" still left a matching
+      # "three days" inside the scope and the check still passed. Measured.
+      #
+      # So the set of day-figures in the section must be exactly the one the code applies. A section
+      # that needs to name a second period — "we used to keep it for 30 days" — goes red, and that
+      # is the right direction: the wording then has to be changed deliberately, in the commit that
+      # introduces the second number, rather than discovered by a data subject.
+      stated=""
+      for d in $(printf '%s\n' "$section" | grep -oiE '[0-9]+[[:space:]]+(days|day)' | grep -oE '^[0-9]+' | sort -u); do
+        [ "$d" = "$default_days" ] || stated="$stated $d"
+      done
+      for n in 1 2 3 4 5 6 7 8 9 10 11 12 13 14; do
+        w="$(number_word "$n")"
+        [ "$n" = "$default_days" ] && continue
+        printf '%s\n' "$section" | grep -qiE "(^|[^a-z])$w[[:space:]]+(days|day)" && stated="$stated $w"
+      done
+      says_it=0
+      printf '%s\n' "$section" | grep -qiE "(^|[^0-9a-z])$default_days[[:space:]]*(days|day)" && says_it=1
+      [ -n "$word" ] && printf '%s\n' "$section" | grep -qiE "(^|[^a-z])$word[[:space:]]+(days|day)" && says_it=1
+      if [ "$says_it" = 0 ]; then
+        err "$doc's section at '$heading' states neither '$default_days days' nor '$word days'. The gateway deletes an unactivated account after $default_days days (AccountRetention.DEFAULT_RETENTION_DAYS) and that section is what tells a data subject or a regulator how long that is — decisions.md D94, D91 §5. If the window has changed, both documents change with it." "$doc"
+      elif [ -n "$stated" ]; then
+        err "$doc's section at '$heading' also states a period the estate does not apply:$stated. The code applies $default_days days (AccountRetention.DEFAULT_RETENTION_DAYS). Two periods in the section that defines one is how a headline drifts from the paragraph under it — measured, that is exactly what the document-wide version of this check passed (decisions.md D94)." "$doc"
+      else
+        ok "$doc's section at '$heading' states the window the code applies ($default_days days) and no other"
+      fi
     fi
   done
 fi
@@ -331,13 +384,39 @@ fi
 # D94 the mail did not work, which is the only reason nobody noticed the door was open.
 permit_paths=""
 if [ -f "$SECURITY_CONFIG" ]; then
-  # Space-separated, not newline-separated: the `case " $permit_paths " in *" $p "*` tests below use
-  # spaces as delimiters, and with newlines in the string every one of them matched nothing — which
-  # reported all three limited paths as "not a permitAll path" while the loop above reported them as
-  # covered. Both halves green on a correct tree would have been worse.
-  permit_paths="$(java_src "$SECURITY_CONFIG" \
-    | grep -oE '\.pathMatchers\("(/api/[^"]*)"\)[[:space:]]*\.permitAll\(\)' \
-    | grep -oE '/api/[^"]*' | sort -u | tr '\n' ' ' || true)"
+  # --- WHY THIS IS NOT A LINE-BOUND GREP, AND IT WAS ONE UNTIL NEW-47'S REVIEW -----------------
+  #
+  # The first version was `grep -oE '\.pathMatchers\("(/api/[^"]*)"\)[[:space:]]*\.permitAll\(\)'`,
+  # which is line-bound, and **prettier formats Java in this repository** — so
+  #
+  #     .pathMatchers("/api/signup")
+  #     .permitAll()
+  #
+  # was invisible to it. Measured, both directions: with that spelling the whole check printed
+  # `account lifecycle guards: ok` while a brand-new unauthenticated public door had no ceiling; the
+  # same path on one line was refused. The asymmetry is the harmful one — a wrapped path that IS
+  # limited only produces noise, a wrapped path that is NOT limited produces silence.
+  #
+  # This is D60's alternation in a different language: CLAUDE.md records "that alternation is
+  # load-bearing rather than tidy" for the zone-write check, for exactly this reason, and the shape
+  # arrives with no intent to evade because a formatter puts it there.
+  #
+  # Matched in python rather than in grep so the pattern can span lines AND so a multi-path call —
+  # `.pathMatchers("/api/a", "/api/b").permitAll()`, which the old regex also missed — yields both
+  # paths. Space-separated on the way out, because the `case " $permit_paths " in *" $p "*` tests
+  # below use spaces as delimiters and a newline-separated string matched nothing in either of them.
+  permit_paths="$(java_src "$SECURITY_CONFIG" | python3 -c '
+import re, sys
+
+src = sys.stdin.read()
+paths = []
+# [^)] spans newlines and \s* absorbs the wrap, so the formatter cannot hide a door.
+for call in re.findall(r"\.pathMatchers\(([^)]*)\)\s*\.permitAll\(\)", src):
+    for path in re.findall(r"\"([^\"]*)\"", call):
+        if path.startswith("/api/"):
+            paths.append(path)
+print(" ".join(sorted(set(paths))))
+' || true)"
   [ -n "$permit_paths" ] || err "no permitAll /api path found in $SECURITY_CONFIG — the set this part derives from could not be read, so nothing about the rate limits was established." "$SECURITY_CONFIG"
 else
   err "$SECURITY_CONFIG does not exist"

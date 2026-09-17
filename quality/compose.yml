@@ -402,8 +402,9 @@ services:
       # vhost, so a link read out of the catcher is a link that resolves from this LAN.
       #
       # It points at a FRONTEND route (`${baseUrl}/account/activate?key=…`) and this estate has no
-      # frontend yet (NEW-48), so today that link 404s while the key activates the account perfectly
-      # well through `GET /api/activate?key=…`. Backlog NEW-60.
+      # frontend yet (NEW-48), so today that link answers 401 — measured on this branch, not the 404
+      # it reads like: reactive Spring Security denies an exchange no rule matched. The key in it
+      # activates the account through `GET /api/activate?key=…`, which answers 200. Backlog NEW-60.
       JHIPSTER_MAIL_BASE_URL: ${HC_MAIL_BASE_URL:-http://market.healthconnect.local}
       # How long an account that is never activated is kept, and when the sweep runs — the estate's
       # stated retention policy for one class of account, three days by default, which is JHipster's

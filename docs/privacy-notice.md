@@ -130,9 +130,14 @@ because an unconfirmed account cannot book, message or review.
 This is not one of the periods in §7. It is now a period we have **chosen and written down**, which it
 was not when this section was first drafted: the three days came from the framework the platform is
 built on, nobody here had decided it, and it was recorded nowhere until 2026-09-15. We have kept the
-same three days rather than changing the number, so nothing about how long we hold a part-finished
-account has moved — what changed is that it is a stated policy, it is the same on every one of our
-systems, and changing it is a decision somebody takes rather than a default nobody read.
+same window rather than changing the number, so nothing about how long we hold a part-finished
+account has moved — what changed is that it is a stated policy rather than a default nobody read.
+
+**As at 17 September 2026 we apply that same period on every one of our systems, and changing it
+anywhere obliges us to change this notice.** We word it that way deliberately rather than promising
+it outright: the period is a setting an administrator can change per system, so a promise that it is
+identical everywhere is one we could break without noticing. What we can warrant is what is
+configured today and the obligation to tell you when it moves.
 
 **If you want to keep the account, confirm your email address.** Until 2026-09-17 the confirmation
 email did not reach anybody, on any of our systems, because no mail server was configured anywhere —

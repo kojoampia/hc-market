@@ -12,8 +12,8 @@ import org.springframework.stereotype.Component;
  * <h2>Why this class exists at all</h2>
  *
  * <p>JHipster's generated {@code UserService} carried
- * {@code @Scheduled(cron = "0 0 1 * * ?")} over a query for accounts whose activation key is older
- * than {@code Instant.now().minus(3, ChronoUnit.DAYS)}. Both numbers were literals in a generated
+ * {@code @Scheduled(cron = "0 0 1 * * ?")} over a query for unactivated accounts holding an activation
+ * key and CREATED before {@code Instant.now().minus(3, ChronoUnit.DAYS)}. Both numbers were literals in a generated
  * file. That deletion destroys a sign-in name, a first and last name, an email address and a password
  * hash, it runs on every estate, and until {@code decisions.md} D91 it was recorded nowhere: ten
  * documents in this repository said there was no scheduler here, two of them drafts written for

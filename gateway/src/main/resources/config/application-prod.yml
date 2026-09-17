@@ -126,9 +126,12 @@ jhipster:
     #
     # It points at the ORIGIN A PERSON BROWSES, not at the API: the templates compose
     # `${baseUrl}/account/activate?key=…`, which is a frontend route. This estate has no frontend yet
-    # (NEW-48), so today that link 404s at the edge while the account activates perfectly well
-    # through `GET /api/activate?key=…`. Named in D94 §5 and opened as NEW-60 rather than papered
-    # over by rewriting a generated template.
+    # (NEW-48), so today that link answers 401 — MEASURED, and not the 404 the first version of this
+    # comment reasoned its way to: reactive Spring Security denies an exchange no authorizeExchange
+    # rule matched, so a person following it is asked to authenticate in order to reach the page that
+    # exists to let them authenticate. The key in it activates the account perfectly well through
+    # `GET /api/activate?key=…`, which answers 200. Named in D94 §5 and opened as NEW-60 rather than
+    # papered over by rewriting a generated template.
     base-url: ${JHIPSTER_MAIL_BASE_URL}
   logging:
     use-json-format: false # By default, logs are not in Json format

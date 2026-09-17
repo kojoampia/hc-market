@@ -149,13 +149,13 @@ removed: it governed no data.
 | | |
 | --- | --- |
 | **What** | An account created but never activated |
-| **Deleted after** | **3 days**, swept daily at 01:00 UTC |
-| **Where** | `gateway/…/service/UnactivatedAccountSweep.java` — a cron task registered through `SchedulingConfigurer`, deleting `activated = false` accounts whose activation key is older than the configured window |
+| **Deleted after** | **3 days**, swept daily at 01:00 in the running system's own time zone — `Etc/UTC` in every container we deploy, which is also Accra time |
+| **Where** | `gateway/…/service/UnactivatedAccountSweep.java` — a cron task registered through `SchedulingConfigurer`, deleting accounts that are `activated = false`, hold an activation key, and were **created** longer ago than the configured window (it filters on the creation date; an unactivated account with no key — one an administrator created for somebody — is left alone) |
 | **Data destroyed** | Sign-in name, first and last name, email address, password hash |
 | **Decided by** | **The organisation, since 2026-09-17** (`decisions.md` D94). Until then: nobody here — it was JHipster's generated behaviour, a literal in a generated file, and was never a decision of this project |
 | **Configured by** | `healthconnect.accounts.unactivated-retention-days` / `…-sweep-cron`, from `HC_UNACTIVATED_ACCOUNT_RETENTION_DAYS` and `HC_UNACTIVATED_ACCOUNT_SWEEP_CRON`. Both blank on every system, so **3 days is what is applied**; a value that is set and unreadable, or zero, or negative, stops the service starting |
 | **Runs today** | Yes. Verified live: the quality gateway started 2026-09-11T21:22Z, so it has swept four times |
-| **Watched deleting** | Yes, since 2026-09-17 — at the boundary, against a real database, in `UnactivatedAccountSweepIT`: an account four days old is removed, one 71 hours old against a 72-hour cutoff is not, an activated account is never touched however old, and an unactivated account with no activation key is left alone |
+| **Watched deleting** | Yes, since 2026-09-17 — at the boundary, against a real database, in `UnactivatedAccountSweepIT`: an account past the window is removed, one an hour inside it is not, an activated account is never touched however old it is, and an unactivated account with no activation key is left alone. Watched again on a live gateway, deleting one real account and leaving a recent one |
 
 Recorded because it destroys a real person's personal data on a timer, and because **this document
 asserted the opposite until 2026-09-15.** It was a *de facto* retention period for one class of account

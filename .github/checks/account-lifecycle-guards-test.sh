@@ -188,6 +188,55 @@ case_refuses "18 a limited path stops being permitAll" "which is not a permitAll
   sed -i 's#\.pathMatchers("/api/authenticate")\.permitAll()#.pathMatchers("/api/authenticate").authenticated()#' \
     "$FIXTURE/java/jojoaddison/config/SecurityConfiguration.java"
 
+# --- 17b-17d. THE THREE FAIL-OPENS NEW-47's REVIEW MEASURED -------------------------------------
+#
+# All three passed a broken tree when this file was first written, and each is here because somebody
+# ran the check rather than read it.
+
+# PRETTIER FORMATS JAVA HERE, so this is the shape a new public door arrives in with no intent to
+# evade — and part 6's regex was line-bound, so it was invisible while the same path on one line was
+# refused. The asymmetry was the harmful one: a wrapped path that IS limited only made noise.
+case_refuses "17b a WRAPPED permitAll path arrives with no ceiling" "/api/signup" \
+  python3 -c '
+import io, sys
+p = sys.argv[1]
+s = io.open(p, encoding="utf-8").read()
+old = "                    .pathMatchers(\"/api/register\").permitAll()"
+new = old + "\n                    .pathMatchers(\"/api/signup\")\n                    .permitAll()"
+assert s.count(old) == 1
+io.open(p, "w", encoding="utf-8").write(s.replace(old, new))
+' "$FIXTURE/java/jojoaddison/config/SecurityConfiguration.java"
+
+# The same regex also missed a multi-path call, which is the other spelling of one line of Java.
+case_refuses "17c a MULTI-PATH permitAll hides a second door" "/api/signup-two" \
+  sed -i 's#\.pathMatchers("/api/register")\.permitAll()#.pathMatchers("/api/register", "/api/signup-two").permitAll()#' \
+    "$FIXTURE/java/jojoaddison/config/SecurityConfiguration.java"
+
+# THE DOCUMENT-AGREEMENT CHECK WAS DOCUMENT-WIDE. §7.1's headline rewritten to fourteen days while
+# the code applies three: the old grep found "three days" in the paragraph BELOW the headline — the
+# one explaining the decision — and printed ok. Scoping to the section was not enough on its own for
+# the same reason, which is why every period figure in the section now has to be the applied one.
+case_refuses "17d the notice's OWN SECTION drifts from the code" "also states a period the estate does not apply" \
+  sed -i 's/^three days later\*\* — 3 days, counted from when you registered./fourteen days later** — 14 days, counted from when you registered./' \
+    "$FIXTURE/docs/privacy-notice.md"
+
+# And the section pattern itself must be missing-means-ERROR, not missing-means-skip: a renumbered
+# heading otherwise silently turns the whole assertion off, which is the shape of every check in this
+# repository that has ever reported success about a file it could not read.
+copy_tree "$FIXTURE"
+# Called directly rather than through run_check, which deliberately fixes its own environment: one
+# more variable in that function is one more thing every other case silently inherits.
+renumbered="$( cd "$ROOT" && HC_NOTICE_SECTION='^### 9\.9' \
+  HC_RETENTION_CLASS="$FIXTURE/java/jojoaddison/service/AccountRetention.java" \
+  HC_PRIVACY_NOTICE="$FIXTURE/docs/privacy-notice.md" \
+  HC_PROCESSING_RECORD="$FIXTURE/docs/processing-record.md" \
+  bash "$CHECK" 2>&1 )" || true
+if printf '%s' "$renumbered" | grep -q "has no section matching"; then
+  report ok "17e a renumbered section is refused rather than skipped"
+else
+  report bad "17e a renumbered section did not refuse: $(printf '%s' "$renumbered" | grep -c '^ok') assertions passed"
+fi
+
 # --- 19. the stripper's absence, and the one thing it must NOT see ------------------------------
 #
 # Every text-matching check in this repository trusts one file; absent it, the two whose subject is a

@@ -101,13 +101,23 @@ public class MailDeliveryGuard {
         checkHost(host, production);
 
         if (!host.isEmpty()) {
+            // "ADDRESSED", NOT "WORKING", AND THE WORDING IS THE POINT OF THE LINE. Nothing here opens
+            // a socket (see the class javadoc), so a developer estate whose catcher is not running
+            // printed the same sentence as a production estate whose relay answers — and the symptom
+            // of a dead catcher is then back to one WARN per send, which is the silence this package
+            // exists to remove. Found at review, on the walk's own log line.
+            //
+            // So it says what it knows: where mail is addressed, that nothing has been contacted, and
+            // — off production, where a catcher is what this points at — where to look first. An INFO
+            // that reads as a guarantee is worse than no INFO.
             LOG.info(
-                "Mail is configured: relaying through {}:{} as '{}', with links under {} — activation and " +
-                    "password-reset mail will be attempted (decisions.md D94)",
+                "Mail is ADDRESSED to {}:{} as '{}', with links under {} — nothing has contacted that relay, " +
+                    "and a send that fails is one WARN line{} (decisions.md D94)",
                 host,
                 mailProperties.getPort(),
                 jHipsterProperties.getMail().getFrom(),
-                baseUrl.isEmpty() ? "<no base-url: links will be relative and will not work>" : baseUrl
+                baseUrl.isEmpty() ? "<no base-url: links will be relative and will not work>" : baseUrl,
+                production ? "" : ". On this estate that is a local mail catcher: check it is up before concluding registration is broken"
             );
         }
     }

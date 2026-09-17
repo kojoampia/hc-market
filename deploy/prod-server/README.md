@@ -293,8 +293,10 @@ no test in the estate able to see it (`MailServiceIT` mocks `JavaMailSender`).
 message the relay accepts and the customer receives, carrying a link to somewhere that does not
 answer. It names the origin a **person browses**, not the API — the mail composes
 `${baseUrl}/account/activate?key=…`, a frontend route — and **this estate has no frontend yet**
-(NEW-48), so that link 404s today while the key in it activates the account through
-`GET /api/activate?key=…`. Backlog **NEW-60**.
+(NEW-48), so that link answers **401** today — measured, not 404: reactive Spring Security denies an
+exchange no rule matched, so somebody following it is asked to authenticate in order to reach the page
+that exists to let them. The key in it activates the account through `GET /api/activate?key=…`, which
+answers **200**. Backlog **NEW-60**.
 
 The credentials, `HC_MAIL_USERNAME` and `HC_MAIL_PASSWORD`, are **optional** and are not in
 preflight's list: a relay on this host's own network authenticates nobody, and refusing a deploy over

@@ -283,7 +283,7 @@ public class UserService {
     }
 
     /**
-     * Deletes not-activated users whose activation key is older than three days.
+     * Deletes not-activated users who hold an activation key and were created more than three days ago.
      *
      * <p><strong>THIS IS NOT WHAT THE ESTATE RUNS, AND THE MISSING {@code @Scheduled} IS THE EDIT.</strong>
      * The generated form of this method carried {@code @Scheduled(cron = "0 0 1 * * ?")} over the

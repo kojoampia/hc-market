@@ -83,8 +83,15 @@ public class UnactivatedAccountSweep implements SchedulingConfigurer {
     }
 
     /**
-     * Deletes every account that is still unactivated and whose activation key is older than the
-     * configured window.
+     * Deletes every account that is still unactivated, HAS an activation key, and was CREATED longer
+     * ago than the configured window.
+     *
+     * <p>The three conditions are the generated query's and the wording matters: it filters on
+     * {@code createdDate}, not on the key's own age — the key carries no timestamp — and an
+     * unactivated account with a {@code null} key is left alone, because that is an account somebody
+     * was meant to be handed a password for rather than one that was self-registered. Earlier drafts
+     * of this javadoc and of {@code docs/processing-record.md} said "activation key older than",
+     * which names a column the code does not read.
      *
      * <p>Blocks, on a scheduler thread rather than on the event loop — the same thing the generated
      * method did, for the same reason: a scheduled task has nowhere to return a {@code Mono} to.
@@ -112,7 +119,8 @@ public class UnactivatedAccountSweep implements SchedulingConfigurer {
      * The deletion itself, taking the cutoff as a parameter so a test can put the boundary where it
      * needs it without waiting three days or moving a clock.
      *
-     * @param cutoff accounts whose activation key was created strictly before this are deleted.
+     * @param cutoff accounts CREATED strictly before this — {@code createdDate}, which is what the
+     *               generated query reads — are deleted.
      * @return how many rows were deleted — rows that <em>changed</em>, never rows that matched, which
      *         is the rule an erasure receipt is held to (D39) and is worth the same here: this number
      *         is the only record that the deletion happened.

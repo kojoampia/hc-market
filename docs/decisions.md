@@ -17019,6 +17019,46 @@ replaced it is a walk, §6.
    different response for "we could not send it" and a way to ask for it again, which is a screen and
    therefore NEW-48's.
 
+### §5b What the review found, because three of these were wrong in the direction that matters
+
+Recorded here rather than only in the commit message, because two of them change what an architect
+reading §5 would decide:
+
+- **NEW-61's disclosure was understated, and §5's option 2 was mis-costed because of it.** The item
+  called the 500 *"a narrow oracle (it needs the password)"*. It does not: re-read in code and
+  re-measured live, `DomainUserDetailsService.createSpringSecurityUser` throws inside the **lookup's**
+  `.map()`, before the password encoder is reached, so **unactivated + wrong password is also 500**
+  and **so is a probe by email address**, while a nonexistent login or address is 401. That is
+  unauthenticated enumeration of logins *and* email addresses on an estate with open registration. The
+  first version therefore asked the architect to weigh option 2's *"publishes the oracle"* cost
+  against a status quo it described as narrower than option 2 — when the status quo is **wider**.
+  NEW-61 now carries all nine measured rows and a **changed recommendation**: close it at 401, which
+  is also what `/api/account/reset-password/init` already does (200 for a known and an unknown
+  address alike, measured).
+- **The 404→401 correction reached two places and left five behind, inside the same commit** — the
+  house failure mode, in the commit that made the measurement. The one that mattered is
+  `deploy-prod.sh`'s hint, which is **printed to a production operator** during preflight and is
+  byte-embedded in the spec's Appendix B: **`sync-appendices.sh --check` was green over the wrong
+  sentence in both copies**, because it verifies byte-identity and not truth. That limit is worth
+  knowing before trusting it again.
+- **Two of this decision's own guards were fail-open, and prettier is what triggers the first.**
+  Part 6's permitAll derivation was a line-bound grep, so
+  `.pathMatchers("/api/signup")\n.permitAll()` — the shape a formatter produces — passed with a new
+  unlimited public door, while the same path on one line was refused; the asymmetry is the harmful
+  direction. It is D60's alternation in another language, and it now also sees a multi-path
+  `pathMatchers("/a", "/b")` call, which the old regex missed too. And the document-agreement
+  assertion was **document-wide**: §7.1 rewritten to fourteen days passed because "three days" appears
+  in the paragraph explaining the decision. It is section-scoped now **and** requires every period
+  figure in that section to be the applied one — scoping alone was still green, measured, which is why
+  §3.1's "four days old" test fixture had to be reworded out of a section that defines a period.
+- **One judgement call taken from the reviewer**: §7.1 promised the period is *"the same on every one
+  of our systems"*, which no mechanism can keep — the variable is settable per environment where no
+  check can see it. It is an **as-of** statement now, with the obligation to update the notice named,
+  which is how `processing-record.md` §3.1 already worded it.
+- And the guard's own INFO said *"Mail is configured … will be attempted"* on a dev estate with no
+  catcher running. It says **ADDRESSED**, names that nothing has been contacted, and off production
+  points at the catcher.
+
 ### §6 Verified, assumed, not exercised
 
 **Verified by running it.** Registration through activation to sign-in, walked end to end against a
