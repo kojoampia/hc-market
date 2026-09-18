@@ -5605,7 +5605,48 @@ answered rather than a `grep -c` wired into the first script that would take it.
 
 ---
 
-## NEW-71 — `pipefail` turns `grep -q` inside out, and one CI guard cannot fire · READY
+## NEW-71 — `pipefail` turns `grep -q` inside out, and one CI guard cannot fire · DONE
+
+**Closed 2026-09-18 by `decisions.md` D98**, on `new-71-a-match-reported-as-a-failure`. All three
+questions answered — the pipeline shape, the pattern, and a third the item did not anticipate — and
+**two of this item's own statements below are corrected by the work**, which is why they are left
+standing rather than edited away:
+
+- **§"Measured both ways" attributes the two outcomes to machine LOAD, and that is the wrong
+  variable** (D98 §2). The discriminator is how much the producer still has to write after the
+  match: under about 4.5KB it exits before `grep -q` closes the pipe and the status is honest, past
+  it the status is 141. Measured, 5 runs per size, no variance. The stated direction is also
+  inverted — a *suppressed* match is what prints `ok`, so load can only make `ok` more likely — and
+  the real subject measured **141 five of five on a loaded box**, printing `ok`.
+- **§3 says part 4's is the one fail-open site. THERE ARE THREE** (D98 §4): part 1's `@Scheduled`
+  sweep (measured inverting, and the **top row of the regeneration table** — the estate silently
+  acquires a second account sweep), part 4's placeholder ban, and part 6's http-scope ban. Part 1's
+  is the worse of the two observed ones. A fourth, the surplus advisory, is the fail-open *shape*
+  with no assertion behind it. Eight were fail-closed, as the item says.
+
+**What landed**: one shape — *no pipeline* — in two spellings chosen by where the text already is
+(strip once to a file and grep the file; or a herestring for text already in a variable), both
+adopted from shapes this repository already argues for rather than invented. `has_in` stops the
+check on any grep answer that is neither match nor no-match, and on a stripper that runs and fails.
+The ban is narrowed a second time — the message of a `${VAR:?…}` expansion is blanked, bounded to
+that expansion's own `}`, with `:-` deliberately still caught — and D98 §5 names *narrowing a ban
+twice* as a pattern rather than repeating the fix. `.claude` is pruned from part 4's walk.
+
+**The test went from 35 assertions to 43.** Cases 1, 10 and 16 all passed the broken tree because
+each one's mutation lands near the end of its file; 21, 22 and 23 are the same mutations moved to the
+top, and the pair is kept deliberately. The mutation battery is tabulated in D98 §7, including the
+two rows that are findings: part 1's mutation reddens **only** the new case, and part 6's reddens
+**nothing** — that site is fixed on argument and no test can see it, which is stated rather than
+dressed up.
+
+**The sweep is NOT done and is NEW-73**: 61 `| grep -q` pipelines across 37 shell scripts, 21 of the
+check scripts setting `pipefail`. Eleven are closed here, in the one file where the fail-opens were
+measured.
+
+---
+
+<details>
+<summary>The item as filed, kept for the record — two of its claims are corrected above</summary>
 
 **Found 2026-09-18 while running D97's gates**, and it is **pre-existing and not D97's** — reported
 rather than fixed, because the repair makes CI red on `main` for a second, separate reason (§3).
@@ -5695,6 +5736,8 @@ shapes.
 
 **Not blocked.** No decision from a person and no outside fact.
 
+</details>
+
 ---
 
 ## NEW-72 — a document true of the RENDER and false of the ESTATE, and nothing can tell a reader which · READY
@@ -5783,3 +5826,60 @@ fact that a variable can change, say which of the two it is stating.**
   passed — three at WP-07/WP-09, four more in the run of `1eadc7a` (D46). Two of that four were in
   the gate's own tooling, which is the argument for running it every package rather than every fifth:
   the box cannot find anything while the scripts that exercise it cannot address it.
+
+---
+
+## NEW-73 — fifty more pipelines of the same shape, and a threshold to triage them by · READY
+
+**Opened 2026-09-18 by `decisions.md` D98 §9**, which closed NEW-71's eleven and deliberately did not
+sweep the rest. The shape is decided now, which is the precondition NEW-71 named: *"a sweep is only
+worth doing once somebody has decided (1), or it produces twenty edits in twenty shapes."*
+
+### The subject, counted rather than estimated
+
+`git grep -c '| *grep -q' -- '*.sh'` over the tracked tree, 2026-09-18:
+
+| file | pipelines | sets `pipefail`? |
+| --- | --- | --- |
+| `account-lifecycle-guards.sh` | 11 | yes — **closed by D98** |
+| `account-lifecycle-guards-test.sh` | 8 | yes |
+| `strip-comments-test.sh` | 12 | yes |
+| `strip-sh-comments-test.sh` | 8 | yes |
+| `signing-key-severance.sh` | 6 | yes |
+| `deploy-prod.sh` | 4 | yes — **and it is Appendix B** |
+| `admin-seed-wiring.sh` | 2 | yes |
+| `filter-chain-precedence-test.sh` | 2 | yes |
+| `backlog-table-agrees.sh`, `host-probe-attribution.sh`, `host-probe-attribution-test.sh`, `observability-claims.sh`, `pepper-wiring.sh`, `quality-pepper-persistence-test.sh`, `quality-project-checkout-test.sh`, `probe-infranet-aliases.sh` | 1 each | yes |
+
+**61 in total, 50 outstanding. 21 of the 37 tracked shell scripts set `pipefail`**, and only those
+can invert at all — a script without it is unaffected, which is most of what makes this triage rather
+than a rewrite.
+
+### What makes this cheap, and what makes it not a blanket substitution
+
+**The threshold is measurable per site** (D98 §2): a producer whose stripped output is under about
+4.5KB finishes before `grep -q` closes the pipe and cannot invert today. So each site is two
+questions — *how big is what it reads*, and *which way does it fail* — and D98 §4's enumeration is
+the format to copy, because **"the check went red" and "the check could not see" want different
+write-ups** and three of NEW-71's eleven were fail-open against eight that were not.
+
+Two sites deserve naming before anybody starts:
+
+- **`deploy-prod.sh`'s four.** It is Appendix B of the spec, so any edit needs
+  `./deploy/sync-appendices.sh` in the same commit. It is also the file D75/D78/D80 spent three
+  packages making honest about *which hop answered*, and a folded pipeline status there is the same
+  family of defect those decisions closed — worth reading D71 §5's *"a die may not fold; a warn and a
+  poll may"* before touching it.
+- **`signing-key-severance.sh`'s six and `admin-seed-wiring.sh`'s two.** Both are **bans** —
+  `admin-seed-wiring.sh` deliberately sweeps for the committed bcrypt hash rather than for logic
+  (D61) — and a ban's finding *is* the match, which is the fail-open direction. These are the ones to
+  measure first.
+
+The three test scripts (28 pipelines between them) are the largest block and the lowest stakes: a
+swallowed match there makes a test's own assertion fail closed. Worth doing last, and worth doing,
+because a test that reddens for the wrong reason is how the subject gets "fixed".
+
+### Not blocked
+
+No decision from a person, no outside fact, and the shape is already chosen and already has a worked
+example beside its own test. What it wants is patience per site rather than a `sed`.

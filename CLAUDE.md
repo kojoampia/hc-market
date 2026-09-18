@@ -1445,13 +1445,17 @@ the deployed image is the built one.
   happened here: the seed still regenerates identically from the prototype, the spec appendices
   still match the deploy scripts, all three compose files still interpolate, every shell script
   still parses, and the quality vhost still agrees with its compose about the upstream port. Since
-  D94 it also holds the **account lifecycle** together — `account-lifecycle-guards.sh`, six parts and
-  36 assertions: the gateway's only scheduled work, the retention window's placeholders and its
+  D94 it also holds the **account lifecycle** together — `account-lifecycle-guards.sh`, six parts:
+  the gateway's only scheduled work, the retention window's placeholders and its
   default against **both privacy documents**, mail required in production and a catcher in dev and
   quality, the placeholder base-url banned estate-wide, `deploy-prod.sh`'s array and its smoke-test
-  question, and the rate limits at both edges with the unlimited set pinned **exactly**. Its own test
-  drives 20 broken states, and three of the six parts were rewritten because running that test showed
-  them passing a broken tree.
+  question, and the rate limits at both edges with the unlimited set pinned **exactly**. **Both
+  counts are derived and printed by the two scripts themselves now — read those lines, not a number
+  from here.** This said "36 assertions" and "20 broken states"; the first happens to still be right
+  and the second was **43** by D98, which is the asymmetry worth noticing rather than the numbers —
+  a quoted count that is accidentally still correct reads exactly like one that is maintained. Three
+  of the six parts were rewritten because running that test showed them passing a broken tree, and
+  **three more of them could not report a finding at all until D98** — see the pipe rule below.
   Since D97 it also holds **what an ERROR line means** — *"A deliberate refusal may not be logged at
   ERROR, nor echo its arguments"*, derived from `jdl/*.jdl`, with `refusal-logging-level-test.sh`
   driving a synthetic estate whose fixtures are the real files — **it prints its own assertion count on
@@ -1461,6 +1465,62 @@ the deployed image is the built one.
   is not padding: the ban covers both slf4j spellings (`.error(` and the fluent `atError`), so the
   matching `atWarn` rewrite must stay green or the guard refuses correct code — which is how a ban gets
   loosened by the next person who meets it.
+
+**A CHECK MAY NOT ASK ITS QUESTION THROUGH A PIPE, and eleven of them did** (D98, backlog NEW-71).
+`grep -q` exits at its **first match**, its producer then takes `SIGPIPE` and dies **141**, and under
+`set -o pipefail` the *pipeline's* status is the producer's — so **a match arrives as a failure** and a
+`producer | grep -q PAT && found="$found $f"` never fires. `account-lifecycle-guards.sh` is
+`set -Eeuo pipefail`, and **three of its eleven were fail-open**: part 1's `@Scheduled` sweep, part 4's
+placeholder-base-url ban and part 6's http-scope ban. Two were measured inverting on the real tree —
+part 1 at **141 three of three** and part 4 at **141 five of five** — with `ok` printed both times.
+
+**The discriminator is the producer's own stdio block, NOT machine load**, and both the item and D97 §8
+said load. Measured with the match on line 1 and only the following text varied: **0 0 0 0 | 141 141
+141** at stripped sizes 1127 / 3327 / 4319 / 4539 | 5527 / 8827 / 13227, five runs each, no variance.
+So the same command genuinely "answers differently twice" — because it was pointed at a different
+*file*, not because the box was busy — which is why this read as flakiness for as long as it did, and
+why `account-lifecycle-guards.sh` part 5's own comment described the symptom without naming it. **Quote
+the threshold (~4.5KB) rather than the word "race"**: under it a site cannot invert today, which is what
+makes the remaining 50 (NEW-73) a triage rather than a `sed`.
+
+**The shape is "no pipeline", in two spellings chosen by where the text already is** — strip once into a
+temp file and `grep -q` **the file** (which part 5 already did, and is now `has_in`), or a **herestring**
+for text already in a variable (which is not a pipeline, and is what D97 hardened its own step with).
+`grep -c … || true` was rejected: `|| true` discards **grep's** status too, so its `2` for an unreadable
+file becomes indistinguishable from a clean tree, which is the same defect in a second costume. Hence
+`has_in` stops the check on any answer that is neither match nor no-match, and on a stripper that runs
+and *fails* — case 19 covers a stripper that is **absent**, case 28 the one that is present and broken.
+
+**Two things about it that are easy to get wrong.** The accumulating form must be `if … then var=… fi`
+and never `cmd && var=`: a left operand that fails inside `&&` is **exempt from errexit**, which is how
+eleven inverted pipelines ran to completion and printed `ok`. And the six pipelines whose **output** is
+used rather than their status are deliberately untouched — an early-exiting `head` can still kill its
+producer there, but the value is complete when it does and nothing reads the status.
+
+**And the test's own fixture position decided what it could see, which is the sharpest lesson here.**
+Cases 1, 10 and 16 all **passed the broken tree**: each mutation lands near the end of its file, so the
+producer finishes and the status is honest. Case 10 plants the placeholder 33 lines from the end of a
+152-line file; the repository's real occurrence is 273 lines from the end of a 492-line file. Cases 21,
+22 and 23 are the same mutations moved to the **top** of the same file and the pairs are kept
+deliberately — the old case pins that the assertion works, the new one that it works wherever the defect
+lands. Reverting part 1 alone reddens **only** case 21; reverting part 6 alone reddens **nothing**, and
+that site is fixed on argument with no test able to see it, which D98 §4 states rather than dresses up.
+
+**That ban is now narrowed twice, and the two narrowings are different kinds of move** (D98 §5). D94
+went raw → **stripped**, which removes a class of *text* — comments are not configuration, in any
+language. D98 removes a **context**: the message of a `${VAR:?…}` expansion, because the only legitimate
+mention of `my-server-url-to-change` in a rendered file is a refusal explaining what the variable
+replaced, and `docker-compose.prod.yml:219` is exactly that — **without the exclusion CI is red on
+`main`**, measured. It is bounded to the expansion's own `}` and never to end of line, and **`:-` is
+deliberately still caught**, because a default is how that placeholder reached the production profile.
+Narrowing by what a thing *is* is free; narrowing by what a mention *means* costs a test per direction.
+
+**Part 4's walk also crossed into a second checkout.** It is the one assertion here that walks the tree,
+and agent worktrees live at `<repo>/.claude/worktrees/agent-*/` — **inside** it: measured, 135 further
+`.yml` files in the main checkout, exactly doubling the 135 it means to walk. Nothing was red, and the
+harm is a *claim* — "no .yml in **the repository**" having walked two of them, with any finding in the
+nested one naming a path the operator cannot fix and CI never reproduces. `.claude` is pruned beside
+`target` and `node_modules`. This is the workspace guide's `eslint .` hazard arriving in a CI check.
 
 **Any check that matches source text must strip comments with `.github/checks/strip-comments.awk`,
 and never its own expression.** *"A check whose reach depends on prose is not a check"* has been the
