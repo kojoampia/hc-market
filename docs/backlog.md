@@ -5833,7 +5833,46 @@ fact that a variable can change, say which of the two it is stating.**
 
 ---
 
-## NEW-73 — fifty more pipelines of the same shape, and a threshold to triage them by · READY
+## NEW-73 — fifty more pipelines of the same shape, and a threshold to triage them by · DONE
+
+**Closed 2026-09-18 by `decisions.md` D99**, on `new-73-fifty-pipelines-and-a-threshold`. **The answer
+is triage by DIRECTION, not by size** — 18 pipelines converted, 33 left with their measurement — and
+the threshold this item was named after turned out not to be a usable triage instrument. **Four of
+this item's own statements below are corrected by the work** and are left standing rather than edited
+away:
+
+- **The population is 51 PIPELINES on 50 LINES.** `signing-key-severance.sh:89` carries two
+  `| grep -q` on one line and `grep -c` counts lines, so the table's 50 undercounts — in the
+  fail-open direction, because the first of that line's two is one of the fail-opens. 18 in the guard
+  scripts, not 17.
+- **§"Two sites deserve naming" calls `admin-seed-wiring.sh`'s two a ban and names them first to
+  measure. Neither is the ban.** They are `printf … | grep -qE … || err` — *requirements*, so
+  fail-**closed** — and D61's bcrypt-hash sweep is a separate loop twenty lines above with **no
+  `| grep -q` in it at all**, never in this population. The two flagged as the priority hold the
+  **largest** producer in the guard population (6,385 B) with a 5× margin and the harmless direction;
+  the two genuinely fail-open sat one file away at 1,171 and 256 bytes. D99 §3b.
+- **§"The three test scripts are the largest block and the lowest stakes" is false for 9 of 33.**
+  The **worst site in the whole population is in a test script**:
+  `host-probe-attribution-test.sh:712`, case 44's aim control, whose finding *is* the match —
+  **141 ten runs of ten**, 36,589-byte producer, 12,175 bytes past the match, and the suite reported
+  `53 ok, 0 failed` on a tree carrying the thing it exists to catch. D99 §4.
+- **The ~4.5KB threshold is a property of ONE producer on ONE machine.** Reproduced exactly for
+  `strip-sh-comments.awk` and then measured across six producer kinds: the Java stripper inverts
+  **below** it, `awk '{print}'` needs 8–32KB, `printf` 16–32KB, and `cat` never inverts here while
+  always inverting at 32KB in CI — an *implementation* gap (uutils vs GNU `cat`, gawk vs **mawk**),
+  not a speed one. The boundary is also **flaky, not sharp**. D99 §2.
+
+**What landed**: 13 fail-open sites, 3 that were driving `deploy-prod.sh` toward **reverting a healthy
+production deployment** (a third failure direction neither D98 nor this item accounted for — D99 §5),
+plus two argued exceptions. Appendix B re-embedded in the same commit. The 33 left are 32 fail-closed
+and one pure `warn`, each with its producer size recorded, because *"under the threshold" without a
+number is not a measurement* — this item's own rule.
+
+**Not swept into a CI ban**, deliberately: a grep cannot read the direction distinction off a line, so
+such a check would have to refuse 33 correct sites or encode something it cannot see. D99 §6(c).
+
+<details>
+<summary>The item as filed, kept for the record — four of its claims are corrected above</summary>
 
 **Opened 2026-09-18 by `decisions.md` D98 §9**, which closed NEW-71's eleven and deliberately did not
 sweep the rest. The shape is decided now, which is the precondition NEW-71 named: *"a sweep is only
@@ -5919,3 +5958,152 @@ because a test that reddens for the wrong reason is how the subject gets "fixed"
 
 No decision from a person, no outside fact, and the shape is already chosen and already has a worked
 example beside its own test. What it wants is patience per site rather than a `sed`.
+
+</details>
+
+### The 33 that were left, with their numbers
+
+Every one is fail-closed — a swallowed match makes the check **refuse a correct tree**, which is the
+direction D71 §5 permits — except `deploy-prod.sh:1275`, which warns either way and decides nothing.
+Producer sizes measured at `83857ee`; re-derive with the loop above rather than trusting these.
+
+| file | sites | producer | bytes |
+| --- | --- | --- | --- |
+| `account-lifecycle-guards-test.sh` | 8 | the check's own output | **3,358** — the largest left, ~93 B/assertion |
+| `strip-comments-test.sh` | 7 | inline Java probes | 341 |
+| `signing-key-severance.sh` | 4 | `$arm`, `$prodmsg`, a 3-line `sed` window | 1,171 / 256 / 900 |
+| `strip-sh-comments-test.sh` | 4 | inline shell probes | 248 |
+| `admin-seed-wiring.sh` | 2 | stripped `InitialSetupMigration.java` | 6,385 (raw 12,080) |
+| `filter-chain-precedence-test.sh` | 2 | the check's own output | 74 |
+| `backlog-table-agrees.sh` | 1 | `$table_rows` | 2,950 (19 rows) |
+| `host-probe-attribution.sh` | 1 | two-stage `awk` over the prod compose | 256 |
+| `observability-claims.sh` | 1 | `$declared`, from the meter class | 49 |
+| `quality-pepper-persistence-test.sh` | 1 | `sed` function range | 329 |
+| `quality-project-checkout-test.sh` | 1 | `sed` function range | 271 |
+| `deploy-prod.sh` | 1 | `$gateway_info` — **unmeasurable**, never run against a host (D49) | — |
+
+⚠ **Do not read a small number here as "safe for ever".** The number is a fact about one afternoon on
+one machine; the reason each of these is left alone is its **direction**, which does not move. The
+three whose producer is not effectively a fixed string are tabulated in D99 §9.
+
+---
+
+## NEW-74 — an ERROR count has three different measures, and the naive one cannot see an application line · READY
+
+**Opened 2026-09-18 by `decisions.md` D99**, found while measuring NEW-73 and **reported rather than
+fixed** — it is outside that item's fence (which is about how a pipeline carries a status, not about
+what anything asserts).
+
+### The mechanism, and why the obvious instrument measures the wrong population
+
+`docker logs` output is **ANSI-colourised**, so the character immediately before `ERROR` on an
+application line is `m` — the tail of a colour escape — and **not a space**. Therefore:
+
+> **`grep -c ' ERROR '` cannot match an application log line at all.**
+
+What it *does* match is the OpenTelemetry agent's own differently-formatted lines
+(`[otel.javaagent …] ERROR io.opentelemetry…`), which are not colourised. So the naive instrument
+silently counts **exporter noise only** — the opposite population from the one every decision that
+quotes it is about.
+
+### Measured, on the quality payout container, before the roll
+
+| instrument | answer | what it actually counts |
+| --- | --- | --- |
+| `grep -c ' ERROR '`, unstripped | **29** | the OTel exporter's own lines, and nothing of the application's |
+| ANSI-stripped, `ERROR` anywhere | **43** | exporter **+** application |
+| ANSI-stripped, anchored `^<ts> ERROR` | **14** | application only — of which **9** were Kafka rebalance and **5** were the probe's own |
+
+Three measures, three answers, and **nothing in any of the documents that quote a figure says which
+one was used.**
+
+### Why it matters
+
+**D63, D64, D73, D97 and NEW-70 all rest on an application-ERROR count.** D97's whole argument for
+moving `LoggingAspect` to WARN is that an ERROR line *means* something, and the evidence for "it means
+something" is that the count was zero. A count produced by the naive grep is a statement about the
+exporter.
+
+⚠ **This does NOT weaken D97 / NEW-65.** That package's evidence is a **delta measured on one
+consistent instrument** — the same command before and after, on the same containers — and a delta
+survives a constant offset in what the instrument counts. What is unsound is quoting any of these
+figures as *the* ERROR count, or comparing a figure from one document against a figure from another.
+
+**NEW-70 already records that most of its 13:10 figures were exporter lines.** What it does not record
+is the **mechanical reason** — the colour escape — nor that the naive grep is *blind* to application
+lines rather than merely diluted by exporter ones. Those two are the additions here.
+
+### What this wants
+
+Not a fix: a **decision about which measure is the estate's**, and then one place that derives it, in
+the shape D63's `verify-otel-agent.sh` established (*a premise nobody can re-run is a claim*). The
+anchored, ANSI-stripped form is the obvious candidate because it is the only one that answers *"did
+this application log an error"*. Whoever takes it should also decide whether the answer is
+lifetime-of-container or since-last-start — NEW-70's §1 poses that and it is the same question.
+
+⚠ **It may not become a reason to suppress an ERROR** (D97's rule), and **it may not read `docker logs`
+from CI** — CI has no daemon and no estate, so such a step is green-by-absence.
+
+### Not blocked
+
+No decision from a person and no outside fact.
+
+---
+
+## NEW-75 — the rate limits are in force on quality, and CLAUDE.md says no ceiling is in force anywhere · READY
+
+**Opened 2026-09-18 by `decisions.md` D99**, reported and **not fixed**: the cycle's rule is that a
+defect outside the item becomes an item with a reason, and there is a decision inside this one.
+
+### What changed underneath the document
+
+The architect reloaded nginx on this workstation on 2026-09-18, which **installed D94's rate-limit
+zones for the first time**. They are live on the quality estate. Two claims in `CLAUDE.md` became
+false at that moment:
+
+- **line 658** — *"The rate limits are PROVIDED AND NOT INSTALLED, and there are two zone files now."*
+- **line 666** — *"…the sudo lines are printed and nothing is installed, so **no ceiling is in force
+  anywhere yet**."*
+
+### Measured through nginx, not through the published port
+
+The published port bypasses the edge, so it is the wrong door to ask at:
+
+```
+POST /api/authenticate ×12, nonexistent login   ->  401 ×7 then 429 ×5
+control: a path outside both maps, ×12          ->  200 ×12
+after 3s idle                                   ->  not 429 (the bucket refills)
+```
+
+`limit_req_status 429` is set, so a refusal is a 429 rather than nginx's default 503. **Seven passed
+rather than the nominal `1 + burst=5`** because the loop spanned just over a second and the `1r/s`
+bucket refilled by one — consistent, not an anomaly. **The control is what makes the result mean
+anything**: zero 429s on an unlimited path is what rules out "the estate is simply sick".
+
+### The correction is narrower than "it is wrong"
+
+**Only quality is installed.** Production's zones live in
+`deploy/prod-server/nginx-conf.d/hc-market-account.conf`, which has never been applied to any host
+because production has never been deployed. So the honest replacement is *quality's are in force and
+measured; production's remain unexecuted configuration* — **not** *the rate limits are installed*.
+
+**The two deliberately-unlimited doors are unchanged**, and should be re-derived rather than trusted
+from here: the `map` defaults are the empty string and nginx does not account a request whose
+`limit_req` key is empty, so `/api/activate` and `/api/account/reset-password/finish` remain unlimited
+**by construction**. CI already derives that set from `SecurityConfiguration`'s own matchers and
+demands the difference be exactly those two.
+
+### Why this is an item and not a two-line edit
+
+`CLAUDE.md` is checked into a **public** repository and describes an estate whose edge configuration
+is owned by a person who changes it **out of band**, so a sentence about what is installed has
+**nothing keeping it true**. That is **NEW-72's genre one file along** — a document true of one subject
+and read as a statement about another — and the decision to take is whether the fix is a corrected
+sentence, a **dated** one, or a check that reads the live edge.
+
+⚠ **`CLAUDE.md` lines 658 and 666 were deliberately left untouched** by the NEW-73 branch, so this
+item still has its subject.
+
+### Not blocked
+
+No decision from a person; the measurement is done and the estate is available to re-measure.

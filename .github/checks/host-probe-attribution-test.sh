@@ -709,7 +709,25 @@ awk -v file="$WORK/m44.repl" '
 # mutation that had applied perfectly: this script's own comments quote the old folded
 # `ssh -o BatchMode=yes …` line verbatim, six times, so an unstripped control is asserting the length
 # of a paragraph — which is the reason the shell stripper exists at all (D68).
-if awk -f "$ROOT/.github/checks/strip-sh-comments.awk" "$f" | grep -qF 'ssh -o BatchMode=yes'; then
+#
+# AND IT ASKS THROUGH NO PIPELINE, because as `awk … | grep -q` IT COULD NOT FIRE (decisions.md D99,
+# backlog NEW-73). This is D98's part-4 defect in a second file and the worst instance of it found:
+# the producer is the shell stripper over a whole mutated copy of `deploy-prod.sh` — 36,589 bytes
+# stripped, with the spelling this control looks for landing at line 932 and **12,175 bytes still to
+# be written after it**. `grep -qF` exits at the match, awk takes SIGPIPE and dies 141, and `pipefail`
+# hands the pipeline that 141 — so the `if` was false exactly when the answer was yes. Measured on the
+# real mutation: 141 ten runs of ten as a pipeline, 0 ten of ten stripped-to-a-file. A control that
+# cannot report a finding is the fail-open this whole family is about.
+#
+# The stripper's ABSENCE is fatal for the same reason and was not guarded: `awk -f` on a missing
+# program exits 2, which the old `if` read as "no match" — so a caller that could not strip at all
+# reported the mutation as correctly aimed. Every other caller in this repository carries this guard.
+strip_sh="$ROOT/.github/checks/strip-sh-comments.awk"
+[ -f "$strip_sh" ] \
+  || { printf '::error::%s is missing, so case 44 cannot establish which door its mutation is aimed at. Every text-matching check here trusts that one file.\n' "$strip_sh"; exit 1; }
+awk -f "$strip_sh" "$f" > "$WORK/m44.stripped" \
+  || { printf '::error::the shell stripper failed on %s (exit %s), so case 44 cannot establish which door its mutation is aimed at.\n' "$f" "$?"; exit 1; }
+if grep -qF 'ssh -o BatchMode=yes' "$WORK/m44.stripped"; then
   bad "44  an option in SSH_OPTS that does not reach one site — the mutation is aimed at the wrong door (part 5 bans that spelling)"
 else
   expect_red "$f" "44  an option in SSH_OPTS that does not reach one site" \

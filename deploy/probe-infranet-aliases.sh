@@ -127,13 +127,26 @@ printf '\n=== 4. are the names WP-18 asked about taken? ===\n'
 taken=''
 free=''
 IFS=',' read -ra wanted <<<"$NAMES"
+# THE FIRST FIELD, CUT ONCE, so the test below asks through no pipeline (decisions.md D99, backlog
+# NEW-73). This was `printf '%s' "$published" | cut -f1 | grep -qxF "$want"` — THREE stages, and the
+# direction is the worst available: `grep -qxF` exits at the match, `cut` (the middle stage, writing a
+# line at a time) takes SIGPIPE, `pipefail` hands the pipeline that 141, and the `else` branch below
+# then prints a name that IS taken as **free**. That is a wrong answer to the only question this
+# script exists to answer, and acting on it means joining a network on an alias somebody already
+# publishes — the silent DNS split D68 is about. `$published` is 624 bytes against `hcnet` today, so
+# it cannot invert here; this script's whole purpose is to be pointed at `infranet` on a host whose
+# container count nothing in this repository bounds.
+#
+# `printf | cut` remains a pipeline and that is fine: its OUTPUT is used, its status is read by
+# nothing, and the value is complete when it is taken (D98 §3). Once, above the loop, not per name.
+published_names="$(printf '%s' "$published" | cut -f1)"
 for want in "${wanted[@]}"; do
   want="$(printf '%s' "$want" | tr -d ' ')"
   [ -n "$want" ] || continue
   # EXACT, whole-field match. A substring test would report `gateway` taken because
   # `hc-market-quality-gateway` is present, which is the opposite of the answer: a long name cannot
   # shadow a short one.
-  if printf '%s' "$published" | cut -f1 | grep -qxF "$want"; then
+  if grep -qxF "$want" <<<"$published_names"; then
     taken="$taken $want"
     printf '  %s•%s    %-12s TAKEN by: %s\n' "$c_y" "$c_0" "$want" \
       "$(printf '%s' "$inspected" | python3 -c '

@@ -1028,8 +1028,21 @@ gate_exhausted() {
   # THE BLIP, WHICH IS THE ONE CASE ONLY A SECOND OPINION CAN SEE. A host unreachable for the last
   # poll alone puts every service in $bad while four of them were ready a second earlier; docker's own
   # healthcheck ran inside the host throughout and is the evidence for that reading.
+  #
+  # A HERESTRING, AND HERE A FOLDED PIPELINE STATUS REVERTS A HEALTHY ESTATE (decisions.md D99,
+  # backlog NEW-73). As `printf '%s\n' "$HOST_OUTPUT" | grep -qE …` a MATCH could arrive as 141:
+  # `grep -qE` exits on the first hit, `printf` takes SIGPIPE, `pipefail` promotes it. The match is
+  # what proves a service healthy, so a swallowed one skips the `continue`, puts that service in
+  # $unproven, empties the blip arm, and drops straight through to the established-unready arm the
+  # router rolls back on. That is NEW-36's own harm arriving through the premise of its fix — the
+  # same sentence D78 §14 wrote about dropping the health column from `--format`.
+  # $HOST_OUTPUT is a remote `compose ps -a` table — ~900 bytes at this estate's eleven containers.
+  # It is PROJECT-scoped, so it is bounded and cannot reach a boundary today; this is repaired on the
+  # direction above rather than on an observed inversion, and D99 §5 says so rather than implying
+  # otherwise. It is still the one producer in this file whose size is set by a host rather than by
+  # this repository, which is why it is not left to a size argument.
   for svc in $bad; do
-    if printf '%s\n' "$HOST_OUTPUT" | grep -qE "^$(compose_name "$svc")[[:space:]]+running[[:space:]]+healthy[[:space:]]*$"; then
+    if grep -qE "^$(compose_name "$svc")[[:space:]]+running[[:space:]]+healthy[[:space:]]*$" <<<"$HOST_OUTPUT"; then
       continue
     fi
     unproven+=" $svc"
@@ -1198,7 +1211,15 @@ smoke_test() {
   local brokerage
   brokerage="$(ssh "${SSH_OPTS[@]}" "$HOST" "cd '$REMOTE_PATH' && $REMOTE_COMPOSE exec -T $(compose_name payout) bash -c \
     'exec 3<>/dev/tcp/localhost/8080 && printf \"GET /management/info HTTP/1.0\\r\\n\\r\\n\" >&3 && cat <&3'" 2>/dev/null || true)"
-  if printf '%s' "$brokerage" | grep -qE '"termsInForce"[[:space:]]*:[[:space:]]*true'; then
+  # A HERESTRING, and the fold D78 §8 argued for is a DIFFERENT fold from this one (decisions.md D99).
+  # That decision deliberately folds the `ssh … || true` above: an unanswerable host and a payout with
+  # no terms both have to fail the same way, because this condition is silent and must not ship
+  # unestablished. It said nothing about the PIPELINE, which folds the opposite way: `grep -qE` exits
+  # at the match, `printf` dies 141, `pipefail` promotes it, so a payout that DOES hold terms in force
+  # takes the `else`, returns 1, and the router reverts a correct deployment. $brokerage is a whole
+  # `/management/info` body off a remote container — never measured, because this script has never run
+  # against a host (D49) and there is no production estate to measure it on.
+  if grep -qE '"termsInForce"[[:space:]]*:[[:space:]]*true' <<<"$brokerage"; then
     ok "payout holds brokerage terms in force — $(printf '%s' "$brokerage" \
       | grep -oE '"commissionRate"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | cut -d'"' -f4) commission"
   else
@@ -1244,7 +1265,11 @@ smoke_test() {
   local gateway_info
   gateway_info="$(ssh "${SSH_OPTS[@]}" "$HOST" "cd '$REMOTE_PATH' && $REMOTE_COMPOSE exec -T $(compose_name gateway) bash -c \
     'exec 3<>/dev/tcp/localhost/8080 && printf \"GET /management/info HTTP/1.0\\r\\n\\r\\n\" >&3 && cat <&3'" 2>/dev/null || true)"
-  if printf '%s' "$gateway_info" | grep -qE '"configured"[[:space:]]*:[[:space:]]*true'; then
+  # A HERESTRING, same argument as the brokerage probe above (decisions.md D99, backlog NEW-73): this
+  # one also `return 1`s, so a swallowed match reverts a deployment whose gateway CAN send mail. The
+  # version probe below is left as a pipeline deliberately — it warns either way and decides nothing,
+  # which is exactly what D71 §5 permits to fold.
+  if grep -qE '"configured"[[:space:]]*:[[:space:]]*true' <<<"$gateway_info"; then
     ok "gateway can send mail — relay $(printf '%s' "$gateway_info" | grep -oE '"host"[[:space:]]*:[[:space:]]*"[^"]*"' \
       | head -1 | cut -d'"' -f4), links under $(printf '%s' "$gateway_info" \
       | grep -oE '"baseUrl"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | cut -d'"' -f4), authenticated=$(printf '%s' "$gateway_info" \
