@@ -155,7 +155,33 @@ x-service: &service
     # WARN line, changing nothing. Note it WILL be heard on this box -- the seed carries disputes
     # whose dueBy is in the past, so the 07:00 line is expected here rather than a fault. WARN and
     # never ERROR, because this stack's zero-ERROR count is load-bearing (see the JAVA_OPTS note
-    # below, and backlog NEW-65).
+    # below, and backlog NEW-65, closed by D97 -- which states the rule and repaired the generated
+    # LoggingAspect that had been breaking it in all five services since the estate was generated).
+    #
+    # THE COUNT IS WATCHED BY NOTHING, and that is backlog NEW-70. Three decisions have turned on it
+    # (D64, D73, D97) and every one of them measured it by hand: no alert rule reads a log level, no
+    # dashboard panel shows it, and quality/startup.sh --verify never reads a log.
+    #
+    # THE ZERO IS GONE AS OF 2026-09-18, AND NOTHING TOLD ANYBODY -- which is NEW-70's whole argument
+    # arriving the same day it was written. Measured twice on the roll to 1ac77c7, five hours apart:
+    #
+    #   09:54 local   ERROR=0 on all five, agent ATTACHED, WARN=196 on payout as the control
+    #   13:10 local   gateway 49, payout 38, booking 35, messaging 27, catalog 24
+    #
+    # NEITHER CAUSE IS AN APPLICATION FAULT AND NEITHER IS hc-market's. Most are the OTel agent's own
+    # exporter -- `GrpcExporter - Failed to export {metrics,logs,spans}` against otel-collector:4317,
+    # from 08:27Z to 09:27Z, which is D63's predicted behaviour against a collector that cannot accept
+    # (loki-quality had been restarted; the collector container itself never went down). The rest are
+    # Kafka listener-container and consumer-rebalance errors between 08:57Z and 09:02Z -- 4 in catalog,
+    # 3 in booking -- while this workstation sat at load average 200+ under eight other products'
+    # Maven builds, so the shared broker was not answering in time.
+    #
+    # WHAT THIS DOES NOT MEAN. It is not a reason to stop treating an ERROR line as a signal, and it is
+    # not a reason to attach or detach the agent. It is the demonstration that the signal fires, that
+    # what it fires about is real, and that ABSOLUTELY NOTHING IS LISTENING -- it was found only
+    # because a package that happened to be writing about the count re-measured before finishing.
+    # Restoring the zero is a roll (`./quality/startup.sh --local` at a TAG); knowing when it next goes
+    # is NEW-70.
     HC_DISPUTE_OVERDUE_SWEEP_ENABLED: ${HC_DISPUTE_OVERDUE_SWEEP_ENABLED:-}
     HC_DISPUTE_OVERDUE_SWEEP_CRON: ${HC_DISPUTE_OVERDUE_SWEEP_CRON:-}
     # --- OpenTelemetry: the agent is IN the image and is NOT attached here ----------------------
@@ -168,15 +194,22 @@ x-service: &service
     #
     # WHY IT IS OFF, measured rather than assumed. This host DOES have a collector — the
     # `monitoring-quality` compose project in ~/work/infra, with otel-collector/grafana/mimir/loki/
-    # tempo/alloy — and every container in it has been EXITED for days. Attached against a dead
+    # tempo/alloy — and on 2026-09-05 every container in it was EXITED. Attached against a dead
     # OTLP endpoint the agent is loud, permanently: 35 ERROR lines with full stack traces in 150
     # seconds at the agent's OWN default intervals (18 logs, 13 spans, 3 metrics; nothing forced),
     # from io.opentelemetry.exporter.otlp.internal.HttpExporter. All five services on this box
-    # currently carry ZERO ERROR lines across their entire life — a few hundred to a few thousand
-    # log lines each, and the ZERO is the load-bearing half; the counts move with uptime and were
-    # 271-2,821 when this was written. So attaching it unconditionally would replace the estate's
-    # one free signal with about 840 ERROR lines an hour per service, for ever, and bury a real
-    # one inside known noise.
+    # carried ZERO ERROR lines across their entire life WHEN THIS WAS WRITTEN — a few hundred to a
+    # few thousand log lines each, and the ZERO is the load-bearing half; the counts move with uptime
+    # and were 271-2,821 then. So attaching it unconditionally would replace the estate's one free
+    # signal with about 840 ERROR lines an hour per service, for ever, and bury a real one inside
+    # known noise.
+    #
+    # BOTH FIGURES IN THAT PARAGRAPH ARE DATED AND NEITHER IS TRUE NOW -- read the NEW-70 block
+    # thirty-odd lines above before quoting either. `monitoring-quality` is up (otel-collector 30h,
+    # loki-quality 2h as of 2026-09-18 13:10) and the zero is gone on all five. The paragraph is kept
+    # in the past tense rather than rewritten because the 35-lines-per-150-seconds measurement is
+    # what the decision below rests on and it is still the right number for a DEAD endpoint; what
+    # went stale is the state of the host, not the behaviour of the agent.
     #
     # The siblings agree, and it is worth knowing they do: no hc-admin, hc-patient or
     # hc-professional QUALITY JVM carries `-javaagent` either, nor does either hc-vendor one —

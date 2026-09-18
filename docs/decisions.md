@@ -18072,3 +18072,382 @@ mock and `customersWithNoActivitySince` was unstubbed, so it returned an empty l
 **control** asserting the same fixture *does* erase when enabled. This is the ninth-or-so instance of
 this repository's signature failure, produced inside the package whose review had just named it — and
 the only reason it was caught is that the mutation was run before the assertion was believed.
+
+---
+
+## D97 — A deliberate refusal is a warning, and the line that said otherwise was generated
+
+**Recorded 2026-09-18**, against `main` at `1ac77c7`. Closes backlog **NEW-65**. Opens **NEW-70**.
+Corrects two claims in NEW-65's own text, one of which changes where the fix had to go.
+
+### §1 The question, and why it was not "edit line 113"
+
+NEW-65 found `LoggingAspect.java:113`, byte-identical in all five services (**measured**: one md5,
+`c854461e…`, across all five files at `HEAD`):
+
+```java
+} catch (IllegalArgumentException e) {
+    log.error("Illegal argument: {} in {}()", Arrays.toString(joinPoint.getArgs()), joinPoint.getSignature().getName());
+    throw e;
+}
+```
+
+`IllegalArgumentException` is how these services spell *"the caller asked for something not allowed"*,
+and `Arrays.toString(joinPoint.getArgs())` renders whatever was passed. Reproduced verbatim, in a
+red-first unit test before anything was changed:
+
+```
+Illegal argument: [PAY-202602-p1-01, GCB-TRF-99881726] in settle()
+```
+
+That is `PayoutRun.settle(reference, settledOn, bankReference)` — D95's desk — putting **a bank
+reference in the log at ERROR**. The item calls that the smaller half and it is right.
+
+**The larger half is a signal this repository has written down as load-bearing.**
+`quality/compose.yml` calls the zero-ERROR count *"the estate's one free signal"* and *"the
+load-bearing half"*, on D64/D73's argument: an attached OpenTelemetry agent against a dead collector
+writes 35 ERROR lines per 150 seconds, so zero ERROR is the only way a dead collector or an unattached
+agent is visible at all. **Re-measured on the estate rolled to `1ac77c7` at 09:54, and it was a stronger
+premise than when it was written**: `docker logs | grep -c ERROR` was **0** on all five, with the agent
+**attached** (`JAVA_OPTS` on every container carries `-javaagent:/app/otel-javaagent.jar
+-Dotel.exporter.otlp.endpoint=http://otel-collector:4317`) and WARN at **196** on payout as the
+positive control that makes the zero mean something. D95's desk — which refuses by design at several
+sites — spends that the first time anybody uses it. Nothing alerts on it:
+`deploy/observability/hc-market-rules.yaml` keys on 5xx rates and these refusals are 4xx, **confirmed
+by reading both rule groups**, so the loss is silent.
+
+**AND THE ZERO WAS GONE FIVE HOURS LATER, ON THE SAME ROLL, WITH NOTHING SAYING SO** — measured at
+13:10 the same day at **49 / 38 / 35 / 27 / 24** (gateway, payout, booking, messaging, catalog). It
+changes nothing about this decision and it is the most useful thing the package found, so it is here
+rather than buried: **none of it is an application fault and none of it is this change.** Most are the
+agent's own `GrpcExporter - Failed to export {metrics,logs,spans}` against `otel-collector:4317`
+between 08:27Z and 09:27Z — D63's dead-endpoint behaviour reproduced by accident, with `loki-quality`
+restarted beneath a collector that never itself went down — and the remainder are Kafka
+listener-container and consumer-rebalance errors (4 in catalog, 3 in booking) between 08:57Z and
+09:02Z, while this workstation sat at load average 200+ under eight other products' Maven builds.
+
+Three things follow, and the third changed what this package shipped. **The signal works** — this is
+the mechanism firing about something real, in the one place a reader would see it. **Nothing read it**:
+it surfaced only because a package that happened to be writing about the count re-measured before
+finishing, which is exactly NEW-70 and is now an observation rather than a prediction. And **a document
+that quotes a live count rots within hours**, so the ten javadoc copies this package ships were
+rewritten to assert the *argument* for the level — an ERROR line must mean something — rather than
+today's number. Where a number is quoted anywhere in D97 it now carries the clock time it was taken at.
+
+### §2 The answer: WARN, naming the method and the reason, echoing no argument
+
+`IllegalArgumentException`'s arm becomes
+
+```java
+log.warn("Refused in {}(): {}", joinPoint.getSignature().getName(), e.getMessage());
+```
+
+and **both arms of `logAfterThrowing` become `warn` too** (§3 is why that is not scope creep). The
+message is composed from the method name and the exception's own message, which is this estate's prose
+at every site that throws one — `PayoutRun`'s refusals, `PayoutDeskResource`'s mapping, `CapturedZone`,
+`BookingPayments`. No argument is rendered.
+
+**THE BOUNDARY OF THAT GUARANTEE, stated because the sentence above is a fact about today's CALL SITES
+and not a structural property** (found at review). `e.getMessage()` is only as safe as whoever composed
+the exception, and not every `IllegalArgumentException` in a JVM is written here: `Enum.valueOf` throws
+one whose message **contains the value it was handed**, and so do several JDK and library parsers. So a
+future throw site that lets a caller-supplied string reach such a constructor puts an argument back into
+the log at WARN, by a route this aspect cannot see and no check here can catch — the aspect has a method
+name and a `Throwable`, and nothing in either says where the words came from.
+
+**It is not fixable in the aspect without gutting the thing the advice is for.** Dropping the message
+leaves `Refused in settle()`, which is the "remove the advice" position under another name: §2 rejects
+that because `ExceptionTranslator` logs only at DEBUG and `PayoutDeskResource` logs nothing, so the
+operator record would be a method name and no reason. The defensible boundary is therefore the one D44
+already draws one service along — **compose the message at the site that decides the refusal** — and
+this estate does that at every site enumerated above. What is written down here is that the guarantee
+lives at those sites and not in this file, so a new throw site is where to look, not the aspect.
+
+**This is D44's rule and not a new one.** D44 faced the structurally identical question one service
+along — a provider's adapter-authored `reason` reaching a response body — and answered: compose the
+message at the boundary, and *"`outcome.reason()` goes to the log **at WARN**, which is where whoever
+has to explain a refusal was always going to look."* `CLAUDE.md` records it as house style. NEW-65 is
+that question at a different site, so the middle of its three candidate positions is the one the rules
+already written down require.
+
+**The two rejected positions, argued rather than dismissed**, because a ratified answer with no
+rejected alternatives is a decision nobody can revisit:
+
+- **WARN, keeping the arguments.** Keeps the diagnostic and frees the signal, and still prints the bank
+  reference. It is *exactly* the trade D44 examined and refused, and the argument transfers without
+  modification: a log is a place the erasure sweep does not reach and cannot re-key (D39, D84's tag
+  rule), so anything written there is written for ever. Refused.
+- **Delete the advice.** Defensible on its face — it is generated, and no line of it has ever been
+  read by anybody working here. The backlog gave three reasons and **one of them is false, measured**:
+  *"it duplicates what the exception translator already reports."* `ExceptionTranslator` has exactly
+  one log call in all five services, `LOG.debug("Converting Exception to Problem Details:", ex)` — it
+  reports to the **caller**, as a ProblemDetail, and to the log only at DEBUG. `PayoutDeskResource`
+  logs nothing at all. So with this advice gone **a desk refusal leaves no record anywhere in the
+  estate**, which is the opposite of what an operator explaining a settlement refusal needs. Refused,
+  and the reason is now a CI assertion: the refusal arm must still log something, and at WARN.
+
+**What is deliberately not done.** No exception taxonomy. The tempting version of this fix splits on
+type — `IllegalArgumentException`/`IllegalStateException` to WARN, everything else left at ERROR — and
+it **misclassifies a real fault**: `BookingEventConsumer.onBookingEvent` wraps every failure as
+`IllegalStateException("could not handle booking event: …")` precisely so the container retries, and
+that is a fault, not a refusal. The narrower claim is the one that holds: **this aspect sees an
+exception crossing a boundary and nothing else, so it cannot tell a refusal from a fault and may not
+author the estate's alarm level.** WARN on every arm. The estate's ERROR channel stays with the code
+that knows something is wrong, which is where all of it already is (§5).
+
+**THE RESIDUAL, stated rather than argued away.** In `dev` and `test` — which is dev and quality, the
+only estates where this bean exists at all — a genuinely unexpected exception out of a service bean now
+reaches the log at **WARN from the aspect** where it used to be ERROR. What is *not* established is
+whether anything else reports it at ERROR: the obvious candidate is Spring Kafka's own error handler for
+`BookingEventConsumer`'s retries, and **that was not measured** — it needs a broker and a listener
+container, and this package's gates were already competing with three other agents' Maven builds on the
+box. So the honest statement is: the diagnostic is not *lost* (the line is still there, still naming the
+method, the cause and the message, and the dev arm still carries the stack trace), and whether a
+*second* ERROR-level report exists beside it is unknown. If that matters to somebody debugging dev, the
+fix is a `--verify`-style observation of the count rather than putting the level back — NEW-70.
+
+### §3 THE ITEM'S FIX WOULD NOT HAVE WORKED, and this is the finding
+
+NEW-65, and the brief that carried it, both describe one line. **Both are wrong about the reach of
+it**, and the correction is the reason this package edits two advices instead of one.
+
+`logAfterThrowing` sits on the *same pointcut* and logs **every `Throwable`** at ERROR, in both of its
+profile arms. It is a separate advice, so it fires for the same throw, and it fires for throws that
+never reach the catch at all. **Measured against a real Spring AOP context** — a `@Service` in
+`net.jojoaddison.service` so the package pointcut matches, one `@Bean LoggingAspect`, a `ListAppender`
+on the advised type's logger — run once at `HEAD` and once after the change:
+
+| one refusal from a service bean | at `1ac77c7` | after D97 |
+| --- | --- | --- |
+| `IllegalArgumentException` | **2 ERROR** — `logAfterThrowing`, then the catch carrying `[PAY-202602-p1-01, GCB-TRF-99881726]` | 2 WARN, no arguments |
+| `IllegalStateException` | **1 ERROR** — `logAfterThrowing` only; the catch is never entered | 1 WARN |
+
+So a fix confined to `:113` would have left **one of the two** ERROR lines for an
+`IllegalArgumentException` refusal and **the only** ERROR line for an `IllegalStateException` one — and
+`IllegalStateException` is what most of D95's desk throws (`NotSettleable`, `NothingToSettle`,
+`NotPayableYet`, `MixedCurrencies`, `LedgerDoesNotAddUp`, `NoTermsInForce`; only `NoSuchBatch` and the
+three argument guards are `IllegalArgumentException`). The zero would not have survived first contact
+with the desk. **The item's stated "done" was not reachable from the line it named**, which is why
+"make the aspect agree" is read as the whole aspect.
+
+It also explains the asymmetry NEW-65 noticed and half-explained: the two `log.debug` calls *are*
+guarded and the failure arm is not, so nobody reading casually would look — and the advice that does
+the most damage is the one the item never mentions.
+
+### §4 A SECOND CORRECTION: there IS a profile gate, one level up, and production has never run this
+
+NEW-65 says *"there is **no profile gate** on the advice, so this fires on `prod` exactly as it fires
+on `dev`."* The brief repeats it. **It is false, and the mechanism is a level above where both looked.**
+`LoggingAspectConfiguration`, in all five services:
+
+```java
+@Bean
+@Profile(JHipsterConstants.SPRING_PROFILE_DEVELOPMENT)
+public LoggingAspect loggingAspect(Environment env) { … }
+```
+
+`SPRING_PROFILE_DEVELOPMENT` is `"dev"`, and `spring.profiles.group.prod` is `[kafka]` in all five —
+**read, not assumed** — so `dev` is not active under `prod` and **the aspect bean is never created
+there**. Three consequences, and none of them makes the item smaller:
+
+- **The disclosure was never a production disclosure.** Production has never been deployed either
+  (D49), so this is belt and braces, but the sentence has to be right.
+- **The signal half is entirely intact, because the zero-ERROR premise is a QUALITY measurement** and
+  quality runs `dev,test` — confirmed off the running container: `GET /management/info` reports
+  `activeProfiles: ["secret-samples","kafka","api-docs","dev","test"]`. The aspect is live on exactly
+  the estate whose ERROR count the argument rests on. So the harm was real where it was claimed and
+  absent where it was not.
+- **`logAfterThrowing`'s not-dev arm is dead code**, by the same reasoning: with the bean present,
+  `dev` is active, so `acceptsProfiles(Profiles.of("dev"))` cannot be false. It is dropped to WARN and
+  kept as generated anyway — it becomes live the moment somebody removes that annotation, and a level
+  left at ERROR in a branch nobody reads is how this item came to exist. No test can reach it; the CI
+  check is the only thing that can see it, and case 3 of the check's test drives exactly that.
+
+This is the `/proc/1/cmdline` lesson from the workspace guide, one estate along: **a probe answers the
+question it was pointed at, not the question the sentence written from it claims.** Reading the advice
+answers *"is the advice gated"*, which is not *"does it run in production"* — and the second question
+is answered one file away, in the class that creates the bean.
+
+### §5 What an ERROR means here, stated so the aspect can be held against it
+
+> **An ERROR line in hc-market is a fact about this estate that is wrong and that nobody chose.** A
+> caller asking for something not allowed is a **WARN**. The level is authored by the code that knows
+> which of the two it is; a generic interceptor does not know, and logs WARN.
+
+**The estate's existing `log.error` calls were enumerated against that rule rather than assumed to
+obey it** — `git grep '\.error(' -- '*/src/main/java/*'`, all five services, the aspect and
+`ExceptionTranslator` excluded. Every one is the first kind:
+
+- `SubjectPseudonym` ×3 — the pepper cannot key an alias;
+- `CapturedZone` — a zone tzdb cannot read, off catalog's wire; D60 chose ERROR explicitly *"because
+  the row is what needs correcting"*, which is a fact about the estate and not a request;
+- `GatewayCustomerContacts` ×5 and `PaymentConfirmations` ×2 — the account store or a confirmation
+  could not be established;
+- `BookingPayments` ×3, `PaymentProviders` — an adapter threw or could not name itself;
+- `PaystackPaymentProvider` ×5 — including D50's *"answered about payment X when asked about Y"*;
+- `PaymentWebhookResource` — D50's review, and its comment says it in so many words: *"our own defect
+  rather than a caller's"*;
+- `RetentionSweep` — one customer's erasure failed inside the night's run;
+- the generated `Healthconnect*App` ×2 per service — a misconfigured profile combination at startup;
+- the generated `SecurityJwtConfiguration` — *"Unknown JWT error"*, and it is **not** the exception it
+  looks like: invalid signature, expired and malformed each go to a meter, and the ERROR is reachable
+  only for a JWT failure the four known shapes do not cover. Unrecognised, therefore ours.
+
+So the rule is descriptive of everything hand-written here and was violated only by the generated
+aspect. Nothing else moved, and nothing else should be moved to match — this enumeration is the
+evidence for that, not a licence to sweep.
+
+### §6 The sixth verbatim-copy family, and why a diff alone would not have done
+
+`LoggingAspect.java` and `LoggingAspectRefusalUnitTest.java` are byte-identical in all five services
+and CI diffs both, with the reference **derived** (the first service in sorted order, printed on every
+run) rather than enumerated — D52's review established why a hard-coded list is how a rogue copy sits
+unchecked. It is the sixth family and **the first whose main-source member is a generated file**, which
+changes what the diff is worth: `--force` restores the same wrong thing in all five at once, and five
+identical copies of the defect satisfy any identity comparison. So the step asserts a **property** as
+well as an identity, and the property is the load-bearing half.
+
+**The check**, *"A deliberate refusal may not be logged at ERROR, nor echo its arguments"*, derived from
+`jdl/*.jdl` — the model of record, and the same file a regeneration reads, so a sixth service demands an
+answer in the pull request that adds it. Per service: no `.error(` anywhere in the aspect; `getArgs()`
+only on `log.debug` lines; the first statement in the `IllegalArgumentException` catch logs at WARN; the
+guard test exists; and `LoggingAspectConfiguration` still gates the bean on the development profile —
+that last one is not about the WARN property (post-D97 the aspect is safe in any profile) but about
+keeping §4's sentence true, since it is quoted in `CLAUDE.md`.
+
+It calls the shared `strip-comments.awk` and guards that the file exists, and it has a **positive
+control**: every assertion is a ban, and text that is not there cannot be matched, so the step refuses a
+file that strips to something with no `void logAfterThrowing(JoinPoint` and no
+`catch (IllegalArgumentException` in it.
+
+**That control was wrong on its first draft and its own test caught it.** It greped for the bare name
+`logAfterThrowing`, which `logAfterThrowingRenamed` satisfies **as a substring** — so with both advices
+renamed the ban ran against a file whose subject it could no longer recognise and printed `ok`. It was
+visible only because the mutation was applied to all five copies at once; with one copy mutated the diff
+fired and the run was red for the wrong reason, which is the shape that would have shipped. It matches
+the declaration now. That is the tenth-or-so instance of this repository's signature failure and the
+second inside a package whose decision names it.
+
+**BOTH SLF4J SPELLINGS ARE BANNED, AND THE SYMMETRY IS THE FINDING — a second review round.** `.error(`
+is what the generator writes and what `--force` restores, so it is the spelling that matters for the
+regeneration hazard; slf4j 2.x also has the fluent `log.atError().setMessage(…).log()`, which contains
+no `.error(` at all and walked straight past the first version of the ban. Nothing in the estate uses
+the fluent API (**measured**: zero `atError`/`atWarn`/`atDebug` across every service's main sources),
+which is exactly when closing a door is free, so the ban became `\.error\(|atError`.
+
+**Widening one side and not the other made the check refuse correct code, and its own control caught
+that.** The WARN assertion still matched the literal `log.warn(`, so a refusal arm rewritten as
+`log.atWarn().setMessage(…).log()` was **rejected**, with a message insisting the line *"does not log at
+WARN"* when it plainly does. That is the fail-**closed** nuisance this repository has a rule about and
+it is not a lesser defect than a hole: **a guard that refuses accurate code is loosened by the next
+person who meets it**, and what gets loosened is the ban, not the message. Both halves take both
+spellings now, and the `atWarn` case is a **green**-expected control sitting directly beside the red
+`atError` one — the pair is the point, because either alone is satisfied by a check that is wrong in the
+other direction.
+
+**Four expected fragments went stale in the same edit and the test went red rather than quiet.** The
+refusals were reworded (`has N ERROR-level call(s)`, `logs at neither log.warn( nor atWarn`) while four
+`expect_fail` cases still asserted the old text, so each case *did* refuse — correctly, naming the file
+and the cause — and the harness reported *"refused, but the message names neither the file nor the
+cause"*. That is the trap this repository names as a case asserting a message the check no longer
+produces, and the direction it failed in is the safe one: **assert the cause and not merely the
+refusal**, and the price of rewording a message is a red test rather than a silent one.
+
+`.github/checks/refusal-logging-level-test.sh` lifts the shipped step out of `build.yml` by name — an
+empty lift is fatal, not skipped — and drives it against a **synthetic** estate whose fixtures are the
+real files, copied in: a hand-written stand-in would let the check and the aspect drift apart in
+opposite directions while the test stayed green. **19 assertions, all passing**, including three
+controls: the shipped tree must pass; `getArgs()` named only in **prose** must stay green, which is what
+makes the ban a statement about code rather than about a paragraph; and the fluent `atWarn` rewrite must
+stay green, which is what stops the ERROR ban being widened into a refusal of correct code.
+
+### §7 The test, and what it can and cannot see
+
+`LoggingAspectRefusalUnitTest`, byte-identical in all five and a **new file**, so it survives the
+regeneration that undoes the aspect and is then the only thing in the estate that goes red. Six cases on
+a `ListAppender` attached to the advised type's own logger (the aspect logs to
+`getSignature().getDeclaringTypeName()`, not to its own class): a refusal is WARN and never ERROR; the
+line names the method and the reason and contains neither the bank reference nor the batch reference nor
+a `[`; the exception propagates as the same instance, unwrapped and un-caused; a method that returns logs
+nothing above DEBUG; an unexpected exception is still reported, at WARN, **with the throwable still
+attached** so nothing diagnostic was traded for the level; and the not-dev arm is WARN too.
+
+Run **red first**: 4 of the 6 failed against the unmodified aspect, three on the level and one on the
+content, with the assertion failure printing the defect in full. The two that passed — propagation and
+the quiet path — were already correct, and saying so is part of the measurement.
+
+The fixture is bank-reference shaped (`GCB-TRF-99881726`) because a neutral string would have made the
+assertion true for a reason unrelated to the harm. `ADVISED_TYPE` is under `net.jojoaddison` on purpose:
+every service's test `logback.xml` pins that package at INFO, so WARN is enabled and the assertion is not
+vacuous — and the pointcut is package-scoped, which the probe established by accident (a fixture declared
+in `net.jojoaddison.aop.logging` matched neither advice and produced **0** lines, so the first run of the
+amplification probe measured nothing at all).
+
+**What none of it covers.** No integration test asserts that a real desk refusal through
+`POST /api/desk/payouts/{reference}/settled` produces no ERROR — the aspect is `@Profile("dev")` and the
+ITs run `test,testdev`, so the bean is not registered under test and there is nothing there to observe.
+The unit test asserts the aspect's contract and the CI check asserts the source; neither is an estate
+measurement, and the estate measurement is NEW-70.
+
+### §7b The gates, and which three are unverified
+
+**Two services are fully measured and three are not, and that difference is stated rather than
+averaged.** `clean verify` is green on **booking (291 unit / 148 IT)** and **gateway (103 / 140)**, both
+`BUILD SUCCESS` with modernizer clean, each **+6** on its baseline — this package's guard test.
+
+**catalog, messaging and payout did not complete, three attempts each**, and the cause is identical
+every time: `CucumberTest` fails to load its `ApplicationContext` because Testcontainers' `postgres:18.4`
+never becomes ready. **The cause was measured rather than inferred from the load average** — a throwaway
+`postgres:18.4` started on this box took **120 seconds** to log *"database system is ready to accept
+connections"*, against `PostgreSQLContainer`'s **60-second** default wait. So the container genuinely
+cannot come ready inside Testcontainers' patience here, with up to eight other agents' Maven builds
+running (load 19 to 210 across the attempts). That also explains why booking and gateway passed: they ran
+earliest, at the lowest load of the day.
+
+**What those three DO establish, and what they do not.** Surefire ran to completion in all three —
+**115 / 68 / 172** tests, **0 failures**, the only errors being `CucumberTest`'s two — and
+`LoggingAspectRefusalUnitTest` passed **6/6 in every one of them**, which is this package's own subject.
+What is **not** established is their integration tests: surefire fails first, so failsafe never ran at
+all (`maven-failsafe-plugin` appears **0** times in each log). They are **unverified**, not passing, and
+the honest reading of a `Tests run: 172` beside a `BUILD FAILURE` is that a suite was interrupted rather
+than that a suite went green.
+
+**Nothing in the failure touches the change.** `postgres:18.4` is in the generated
+`DatabaseTestcontainer`, untouched here; booking is the control — the same database, the same
+Testcontainers, the same aspect edit, green.
+
+### §8 What is surfaced and not taken — NEW-70
+
+**Nothing observes the zero-ERROR count.** The whole of §1's argument rests on a number nobody is
+watching: no CI step, no alert rule, no dashboard panel and no `quality/startup.sh --verify` assertion
+looks at it, and it was measured today by hand exactly as D64 and D73 measured it by hand. So the signal
+this decision spends a package protecting is still one that only fires if somebody happens to run
+`docker logs | grep -c ERROR`. **NEW-70** carries it, with `--verify` as the recommended home, and it is
+opened rather than taken because *what to do when the count is not zero* is an operational decision and
+because the honest version of it has to distinguish a service's whole life from its current run.
+
+**A second, unrelated defect was found by running this package's gates and is NEW-71**, reported rather
+than fixed because its repair makes CI red on `main` for a separate reason. `grep -q` exits at its first
+match, its producer takes `SIGPIPE` and dies **141**, and under `set -o pipefail` the *pipeline* then
+reports **a match as a failure** — measured with a control, same file, same pattern, one shell option
+apart: `rc=0` without `pipefail`, `rc=141` with it. `account-lifecycle-guards.sh` is
+`set -Eeuo pipefail`, so **D94's estate-wide ban on JHipster's placeholder base-url cannot report a
+file**. It is a race rather than a rule — the producer sometimes finishes writing first — which is why
+that script's own part 5 carries a comment about *"an instrument that answers differently twice"*
+without naming the cause. Observed both ways here: two runs racing a Maven build reported the file,
+eight quiet runs reported `ok` with the string demonstrably present in a file the check had walked.
+
+**D97's own step and its test were hardened rather than left to inherit the hazard**: every `grep -q`
+in them reads a **file or a herestring**, which is not a pipeline, and says so at the site. The step
+runs under Actions' default `bash -e`, which carries no `pipefail`, so it was correct either way — and
+one `defaults: run: shell:` line away from not being, which is the argument for a shape that cannot be
+wrong rather than one that happens not to be.
+
+The second question the brief anticipated — whether `IllegalStateException` needs the same treatment — is
+**answered here and not deferred**: it travels a different advice, that advice is fixed, and the split
+that would have handled it by type is refused in §2 for misclassifying `BookingEventConsumer`'s wrap. And
+the third — whether the surviving `log.warn` calls want `isWarnEnabled` guards for symmetry with their
+neighbours — is **declined as cargo cult**: the `isDebugEnabled` guards exist because DEBUG is off in
+every environment and the guarded calls would otherwise render `Arrays.toString(getArgs())` and
+`String.valueOf(result)` on every method call in the estate. WARN is on everywhere, the arguments are no
+longer rendered, and a guard that is always true costs a branch and buys a reader nothing.

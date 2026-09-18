@@ -63,8 +63,10 @@ import org.springframework.stereotype.Component;
  * ERROR lines</strong> across their whole life — *"the estate's one free signal"*, and the only way an
  * unattached OTel agent or a dead collector is visible at all (D64, D73). An overdue dispute is a
  * normal operational fact on a busy marketplace, so logging it at ERROR would spend that signal on
- * routine business, every morning, for ever. Backlog NEW-65 records the generated {@code LoggingAspect}
- * doing exactly that by accident; this is the same mistake declined on purpose.
+ * routine business, every morning, for ever. The generated {@code LoggingAspect} was doing exactly
+ * that by accident — backlog NEW-65, closed by D97, which states the rule this line already followed:
+ * an ERROR is a fact about this estate that is wrong and that nobody chose, and everything else is a
+ * WARN. This is that mistake declined on purpose, one package before the rule existed.
  *
  * <h2>No customer text and no login ever reaches the line</h2>
  *

@@ -5144,7 +5144,105 @@ exists anywhere" was true when this was written and is now false of one estate.
 
 ---
 
-## NEW-65 — a deliberate business refusal logs at ERROR with its arguments, in all five services · READY
+## NEW-65 — a deliberate business refusal logs at ERROR with its arguments, in all five services · DONE (D97)
+
+> **CLOSED 2026-09-18 — `decisions.md` D97. A deliberate refusal is a WARN, it names the method and
+> the reason this estate composed, and it echoes nothing it was handed.**
+>
+> The answer is this item's **middle** candidate, and it needed no decision from a person: **D44
+> already settled the structurally identical question** one service along — compose the message at the
+> boundary, send the outside-authored string to the log at WARN — and `CLAUDE.md` records that as house
+> style. The two rejected positions are argued in D97 §2 rather than dismissed, and one of this item's
+> three reasons for *"remove the advice"* is **false, measured**: `ExceptionTranslator` has exactly one
+> log call in all five services and it is `LOG.debug`, so it reports to the **caller** and not to the
+> log. With the advice deleted a desk refusal would leave no record anywhere in the estate.
+>
+> **TWO OF THIS ITEM'S OWN CLAIMS WERE WRONG, and the first changes where the fix had to go.**
+>
+> | this item said | measured |
+> | --- | --- |
+> | the defect is `:113` | `:113` is **one of two** ERROR lines. `logAfterThrowing` is a separate advice on the *same* pointcut, logs **every** `Throwable` at ERROR, and is the only one an `IllegalStateException` reaches. Driven against a real Spring AOP context: an `IllegalArgumentException` refusal produced **2 ERROR** lines (the second carrying `[PAY-202602-p1-01, GCB-TRF-99881726]`), an `IllegalStateException` refusal **1**. Since most of D95's desk throws `IllegalStateException` — `NotSettleable`, `NothingToSettle`, `NotPayableYet`, `MixedCurrencies`, `LedgerDoesNotAddUp`, `NoTermsInForce` — **a `:113`-only fix would not have kept the ERROR count at zero.** Both advices are WARN now |
+> | *"there is no profile gate on the advice, so this fires on `prod` exactly as on `dev`"* | There **is** one, a level up: `LoggingAspectConfiguration` declares `@Profile(JHipsterConstants.SPRING_PROFILE_DEVELOPMENT)` on the `@Bean` in all five services, and `spring.profiles.group.prod` is `[kafka]`, so **`prod` never creates the aspect at all**. The disclosure was never a production disclosure. It does **not** shrink the item: the zero-ERROR premise is a *quality* measurement and quality runs `dev,test` (read off the container: `activeProfiles: ["secret-samples","kafka","api-docs","dev","test"]`), so the aspect is live on exactly the estate the argument rests on |
+>
+> **The premise was re-measured on the estate rolled to `1ac77c7` at 09:54 and was stronger than when
+> it was written**: `ERROR = 0` on all five with the OpenTelemetry agent **attached**
+> (`-javaagent:/app/otel-javaagent.jar -Dotel.exporter.otlp.endpoint=http://otel-collector:4317` on
+> every container's `JAVA_OPTS`), `WARN = 196` on payout as the positive control. Nothing alerts on it —
+> `hc-market-rules.yaml` keys on 5xx rates, confirmed by reading both rule groups — so the loss was
+> silent, which is why it needed a check.
+> **AND BY 13:10 THE SAME DAY THE ZERO WAS GONE ON ALL FIVE** — 49/38/35/27/24, none of it an
+> application fault and none of it this change: OTLP exporter failures against a collector that could
+> not accept, plus Kafka listener errors while the box sat at load 200+. Nothing announced it. That is
+> **NEW-70**, demonstrated rather than predicted, and it is why the ten javadoc copies this package
+> ships assert the *argument* for the level rather than a live count.
+>
+> **What shipped.** Two `.warn` in `logAfterThrowing` and one in `logAround`'s catch, no `getArgs()`
+> outside the two guarded `log.debug` lines; `LoggingAspectRefusalUnitTest` — a **new** file, so it
+> survives the regeneration that undoes the aspect — byte-identical in all five; a row on `CLAUDE.md`'s
+> regeneration table; and the **sixth verbatim-copy family**, the first whose main-source member is a
+> generated file. That last point is why the CI step asserts a **property** and not only an identity:
+> `--force` restores the same wrong thing in all five at once, and five identical copies of the defect
+> satisfy any diff.
+>
+> **Gates — TWO SERVICES FULLY MEASURED, THREE BLOCKED BY THE BOX, and the difference is stated rather
+> than averaged.** `clean verify` is green on **booking (291 unit / 148 IT)** and **gateway (103 / 140)**,
+> both `BUILD SUCCESS`, modernizer clean, each **+6** on its baseline — the new guard test. **catalog,
+> messaging and payout did not complete**, three times each, and the cause is the same every time and is
+> not this change: `CucumberTest` fails to load its `ApplicationContext` because the Testcontainers
+> `postgres:18.4` container never becomes ready. **Measured rather than assumed** — a throwaway
+> `postgres:18.4` on this box took **120 seconds** to log *"database system is ready to accept
+> connections"*, against Testcontainers' **60-second** default wait, with up to eight other agents'
+> Maven builds running (load average 19-210 across the attempts). What *is* measured in those three:
+> surefire ran to completion at **115 / 68 / 172** tests with **0 failures** and the only errors being
+> `CucumberTest`'s two, **`LoggingAspectRefusalUnitTest` passed 6/6 in every one of them**, and
+> modernizer reported 0 violations. What is **not** measured is their integration tests — surefire fails
+> first, so failsafe never ran at all (`maven-failsafe-plugin` appears **0** times in each log). Treat
+> those three as **unverified**, not as passing.
+>
+> The check was driven against
+> **12 mutations locally and 19 assertions in CI** — `refusal-logging-level-test.sh`, which lifts the
+> shipped step out of `build.yml` and runs it against a synthetic estate whose fixtures are the real
+> files, and which **prints its own count on every run**: read that line, because this one was written
+> as 17 and was 19 one review round later. The unit test was run **red first**: 4 of 6 failed against
+> the unmodified aspect, the content case printing the defect in full — `Illegal argument:
+> [PAY-202602-p1-01, GCB-TRF-99881726] in settle()`.
+>
+> **The check's positive control was wrong on its first draft and its own test caught it** — it greped
+> for the bare name `logAfterThrowing`, which `logAfterThrowingRenamed` satisfies as a substring, so the
+> ban ran against a file whose subject it could no longer recognise and printed `ok`. It matches the
+> declaration now. Visible only because the mutation was applied to all five copies at once; with one
+> copy mutated the copy diff fired and the run was red for the wrong reason.
+>
+> **AND A SECOND REVIEW ROUND FOUND THE OPPOSITE DEFECT IN THE SAME BAN.** slf4j 2.x's fluent
+> `log.atError().setMessage(…).log()` contains no `.error(`, so the ban was widened to
+> `\.error\(|atError` — free, because nothing in the estate uses the fluent API (measured: zero
+> `atError`/`atWarn`/`atDebug` in any service's main sources). **Widening one side and not the other
+> made the check refuse correct code**: the WARN assertion still matched the literal `log.warn(`, so an
+> arm rewritten as `log.atWarn()…` was rejected with a message insisting it *"does not log at WARN"*
+> when it plainly does. Caught by a **green-expected control** written in the same round, and it is not
+> a lesser defect than a hole — a guard that refuses accurate code gets loosened by the next person who
+> meets it, and what gets loosened is the ban. Both halves take both spellings, and the red `atError`
+> case and the green `atWarn` case sit together because either alone is satisfied by a check that is
+> wrong in the other direction.
+>
+> **Four expected fragments went stale in that same edit**, and the test went **red** rather than
+> quiet: the refusals were reworded while four `expect_fail` cases still asserted the old text, so each
+> refused correctly and the harness reported *"refused, but the message names neither the file nor the
+> cause"*. The direction is the safe one, and the lesson is to **assert the cause and not merely the
+> refusal** — the price of rewording a message is then a red test rather than a silent one.
+>
+> **ONE QUESTION SURFACED AND NOT TAKEN → NEW-70.** Nothing observes the zero-ERROR count — no CI step,
+> no alert rule, no dashboard panel, no `quality/startup.sh --verify` assertion. The signal this package
+> protects still only fires if somebody runs `docker logs | grep -c ERROR` by hand, which is how it was
+> measured for D64, D73 and this item alike.
+>
+> The two questions the brief anticipated are **answered in D97 rather than deferred**:
+> `IllegalStateException` travels `logAfterThrowing`, which is fixed, and the type-split that would
+> have handled it separately is refused for misclassifying `BookingEventConsumer`'s deliberate wrap of
+> every failure as `IllegalStateException`; and an `isWarnEnabled` guard is declined as cargo cult —
+> the `isDebugEnabled` guards exist because DEBUG is off everywhere and those calls render
+> `Arrays.toString(getArgs())` on every advised call, while WARN is on everywhere and the arguments are
+> no longer rendered.
 
 **Found 2026-09-17** while opening NEW-52, and it is **pre-existing and generated** rather than
 anything a recent package introduced — which is the first thing to establish about it, because it
@@ -5407,6 +5505,267 @@ decision produced. If the answer is that it should, that is a state-machine chan
 behind it, not a sweep change.
 
 **Not blocked on engineering.** The report exists; the recipient is the open question.
+
+---
+
+## NEW-70 — the estate's one free signal is watched by nothing · READY, and a decision with it
+
+**Surfaced by D97 / NEW-65**, 2026-09-18, and it is the question that item's whole argument rests on
+without answering.
+
+> **THE SIGNAL FIRED THE DAY THIS ITEM WAS WRITTEN, AND NOTHING TOLD ANYBODY.** This item's premise was
+> measured at 09:54 and re-measured at 13:10 on the same estate, the same roll, five hours apart — and
+> it had moved. That is not a reason to weaken the item; **it is the item, demonstrated**, and it is
+> worth reading before the argument below because it turns a prediction into an observation:
+>
+> | | 09:54 | 13:10 |
+> | --- | --- | --- |
+> | gateway / payout / booking / messaging / catalog | **0 / 0 / 0 / 0 / 0** | **49 / 38 / 35 / 27 / 24** |
+>
+> **Neither cause is an application fault and neither is hc-market's.** Most are the OTel agent's own
+> exporter — `GrpcExporter - Failed to export {metrics,logs,spans}` against `otel-collector:4317`,
+> 08:27Z to 09:27Z, which is **D63's predicted behaviour reproduced by accident**: `loki-quality` had
+> been restarted and the collector could not accept, though the collector container itself never went
+> down (`Up 29 hours`). The rest are Kafka listener-container and consumer-rebalance errors between
+> 08:57Z and 09:02Z — **4 in catalog, 3 in booking** — while this workstation sat at load average 200+
+> under eight other products' Maven builds, so the shared broker was not answering in time.
+>
+> **It was found only because a package that happened to be writing about the count re-measured before
+> finishing.** No alert fired, no panel moved, no check went red, and a reader of any document in this
+> repository would have gone on believing the zero. The ten javadoc copies D97 shipped originally
+> asserted the live count and were rewritten to assert the *argument* instead — a javadoc quoting a
+> number nothing watches is a javadoc that rots.
+
+**The premise, as measured and as it decayed.** On the quality estate rolled to `1ac77c7` at 09:54,
+`docker logs hc-market-quality-<svc> | grep -c ERROR` was **0** for all five with the OpenTelemetry
+agent **attached** — every container's `JAVA_OPTS` carries
+`-javaagent:/app/otel-javaagent.jar -Dotel.exporter.otlp.endpoint=http://otel-collector:4317` — and
+`WARN` at **196** on payout as the positive control that stops the zero meaning "nothing is logging".
+**By 13:10 it was not zero anywhere**, per the box above. Both readings are real; what makes them
+useful together is that nothing in the estate can tell you which one is current.
+That zero is the estate's only way of knowing a collector has died or an agent failed to attach: D63
+measured **35 ERROR lines with stack traces every 150 seconds** against a dead OTLP endpoint, D73
+measured **zero** against a live one, and `quality/compose.yml` calls it *"the estate's one free
+signal"* and *"the load-bearing half"* in its own comments. **The 13:10 reading above is that mechanism
+working exactly as D63 described it** — a collector that cannot accept, the agent saying so, in the one
+place anybody would see it if anybody were looking. The signal is not theoretical and does not need
+proving; what it needs is a reader.
+
+**Nothing watches it.** Established by looking rather than assumed:
+
+- `deploy/observability/hc-market-rules.yaml` — both rule groups key on
+  `http_server_request_duration_seconds_count{http_response_status_code=~"5.."}` ratios. **No rule
+  reads a log level**, and there is no Loki rule file in this repository at all;
+- `deploy/observability/hc-market-gateway-identity.json` — six panels, all `gateway_identity_*`, and
+  it carries a `NOT-YET-TRANSPORTED` marker of its own (D84 §7);
+- `quality/startup.sh --verify` — counts professionals and reviews and derives the rating from the
+  view (D46). It never reads a log;
+- `deploy/deploy-prod.sh`'s smoke test — `/management/info` for `brokerage.termsInForce` and a
+  catalogue count (D57). Never a log;
+- `.github/workflows/build.yml` — nothing; CI has no estate to read logs from.
+
+So three decisions in a row (D64, D73, D97) have turned on a number that has only ever been produced
+by a person typing `grep -c` at the moment they needed it. **A premise nobody can re-run is a claim**,
+which is this repository's own rule about `verify-otel-agent.sh` (D63) applied to the thing that script
+exists to make visible.
+
+### Two things that make it harder than it looks, and both need deciding
+
+**1. "Zero" is ambiguous between two different questions.** `docker logs` returns a container's whole
+life; a restart resets nothing and a roll to a new tag resets everything. *"Has this service ever
+logged an ERROR"* and *"has it logged one since the last roll"* are different assertions with different
+uses — the first is the one D63/D73/D97 have been quoting, and it is the one that becomes permanently
+false the first time anything legitimate goes wrong. A check asserting the lifetime figure is a check
+that goes red for ever after one incident and then gets disabled. **Recommended: assert the count since
+the container started and print the lifetime figure beside it**, so a reader can see both and neither
+number is doing a job the other is better at.
+
+**2. What to do when it is not zero is an operations question, not an engineering one.** The plausible
+answers are a `--verify` assertion (red on this box, nothing paged), a Loki rule (pages somebody, and
+Loki belongs to `monitoring-quality` — another repository's stack, exited for five days in September and
+able to go down again, which is D73 §3's whole argument for not depending on it), or a line in
+`--verify`'s output that reports and does not fail. **Recommended: report-and-do-not-fail first**, for
+the reason D46 records about `verify-cycle.sh` — a tool that calls a legitimate state a fault is a tool
+people stop running — with an assertion added once somebody has watched the number for a while.
+
+### What must NOT happen to it
+
+**It may not become a reason to suppress an ERROR.** The direction of D97 was to stop a *generic
+interceptor* authoring the signal; the moment a check exists, the cheap way to keep it green is to drop
+a real ERROR to WARN at a site that knows it is an error, and that is the defect inverted. D97 §5 states
+the rule and enumerates every hand-written `log.error` in the estate against it; that enumeration is the
+thing to check a proposed suppression against.
+
+**And it may not read `docker logs` on the quality box from CI.** CI has no daemon and no estate; a step
+written that way would be skipped or green-by-absence, which is the fail-open this repository has found
+nine times.
+
+**Not blocked.** No decision from a person and no outside fact — but it wants the two questions above
+answered rather than a `grep -c` wired into the first script that would take it.
+
+---
+
+## NEW-71 — `pipefail` turns `grep -q` inside out, and one CI guard cannot fire · READY
+
+**Found 2026-09-18 while running D97's gates**, and it is **pre-existing and not D97's** — reported
+rather than fixed, because the repair makes CI red on `main` for a second, separate reason (§3).
+
+### The mechanism, measured with a control
+
+`grep -q` exits at its **first match**. Its producer then takes `SIGPIPE` and dies **141** — and under
+`set -o pipefail` the *pipeline's* status is the producer's, so **a match is reported as failure**.
+Measured on this repository, same file, same pattern, one option apart:
+
+```
+$ bash -c 'awk -f .github/checks/strip-sh-comments.awk deploy/docker/docker-compose.prod.yml \
+             | grep -q my-server-url-to-change; echo rc=$?'
+rc=0                       # the match
+
+$ bash -c 'set -o pipefail; awk -f … | grep -q my-server-url-to-change; echo rc=$?'
+rc=141                     # the same match, reported as a failure
+```
+
+It is a **race, not a rule**: if the producer finishes writing before `grep -q` closes the pipe there
+is no `SIGPIPE` and the status is 0. So the same command answers differently depending on load, which
+is why this went unnoticed — and it is the second time this file has been caught by it. Its **own part 5
+carries a comment about the first**: *"the variable form disagreed with itself between two runs of this
+check over an unchanged `deploy-prod.sh` … whatever the cause, an instrument that answers differently
+twice is not one to reason from."* The cause is this.
+
+### What it costs, today, in one place
+
+`.github/checks/account-lifecycle-guards.sh` is `set -Eeuo pipefail` and part 4 reads
+
+```bash
+conf_src "$f" | grep -q 'my-server-url-to-change' && placeholders="$placeholders $f"
+```
+
+so **the estate-wide ban on JHipster's placeholder base-url cannot report a file**. That is D94's
+guard — the regeneration table calls the thing it protects *"the front door swallows people again"*:
+restore `base-url: http://my-server-url-to-change` and `POST /api/register` answers **201**, the mail
+is **delivered** with a dead link, one WARN is logged, and the sweep deletes the account in three days.
+`MailServiceIT` mocks `JavaMailSender`, so nothing else in the estate can see it either.
+
+**Measured both ways.** Under no load the check prints `ok   no .yml in the repository carries
+my-server-url-to-change` and exits **0** with the string demonstrably present in a file it walked (135
+`.yml` files, `placeholders` empty). Racing a Maven build on the same box it printed
+`::error file=./deploy/docker/docker-compose.prod.yml::… contains JHipster's placeholder base-url` —
+twice — and then stopped doing so. **Eight consecutive quiet runs: eight `ok`.**
+
+There are **11** `| grep -q` pipelines in that file. Part 4's is the one whose direction is
+fail-**open**; the others are `if ! … ; then err` shapes, where a swallowed match makes the check
+refuse a correct tree — annoying, fail-closed, and the reason this has read as flakiness rather than as
+a hole. **Which of the eleven are which has not been enumerated** and is part of the work.
+
+### §3 Why the one-line repair is not enough, and why this is not folded into D97
+
+`grep -q` is the wrong tool in a `pipefail` script; `grep -c … || true` compared against 0, or a
+herestring (`grep -q PAT <<< "$text"` — not a pipeline, so the question cannot arise), or `grep -l`
+against a file both answer honestly. **But fixing part 4 makes CI red on `main` immediately**, for a
+false positive: the one surviving occurrence is on `docker-compose.prod.yml:219`, inside the *error
+message* of a `${HC_MAIL_BASE_URL:? … It was \`http://my-server-url-to-change\` in
+application-prod.yml until decisions.md D94}` expansion. It is prose in a shell parameter expansion, not
+a base-url value, and the shell stripper cannot tell the two apart because both are YAML content. So
+the item is **two decisions**, which is why it is an item:
+
+1. **the pipeline** — replace the shape, and enumerate which of the eleven were fail-open and which
+   fail-closed, because *"the check went red"* and *"the check could not see"* want different write-ups;
+2. **the pattern** — the ban is a bare string in a `.yml`, and D94 already narrowed it once from raw
+   text to stripped text after reporting three files, two of which were its own explanatory comments.
+   Narrowing it again means banning the placeholder **as a value** — the right-hand side of a mapping,
+   or a `:-` default, but not a `:?` message — which is a small YAML-shaped assertion rather than a
+   grep. **Recommended**: match `my-server-url-to-change` only where it is not inside a `:?`, and say
+   in place that the exclusion exists because the only legitimate mention of the string is a refusal
+   explaining it.
+
+**D97 hardened its own step rather than leaving the hazard to spread**: the new refusal-logging check
+and its test use herestrings and files throughout and say why at the site. That step runs under
+Actions' default `bash -e`, which carries **no** pipefail, so it was correct either way — and one
+`defaults: run: shell: bash -eo pipefail` away from not being, which is the whole reason to prefer a
+shape that cannot be wrong.
+
+### The generalisation, which is this repository's own rule arriving from a new direction
+
+D71 established *"a die may not fold; a warn and a poll may"* for `2>/dev/null` swallowing docker's
+status. This is the same defect with no redirection in sight: **`pipefail` does not make a pipeline
+honest, it makes it report the wrong end**, and an early-exiting consumer inverts the answer. Worth a
+sweep of every `| grep -q` in a `pipefail` script — **21 of the check scripts set `pipefail`** — but a
+sweep is only worth doing once somebody has decided (1) above, or it produces twenty edits in twenty
+shapes.
+
+**Not blocked.** No decision from a person and no outside fact.
+
+---
+
+## NEW-72 — a document true of the RENDER and false of the ESTATE, and nothing can tell a reader which · READY
+
+**Found 2026-09-18 at D97's review.** It is given its own row rather than folded into NEW-70 because the
+two have different subjects and different done-conditions: NEW-70 is *nothing watches the ERROR count*
+and is closed by something that observes; this is *a header states as fact about the estate something
+that is only a fact about the default*, and is closed by rewording plus deciding whether anything should
+check the estate at all. Related in topic, unrelated in remedy — the NEW-52 → NEW-68 split is the
+precedent.
+
+### The instance
+
+`deploy/observability/hc-market-rules.yaml` says, in capitals at line 14:
+
+> `NOTHING ANSWERS THESE QUERIES TODAY, AND NOTHING EVER HAS. DO NOT INSTALL THIS FILE YET.`
+
+and at line 19, `NO ENVIRONMENT ATTACHES IT`.
+
+**Measured 2026-09-18: the agent is attached on all five quality services** — `1` for `javaagent` in
+each container's `/proc/1/environ` — and `otel-collector-quality` has been up 30 hours with
+`loki-quality` up 2. So the second sentence is false of what is running, and *"nothing ever has"* is
+false of history.
+
+### The distinction, which is the whole item and is why "the header is stale" undersells it
+
+The file is **true of the rendered compose** and **false of the running estate**, and both at once:
+
+- `quality/compose.yml` renders `JAVA_OPTS: ${HC_JAVA_OPTS:-…} ${HC_OTEL_JAVA_OPTS:-}`, and
+  `HC_OTEL_JAVA_OPTS` **defaults empty**. That is D73 §3's deliberate decision — `monitoring-quality`
+  belongs to another repository and can go down, and one variable set by an operator is the right
+  interface for a dependency this repository does not control.
+- Every roll this session passed that variable **explicitly**, so the estate has been running attached
+  while the default it is checked against says otherwise.
+
+**CI is not wrong and is not red.** `observability-claims.sh`'s marker check holds the file against the
+*render*, which is the correct subject for a check about a default: a check that read the estate would
+go red whenever an operator exercised a documented switch. Nothing needs fixing in the check.
+
+**What is wrong is that a reader cannot tell which subject a sentence has** — and this exact hazard bit
+this repository twice in one day. `CLAUDE.md`'s D63/D64 paragraph asserted a dead collector and a zero
+ERROR count in the present tense, both false by 2026-09-18, and `quality/compose.yml` carried a
+*"currently carry ZERO ERROR lines"* thirty-six lines from a new block saying the zero was gone. Both are
+corrected by D97; this one is not, because the correction needs a decision.
+
+### The decisions it wants
+
+1. **What the header should claim.** Recommended: say it of the **default** explicitly — *"no environment
+   attaches the agent BY DEFAULT; set `HC_OTEL_JAVA_OPTS` and it does, which is what CI checks and what
+   this file is written against"* — and move the install refusal onto the condition rather than the
+   estate. That keeps the file honest under both states without needing to know which is current.
+2. **Whether anything should check the ESTATE, and where.** Not in `observability-claims.sh`, per above.
+   If anywhere, it belongs beside NEW-70's observation of the ERROR count: both questions are *"what is
+   this box actually doing right now"*, and `quality/startup.sh --verify` is the one tool that already
+   runs against a live estate. **Recommended: pair it with NEW-70** and report rather than fail, for the
+   reason D46 records about `verify-cycle.sh` — a tool that calls a legitimate state a fault stops being
+   run.
+3. **Whether the alert rules are now installable.** The header's *"DO NOT INSTALL"* rests on nothing
+   answering the queries. Something does, on quality, when the variable is set. That is a separate call
+   from (1) and should not ride along with a wording fix — installing rules that fire against a stack
+   another repository owns is a conversation with whoever owns it.
+
+### The generalisation worth keeping
+
+**A marker held against a render is a statement about configuration; a reader takes it as a statement
+about the world.** This repository has a rule for the neighbouring case — *a probe answers the question
+it was pointed at, not the question the sentence written from it claims* (the `/proc/1/cmdline` finding,
+and `JAVA_TOOL_OPTIONS` one layer down) — and this is its documentary twin. **Where a document states a
+fact that a variable can change, say which of the two it is stating.**
+
+**Not blocked.** No outside fact and no decision from a person for (1); (3) is somebody else's estate.
 
 ---
 
