@@ -57,7 +57,60 @@ public final class MarketplaceDtos {
         String avatarGradientTo,
         BigDecimal rating,
         long reviewCount,
+        /**
+         * The literal cheapest ACTIVE service, including a free one — so {@code 0} for a
+         * professional who publishes something at no charge, and null for one who publishes
+         * nothing.
+         *
+         * <p>{@code decisions.md} D100 keeps this meaning rather than narrowing it, because {@code 0}
+         * is the honest answer to "what is the least this listing charges" and because it is the only
+         * thing that tells an all-free listing ({@code 0}) apart from an empty one (null) once
+         * {@link #fromPaidPriceMinor()} is null for both.
+         */
         Long fromPriceMinor,
+        /**
+         * The cheapest service a customer can actually buy — the headline a card renders, and the
+         * quantity the {@code maxPriceMinor} filter and the two price sorts are about.
+         *
+         * <p>{@code decisions.md} D100, backlog NEW-50. The prototype has always computed this —
+         * {@code Math.min(... p.services.filter(s => s.price > 0) ...)} at three sites — while the
+         * API published the literal minimum beside a comment claiming the two agreed. For the two
+         * seeded professionals with a free consultation they did not: the card read "from ₵0" for a
+         * doula whose packages run to ₵3,200.
+         *
+         * <p><strong>Null is two facts and this field cannot tell them apart on its own</strong>: a
+         * professional with nothing published has no price, and so does one whose every service is
+         * free. Both are null here, and {@link #fromPriceMinor()} separates them. Neither is matched
+         * by a price filter — the same refusal {@code rating} makes, where a professional with no
+         * reviews is excluded from {@code minRating} rather than read as 0.0. "Free" and "unpriced"
+         * must not collapse into one number for the same reason "unrated" and "rated badly" must
+         * not.
+         */
+        Long fromPaidPriceMinor,
+        /**
+         * That at least one ACTIVE service is free — the marker D92 §4 ratified in place of a ₵0
+         * headline.
+         *
+         * <p><strong>A boolean, and not the service's name or reference</strong>, for two reasons
+         * that are decisions rather than economy. A {@code ServiceOffering.name} is free text its
+         * own professional types, and D92 §3 has just ratified self-service signup — so putting it
+         * here would widen where unvetted self-declared text renders from the profile alone to every
+         * Browse card, Discover tile and search result, which is NEW-58's subject and not something
+         * to add to in passing. And the platform cannot call it an "intro": the two free services in
+         * the seed are "Discovery session" and "Doula consultation", so a client that rendered
+         * "free intro" would be making a claim about the service's purpose that nothing checks. A
+         * reference would need a second request to become anything a card could show, which is the
+         * one thing this field exists to avoid.
+         *
+         * <p><strong>Deliberately redundant.</strong> {@code priceMinor} is {@code required min(0)}
+         * in the JDL, so {@code fromPriceMinor == 0} holds exactly when a free active service exists
+         * and this boolean adds no information. It is here because the alternative is every client
+         * inventing that derivation in a template where nothing tests it — a contract a caller has
+         * to infer by comparing two numbers is a contract that will be inferred wrong. The three
+         * fields are computed together from one query so they cannot drift, and
+         * {@code TheFromPriceOnTheWireIT} asserts they agree.
+         */
+        boolean hasFreeService,
         String currency,
         /**
          * The IANA zone the professional's wall clock belongs to — {@code decisions.md} D21.

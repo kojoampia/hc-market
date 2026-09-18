@@ -34,11 +34,37 @@ public interface MarketplaceQueryRepository extends org.springframework.data.jpa
     List<ServiceOffering> findActiveServices(@Param("ref") String reference);
 
     /**
-     * The indicative "from" price is the cheapest ACTIVE service, exactly as the prototype computed
-     * it. Null when a professional has published nothing.
+     * The two "from" prices of a professional's ACTIVE services, in one row — {@code decisions.md}
+     * D100, backlog NEW-50.
+     *
+     * <p>Column 0 is the <strong>literal</strong> minimum and column 1 is the cheapest service with
+     * a price on it. They differ only for a professional who publishes something free, and both are
+     * null when nothing is published at all.
+     *
+     * <p><strong>This javadoc used to claim the single minimum was "exactly as the prototype
+     * computed it", and that was false.</strong> The prototype filters {@code s.price > 0} at three
+     * sites; this query did not, so for the two seeded professionals with a free service the two
+     * disagreed — the API answered {@code 0} where the prototype showed ₵280 and ₵420. The claim was
+     * a parity assertion made in the one file that could have settled it, and settled nothing. Both
+     * quantities are returned now and each is named for what it is, so neither has to stand in for
+     * the other.
+     *
+     * <p><strong>One query, two columns, deliberately.</strong> {@link MarketplaceService#toCard}
+     * calls this once per card and browse maps the whole catalogue, so a second finder would double
+     * the statement count on the busiest public read for a quantity derivable in the same pass.
+     *
+     * <p><strong>{@code List<Object[]>}, not {@code Object[]}</strong> — the trap CLAUDE.md records
+     * against {@code EarningsRepository.lifetime}. A single-row aggregate declared as {@code
+     * Object[]} hands back the <em>list</em> wrapped in an array, so the first element is itself an
+     * {@code Object[]} and the first cast to {@code Number} fails with a 500 that says nothing about
+     * why. An aggregate with no {@code group by} always yields exactly one row, of two nulls when
+     * nothing matched — the caller treats an empty list as that same answer rather than trusting it.
      */
-    @Query("select min(s.priceMinor) from ServiceOffering s where s.professional.reference = :ref and s.active = true")
-    Long findFromPriceMinor(@Param("ref") String reference);
+    @Query(
+        "select min(s.priceMinor), min(case when s.priceMinor > 0 then s.priceMinor else null end) " +
+        "from ServiceOffering s where s.professional.reference = :ref and s.active = true"
+    )
+    List<Object[]> findPriceFloors(@Param("ref") String reference);
 
     @Query("select s from AvailabilitySlot s where s.professional.reference = :ref and s.taken = false " +
            "and s.slotDate >= :from and s.slotDate <= :to order by s.slotDate, s.slotTime")

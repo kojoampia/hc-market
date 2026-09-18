@@ -19124,3 +19124,253 @@ diagnosis. At 3,366 bytes it cannot invert at all.
 **Two items opened, neither fixed here**: **NEW-74**, an ERROR count has three different measures and
 the naive instrument counts the opposite population; **NEW-75**, the quality rate limits are in force
 and `CLAUDE.md` says no ceiling is in force anywhere.
+
+---
+
+## D100 — A free service is a fact about a listing, not its price
+
+**Backlog NEW-50.** Closed 2026-09-18, on branch `worktree-agent-a9d621de598a6db36` off `a88c790`.
+The product question was **already ratified** — `decisions.md` D92 §4, by the architect, 2026-09-16 —
+so this entry implements it, argues the two alternatives it beat so the choice can be revisited, and
+records the two decisions the ratification left to engineering.
+
+**Measuring first changed the size of the item in both directions.** One part of D92 §4's own cost
+estimate turned out to be **zero** work (§5), and a defect nobody had asked about turned out to be
+larger than the one the item was written for: the headline was a misleading number on a card, and the
+**filter was returning listings a customer cannot buy anything from** (§6).
+
+### §1 THE ANSWER: say both, and `fromPriceMinor` keeps its meaning
+
+**Settled, not reopened.** `ProfessionalCard` gains **`fromPaidPriceMinor`** — the cheapest ACTIVE
+service that costs something, which is the headline a card renders and which the prototype has always
+computed — and **`hasFreeService`**, the marker D92 §4 ratified in place of a ₵0 headline.
+`fromPriceMinor` still carries the literal minimum, `0` included.
+
+| | `fromPriceMinor` | `fromPaidPriceMinor` | `hasFreeService` |
+| --- | --- | --- | --- |
+| **p12** Abena Owusu — 0, 28000, 156000 | `0` (unchanged) | **28000** | **true** |
+| **p13** Hannah Tetteh — 0, 42000, 320000 | `0` (unchanged) | **42000** | **true** |
+| **p1** Akosua Mensah — 15000, 28000, 34000, 52000 | `15000` (unchanged) | 15000 | false |
+| the other fifteen | unchanged | equal to `fromPriceMinor` | false |
+
+**Sixteen of eighteen are unaffected by construction**, because a professional with no free service
+has one number twice. Derived per read from one query over `ServiceOffering`; **no column, no
+changelog, nothing stored** — the rule this repository turns on, and the reason a
+`professional.has_free_service` was never on the table.
+
+### §2 The two alternatives, and why each loses
+
+A ratified answer with no rejected alternatives written down is a decision nobody can revisit, so
+both are argued rather than merely named.
+
+**(a) Show the cheapest paid service — change the JPQL, one line.** This was the item's own
+recommendation and the prototype is the acceptance target, so it is the cheap and defensible answer.
+It loses because **it makes `fromPriceMinor` lie about the minimum**: the field would report `28000`
+for a professional who publishes something at `0`, and the honest answer to "what is the least this
+listing charges" would be unavailable anywhere in the API. Two live readers make that concrete — a
+`maxPriceMinor` filter and two `price-asc`/`price-desc` comparators would silently change meaning for
+those two rows, which is the same quantity moving under two names. And it would have **hidden a real
+offer to tidy a headline**: a free consultation is a conversion tool, not an embarrassment.
+
+**(b) Show zero — change the prototype's three sites and the comment.** "From ₵0" is literally true,
+and a customer looking for a free consultation genuinely wants to find one. It loses on the
+misrepresentation: **a doula whose packages run to ₵420 and ₵3,200 is not a "from ₵0" listing**, and
+the tile would read as an error rather than as an offer. It is also the only option with a cost
+outside this repository's own code — the prototype is the seed's source, CI asserts the seed
+regenerates from it byte-identically, and `p.rate` is derived in **block 1**, the block the extractor
+sandboxes. Editing it is the one change here that could have moved 289 KB of seed data.
+
+**Both losers share one property that (a) and (b) cannot express and that the ratified answer can**:
+there are two facts about p12 and only one number to put them in. Saying both costs a field.
+
+### §3 DECISION ONE: the marker is a boolean, and the two rejected spellings are the point
+
+D92 §4 said "its own marker" and left the shape open. There is **no frontend** (NEW-48), so this is an
+API contract a screen must be able to render **without a second request**, which is the constraint
+that eliminates most of the field.
+
+**Rejected: the free service's `reference`.** Opaque; a card cannot render `s12a`, so the client needs
+a second call to turn it into anything — the one thing the constraint forbids.
+
+**Rejected: the free service's `name`, which is the tempting one.** It renders directly — *"Free:
+Discovery session"* — and discloses nothing new, since `ServiceView.name` is already on the public
+profile. It loses on two grounds and the first is measured. **The platform cannot call it an
+"intro".** D92 §4 says "free-intro badge"; the two free services in the seed are **"Discovery
+session"** (p12, `s12a`) and **"Doula consultation"** (p13, `s13a`), and neither is an intro — a client
+rendering "free intro" would be making a claim about the service's purpose that nothing checks. And
+`ServiceOffering.name` is **free text its own professional types** (`ProWorkspaceResource`), while
+**D92 §3 has just ratified self-service signup** — so putting it on the card would widen where
+unvetted self-declared text renders from the profile alone to every Browse card, Discover tile and
+search result. That is **NEW-58's** subject, and it is not something to add to in passing in the
+release that opened it.
+
+**Rejected: a count.** "2 free services" is not a sentence a card says, and it reads oddly at 1.
+
+**`hasFreeService`, and the redundancy is deliberate.** `ServiceOffering.priceMinor` is
+`required min(0)` in the JDL, so `fromPriceMinor == 0` holds **exactly** when a free active service
+exists: the boolean carries no information the two numbers do not. It is published anyway because the
+alternative is **every client inventing that derivation in a template where nothing tests it** — a
+contract a caller has to infer by comparing two numbers is a contract that will be inferred wrong, and
+this repository has a long row of findings that begin exactly there. The three fields are computed
+together from one query so they cannot drift, and the IT asserts they agree.
+
+### §4 DECISION TWO: the filter and the sorts move, and the null is excluded
+
+The item named `maxPriceMinor` and the two comparators and said they must be settled in the same
+commit. **They are all on `fromPaidPriceMinor` now** — a budget is a question about what a listing
+sells for, and the quantity a customer filters by must be the quantity the card shows them, or the
+slider and the headline describe different catalogues.
+
+**A listing with no paid service is EXCLUDED from `maxPriceMinor`, not matched at every budget.**
+`minRating` is the precedent and the argument, verbatim one field along: it excludes unrated
+professionals rather than reading them as 0.0, because *"unrated"* and *"rated badly"* must not
+collapse. Here *"free"* and *"unpriced"* must not collapse for the same reason. A filter over a
+quantity somebody does not have cannot answer for them, and inventing a zero is what makes an
+all-free listing indistinguishable from an empty one.
+
+⚠ **The counter-argument is real and is recorded**: a professional whose every service is free costs
+nothing, so excluding them from "up to ₵90" is arguably wrong in the other direction. It was rejected
+because including them requires reading a missing price as zero — and then a professional with
+**nothing published** is surfaced in every budget bracket too, since both are null. The two are told
+apart by `fromPriceMinor` (`0` against null), so a **marker filter** is the right way to find them and
+it does not exist yet: **NEW-77**. Nobody is harmed today — there is no such professional in either
+estate.
+
+**A null sorts LAST in both directions, and both halves are asserted.** An unpriced listing is neither
+the cheapest nor the dearest. `nullsLast` on `price-asc` with `nullsFirst` on `price-desc` reads as
+symmetry and is not, which is why the test asserts the descending half rather than assuming it.
+
+**And a FOURTH site, which the item did not name**: `Facets.minPriceMinor`/`maxPriceMinor`, the range a
+client draws the price slider from. It read the literal minimum, so the slider's floor was **₵0** —
+a bracket the filter then matched nobody in. Left behind, the slider and the filter would have
+disagreed about their own scale, which is this item's defect rebuilt one layer up.
+
+### §5 The prototype needs NO change to its headline, and D92 §4's cost list was wrong about that
+
+D92 §4 costed this as *"a new field on the card DTO, **the prototype's three sites**, and a badge in a
+design system that does not exist yet"*. **Measured, the middle term is zero.** All three sites —
+`:740` in block 1, `:2425` in the professional workspace, `:2824` in live mode's own recompute — are
+`Math.min.apply(null, p.services.filter(s => s.price > 0).map(s => s.price))`, which **is**
+`fromPaidPriceMinor`. The prototype has computed the ratified headline all along; the API was the one
+that diverged, and D92's list was written before anyone had checked which way round that was.
+
+So the prototype is **right about the headline and silent about the marker**, and the marker is a
+card-design question — how two facts sit on one tile — which D92 §4 itself puts in "a design system
+that does not exist yet". That is **NEW-48's**, named and handed over rather than invented here. Not
+touching block 1 is also what keeps the seed out of this package: it regenerates byte-identically
+(18 / 52 / 63 / 256 / 8,162,000 pesewas), verified rather than assumed.
+
+⚠ **The prototype does have a defect on the same edge, and it is filed rather than fixed — NEW-78.**
+`Math.min.apply(null, [])` is **`Infinity`** (measured), so all three sites render `money(Infinity)`
+for a professional whose services are all free — under a comment at `:2824` claiming live and demo
+*"must agree on the same data, including on the edge where a professional's services are all free"*.
+They do agree; **agreeing is not being right**, and that is a parity claim asserted rather than
+measured, which is the genre of this entire item one document along. No seeded professional reaches
+it, the correct value there depends on NEW-48's card design, and block 1 is the seed's source — three
+reasons it is an item and not a patch.
+
+### §6 The half nobody asked about: the filter was answering with listings you cannot buy from
+
+The item is framed as a display divergence, and the javadoc as a false parity claim. **The filter was
+the sharper half**, and it was measured on the running quality estate at `a88c790` before any change:
+
+```
+GET /api/professionals?maxPriceMinor=9000        -> 3 matches: p13(0), p3(9000), p12(0)
+GET /api/professionals?sort=price-asc            -> p12(0), p13(0), p3(9000), p9(9500), p4(11000)
+GET /api/professionals/facets                    -> minPriceMinor = 0
+```
+
+**₵90 is the floor of the prototype's own price slider** (`min="90"` on the range input), so that
+first query is the tightest budget the interface can express — and two of its three answers were
+listings whose cheapest purchasable service is ₵280 and ₵420. **A display defect shows a customer a
+wrong number; this one showed them the wrong listings**, and "cheapest first" led with the two whose
+dearest packages are ₵1,560 and ₵3,200. The prototype's equivalents (`p.rate > f.maxPrice` and
+`a.rate - b.rate`) both read the paid minimum, so the divergence was at four sites, not one.
+
+**The javadoc is the root cause and is rewritten rather than annotated.**
+`MarketplaceQueryRepository:37-38` said the single minimum was *"exactly as the prototype computed
+it"* — a parity claim, asserted rather than measured, in the one file that would have settled it. Both
+quantities are returned now and each is named for what it is, so **neither has to stand in for the
+other** and there is nothing left for a comment to be wrong about.
+
+### §7 One query, and the two traps it walks past
+
+`findFromPriceMinor` is **replaced** by `findPriceFloors`, returning both columns in one row:
+
+```
+select min(s.priceMinor), min(case when s.priceMinor > 0 then s.priceMinor else null end)
+from ServiceOffering s where s.professional.reference = :ref and s.active = true
+```
+
+**One query and not two, deliberately.** `toCard` calls this once per card and `browse` maps the whole
+catalogue, so a second finder would have doubled the statement count on the busiest public read for a
+quantity derivable in the same pass.
+
+**`List<Object[]>`, never `Object[]`** — CLAUDE.md's wrapped-aggregate trap, recorded against
+`EarningsRepository.lifetime`. A unit case drives an `Integer`-valued row as well as a `Long` one,
+because Hibernate's type for an aggregate is not something to assume and a straight cast to `Long`
+would be a 500 on a public read. The zero-row branch is **unreachable today** — an aggregate with no
+`group by` always returns one row — and is written and tested anyway, because the alternative is an
+`IndexOutOfBoundsException` the day it is not.
+
+`MarketplaceQueryRepository` is **hand-written beside the generated `ProfessionalRepository`**
+(verified: the generated one is the bare `@SuppressWarnings("unused")` two-liner), so a
+`--force` regeneration leaves this method alone. A method added to `ProfessionalRepository` or
+`ServiceOfferingRepository` would have been discarded.
+
+### §8 Tests: 27 new, and 11 mutations watched going red
+
+**Nothing in catalog touched the price quantity before this package** — `fromPriceMinor`, the
+`maxPriceMinor` filter and both comparators had **zero** tests, which is how a four-site divergence
+survived.
+
+- **`AFreeServiceIsNotAPriceUnitTest`** (13) — the derivation against a mocked repository, and the
+  filter and both comparators against hand-built cards. **Its first version asserted nothing about
+  production code**: the card block read `card(…).fromPaidPriceMinor()` off a record this file had just
+  constructed, which asserts that a record constructor assigns its arguments — D93's finding,
+  reproduced in this package by the obvious shape. It drives `MarketplaceService.browse` now.
+- **`TheFromPriceOnTheWireIT`** (14) — the **serialised body**, because a component that is never
+  serialised or is renamed on the way out leaves every unit assertion green while NEW-48's card has
+  nothing to render. D47's verification-desk test is the precedent, applied to a field being *added*.
+  Five listings are planted: the two measured free-service shapes, the p1 control, an all-free and an
+  empty. Membership is asserted **by reference and never by a total**, since `browse` reads the whole
+  table; the one assertion that cannot be (the facet range) is scoped to a city only these rows carry.
+
+**Eleven mutations, applied one at a time, restored from a pristine copy after each, all red, none
+fail-open.** The attribution is the property worth having rather than the count: reverting `price-desc`
+alone reddens only the descending test, `nullsLast` → `nullsFirst` on `price-asc` alone reddens only
+the unpriced-ordering test, and widening `hasFreeService` to `minor != null` reddens only the control.
+Two are visible **solely** to the IT — the facet range, and the JPQL's `> 0` relaxed to `>= 0` — which
+is what that file is for.
+
+### §9 Verified, assumed, not exercised
+
+**Verified.** Both of the item's live measurements reproduce exactly, twice over and independently:
+through the gateway against the running quality estate at `a88c790`, and derived from
+`deploy/demo/seed-data.json` for all eighteen professionals. The four divergent sites and the ₵90
+slider floor are read from the prototype's own source. `catalog` `clean verify` is green — **128 unit
+and 93 integration tests, 0 checkstyle violations**, `modernizer` clean and `TechnicalStructureTest`
+passing. The seed regenerates byte-identically. `sync-appendices.sh --check` is in sync and all 37
+tracked shell scripts parse. `Math.min.apply(null, [])` is `Infinity`, run rather than recalled.
+
+**Assumed.** That `fromPaidPriceMinor` and `hasFreeService` are the names a future client wants; no
+client exists, and the two are the shape D92 §4 and the item's own option three describe.
+
+⚠ **Not exercised.** **No `after` state was measured on the quality estate** — nothing here is
+deployed, by design, so every post-change figure in §1 and §6 comes from the integration test's
+planted rows rather than from the seeded eighteen. The three that would be worth confirming on the
+next roll are `maxPriceMinor=9000` answering with **p3 alone**, `price-asc` leading with
+**p3, p9, p4**, and the facet floor reading **9000**. **No professional with only free services and
+none with no services at all has ever existed in either estate**, so both null cases are exercised by
+tests and by nothing else. `modernizer` was met once and is worth naming, since its advice here is
+wrong: it demands `List.of(Object)` in place of `Collections.singletonList`, and for a single
+`Object[]` that binds to the varargs overload and rejects nulls — the list is built by hand and says
+so. **`prettier` could not be run**: `catalog/package.json` has no `prettier:format` script (CLAUDE.md
+names one; it is stale for this service) and `node_modules` is not installed, so the two rules it
+would apply were checked by hand — 4-space Java, and 140 columns, against a file that already carried
+seven over-length lines on `a88c790`.
+
+**Three items opened, none fixed here**: **NEW-76**, a `LoggingAspect` refusal costs five ERROR lines
+and not two, because two layers are advised; **NEW-77**, a free service is published and unfindable —
+there is no filter and no facet for the marker this decision adds; **NEW-78**, the prototype's own
+"from" price is `Infinity` on the all-free edge, under a comment claiming that edge is handled.

@@ -83,7 +83,7 @@ production. Phases are sequential where stated and their items are independent w
 |---|---|---|---|
 | **1** | a person can hold an account | ~~NEW-47~~ **DONE** (D94) | — |
 | **2** | the application | NEW-48 | phase 1 for anything behind a token; D90 §3 for its shape |
-| **3** | the promises the API already makes | NEW-49, NEW-50, ~~NEW-51~~ **DONE** (D95), ~~NEW-52~~ **DONE** (D96), NEW-53 | nothing; cheaper with phase 2's screens |
+| **3** | the promises the API already makes | NEW-49, ~~NEW-50~~ **DONE** (D100), ~~NEW-51~~ **DONE** (D95), ~~NEW-52~~ **DONE** (D96), NEW-53 | nothing; cheaper with phase 2's screens |
 | **4** | money for real | WP-13, NEW-54 | Act 987, provider credentials, a callback route |
 | **5** | deploy | WP-18, WP-19, NEW-55 | the four gates below |
 
@@ -4107,7 +4107,51 @@ where that stops being copy.
 
 ---
 
-## NEW-50 — the API's "from" price includes a free service and the prototype's excludes it · READY
+## NEW-50 — the API's "from" price includes a free service and the prototype's excludes it · DONE (D100)
+
+> **CLOSED 2026-09-18 — `decisions.md` D100**, on branch `worktree-agent-a9d621de598a6db36` off
+> `a88c790`. `ProfessionalCard` gains **`fromPaidPriceMinor`** (the cheapest service somebody can buy —
+> the headline, and what the prototype has always computed) and **`hasFreeService`** (the marker).
+> `fromPriceMinor` keeps the literal minimum, `0` included. **One hand-written repository method, two
+> record components, no column, no changelog, no JDL change** — derived per read from one query.
+>
+> **27 new tests and 11 mutations watched going red, one at a time, none fail-open.** Nothing in catalog
+> had touched the price quantity before: `fromPriceMinor`, the `maxPriceMinor` filter and both price
+> comparators had **zero** tests, which is how a four-site divergence survived.
+>
+> **THE FILTER WAS THE SHARPER HALF, and this item did not frame it that way.** Measured on quality at
+> `a88c790`: `?maxPriceMinor=9000` — ₵90, the floor of the prototype's own slider — answered with
+> **three** professionals, two of them p12 and p13, whose cheapest *purchasable* services are ₵280 and
+> ₵420 and whose dearest are ₵1,560 and ₵3,200. `?sort=price-asc` **led** with the same two, ahead of p3
+> at ₵90. So a display defect shows a wrong number and this one **showed the wrong listings**. The
+> `maxPriceMinor` filter, both comparators and — a **fourth** site this item did not name — the
+> `Facets` price range all read `fromPaidPriceMinor` now; the facet floor had been `0`, which gave the
+> slider a bracket the filter matched nobody in.
+>
+> **A listing with no paid service is EXCLUDED from a price filter, not matched at every budget** —
+> `minRating`'s refusal to read an unrated professional as 0.0, verbatim one field along. A null sorts
+> **last in both directions**. Finding those listings needs a marker filter that does not exist:
+> **NEW-77**.
+>
+> **`fromPriceMinor` is kept rather than narrowed for a reason beyond honesty**: it is the only thing
+> that tells an all-free listing (`0`) from one with nothing published (null), once `fromPaidPriceMinor`
+> is null for both.
+>
+> **THE PROTOTYPE NEEDED NO CHANGE, and D92 §4's cost list was wrong about that.** It costed "the
+> prototype's three sites" as work; measured, all three already compute the ratified headline, so that
+> term is **zero** — the API was the side that diverged. The prototype is right about the headline and
+> silent about the marker, and the marker is a card-design question handed to **NEW-48**. The seed
+> regenerates byte-identically and block 1 was not touched.
+>
+> **The marker is a boolean and not the free service's name**, which is the tempting spelling: the two
+> free services in the seed are *"Discovery session"* and *"Doula consultation"*, so **neither is an
+> "intro"** and a client rendering D92's word would be claiming something nothing checks — and
+> `ServiceOffering.name` is professional-typed free text, so carrying it would widen self-declared text
+> from the profile to every Browse card in the release that ratified self-service signup (**NEW-58**).
+>
+> **Opened, not fixed**: **NEW-76** (a refusal costs five ERROR lines, not two), **NEW-77** (the marker
+> is unfindable), **NEW-78** (the prototype renders `Infinity` on the all-free edge, under a comment
+> claiming that edge is handled).
 
 > **RATIFIED 2026-09-16 — `decisions.md` D92 §4. Neither reading wins: say both.** The headline is the
 > **paid** minimum and the free service gets its **own marker**, not a price of ₵0. It is the only one of
@@ -6113,3 +6157,116 @@ item still has its subject.
 ### Not blocked
 
 No decision from a person; the measurement is done and the estate is available to re-measure.
+
+---
+
+## NEW-76 — a deliberate refusal costs FIVE ERROR lines, not two, because two layers are advised · READY
+
+**Found 2026-09-18 while closing NEW-50**, measured on the quality estate at `1ac77c7`. Nothing here is
+a regression: D97 closed NEW-65 correctly and this item makes **its argument stronger** than the
+document states.
+
+`CLAUDE.md`'s `LoggingAspect` row says an `IllegalArgumentException` refusal is **two** ERROR lines and
+an `IllegalStateException` one *"through an advice the item that found this never mentioned"*, and warns
+that a `:113`-only repair leaves the count non-zero.
+
+**Measured, driving two desk refusals against the already-`PAID` batch `PAY-202602-p1-01`:**
+
+| refusal | the row says | measured |
+| --- | --- | --- |
+| the `IllegalArgumentException` arm | 2 | **3** |
+| the `IllegalStateException` arm | 1 | **2** |
+| **one pair of correct refusals** | 3 | **5** |
+
+**The cause is that `web.rest` and `service` are BOTH advised**, so the exception crosses two advised
+boundaries: `PayoutRun` logs it, and `PayoutDeskResource` then logs the `ResponseStatusException` it
+became. The row reasons about `logAround`'s catch and `logAfterThrowing` as the two advices on one
+pointcut and does not account for the pointcut matching **twice on one call path**.
+
+**Why it matters rather than being a tidier number.** The row's own warning — that a repair touching one
+advice leaves the count non-zero — is **more** true than written, and anyone budgeting "how many ERROR
+lines does a correct estate emit" from that row is low by a factor of about 1.7 on the desk's own paths.
+The zero-ERROR argument D64, D73 and D97 all rest on is a claim about *correct* refusals being silent,
+so the multiplier is exactly the quantity that argument turns on.
+
+⚠ **Note the measure used, because the naive one cannot see these lines at all.** This is the
+**anchored application-only** ERROR count, not `grep -c ' ERROR '`, which cannot match a colourised
+application line — that instrument problem is already **NEW-74**, and this item's numbers are not
+comparable to any figure produced by the naive form.
+
+### Not blocked
+
+No decision from a person. The fix is a corrected row in `CLAUDE.md` and, if it is worth it, a sentence
+in D97 §5; the measurement is done. **Do not "fix" it by dropping a real ERROR to WARN** — that is the
+defect D97 closed, inverted.
+
+---
+
+## NEW-77 — a free service is published and there is no way to look for one · READY
+
+**Opened by `decisions.md` D100** (backlog NEW-50), 2026-09-18. D100 adds `hasFreeService` to
+`ProfessionalCard` and moves `maxPriceMinor`, both price comparators and the `Facets` price range onto
+`fromPaidPriceMinor`. Two consequences follow and neither is closed:
+
+- **the marker is readable and not searchable.** A client can render "free consultation available" on a
+  card it already has, and there is **no `hasFreeService` filter and no facet**, so a customer who wants
+  a free consultation cannot ask for one. The prototype has no such control either, so this is new
+  surface rather than restored parity;
+- **a professional whose every service is free is excluded from every `maxPriceMinor` bracket.** D100 §4
+  argues that deliberately — `minRating`'s refusal to read an unrated professional as 0.0 — and names
+  the counter-argument: such a listing costs nothing, so a budget filter arguably ought to match it.
+  **The marker filter is the answer D100 points at**, because it separates "free" from "unpriced"
+  instead of collapsing them, which is what treating a missing price as zero would do.
+
+**Nobody is harmed today.** No professional in either estate has only free services; two (p12, p13) have
+one free service beside paid ones, and both are matched by any budget reaching their cheapest paid
+price. So this is a missing capability, not a defect.
+
+**Done means** a decision on the filter's shape — a `hasFreeService` boolean parameter, a facet count
+beside the existing four, or both — and whether an all-free listing then becomes reachable through it.
+It is **cheaper with phase 2's screens** (NEW-48): a filter nothing renders is a parameter nobody sends,
+and the facet counts exist to sit beside controls.
+
+### Not blocked
+
+No decision from a person is required to start, but the shape is a product question and the screens are
+not built.
+
+---
+
+## NEW-78 — the prototype's own "from" price is `Infinity` on the edge its comment claims to handle · READY
+
+**Found 2026-09-18 while closing NEW-50.** `docs/Abofonsa_BridgeCare_Marketplace.html` derives the
+headline price at three sites — `:740` (block 1), `:2425` (the professional workspace) and `:2824` (live
+mode's own recompute) — all of them:
+
+```js
+p.rate = Math.min.apply(null, p.services.filter(s => s.price > 0).map(s => s.price));
+```
+
+**`Math.min.apply(null, [])` is `Infinity`** (run, not recalled), so a professional whose services are
+all free — or who has none — renders `money(Infinity)` on every browse card and on the profile.
+
+**The sharp form is the comment, which is this repository's recurring genre.** `:2824` says the same
+formula is used rather than a tidier one *"deliberately: live and demo must agree on the same data,
+including on the edge where a professional's services are all free."* **They do agree, and agreeing is
+not being right** — both modes render the same wrong thing. That is a parity claim asserted rather than
+measured, one document along from `MarketplaceQueryRepository`'s, which is exactly what NEW-50 was about.
+
+**It is the `₵NaN` class** (D29/D46) and milder than both of its predecessors: `₵NaN` and the plausible
+`269` were live on every estate, and this fires for **no professional in the seed** — all eighteen have
+at least one paid service.
+
+### Why it is an item and not a patch
+
+Three reasons, and the first is the expensive one. **Block 1 is the seed's source** — the extractor
+sandboxes it and CI asserts `seed-data.json` regenerates byte-identically — so an edit there is the one
+change in this area that can move 289 KB of committed data. **The right value is not obvious and belongs
+with the card design**: `null` and an omitted price is what D100's API answers (`fromPaidPriceMinor` is
+null), but whether the tile then reads "free consultation" or nothing at all is **NEW-48's**. And
+**`money()` has other callers**, so hardening the formula and hardening the renderer are different
+fixes with different blast radii.
+
+### Not blocked
+
+No decision from a person; it wants NEW-48's card design to say what the tile should read.
