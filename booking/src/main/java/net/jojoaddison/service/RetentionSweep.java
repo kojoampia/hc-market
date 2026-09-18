@@ -107,15 +107,28 @@ public class RetentionSweep implements SchedulingConfigurer {
     /**
      * Registers the sweep, or deliberately registers nothing.
      *
-     * <p>Every value is read here so an unusable one is a startup failure. The financial period is
-     * checked for presence only when the sweep is enabled: an estate that is not sweeping has no need
-     * of a window, and refusing to start over a blanked number nothing reads would be a guard that
-     * fires on a correct state.
+     * <p><strong>All three switches are read BEFORE the enabled check, and that ordering is the
+     * point</strong> — a review finding against the first cut of this method, which returned early and
+     * so never looked at {@code sweep-dry-run} or {@code sweep-cron} on a disabled estate. That made
+     * {@code HC_RETENTION_SWEEP_DRY_RUN=fales} silently acceptable until the deploy that switched the
+     * sweep on, which is the worst moment to discover it and is exactly the *"a value somebody set and
+     * this estate silently ignored"* case {@link DisputeSlaProperties}' own comment argues against.
+     * Reading them eagerly costs nothing: the getters are pure and a correct estate has three readable
+     * values.
+     *
+     * <p><strong>The financial period stays conditional, deliberately</strong>, and that is not the
+     * same case. It is not this class's switch — it is counsel's ratified figure, blankable, and read
+     * by the desk endpoint whether or not anything sweeps. An estate that is not sweeping has no need
+     * of a window, so refusing to start over a number nothing reads would be a guard firing on a
+     * correct state.
      */
     @Override
     public void configureTasks(ScheduledTaskRegistrar registrar) {
         PrivacyProperties.Retention retention = privacy.getRetention();
-        if (!retention.sweepEnabled()) {
+        boolean enabled = retention.sweepEnabled();
+        boolean dryRun = retention.sweepDryRun();
+        String cron = retention.sweepCron();
+        if (!enabled) {
             LOG.info(
                 "retention: no sweep registered — healthconnect.privacy.retention.sweep-enabled is false, so the " +
                     "financial and operational periods are a stated policy and nothing applies them (decisions.md D96)"
@@ -123,8 +136,6 @@ public class RetentionSweep implements SchedulingConfigurer {
             return;
         }
         Duration window = financialWindow(retention);
-        String cron = retention.sweepCron();
-        boolean dryRun = retention.sweepDryRun();
         LOG.warn(
             "retention: sweeping on '{}' — customers with no booking activity for {} days will be {} (decisions.md D96)",
             cron,
@@ -144,11 +155,39 @@ public class RetentionSweep implements SchedulingConfigurer {
      * wanted. The only callers are this class's registered task and the tests that put the boundary
      * where they need it.
      *
+     * <h2>It re-reads all three values, which makes {@code sweep-enabled} a KILL SWITCH</h2>
+     *
+     * <p>Found while answering a review question about configuration rebinding, and it is the one place
+     * that mechanism matters. {@code spring-cloud-starter-consul-config} is on booking's classpath with
+     * its <em>watch</em> enabled by default, so a write to this application's Consul KV key fires a
+     * {@code RefreshEvent} and {@code @ConfigurationProperties} are rebound — <strong>with no HTTP
+     * endpoint involved</strong>, which matters because {@code refresh} is deliberately not in this
+     * service's exposed management endpoints. Every value here is read per run and parsed on every
+     * read, so a rebind takes effect on the next run rather than at the next restart.
+     *
+     * <p>The consequence worth knowing: <strong>the registered task does not disappear when the sweep
+     * is disabled</strong> — {@code configureTasks} runs once, at startup — so without the check below
+     * a rebind setting {@code sweep-enabled=false} would be silently ignored and the nightly erasure
+     * would continue. That is the wrong direction for an irreversible act, so this asks again. An
+     * operator can now stop the sweep on a running estate, and <em>cannot</em> start one that was never
+     * registered; both halves are the safe direction, and starting one still needs a restart.
+     *
+     * <p>A rebound value this class cannot read throws here rather than at startup, which is the
+     * unavoidable cost of the same mechanism — the sweep then does nothing that night, which is again
+     * the safe direction, and the scheduler logs it.
+     *
      * @return what it selected and what it erased — see {@link Swept}, and note the two are not the
      *         same number by construction.
      */
     Swept sweep() {
         PrivacyProperties.Retention retention = privacy.getRetention();
+        if (!retention.sweepEnabled()) {
+            LOG.warn(
+                "retention: the sweep is registered but healthconnect.privacy.retention.sweep-enabled is now false — " +
+                    "nothing was erased. A restart is needed to stop the task itself (decisions.md D96)"
+            );
+            return new Swept(0, 0);
+        }
         Duration window = financialWindow(retention);
         Instant cutoff = Instant.now().minus(window);
         return sweepAsAt(cutoff, retention.sweepDryRun());

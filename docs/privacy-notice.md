@@ -124,12 +124,17 @@ We do not sell your data, and we do not share it with anyone else except where t
 > **derives** that answer from what the systems will actually do rather than stating it as a fixed
 > sentence — so if this ever stops being true, that endpoint changes with it.
 >
-> **Since 17 September 2026 we have the means to apply the 6-year financial period and have not
-> switched it on** (`decisions.md` D96). It is deliberately off, and turning it on takes two separate
-> settings, because deleting somebody's records cannot be undone and we would rather count first than
-> discover afterwards. **Nothing has been deleted by it on any of our systems.** The 1-year operational
-> period — messages and notifications — still has nothing behind it at all. We would rather tell you
-> that than let "we have a mechanism" be read as "we have applied it".
+> **Since 17 September 2026 we have the means to apply the 6-year financial period to a customer's
+> booking records, and we have not switched it on** (`decisions.md` D96). It is deliberately off, and
+> turning it on takes two separate settings, because deleting somebody's records cannot be undone and
+> we would rather count first than discover afterwards. **Nothing has been deleted by it on any of our
+> systems.**
+>
+> Two things that means it does **not** cover, said plainly rather than left to be assumed: the
+> earnings and payment records we keep about **professionals** are under the same 6-year period and
+> nothing applies it to them; and the 1-year operational period — messages and notifications — still
+> has nothing behind it at all. We would rather tell you that than let "we have a mechanism" be read as
+> "we have applied it everywhere".
 
 ### 7.1 One deletion that does happen automatically
 

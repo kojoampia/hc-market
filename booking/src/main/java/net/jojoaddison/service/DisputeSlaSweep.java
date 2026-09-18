@@ -80,6 +80,15 @@ public class DisputeSlaSweep implements SchedulingConfigurer {
 
     private static final Logger LOG = LoggerFactory.getLogger(DisputeSlaSweep.class);
 
+    /**
+     * How many references the WARN line names before it abbreviates — see the comment at the log site.
+     *
+     * <p>Twelve is a judgement and not a measurement: enough that a normal morning's list is complete,
+     * short enough that a pathological one stays one readable line. {@link Overdue#references()} is
+     * always complete regardless.
+     */
+    private static final int REFERENCES_IN_THE_LOG = 12;
+
     private final DisputeSlaRepository disputes;
 
     private final DisputeSlaProperties properties;
@@ -96,6 +105,15 @@ public class DisputeSlaSweep implements SchedulingConfigurer {
      * 07:00 — {@code AccountRetention}'s rule (D94), and it applies to a harmless task for the
      * uninteresting reason that a scheduled task which silently never runs is indistinguishable from
      * one that finds nothing.
+     *
+     * <p><strong>Disabled is a WARN here and an INFO in {@link RetentionSweep}, and the asymmetry is
+     * deliberate</strong> — stated because it looks like an inconsistency somebody would tidy. A
+     * disabled retention sweep is this estate's <em>default and recommended</em> state, so announcing
+     * it at WARN would train people to ignore a level that elsewhere means something. A disabled
+     * dispute sweep is the opposite: it returns the estate to having a customer-facing promise that
+     * <em>nothing whatsoever</em> reads back, which is the condition NEW-52 existed to end, so it
+     * deserves a nag for as long as it lasts. The level tracks "is this state one somebody should be
+     * reminded of", not "is this switch off".
      */
     @Override
     public void configureTasks(ScheduledTaskRegistrar registrar) {
@@ -138,6 +156,15 @@ public class DisputeSlaSweep implements SchedulingConfigurer {
             return new Overdue(0, List.of());
         }
         List<String> references = late.stream().map(Dispute::getReference).toList();
+        /* THE LINE IS CAPPED AND THE RECORD IS NOT. A backlog of four hundred overdue disputes would
+           otherwise put four hundred references on one line, which stops being greppable at exactly
+           the moment somebody needs to read it — and the count, which is the number that matters, ends
+           up at the far left of a wrapped wall. `Overdue.references()` still carries every one, so a
+           caller (a desk screen, NEW-69) loses nothing; only the log line is abbreviated, and it says
+           so rather than appearing to be the whole list. */
+        String shown = references.size() <= REFERENCES_IN_THE_LOG
+            ? references.toString()
+            : "%s … and %d more".formatted(references.subList(0, REFERENCES_IN_THE_LOG), references.size() - REFERENCES_IN_THE_LOG);
         /* The oldest is called out beside the count because a list of twelve references says how many
            and not how bad. Whole days, from the earliest deadline — the query orders by dueBy, so the
            first row is the worst one. */
@@ -152,7 +179,7 @@ public class DisputeSlaSweep implements SchedulingConfigurer {
                 "References: {}. Nothing has been changed; this is a report (decisions.md D96, backlog NEW-69)",
             references.size(),
             worstDays,
-            references
+            shown
         );
         return new Overdue(references.size(), references);
     }

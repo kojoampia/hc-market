@@ -17968,10 +17968,23 @@ green.
 
 **Not exercised, and each for a reason.**
 
-- **No sweep has run on a timer anywhere.** Every case drives the task or the registrar directly, and
-  `@EnableScheduling` is inactive under the test profiles — so *that the cron fires* is asserted by
-  nothing here. What is asserted is that a task is registered, on the configured expression, and what
-  it does when it is called.
+- **Neither of THESE TWO sweeps has run on a timer.** Every case drives the task or the registrar
+  directly, and `@EnableScheduling` is inactive under the test profiles, so *that the cron fires* is
+  asserted by nothing **in this package**. What is asserted is that a task is registered, on the
+  configured expression, and what it does when it is called.
+  **The PATTERN is exercised, and the first draft of this paragraph was wider than the truth** — the
+  reviewer measured it. D94's `UnactivatedAccountSweep` registers through the identical
+  `SchedulingConfigurer` path and **has fired on its own cron in a real estate**: the quality gateway
+  started 2026-09-17T20:32:05Z and logged, on the scheduler thread,
+  ```
+  2026-09-18T01:00:00.437Z  [ay-scheduling-1]  UnactivatedAccountSweep: No unactivated account is older than 3 days
+  ```
+  So the mechanism — `SchedulingConfigurer` + a cron task + `@EnableScheduling` under
+  `!testdev & !testprod` — is demonstrated one service over, on a real estate, at the minute it was
+  configured for. **The narrower claim is the honest one**: what is untested is these two beans, on a
+  path that has been watched working. That gap is judged acceptable rather than closed — building
+  machinery to fire a cron inside a build would test the framework, and the beans' own logic is driven
+  directly by twenty-odd assertions.
 - **No estate has run either sweep**, because none is deployed and the quality box was deliberately not
   touched (it holds the estate's first payout batch). The compose edits change the five app services'
   environment, so the **next** roll will recreate them — expected, and per D68 a recreate restores the
@@ -17985,3 +17998,77 @@ green.
   half-built. **Losing the block is silent in the safe direction**: every switch falls back to its Java
   default, which is *off*, so what is lost is the ability to enable the sweep — not a sweep that starts
   deleting.
+
+### §12 What review changed, and the kill switch it surfaced
+
+Nothing blocked. Three findings and four nits; all taken, and two of them changed behaviour rather
+than prose.
+
+**1. The continue-on-failure property was asserted by nothing, and `RetentionSweepIT` cannot assert
+it.** §6 argues at length that `sweep()` must not be `@Transactional` — *"a customer whose erasure
+fails rolls back alone and the rest are still erased"* — and **no test covered it**. The reason is
+structural and worth recording: `RetentionSweepIT` is class-level `@Transactional` and
+`eraseCustomer` is `@Transactional` with the default `REQUIRED`, so inside that IT the erasure
+**joins the test's transaction** and the per-customer boundary does not exist to be observed.
+
+**Measured, not reasoned**: with `sweep()` mutated to abandon the run at the first failed erasure,
+`RetentionSweepIT` passed **all 8**. So the file that looks like the home for this property is blind
+to it. `OneFailedErasureDoesNotAbandonTheSweepTest` is a plain Mockito test with no context — five
+of five customers attempted, four counted, the failure logged **by alias** — plus a case pinning the
+absence of `@Transactional` on the class and on both sweep methods, because the behavioural cases
+construct the object directly and would stay green if it were added.
+
+**2. `processing-record.md` §6.2 over-generalised, and a regulator could have quoted it.** *"No longer
+missing engineering either, for the financial period"* is unscoped: the sweep applies that period to a
+**customer's data in booking** — it calls `eraseCustomer`, not the `eraseEverywhere` fan-out. Three
+things under the same 2,190-day period are **not** reachable by it, now enumerated in place: activity
+**2.6** (a professional's earnings and payout batches, in payout — and a customer's erasure leaves
+every ledger row intact *by design*), a professional's identity on a seven-year-old booking, and the
+operational period. §5's row now reads *"Partly available, and switched off"*, and 2.6's retention cell
+says so too. The capability is **one activity wide, not one category wide**.
+
+**3. §2.7 claimed a stored actor that does not exist.** *"The acting staff member's sign-in name"* was
+listed among the categories of data kept for erasure records. Measured column by column:
+`erased_subject` is `pseudonym` + `erased_at`; `erasure_run` is `id`, `pseudonym`, `ran_at`,
+`complete`, `booking_references`, `receipt`; and the serialised receipt is `pseudonym`, `complete`,
+`recorded`, `recordId`, `bookingReferences`, legs — **no actor anywhere**. Pre-existing, and **this
+package established the falsifying fact** (§9's NEW-67 depends on it) while editing the same document
+without reconciling it. Over-stating what is kept is the safer direction and still wrong.
+
+**4. The eager validation, and it removes a case rather than documenting it.** `configureTasks`
+returned early on `sweep-enabled=false` and so never read the other two, making
+`HC_RETENTION_SWEEP_DRY_RUN=fales` silently acceptable **until the deploy that switched the sweep on**.
+All three are read before the enabled check now. **The financial period stays conditional** — it is
+counsel's figure rather than this class's switch, it is blankable, and the desk reports it whether or
+not anything sweeps, so refusing over it would fire on a correct state. Both halves are asserted, the
+second as the first one's control.
+
+**5. The dispute line is capped at twelve references** (`… and N more`) while `Overdue.references()`
+stays complete: a four-hundred-reference line stops being greppable exactly when somebody needs it.
+**6. The WARN-when-disabled asymmetry is now argued in place** — a disabled retention sweep is this
+estate's recommended state and gets INFO; a disabled dispute sweep returns the estate to a promise
+nothing reads back, which is the condition NEW-52 existed to end, and gets a nag. The level tracks
+*"should somebody be reminded of this state"*, not *"is this switch off"*.
+
+**7. The rebind question turned out to be a missing kill switch.** The reviewer asked for one sentence
+recording that `spring-cloud-context` can rebind `@ConfigurationProperties`. Checking the premise
+produced something better. `spring-cloud-starter-consul-config` **is** on booking's classpath with its
+watch enabled by default, so a Consul KV write fires a `RefreshEvent` and rebinds — **with no HTTP
+endpoint involved**, which matters because `refresh` is deliberately absent from this service's
+exposed management endpoints, so the obvious "there is no door" reassurance is beside the point. Every
+value is read per run and parsed on every read, so a rebind takes effect on the next run.
+
+**The consequence the sentence would have missed: `configureTasks` runs once, so the registered task
+does not disappear when the sweep is disabled.** Without a re-check, an operator setting
+`sweep-enabled=false` on a running estate would be **silently ignored and the nightly erasure would
+continue** — the wrong direction for an irreversible act. `sweep()` asks again, so it is a genuine kill
+switch; the converse is deliberately not available, since enabling by rebind registers no task and
+still needs a restart. A rebound value that cannot be read throws inside the task, which costs that
+night's run and deletes nothing — the safe direction again.
+
+**And that test was vacuous on its first draft, caught by its own red-first run.** `candidates` is a
+mock and `customersWithNoActivitySince` was unstubbed, so it returned an empty list: the case passed
+**with the kill switch removed**, proving nothing. It stubs a customer now and has an explicit
+**control** asserting the same fixture *does* erase when enabled. This is the ninth-or-so instance of
+this repository's signature failure, produced inside the package whose review had just named it — and
+the only reason it was caught is that the mutation was run before the assertion was believed.

@@ -16,6 +16,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.scheduling.config.ScheduledTaskRegistrar;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -222,7 +223,7 @@ class RetentionSweepIT {
         bare.getRetention().setSweepEnabled("true");
         RetentionSweep unconfigured = new RetentionSweep(candidates, null, bare);
 
-        assertThatThrownBy(() -> unconfigured.configureTasks(new org.springframework.scheduling.config.ScheduledTaskRegistrar()))
+        assertThatThrownBy(() -> unconfigured.configureTasks(new ScheduledTaskRegistrar()))
             .isInstanceOf(IllegalStateException.class)
             .hasMessageContaining("financial-days")
             .hasMessageContaining("sweep-enabled=false");
@@ -238,7 +239,7 @@ class RetentionSweepIT {
     @Test
     @DisplayName("a disabled sweep registers nothing with the scheduler")
     void offMeansNoTask() {
-        var registrar = new org.springframework.scheduling.config.ScheduledTaskRegistrar();
+        var registrar = new ScheduledTaskRegistrar();
         PrivacyProperties off = new PrivacyProperties();
         off.getRetention().setFinancialDays(FINANCIAL_DAYS);
 
@@ -247,11 +248,59 @@ class RetentionSweepIT {
         assertThat(registrar.getCronTaskList()).as("nothing scheduled, not something scheduled that does nothing").isEmpty();
     }
 
+    /**
+     * A DISABLED sweep still refuses an unreadable switch, and that is a review finding.
+     *
+     * <p>The first cut of {@code configureTasks} returned early on {@code sweep-enabled=false} and so
+     * never read the other two — making {@code sweep-dry-run=fales} silently acceptable until the
+     * deploy that switched the sweep on, which is the worst moment to find it. All three are read
+     * before the enabled check now.
+     *
+     * <p>Red-first: with the reads moved back below the early return, both cases here pass with no
+     * exception and the defect is fully restored.
+     */
+    @Test
+    @DisplayName("an unreadable dry-run or cron refuses startup even while the sweep is off")
+    void aDisabledSweepStillValidatesItsOtherSwitches() {
+        PrivacyProperties typo = new PrivacyProperties();
+        typo.getRetention().setFinancialDays(FINANCIAL_DAYS);
+        typo.getRetention().setSweepDryRun("fales");
+        assertThatThrownBy(() -> new RetentionSweep(candidates, null, typo).configureTasks(new ScheduledTaskRegistrar()))
+            .as("a mistyped dry-run is dry-run OFF under a lenient parse — it must never wait for the enabling deploy")
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("sweep-dry-run");
+
+        PrivacyProperties badCron = new PrivacyProperties();
+        badCron.getRetention().setFinancialDays(FINANCIAL_DAYS);
+        badCron.getRetention().setSweepCron("at teatime");
+        assertThatThrownBy(() -> new RetentionSweep(candidates, null, badCron).configureTasks(new ScheduledTaskRegistrar()))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("sweep-cron");
+    }
+
+    /**
+     * But a BLANKED financial period is still accepted while the sweep is off — the deliberate
+     * exception to the case above.
+     *
+     * <p>That number is counsel's ratified figure rather than this class's switch, it is blankable, and
+     * the desk endpoint reports it whether or not anything sweeps. An estate that is not sweeping has
+     * no need of a window, so refusing here would be a guard firing on a correct state. The
+     * enabled-and-no-window case is {@link #anEnabledSweepNeedsAWindow()}.
+     */
+    @Test
+    @DisplayName("a disabled sweep does not demand a financial period")
+    void aDisabledSweepToleratesNoWindow() {
+        var registrar = new ScheduledTaskRegistrar();
+        new RetentionSweep(candidates, null, new PrivacyProperties()).configureTasks(registrar);
+
+        assertThat(registrar.getCronTaskList()).isEmpty();
+    }
+
     /** And an enabled one does register, on the configured expression. */
     @Test
     @DisplayName("an enabled sweep registers one cron task on the configured expression")
     void onMeansOneTask() {
-        var registrar = new org.springframework.scheduling.config.ScheduledTaskRegistrar();
+        var registrar = new ScheduledTaskRegistrar();
         PrivacyProperties on = new PrivacyProperties();
         on.getRetention().setFinancialDays(FINANCIAL_DAYS);
         on.getRetention().setSweepEnabled("true");

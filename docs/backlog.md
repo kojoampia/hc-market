@@ -4319,9 +4319,31 @@ the whole of the internal record, and only *automated* settlement waits on couns
 > thing — the means exist for one period and are switched off, and the other period has nothing. A
 > regulator-facing document understating a capability is as wrong as one overstating it.
 >
+> **REVIEWED 2026-09-18, nothing blocked, three findings and four nits — all taken, two of which
+> changed behaviour** (D96 §12). The one worth reading: **the continue-on-failure property was
+> asserted by nothing**, and `RetentionSweepIT` is structurally incapable of asserting it — it is
+> `@Transactional` and `eraseCustomer` is `REQUIRED`, so the erasure joins the test's transaction and
+> the per-customer boundary does not exist to be observed. **Measured**: with `sweep()` mutated to
+> abandon the run at the first failure, that IT passed all 8. `OneFailedErasureDoesNotAbandonTheSweepTest`
+> (no context, Mockito) covers it now and pins the absent `@Transactional` besides.
+> **A kill switch was surfaced by a nit about configuration rebinding**: `configureTasks` runs once, so
+> the registered task survives a rebind — an operator disabling the sweep on a running estate was
+> silently ignored and the nightly erasure continued. `sweep()` re-checks now. Enabling by rebind still
+> needs a restart, which is the safe asymmetry. **And that test was vacuous on its first draft** — an
+> unstubbed mock made it pass against the very mutation it exists to catch, caught by running the
+> mutation rather than trusting the green, and it now carries an explicit control.
+> Two regulator-facing over-statements corrected with it: §6.2's unscoped *"no longer missing
+> engineering"* (the sweep is **one activity wide** — a customer's data in booking; §2.6's payout rows,
+> a professional's identity, and the operational period are all outside it) and §2.7's claim to store
+> *"the acting staff member's sign-in name"*, which **no table holds** — the fact this package itself
+> established, and NEW-67's premise.
+>
 > **Also verified rather than assumed**, from §5 of the brief: `@EnableScheduling` is live in booking
 > under `@Profile("!testdev & !testprod")` (so active in dev, test and prod, and — note —
-> **inactive under the test suite**, which is why no scheduled erasure can fire inside a build); the
+> **inactive under the test suite**, which is why no scheduled erasure can fire inside a build — though
+> the *pattern* is exercised: D94's sweep fired on its own cron on the quality gateway at
+> 2026-09-18T01:00:00.437Z through the identical `SchedulingConfigurer` path, measured at review, so
+> what is untested is these two beans and not the mechanism); the
 > three period property names and their committed fallbacks; that `PrivacyResourceIT` was the test
 > pinning `enforced: false`; and that `eraseCustomer` needs no HTTP request in scope.
 

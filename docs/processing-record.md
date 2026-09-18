@@ -115,7 +115,7 @@
 | **Categories of data** | Professional sign-in name and reference, service name, gross, commission and net amounts, the day earned, payout batches |
 | **Categories of subject** | Professionals |
 | **Where** | Payout service, PostgreSQL. `jdl/payout.jdl` |
-| **Retention** | Financial — 2,190 days |
+| **Retention** | **Financial — 2,190 days.** Configured, not enforced, and **no sweep reaches this data** — D96's sweep runs in booking against a *customer's* rows, and a customer's erasure deliberately leaves every ledger row intact. §6.2 |
 | **Recipients** | None outside the platform. **Nothing in this platform pays a professional** — the interface has no settlement call, deliberately, pending the Act 987 question (WP-13) |
 
 ### 2.7 Erasure, and the record of it
@@ -124,7 +124,7 @@
 | --- | --- |
 | **Purpose** | Give effect to an erasure request, and keep evidence of what was done |
 | **Lawful basis** | Legal obligation |
-| **Categories of data** | A one-way alias derived from the subject's sign-in name; counts of what changed; the acting staff member's sign-in name; timestamps |
+| **Categories of data** | A one-way alias derived from the subject's sign-in name; counts of what changed; whether every service completed; the booking references touched; timestamps. **No acting staff member and no reason** — see the correction below |
 | **Where** | Booking (`erasure_run`, `erased_subject`), catalog and messaging registers |
 | **Retention** | Kept — it is the evidence that an irreversible act was performed |
 | **Recipients** | Internal only |
@@ -133,6 +133,32 @@
 > every service and two of their records can be told apart without either naming them. **It cannot be
 > reversed** and **the key must never be rotated after an erasure**, or existing aliases are orphaned
 > (D35).
+
+> **⚠ CORRECTED 2026-09-18 — this row claimed a stored actor that does not exist.** It read *"the
+> acting staff member's sign-in name"* among the categories of data, and **no such field is stored
+> anywhere on the erasure path.** Measured field by field rather than inferred:
+>
+> | Table | Every column it has |
+> | --- | --- |
+> | `erased_subject` | `pseudonym`, `erased_at` |
+> | `erasure_run` | `id`, `pseudonym`, `ran_at`, `complete`, `booking_references`, `receipt` |
+> | inside the serialised `receipt` | `pseudonym`, `complete`, `recorded`, `recordId`, `bookingReferences`, and a leg per service — **no actor** |
+>
+> **This over-stated what is kept, which is the safer direction and still wrong** — a processing record
+> is read as an account of what the organisation holds, and a regulator asking *"who performed this
+> erasure"* would be pointed at a column that is not there. It was wrong before `decisions.md` D96 and
+> is corrected by it, because **D96 is the package that established the falsifying fact**: it verified
+> the absence of an actor column while deciding what a *sweep* would put in one, and that absence is
+> the whole premise of backlog **NEW-67**.
+>
+> **The gap this leaves is real and is NEW-67's**, not a documentation slip. Since D96 the register is
+> written by **two callers that mean different things** — a subject's request, identity-checked by a
+> person at the desk (D40), and the financial retention period expiring on a timer — and the rows are
+> **identical**. So the estate cannot answer either *"who did this"* or *"why"*. §6.3 records the
+> related absence of any audit of staff *reads*; this is the same shape on the estate's one
+> irreversible *act*. NEW-67 recommends a nullable `reason` and deliberately leaves the actor question
+> to §6.3, because a staff member's sign-in name in a table kept for ever is itself a disclosure
+> decision (D47's reasoning).
 
 ## 3. Retention, as configured
 
@@ -227,7 +253,7 @@ data-protection position can be settled **before** the processing starts rather 
 | Each service owns its own database instance | **Implemented** |
 | Databases unreachable from other products | **Implemented** — they join no shared network |
 | Payment provider callbacks authenticated by signature over the raw body | **Implemented** (HMAC-SHA512, constant-time comparison) |
-| Retention enforcement | **Available and not switched on** — §3, and this row read "**Not implemented**" until 2026-09-17. The scheduling capability exists and is running, and two sweeps now run on it by decision: unactivated accounts (§3.1, `decisions.md` D94) and, since D96, the **financial** period — which is off by default and in dry run when enabled, so it is applied on no system. The **operational** period still has no sweep. NEW-52 is closed; what remains is a decision to enable it and NEW-68 for the other period |
+| Retention enforcement | **Partly available, and switched off** — §3, §6.2, and this row read "**Not implemented**" until 2026-09-17. The scheduling capability exists and is running, and two sweeps run on it by decision: unactivated accounts (§3.1, `decisions.md` D94) and, since D96, the financial period **as it applies to a customer's data in the booking service only** — off by default and in dry run when enabled, so applied on no system. **Not** reached by it: a professional's earnings and payout batches (§2.6, the same period), a professional's identity on an old booking, and the whole **operational** period (§2.2, §2.3). NEW-52 is closed; what remains is a decision to enable what exists, NEW-68 for the operational period, and an unasked question for §2.6 |
 | Rate limits on the public account paths | **Provided, not installed** (`decisions.md` D94). Registration, password-reset-request and sign-in are capped per source address at both edges — 10/min and 1/s — which is what stops open self-registration being an account-creation and mail-sending amplifier. The configuration is in this repository; `/etc/nginx` belongs to the architect, so it is installed by a person and **is not in force on any system until they do** |
 | A registration cannot be answered if mail cannot be sent | **Implemented** (`decisions.md` D94). A system with no mail configuration refuses to start rather than answering 201, discarding the message and deleting the account three days later |
 | Audit log of staff access to customer records | **Not implemented.** §6.3 |
@@ -250,13 +276,32 @@ it — it is the one option that would make this gap bigger.
 §3. **The shape of this gap changed with `decisions.md` D96** and it is worth stating precisely,
 because it has now been wrong in two different directions in this document.
 
-It was never a scheduler this estate lacked — that claim was false and is corrected in §3.1's box
-(D91). It is no longer missing engineering either, for the **financial** period: `RetentionSweep`
-applies it, through the same erasure the desk performs and onto the same register. **It is off on every
-system**, by a default this repository chose deliberately, and enabling it takes two separate switches.
-So for that period the question is now *"will the organisation apply its own stated policy, and from
-when"* — which is a decision for a person, and one that can be taken with a dry run's count in hand
-rather than blind.
+It was never a scheduler this estate lacked — that claim was false and is corrected in §3's box
+(D91). It is no longer missing engineering either **for one part of the financial period, and the scope
+matters more than the capability**: `RetentionSweep` applies that period to **a customer's personal
+data in the booking service** — it calls `eraseCustomer`, the single-service erasure, not the desk's
+`eraseEverywhere` fan-out. **It is off on every system**, by a default this repository chose
+deliberately, and enabling it takes two separate switches. So for that data the question is now *"will
+the organisation apply its own stated policy, and from when"* — a decision for a person, and one that
+can be taken with a dry run's count in hand rather than blind.
+
+**What the financial period covers and this sweep does NOT reach**, so that "the financial period has a
+sweep" is never read as category-wide:
+
+- **§2.6 — a professional's earnings and payout batches**, in the **payout** service, also under the
+  2,190-day period. Nothing sweeps them and this sweep cannot: it runs in booking, against booking's
+  tables, and erasing a customer leaves every ledger row deliberately intact (that is the whole reason
+  erasure here is pseudonymisation rather than deletion — ledger rows are keyed by booking reference
+  and carry their own retention obligation);
+- **a professional's identity on an old booking.** The sweep redacts the *customer*.
+  `professionalLogin` and `professionalRef` are untouched by design, so a seven-year-old booking still
+  names the practitioner who delivered it;
+- **§2.2 and §2.3 — message bodies, notifications and conversations**, which are the *operational*
+  period and are the paragraph below.
+
+None of those three is an oversight in the sweep; each is a different subject with a different
+argument, and the first two have never been asked. **The capability is one activity wide, not one
+category wide.**
 
 **What is still missing work** is the **operational** period (365 days): message bodies, notifications
 and conversations, in messaging, with nothing sweeping them. That is **NEW-68**, and it is not a copy of
