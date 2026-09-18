@@ -65,8 +65,24 @@ JAVA
 
 stripped=$(awk -f "$awkfile" "$probe")
 
+# WHERE THE MATCH IS THE FINDING, THE QUESTION IS ASKED THROUGH NO PIPELINE — decisions.md D99,
+# backlog NEW-73. Cases 1, 2, 3, 10 and 12 below say "if this text SURVIVED stripping, the stripper
+# is broken", so `producer | grep -q` cannot merely mis-report them: `grep -q` exits at the match,
+# the producer takes SIGPIPE and dies 141, `pipefail` hands the pipeline that 141, and the `if` is
+# false exactly when a comment did survive — so the case prints `pass` about a broken stripper. That
+# is this file's own subject matter turned on itself, and it is what D98 measured in
+# `account-lifecycle-guards.sh` part 4 and what NEW-73 measured in
+# `host-probe-attribution-test.sh` case 44 (141 ten runs of ten, 12,175 bytes past the match).
+#
+# These probes are inline heredocs of a few hundred bytes, so NONE of them can invert today and no
+# assertion here changes colour. The shape is what is repaired; the size is today's reprieve, and
+# this file's probes grow every time a construct is added to the stripper. The cases whose `bad` is
+# in the `else` branch — 4, 5, 6, 7, 8, 9, 11, 13, 14 — are deliberately left as pipelines: there a
+# swallowed match makes the test REFUSE a correct stripper, which is the direction D71 §5 permits.
+# Do not make the two consistent.
+
 # 1. The multi-line block comment is gone.
-if printf '%s\n' "$stripped" | grep -q 'queryParam("at"'; then
+if grep -q 'queryParam("at"' <<<"$stripped"; then
   bad "a multi-line block comment survived stripping — this is the fail-open D56's review found, restored"
 else
   pass "a multi-line, non-javadoc block comment is stripped"
@@ -74,14 +90,14 @@ fi
 
 # 2. Javadoc is gone. It always was, but by accident: the old sed relied on a `grep -v` dropping
 #    `*`-prefixed lines, which is not the same thing as understanding a block.
-if printf '%s\n' "$stripped" | grep -q 'queryParam("on"'; then
+if grep -q 'queryParam("on"' <<<"$stripped"; then
   bad "javadoc survived stripping"
 else
   pass "javadoc is stripped"
 fi
 
 # 3. A trailing // comment is gone.
-if printf '%s\n' "$stripped" | grep -q 'queryParam("nope"'; then
+if grep -q 'queryParam("nope"' <<<"$stripped"; then
   bad "a trailing // comment survived stripping"
 else
   pass "a trailing // comment is stripped"
@@ -186,7 +202,7 @@ fi
 
 # 10. A comment is STILL a comment when it follows all of that — the state machine has to come back
 #     out of every literal above, and an off-by-one in any of them leaves it inside a string for ever.
-if printf '%s\n' "$s" | grep -q 'shouldNotSurvive'; then
+if grep -q 'shouldNotSurvive' <<<"$s"; then          # no pipeline: the match is the finding (D99)
   bad "a block comment after the string literals survived, so the stripper never left one of them — it is now keeping comments, which is the fail-open all five callers exist to close"
 else
   pass "a block comment after every literal above is still stripped"
@@ -226,7 +242,11 @@ cat > "$truncating" <<'AWK'
   print line
 }
 AWK
-if awk -f "$truncating" "$strprobe" | grep -q 'marker("survived")'; then
+# The producer's output is taken first, so the test asks through no pipeline (D99): the match is the
+# finding here — it says the predecessor has stopped reproducing the defect — so a 141 would report
+# `pass` about a premise that had quietly stopped holding, which is the one thing this case is for.
+truncated_out="$(awk -f "$truncating" "$strprobe")"
+if grep -q 'marker("survived")' <<<"$truncated_out"; then
   bad "the string-blind version no longer truncates this probe; case 7's premise needs re-establishing"
 else
   pass "the string-blind version it replaced does truncate this probe — the defect is real and reproduced here"

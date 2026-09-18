@@ -46,8 +46,17 @@ SH
 
 stripped=$(awk -f "$awkfile" "$probe")
 
+# WHERE THE MATCH IS THE FINDING, THE QUESTION IS ASKED THROUGH NO PIPELINE — decisions.md D99,
+# backlog NEW-73, and this mirrors the note in `strip-comments-test.sh` beside it. Cases 1, 2 and
+# 9a below say "if this text SURVIVED stripping, the stripper is broken", so a `producer | grep -q`
+# reports `pass` about a broken stripper whenever the producer still has ~4.5KB to write after the
+# match: `grep -q` exits, the producer takes SIGPIPE, `pipefail` promotes the 141. These probes are
+# one-line or few-line files and cannot invert today; the shape is what is repaired. Cases 3-8 and
+# 7's line-count are left as pipelines deliberately — there a swallowed match REFUSES a correct
+# stripper, which is the direction D71 §5 permits. Do not make the two consistent.
+
 # 1. A full-line comment goes.
-if printf '%s\n' "$stripped" | grep -q 'KILL_FULLLINE'; then
+if grep -q 'KILL_FULLLINE' <<<"$stripped"; then
   bad "a full-line # comment survived stripping"
 else
   pass "a full-line # comment is stripped"
@@ -56,7 +65,7 @@ fi
 # 2. A trailing comment goes. This is the one that matters for the caller: the guarded string
 #    `docker network connect` appears in that script's header prose, and unstripped the count reads
 #    3 rather than 1.
-if printf '%s\n' "$stripped" | grep -q 'KILL_TRAILING'; then
+if grep -q 'KILL_TRAILING' <<<"$stripped"; then
   bad "a trailing # comment survived stripping"
 else
   pass "a trailing # comment is stripped"
@@ -124,7 +133,8 @@ fi
 #    (a) A `#` inside a quoted string, preceded by a space, TRUNCATES the line. Fail-CLOSED: it
 #        removes too much, so a check goes red on correct code and somebody looks.
 printf 'echo "issue # KEEP_QUOTED"\n' > "$probe"
-if awk -f "$awkfile" "$probe" | grep -q 'KEEP_QUOTED'; then
+quoted_out="$(awk -f "$awkfile" "$probe")"
+if grep -q 'KEEP_QUOTED' <<<"$quoted_out"; then   # no pipeline: the match is the finding (D99)
   bad "a quoted # no longer truncates; the header documents that it does, and fail-closed is the point"
 else
   pass "a quoted # truncates the line — fail-closed, as documented"
@@ -134,7 +144,13 @@ fi
 #        is that no assertion in the caller can be satisfied by it: the guarded strings are matched
 #        on lines of their own. Pinned here so the tolerance is a decision rather than an oversight.
 printf 'true;# KEEP_SEMI docker network connect\n' > "$probe"
-if awk -f "$awkfile" "$probe" | grep -q 'KEEP_SEMI'; then
+# BOTH BRANCHES `pass`, so the pipeline status decides only WHICH SENTENCE is printed — and that is
+# why it is converted anyway (decisions.md D99). A swallowed match here prints "strictly better than
+# documented; update the awk's header" about a tolerance that is still exactly as documented, which
+# sends the next reader to edit the stripper's header on a false premise. It is also case 9's other
+# half: leaving 9a converted and 9b a pipeline invites a tidy-up that reverts 9a.
+semi_out="$(awk -f "$awkfile" "$probe")"
+if grep -q 'KEEP_SEMI' <<<"$semi_out"; then
   pass ";# is not treated as a comment — a stated limit, fail-open, tolerated (D68 §12)"
 else
   pass ";# is now stripped too — strictly better than documented; update the awk's header"

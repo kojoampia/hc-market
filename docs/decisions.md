@@ -18748,3 +18748,379 @@ write-ups.
 **Nothing in `deploy-dev.sh` or `deploy-prod.sh` changed**, so the appendices are untouched — but
 `deploy-prod.sh` holds four of the 50 and is Appendix B, which is a re-embed NEW-73 will need and
 this package did not.
+
+---
+
+## D99 — Triage by direction, because the threshold is a property of one producer on one machine
+
+**Backlog NEW-73.** Closed 2026-09-18. Opened by D98 §9, which fixed eleven pipelines in one file and
+left the population deliberately unswept, with the shape decided and a threshold offered to triage by.
+
+One decision was asked for — *does each site need repair at all* — and measuring it produced two
+corrections to the instrument, one correction to the population's size, and a third failure direction
+that neither D98 nor the item accounted for. **The shape is D98's and is not reopened.**
+
+### §1 THE ANSWER: convert by DIRECTION, never by size
+
+**Eighteen pipelines converted, thirty-three left, and the line is drawn where a swallowed match
+LOSES A FINDING or DRIVES A HARMFUL ACTION rather than where a payload is large.**
+
+**The population column counts PIPELINES, and a converted site stays in the row for its own
+direction** — so the four rows sum to §3's 51 and not to the 33 that were left. Getting this wrong is
+how the first version of this table summed to 50:
+
+| direction | what a swallowed match does | pipelines | converted | left |
+| --- | --- | --- | --- | --- |
+| **fail-OPEN** | the finding is lost and the check prints `ok` | 13 | **13** | 0 |
+| **rollback-biased** | a healthy production estate is reverted | 3 | **3** | 0 |
+| fail-CLOSED | a loud refusal on a correct tree; somebody looks | **33** | 1 | 32 |
+| warn-only | one advisory line differs; nothing decides | 2 | 1 | 1 |
+| | | **51** | **18** | **33** |
+
+The single converted fail-closed pipeline is `signing-key-severance.sh`'s **second** one on the line
+§3 is about: it shares its `if` with a fail-open and could not be left behind. The converted warn-only
+one is argued in §6(d).
+
+⚠ **THE FIRST VERSION OF THIS TABLE SUMMED TO 50, AND THE MISSING MEMBER WAS THE 51st — the very
+pipeline §3 exists to point out.** It carried 32 in the fail-closed row, which is the *left* count, in
+a column labelled *population*; §6(a) then said *"nine of the 18 guard ones"* where ten guard
+pipelines fail closed. **This is §3's own genre — "count the list, not the number" — recurring two
+sections below the correction that states it**, and it is recorded rather than quietly fixed because
+that is the third time in three packages that a count in this family has been wrong in the document
+announcing a count was wrong. **Name the measure beside every number**: pipelines or lines,
+population or disposition.
+
+Direction is a **structural** property of the surrounding branch. It does not change when a file
+grows, when CI's runner image moves, or when somebody swaps `awk` for `sed`. That is the whole
+argument, and §2 is why the alternative does not have it.
+
+### §2 THE THRESHOLD IS NOT A TRIAGE INSTRUMENT, AND THIS IS THE CORRECTION THAT DECIDED THE ITEM
+
+D98 §2 measured *"~4.5KB, 5 runs per size, no variance"* and offered it as a safe-below rule. **The
+figure is exactly reproducible and it is a property of the producer D98 happened to be looking at.**
+Same fixture — match on line 1, only the following text varied — across six producer kinds:
+
+| producer | this workstation | **CI (`ubuntu:24.04`)** |
+| --- | --- | --- |
+| `awk -f strip-comments.awk` (Java stripper) | inverts ≥ **~4.6KB** | inverts ≥ **4,851 B** |
+| `awk -f strip-sh-comments.awk` (shell stripper) | ≥ ~4,851 B — **D98's figure, reproduced** | ≥ 6,321 B |
+| `awk '{print}'` | flaky from **8KB** | solid 32KB |
+| `sed -n` | flaky 64KB | flaky 16KB, solid 32KB |
+| `printf` (bash builtin) | flaky 16KB | flaky 16KB, solid 32KB |
+| `cat` | **never, to 128KB** | **32KB** |
+| `printf \| cut` (three-stage) | solid 128KB | solid 32KB |
+
+**Three things follow and each one kills "measure and leave alone" separately.**
+
+- **The quoted threshold is not even conservative, and the comparison has to name POST-MATCH BYTES to
+  say so.** Measured finely in CI on the Java stripper, varying only the bytes *following* the match
+  (10 runs each): **4,200 clean ten-of-ten → 4,410 FLAKY (`X.XX.XX.X.`) → 4,494 solid 141.** So the
+  **flaky onset at 4,410 B and solid inversion at 4,494 B are both under 4.5 KB (4,500) and under
+  4.5 KiB (4,608)** — the safe side of the offered rule is measurably unsafe for one of its own
+  producers. A rule like that is not a rule.
+  ⚠ **The table above quotes TOTAL probe bytes and this bullet quotes POST-MATCH bytes** — the mechanism
+  depends on the second, and the first version of this bullet compared a total-bytes figure (4,851)
+  against a threshold about post-match bytes and read as arithmetically false. Two measures, named.
+  **And a second instrument put the same boundary at 4,355 clean / 4,545 flaky / 4,735 solid** — ~100
+  to 240 B higher, which is not a disagreement but the *flakiness this section is about*, so quote the
+  onset as a band and the instrument with it.
+- **The local measurement is the optimistic one, taken in the environment that does not matter.**
+  `cat` never inverts here and always inverts at 32KB in CI, and that gap is an **implementation**
+  difference rather than a speed one: `cat` is uutils 0.8.0 on this box and GNU 9.4 in CI, and `awk`
+  is gawk 5.3.2 here and **mawk 1.3.4** there. D98's numbers were taken here. So was every number in
+  this section, which is why each one is given for both.
+- **The boundary is flaky, not sharp.** `awk '{print}'` gave `141 0 0 0 0` at 8,019 B locally and
+  `sed -n` gave `141 0 141 141 141` at 16,019 B in CI. A site parked near its boundary is an
+  intermittently red check, which is worse than either steady state — it is the thing that teaches
+  people to re-run CI rather than read it.
+
+And **`runs-on: ubuntu-latest`** (both jobs in `build.yml`), so the image moves. A site triaged safe on
+a measurement can become fail-open with **nothing in this repository changing and nothing going red**.
+A statement with no shelf life *and* no portability is not evidence that a site is safe; it is a note
+about one afternoon.
+
+⚠ **EVERY FIGURE IN THAT TABLE IS A SAFE-BELOW BOUND, NEVER AN UPPER BOUND ON SAFETY.** It says *this
+producer did not invert at this size on this implementation under this load*. It does not say a larger
+payload will invert, and it does not transfer to a third `grep`, a third `awk`, or a busier box. The
+one direction it can be used in is the conservative one.
+
+**What the threshold is still good for**: explaining a measurement you have already taken, and ranking
+two sites that fail the same way. Not for deciding whether to repair one. Quote it with its producer
+and its machine or do not quote it.
+
+⚠ **EVERY FIGURE IN THIS DECISION IS BYTES, MEASURED AS `printf '%s' "$var" | wc -c`, and the first
+version of them was CHARACTERS.** `${#var}` counts characters, and these payloads carry em-dashes:
+`$arm` has exactly two (U+2014, 3 bytes each, so +2 bytes over 1 character each → delta 4), the
+stripped seeder has four → delta 8, and `$table_rows` → delta 24. The figures read 1,171 / 256 /
+6,385 / 2,950 / 3,358 and are 1,175 / 260 / 6,393 / 2,974 / 3,366. **No conclusion moves** — every one
+is orders of magnitude from its boundary — but **SIGPIPE is a function of bytes written to the pipe,
+not of characters**, so bytes is the only correct unit in a threshold table, and a number labelled
+with the wrong measure is the exact defect this section exists to warn about. The measuring expression
+is named so the next reader reproduces rather than re-derives.
+
+**AND IN THIS POPULATION SIZE AND DANGER ARE ANTI-CORRELATED, which is the fact that settles it.** The
+intuition a size rule runs on — bigger payload, more dangerous — is not merely unreliable here, it
+points the wrong way:
+
+| site | producer | bytes | direction |
+| --- | --- | --- | --- |
+| `admin-seed-wiring.sh:85, :91` | `printf "$stripped"` | **6,393** — the largest in the guard population | fail-**closed** |
+| `signing-key-severance.sh:62` | `printf "$arm"` | 1,175 | **fail-OPEN** |
+| `signing-key-severance.sh:89` | `printf "$msg"` | **256** — among the smallest | **fail-OPEN** |
+
+The largest real producer in the eight guard scripts was driven with the match early, so essentially
+all 6,393 bytes follow it: **`0 0 0 0 0` on GNU grep 3.12 and `0 0 0 0 0` on 3.11.** Roughly a 5×
+margin to the nearest `printf` boundary, and it is the site a size rule would have reached for first.
+Independently, all seven runnable guard scripts produce identical exit codes and identical output
+under both greps on a clean tree. **No site in the eight guard scripts is near inverting today** —
+which is precisely why a size rule closes this item with no edit and two fail-open guards standing.
+
+### §3 THE POPULATION IS 51 PIPELINES ON 50 LINES, AND `grep -c` CANNOT SEE THE DIFFERENCE
+
+D98 §9 and the item both say **50**. That is a count of matching **lines**.
+`signing-key-severance.sh:89` carries **two** `| grep -q` pipelines on one line —
+
+```bash
+if printf '%s' "$msg" | grep -qF 'platform' && ! printf '%s' "$msg" | grep -qF 'NOT the platform key'; then
+```
+
+— and the first of the two is **fail-open**, so the undercount sat in the population that matters.
+`grep -o … | wc -l` answers 51 where `grep -c` answers 50; the inventory prints both now. **18 in the
+eight guard scripts, not 17**, and 33 in the seven test scripts.
+
+This is *"count the list, not the number"* one measure further in than D98 took it: that decision
+corrected a raw-vs-stripped count and did not ask whether a line held one pipeline or two.
+
+### §3b THE ITEM CALLED `admin-seed-wiring.sh`'s TWO A BAN, AND NEITHER OF THEM IS THE BAN
+
+NEW-73's table reads *"`admin-seed-wiring.sh` — 2 — yes — a **ban** (D61's bcrypt-hash sweep)"*, and
+names those two among *"the ones to measure first"* on the strength of a ban's finding being the
+match. **Both halves are wrong, and the way they are wrong is this family's own defect.**
+
+The two `| grep -q` pipelines there are `printf '%s' "$stripped" | grep -qE PATTERN || err` —
+**requirements**, not prohibitions. A swallowed match fires the `||` and the check *errors*, so they
+are fail-**closed**: they would redden on a correct tree rather than pass a broken one.
+
+**And D61's bcrypt-hash sweep is not either of them.** It is a separate loop roughly twenty lines
+above, accumulating into a `hit` variable off a `grep -rInE … | grep -v '/src/test/' || true` process
+substitution — **it contains no `| grep -q` at all** and was never in this population. So the item
+attributed the direction of a construct to two pipelines that are not that construct: *a claim about
+a site that was not measured at the site*, which is §8's subject arriving in the item's own inventory.
+
+The consequence is not cosmetic. Those two were flagged as the priority and are two of the safest
+things in the population (§2's table, 6,393 bytes with a 5× margin and the wrong direction to matter),
+while the two that are genuinely fail-open sat one file away, unremarked, at 1,175 and 260 bytes.
+
+### §4 THE GUARD/TEST SPLIT IS THE WRONG AXIS, AND THE WORST SITE IN THE POPULATION IS IN A TEST
+
+The item calls the three test scripts *"the largest block and the lowest stakes — a swallowed match
+there makes a test's own assertion fail closed"*. **That is true of 23 of the 33 test pipelines and
+false of 9 of them**, and the exception is the sharpest finding here.
+
+**`.github/checks/host-probe-attribution-test.sh:712` is case 44's *aim control*** — it asks whether
+the mutation it just applied accidentally wrote the spelling part 5 bans, so that the case goes red
+through the right door. Its finding **is** the match. Measured against the real slip:
+
+```
+producer   awk -f strip-sh-comments.awk <a mutated copy of deploy-prod.sh>
+           36,589 bytes stripped; match lands at line 932; 12,175 bytes still to write after it
+as shipped (pipeline)          141  ten runs of ten   -> control CANNOT fire
+strip to a file, grep the file    0  ten runs of ten   -> control fires
+```
+
+Driven end to end, with case 44's replacement text edited to the slip it exists to catch:
+
+| | outcome |
+| --- | --- |
+| **before** | `ok 44 … → red` — **rc=0, 53 ok, 0 failed**. The suite passed. |
+| **after** | `FAIL 44 … the mutation is aimed at the wrong door` — **rc=1, 52 ok, 1 failed**. |
+
+**This is D98's part-4 defect in a second file, with the producer 2.7× further past its boundary**, and
+it had no test able to see it because it *is* the test. The nine fail-open test sites are all of the
+form *"if this text SURVIVED, the subject is broken"* — the two strippers' own self-tests, which is
+this repository's stripper rule turned on the files that enforce it.
+
+**So the axis is direction, and it cuts across both populations**: 4 of 18 guard pipelines are
+fail-open, and 9 of 33 test pipelines are. The item's instinct to do the guards first was right for
+the ban population and would have left the worst single site until last.
+
+### §5 A THIRD FAILURE DIRECTION: `deploy-prod.sh` REVERTS A HEALTHY ESTATE
+
+Three of that file's four sites are neither fail-open nor safely fail-closed. A swallowed match drives
+`gate_exhausted` and `smoke_test` toward **rolling back a production deployment that is fine**:
+
+**Each is named by the FUNCTION it sits in, and the base line is labelled as such, because the line
+numbers went stale in this very commit** — the comment blocks this package added pushed every one of
+them down: `1032 → 1045`, `1201 → 1222`, `1247 → 1272`, `1275 → 1300`. §8 cites *"D78 §7's line
+numbers were stale one commit later"* as the reason not to enumerate the 33 by line, and then this
+table did it anyway. **A line number is not a name.**
+
+| site — function, and base line at `83857ee` | a swallowed match means | consequence |
+| --- | --- | --- |
+| `gate_exhausted`'s blip arm (base `:1032`) | a service reporting `running healthy` is not seen | it joins `$unproven`, the blip arm empties, the router reverts |
+| `smoke_test`'s brokerage probe (base `:1201`) | payout **does** hold terms in force | `return 1` → `smoke_test` fails → revert |
+| `smoke_test`'s mail probe (base `:1247`) | the gateway **can** send mail | `return 1` → revert |
+
+That is **NEW-36's own harm arriving through the premise of its fix** — the same sentence D78 §14
+wrote about dropping the health column from `--format`, one mechanism along. Driven on the lifted blip
+loop with every service genuinely `running healthy`, in CI's environment:
+
+```
+     85 bytes   OLD: refuses, reverts nothing      NEW: refuses, reverts nothing
+  1,965 bytes   OLD: refuses, reverts nothing      NEW: refuses, reverts nothing
+ 28,285 bytes   OLD: ROLLS BACK catalog booking    NEW: refuses, reverts nothing
+```
+
+⚠ **28,285 bytes is a CONSTRUCTED payload and `$HOST_OUTPUT` will not reach it.** `compose ps -a` is
+**project**-scoped, so it is eleven lines and ~900 bytes on this estate. These three are repaired **on
+direction, not on an observed inversion**, and saying so is the point: §2 is the argument, and a
+demonstration at a size the command cannot produce is an illustration of the shape rather than
+evidence about the site. What is true is that `$HOST_OUTPUT`, `$brokerage` and `$gateway_info` are the
+only producers in this population whose size is set by **somebody else's host**, and that none of
+them can be measured at all — `deploy-prod.sh` has never run against a host (D49) and there is no
+production estate.
+
+**`smoke_test`'s VERSION probe (base `:1275`) IS LEFT AS A PIPELINE, and the distinction is
+load-bearing.** It warns either way and decides nothing, which is exactly what D71 §5 permits: *a
+`die` may not fold; a `warn` and a poll may.*
+
+⚠ **D78 §8's "these two probes still fold, as a decision" is about a DIFFERENT fold and does not
+license this one.** That decision folds the `ssh … || true` on the brokerage and mail probes,
+deliberately,
+because the condition is silent and an unestablished answer must not ship. The **pipeline** folds the
+opposite way — it turns a *satisfied* condition into a failure — so the two folds push in opposite
+directions and the argument for one is not an argument for the other. Appendix B is re-embedded in
+this commit.
+
+### §6 THE LOSERS, EACH ARGUED
+
+**(a) Convert all 51.** Rejected. Twenty-three of the 33 test pipelines and **ten** of the 18 guard
+ones fail *closed* — 33, reconciling with §1's row — a swallowed match makes them refuse a correct
+tree, which is the direction D71 §5 exists to permit, and converting them changes no behaviour while
+producing a diff nobody can review per site. That is how the next fail-open gets in. It would also churn
+`account-lifecycle-guards-test.sh`, the file a reviewer most needs to read cleanly against D98.
+
+**(b) Convert only what is measurably over the threshold.** Rejected on §2, and rejected harder than
+expected — **it converts nothing, because nothing in the population is over it**, so it closes this
+item with no edit and two fail-open guards standing. It also mis-triages in **both** directions.
+`admin-seed-wiring.sh`'s `$stripped` is **6,393 bytes** — comfortably over the quoted 4.5KB, and a
+`printf` producer measured clean ten-of-ten at that payload on GNU grep 3.12 *and* 3.11, so the rule
+calls it unsafe when it is safe. The Java stripper's callers invert from ~4,410 post-match bytes, so
+the rule calls them safe just below where they are not. And a site left alone on today's number needs
+that number recorded or the next reader cannot tell *measured and safe* from *not looked at* — which
+is a maintenance burden on a fact with a half-life of one runner-image bump.
+
+**(c) Leave the whole thing and widen CI instead** — a check banning `| grep -q` in any `pipefail`
+script. Rejected as premature, and recorded because it is the obvious next thought: it would have to
+encode the direction distinction to avoid refusing 33 correct sites, and direction is not something a
+grep can read off a line. It is also the shape that has failed here repeatedly — a guard written over
+a property nobody had enumerated yet. The enumeration now exists (§8); a check over it is worth
+considering once the population has stopped moving.
+
+**(d) One narrow exception to the direction rule, taken deliberately.**
+`strip-sh-comments-test.sh:137` has `pass` in **both** branches, so the pipeline decides only which
+sentence prints — a `warn` by §1's table. It is converted anyway, for two reasons: the wrong sentence
+is *"strictly better than documented; update the awk's header"*, which sends the next reader to edit
+the stripper on a false premise; and it is the second half of case 9, whose first half **is**
+fail-open and **is** converted. Leaving two adjacent lines of one assertion in two shapes is how the
+repaired half gets reverted for consistency. Stated here so the exception is a decision.
+
+### §7 WHAT WAS WATCHED, AND WHAT CANNOT BE
+
+Red first, per site, and **the demonstration for a ban is that the check REPORTS THE FINDING** — not
+that a status moved:
+
+| site | mutation | before | after |
+| --- | --- | --- | --- |
+| `host-probe-attribution-test.sh:712` | case 44 writes the banned option order | `ok`, **rc=0, 0 failed** | `FAIL 44 … aimed at the wrong door`, rc=1 |
+| `signing-key-severance.sh:62` | `Do NOT copy it from` → `Take it from` (mention kept) | — | reports *"without forbidding it ('Do NOT copy it from')"*, 1 `::error` |
+| `signing-key-severance.sh:89` | `:?` message → *"platform JWT secret is required"* (D37's original defect) | — | reports *"describes this estate's signing key as the platform"*, 1 `::error` |
+| `probe-infranet-aliases.sh:136` | 600 extra containers, `gateway` on line 1 | **141 ×5 → reports a TAKEN name as FREE** | `0 ×5`, TAKEN |
+| `deploy-prod.sh` `gate_exhausted` blip arm | every service `running healthy`, 28KB table | **ROLLS BACK a healthy estate** | refuses, reverts nothing |
+
+**Three of the eighteen cannot be watched and that is stated rather than dressed up**, exactly as D98
+§4 did for its part 6. `pepper-wiring.sh:81` ($report, 3 lines), the `signing-key-severance.sh` pair
+($arm 1,175 B, $msg 260 B) and the nine strip-test probes (248–341 B) all behave **identically** before
+and after: measured on `pepper-wiring.sh` with a compose file whose pepper had lost its `:?`, both
+forms emitted exactly **1** `::error`. They are repaired on §1 and §2, and the control run is clean
+(rc=0, 0 errors) in both.
+
+**Behaviour is unchanged where it must be.** `probe-infranet-aliases.sh` still answers `gateway`
+**free** on `hcnet` — which is the correct answer and was confirmed independently out of
+`docker network inspect`: only container names are published there, no compose aliases, which is
+D68's state and the caveat the script prints for itself.
+
+### §8 FOUR INSTRUMENT FAULTS IN THIS PACKAGE, EVERY ONE IN THE DIRECTION THAT LOOKS LIKE AN ANSWER
+
+D98 §7 found three. This package found four more, which is now the strongest regularity in this whole
+family — **suspect the instrument before the code**:
+
+1. **The site enumerator had the defect it was built to inventory.** `grep -n '| *grep -q' "$buf" |
+   while read` — under `pipefail`, with `errexit`, on a file with no hits. Second instance of D98 §7's
+   third fault, in the next package along.
+2. **The status reader conflated `1` with `141`.** It printed `X` for any non-zero, so site 20's
+   honest *"no match"* (**1**) read as an inversion. That produced a false *"inverts ten of ten at
+   base"* which survived until the statuses were printed. A probe that cannot tell its two outcomes
+   apart answers neither question.
+3. **A probe that could not reach its subject.** The site-20 driver was run from the scratchpad, and
+   the test derives `ROOT` from its own `BASH_SOURCE` — so it died on *"cannot find
+   host-probe-attribution.sh"*. **This is D98 case 28's lesson recurring inside the package that cites
+   it**; the copy has to live in `.github/checks/`.
+4. **`export` of a 100KB payload** hit the argv limit and returned **126** from `cut`, reported as a
+   scale result until the exit code was read.
+
+**And one correction to a claim made in this package's own working notes**: `grep --version` in an
+interactive shell here says **ugrep 7.5.0**, which is a shell *function*; a script gets
+**GNU grep 3.12** from `/usr/bin/grep`. Every measurement above was taken from a script and is GNU
+grep, and the workspace guide's *"grep is ugrep 7.5.0"* describes a shell no CI runs. The `cat` and
+`awk` divergences in §2 are real and are the ones that matter.
+
+**The membership is derived, not listed** — D98 §3's rule, and the reason this decision carries no
+table of 33 line numbers (§7's five are named by what they do, because D78 §7's line numbers were
+stale one commit later):
+
+```bash
+buf=$(mktemp); for f in $(git ls-files '*.sh'); do
+  awk -f .github/checks/strip-sh-comments.awk "$f" > "$buf"
+  n=$(grep -c '| *grep -q' "$buf"); n=${n:-0}; [ "$n" = 0 ] || printf '%3s %s\n' "$n" "$f"
+done; rm -f "$buf"
+```
+
+It answers **33** now and answered 50 at base. **Detect `pipefail` by reading the literal, never with a
+character class**: every one of these files spells `set -Eeuo pipefail`, and `set -[a-z]*o pipefail`
+cannot match a capital `E` — which reported `pipefail=no` for two files that plainly set it, in the
+second independent instrument to reproduce this item's own defect.
+
+### §9 WHAT IS NOT DONE
+
+**No CI check bans this shape**, deliberately — §6(c). The 33 remaining sites are correct as they
+stand and each has its producer size recorded in NEW-73.
+
+**THE HEADROOM QUOTED IS CI's, NOT THIS BOX'S**, because §2 is the reason this decision exists: the
+local boundary is the optimistic one and the environment that matters is the runner. Three sites are
+worth watching for *growth*, being the only ones whose producer is not effectively a fixed string:
+
+| site | producer grows with | today | CI headroom |
+| --- | --- | --- | --- |
+| `account-lifecycle-guards-test.sh` ×8 | the check's own assertion count (~93 B each, 36 now) | **3,366 B** | `printf` clean at 8,019 B, flaky by 16 KB → ~86 assertions |
+| `deploy-prod.sh` `gate_exhausted` blip arm | **the estate** — remote `compose ps -a`, one line per container | ~900 B (11 containers) | project-scoped, so bounded; **converted anyway** (§5) |
+| `observability-claims.sh:204` | the meter count declared in `GatewayIdentityMeters` | **49 B** | three orders of magnitude clear |
+
+The first is the one number in the left-alone population worth watching, and D98 took that file from
+35 assertions to 43 in a single package. All three are fail-closed, so growth buys a noisy false red
+rather than a lost finding — but a check that goes red intermittently is the thing §2 warns about.
+
+**`account-lifecycle-guards-test.sh` stays mixed** — four herestrings from D98, eight pipelines — and
+that mixture is D98's own choice, not drift: it converted the cases it added and left the rest, all of
+which are fail-closed.
+
+**One theoretical false-pass is left in place and named.** `case_refuses`' first branch (`:114`) reports
+*"the check PASSED a tree it should refuse"*, so its match is a finding; a swallowed one falls to the
+`elif`, which reports `bad` anyway unless `$out` holds **both** the success line and the refusal
+fragment. That combination is not reachable today — the check prints its `ok` trailer only when
+`fail == 0`, and the fragments are `::error` text — so the case still goes red, with the wrong
+diagnosis. At 3,366 bytes it cannot invert at all.
+
+**Two items opened, neither fixed here**: **NEW-74**, an ERROR count has three different measures and
+the naive instrument counts the opposite population; **NEW-75**, the quality rate limits are in force
+and `CLAUDE.md` says no ceiling is in force anywhere.

@@ -59,7 +59,15 @@ else
   done
   # If it names the platform file at all, it may only be to refuse it — in these words, because the
   # defect was a sentence that named the same file approvingly.
-  if printf '%s' "$arm" | grep -qE "$PLATFORM_ENV"; then
+  #
+  # A HERESTRING, BECAUSE A SWALLOWED MATCH HERE SKIPS THE REFUSAL CHECK ENTIRELY (decisions.md D99,
+  # backlog NEW-73). This `if` is a gate, not an assertion: the whole "it may only be to forbid it"
+  # test lives inside it, so `printf … | grep -q` dying 141 on a match means an `arm` that names the
+  # platform key file approvingly is never examined at all — the one defect this file was written for.
+  # $arm is 1,171 bytes today so it cannot invert; the direction is what is being repaired, not the
+  # size. Sites in this file whose swallowed match produces a FALSE ALARM rather than a lost finding
+  # are deliberately left as pipelines — see the note at the foot of this file.
+  if grep -qE "$PLATFORM_ENV" <<<"$arm"; then
     if printf '%s' "$arm" | grep -qF 'Do NOT copy it from'; then
       echo "ok   secret_hint names the platform key file only to forbid it"
     else
@@ -86,7 +94,13 @@ for f in $COMPOSE_FILES; do
     err "$f" "no \${JWT_BASE64_SECRET:?...} — the signing key is no longer required by this compose file, so a stack can start with whatever happens to be in the environment. See decisions.md D49."
     continue
   fi
-  if printf '%s' "$msg" | grep -qF 'platform' && ! printf '%s' "$msg" | grep -qF 'NOT the platform key'; then
+  # HERESTRINGS, AND THIS LINE CARRIED TWO PIPELINES (decisions.md D99, backlog NEW-73 — which is why
+  # the population is 51 pipelines on 50 lines and `grep -c` undercounts it). The FIRST one is the
+  # fail-open: a swallowed match on 'platform' short-circuits the `&&` to false and prints `ok` for
+  # exactly the message this arm exists to refuse — "platform JWT secret is required", the copy that
+  # was still wrong after the other four were corrected. The second is negated and merely loud. Both
+  # are converted because they are one condition; $msg is 256 bytes and neither can invert today.
+  if grep -qF 'platform' <<<"$msg" && ! grep -qF 'NOT the platform key' <<<"$msg"; then
     err "$f" "the required-variable message describes this estate's signing key as the platform's ('$msg'). It is the one string an operator meets at the moment of failure, and it sends them to the key hc-admin, hc-patient and hc-professional share. See decisions.md D37 and D49."
   else
     echo "ok   $f says: $msg"
@@ -105,4 +119,22 @@ if [[ -f "$prod" ]]; then
 fi
 
 [ "$fail" = 0 ] && echo "ok   the signing key is severed from the platform's in every deploy path"
+
+# WHY THIS FILE MIXES TWO SHAPES, so that neither is "tidied" into the other (decisions.md D99).
+#
+# FOUR `| grep -q` PIPELINES remain here — that is a count of pipelines, not of evaluations, and two
+# of the four sit inside `for` loops so they run six times between them. Derive it rather than
+# trusting this sentence; this is the file whose line 89 carried two pipelines on one line and made
+# NEW-73's own population 51 rather than 50:
+#     awk -f .github/checks/strip-sh-comments.awk "$0" | grep -c '| *grep -q'
+#
+# They stay as pipelines by decision rather than by oversight: in every one a swallowed match makes
+# this check REFUSE a correct tree — arm 1's `want` loop, the 'Do NOT copy it from' test, the `sed`
+# window in arm 2, and arm 3's prod `want` loop. That is the direction D71 §5 permits things to fold
+# in; somebody reads the refusal and looks. The two converted above are the opposite: a swallowed
+# match there LOSES the finding and prints `ok`. Direction is a structural property and does not move
+# when a file grows; the ~4.5KB threshold is a property of one producer on one machine and survives
+# neither a bigger file nor a different runner image. So the rule applied here is by direction, never
+# by size — and in this file the two dangerous sites hold the SMALLEST producers (1,171 and 256
+# bytes) while the largest in the whole guard population is harmless, which is why size lost.
 exit "$fail"

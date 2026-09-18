@@ -78,7 +78,14 @@ for service in wanted:
 print("\n".join("bad  " + p for p in problems))
 ')"
   printf '%s\n' "$report" | sed '/^$/d' | sed "s#^#  $f: #"
-  if printf '%s' "$report" | grep -q '^bad  '; then
+  # A HERESTRING, NOT A PIPELINE, and the direction is why (decisions.md D99, backlog NEW-73).
+  # The match IS the finding here, so `printf … | grep -q` cannot merely mis-report it — it loses it:
+  # `grep -q` exits at the first `bad  ` line, `printf` takes SIGPIPE, and `pipefail` hands the
+  # pipeline that 141, so the `if` is false exactly when a service would start unpeppered. $report is
+  # three lines today and cannot invert, which is why nothing has been wrong; the shape is the defect
+  # and the size is only today's reprieve. The `sed` pipeline above is deliberately untouched — its
+  # OUTPUT is used and its status is read by nothing (D98 §3).
+  if grep -q '^bad  ' <<<"$report"; then
     err "a service that derives erased-subject aliases would start unpeppered. isErased then answers false for people it has erased and the consumer writes their real login back — silently, on a green stack. See decisions.md D35." "$f"
   fi
 done
