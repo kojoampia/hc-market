@@ -32,8 +32,17 @@
 #  its purest form. Each caller guards that its stripper exists — one absent file is otherwise a
 #  check that reads empty text and passes everything.
 #
+#  --- AND NOTHING HERE ASKS A QUESTION THROUGH A PIPE ---------------------------------------------
+#
+#  Three of the assertions below could not report a finding at all until NEW-71 / decisions.md D98,
+#  because `producer | grep -q` under `set -o pipefail` reports a MATCH as a failure. The mechanism,
+#  which of the eleven were fail-open and which fail-closed, and the two shapes that replaced them
+#  are argued at `has_in`. Read that before adding an assertion to this file.
+#
 #  Inputs are overridable so account-lifecycle-guards-test.sh can construct each broken state and
-#  watch the relevant assertion fail. A check nobody has seen fail is a check of nothing.
+#  watch the relevant assertion fail. A check nobody has seen fail is a check of nothing — and cases
+#  1, 10 and 16 there were watched failing for a reason unrelated to what they assert, which is why
+#  21, 22 and 23 sit beside them with the same mutation moved to the top of the same file.
 # ==============================================================================
 set -Eeuo pipefail
 
@@ -69,9 +78,97 @@ done
 java_src() { awk -f "$JAVA_STRIP" "$1"; }
 conf_src() { awk -f "$SH_STRIP" "$1"; }
 
+# Every ${VAR:?message} message blanked, and nothing else touched — see part 4, which is the only
+# caller and the only place the distinction between a value and a refusal about a value matters.
+value_src() { conf_src "$1" | sed 's/:?[^}]*}/:?}/g'; }
+
+# --- WHY NOTHING BELOW ASKS A QUESTION THROUGH A PIPE — decisions.md D98, backlog NEW-71 ----------
+#
+# `grep -q` exits at its FIRST match. Its producer then takes SIGPIPE and dies 141, and under
+# `set -o pipefail` — which this file sets — the PIPELINE's status is the producer's. So
+#
+#     conf_src "$f" | grep -q PATTERN && found="$found $f"
+#
+# reports a match as a FAILURE, the `&&` never fires, and the file is not reported. That is not a
+# theory: with the match on line 1 and only the amount of following text varied, on this tree,
+#
+#     stripped bytes   1127  3327  4319  4539 | 5527  8827  13227
+#     status           0     0     0     0    | 141   141   141        (5 runs each, no variance)
+#
+# so the discriminator is whether the producer's whole output fits its own stdio block before grep
+# closes the pipe. NEW-71 and D97 §8 both attributed the two outcomes to machine LOAD; that is the
+# wrong variable and D98 §2 is the correction.
+#
+# WHAT IT COST, AND THE TWO CASES ARE NOT EQUAL. Part 4 could not report the repository's one real
+# occurrence of the placeholder base-url — 11,673 stripped bytes, the match 273 lines from the end,
+# 141 five runs of five, `ok` printed. That is an OBSERVED unreportable finding and it is the worst
+# of the three. Part 1's blind spot is real but HYPOTHETICAL: the position a regeneration actually
+# uses is caught even by the old pipeline (D98 §4), because `@Scheduled` cannot legally appear at
+# class level. Part 6's is not observable on today's tree at all. Rank them that way round — the
+# first version of this note led with part 1 on the strength of a fixture that does not compile.
+#
+# THE SHAPE IS THEREFORE "NO PIPELINE", IN TWO SPELLINGS CHOSEN BY WHERE THE TEXT ALREADY IS:
+#
+#   * text that has to be STRIPPED OUT OF A FILE  → strip once into $STRIP_BUF and grep the file.
+#     This is not a new invention: part 5 below already does exactly this, and its comment records
+#     the symptom ("an instrument that answers differently twice") without naming this as the cause.
+#     One shape, shared, rather than part 5's private copy beside ten pipelines.
+#   * text ALREADY IN A VARIABLE                  → a herestring, which is not a pipeline at all, so
+#     the question cannot arise. D97's own step and test use this and say so at the site.
+#
+# WHAT IS DELIBERATELY NOT CHANGED, STATED AS A RULE AND NOT AS A LIST: a pipeline whose **status**
+# is read is forbidden here; a pipeline whose **output** is used is fine. An early-exiting `head` can
+# still kill its producer in the second kind, but the value is already complete when it does, each
+# carries a `|| true` argued in place, and nothing reads the status. Rewriting them would be making
+# lines look consistent rather than correct.
+#
+# DERIVE THE SURVIVORS, DO NOT QUOTE THEM. This comment named four and D98 §3 named six, and both
+# were short — the `sed -n` report readers alone are five, in two groups (D98 §3, as reviewed). The
+# discriminator is mechanical, so read it off the file:
+#
+#     awk -f .github/checks/strip-sh-comments.awk "$0" | grep -nE '\| *(grep|head|sed|sort|cut|tr)'
+#
+# Anything that command lists is an output pipeline and belongs. Anything matching `| grep -q` is a
+# status pipeline and does not — and stripped, this file now has zero of those.
+#
+# The other 50 `| grep -q` pipelines in this repository's shell scripts are NEW-73, not this file.
+STRIP_BUF="$(mktemp)"
+# Part 5's own buffer is cleaned here too rather than only on its success path: has_in can now `exit`
+# from anywhere, which made that `rm -f` reachable-past for the first time. `:-` because the trap is
+# installed before that variable exists and this file runs under `set -u`.
+trap 'rm -f "$STRIP_BUF" "${script_src:-}"' EXIT
+
+# $1 = the stripper function, $2 = the file, rest = grep options and the pattern.
+# 0 match, 1 no match, and ANY OTHER ANSWER STOPS THE CHECK rather than being read as "no match" —
+# D71's rule, one tool along. Without that arm an unreadable file or a bad pattern (grep's 2) is
+# indistinguishable from a clean tree, which is this whole item in a second costume, and the `exit`
+# is what makes it fire even from inside an `if` condition, where errexit is suppressed.
+has_in() {
+  local stripper="$1" file="$2"; shift 2
+  "$stripper" "$file" > "$STRIP_BUF" || {
+    printf '::error file=%s::%s could not read this file, so nothing about it was established. Every text-matching assertion in this check reads through a stripper; one that fails silently is a check that matches empty text and passes everything.\n' "$file" "$stripper"
+    exit 1
+  }
+  local rc=0
+  grep -q "$@" -- "$STRIP_BUF" || rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    1) return 1 ;;
+    *) printf '::error file=%s::grep exited %s asking this file a question, which is neither a match nor a no-match. Treating that as "no match" is how a check reports success about a file it could not read (decisions.md D98).\n' "$file" "$rc"
+       exit 1 ;;
+  esac
+}
+java_has()  { has_in java_src  "$@"; }
+conf_has()  { has_in conf_src  "$@"; }
+value_has() { has_in value_src "$@"; }
+
+# The counts are DERIVED AND PRINTED, because a number in a document is a number that goes stale:
+# CLAUDE.md carried "36 assertions" for two packages after it stopped being 36, which is this
+# repository's standing complaint about its own prose. Read the last line of a run.
 fail=0
-err() { printf '::error%s::%s\n' "${2:+ file=$2}" "$1"; fail=1; }
-ok()  { printf 'ok   %s\n' "$1"; }
+asserted=0
+err() { printf '::error%s::%s\n' "${2:+ file=$2}" "$1"; fail=1; asserted=$((asserted + 1)); }
+ok()  { printf 'ok   %s\n' "$1"; asserted=$((asserted + 1)); }
 
 # --- 1. The estate's only scheduled work ---------------------------------------------------------
 #
@@ -86,7 +183,21 @@ ok()  { printf 'ok   %s\n' "$1"; }
 scheduled=""
 if [ -d "$GATEWAY_MAIN" ]; then
   while IFS= read -r f; do
-    java_src "$f" | grep -q '@Scheduled' && scheduled="$scheduled $f"
+    # FAIL-OPEN IN SHAPE — see the note above has_in. The pipeline this replaced reported a match as
+    # a failure whenever more than ~4.5KB of the stripped file followed it, so this scan had a blind
+    # spot that depended on WHERE the annotation sat.
+    #
+    # BUT NOT AT THE POSITION A REGENERATION USES, and the first version of this comment claimed
+    # otherwise (D98 §4, corrected at review). `@Scheduled` is `@Target({METHOD, ANNOTATION_TYPE})`
+    # — read out of spring-context with javap — so a CLASS-LEVEL one does not compile and cannot be
+    # generated. What `--force` restores is the annotation on `removeNotActivatedUsers`, 602 stripped
+    # bytes from the end of that file, and the OLD pipeline caught that three runs of three. The
+    # blind spot is real and is hypothetical: scheduled work on an early method of a long class, or a
+    # new `@Scheduled` in a larger gateway source. Do not re-justify this with the regeneration case.
+    #
+    # `if` rather than `&&`: the accumulating form is what made the old defect silent, because a
+    # left operand that fails is exempt from errexit and its status is then the loop body's.
+    if java_has "$f" '@Scheduled'; then scheduled="$scheduled $f"; fi
   done < <(find "$GATEWAY_MAIN" -name '*.java' | sort)
 else
   err "$GATEWAY_MAIN does not exist — nothing was scanned for a second account sweep"
@@ -119,7 +230,7 @@ if [ -f "$RETENTION_CLASS" ]; then
   # saw it. Every branch below must be able to say what is missing.
   default_days="$(java_src "$RETENTION_CLASS" | grep -oE 'DEFAULT_RETENTION_DAYS *= *"[0-9]+"' | grep -oE '[0-9]+' | head -1 || true)"
   [ -n "$default_days" ] || err "no DEFAULT_RETENTION_DAYS literal in $RETENTION_CLASS — the estate's stated retention period for an unactivated account could not be read, so nothing below could be checked against it." "$RETENTION_CLASS"
-  if java_src "$RETENTION_CLASS" | grep -q 'DEFAULT_SWEEP_CRON *= *"0 0 1 \* \* ?"'; then
+  if java_has "$RETENTION_CLASS" 'DEFAULT_SWEEP_CRON *= *"0 0 1 \* \* ?"'; then
     ok "the sweep's default schedule is still the generated 0 0 1 * * ?"
   else
     err "DEFAULT_SWEEP_CRON in $RETENTION_CLASS is not \"0 0 1 * * ?\". D94 kept JHipster's schedule deliberately so that a default estate behaves exactly as every estate that has ever run; changing it is a decision to record, not a tidy-up." "$RETENTION_CLASS"
@@ -343,7 +454,7 @@ for f in "$DEV_COMPOSE" "$QUALITY_COMPOSE"; do
     continue
   fi
   for key in SPRING_MAIL_HOST SPRING_MAIL_PORT JHIPSTER_MAIL_BASE_URL; do
-    if printf '%s\n' "$env_lines" | grep -qE "^$key=."; then
+    if grep -qE "^$key=." <<< "$env_lines"; then
       ok "$f passes $key to the gateway"
     else
       err "$f's gateway does not set $key. Dev and quality run a mail catcher so that registration, activation and password reset can be walked at all; without these the send fails against the container's own loopback and the only trace is one WARN line (decisions.md D94)." "$f"
@@ -370,7 +481,7 @@ for name, spec in (doc.get("services") or {}).items():
     if spec.get("container_name"):
         print(spec["container_name"])
 ')"
-  if [ -n "$host_default" ] && printf '%s\n' "$names" | grep -qxF "$host_default"; then
+  if [ -n "$host_default" ] && grep -qxF "$host_default" <<< "$names"; then
     ok "$f's SPRING_MAIL_HOST default ($host_default) is a container in the same file"
   else
     err "$f's gateway points SPRING_MAIL_HOST at '${host_default:-<nothing this check could read>}', which is not a service or container_name in that file. Dev and quality run a local catcher precisely so this path can be walked; a host that resolves nowhere fails the send with one WARN line and nothing else (decisions.md D94)." "$f"
@@ -405,10 +516,32 @@ fi
 #
 # target/ is excluded because it is build output: a stale copy of a file that has since been fixed
 # is not a claim about the estate, and `mvn clean` is not a remedy anybody should have to know.
+#
+# AND NEITHER COULD IT REPORT ANYTHING AT ALL UNTIL NEW-71 — the pipeline it used reported a match as
+# a failure, so this ban has never once named a file. See the note above has_in; the one real
+# occurrence in the repository is 273 lines from the end of a 492-line compose file and measured 141
+# five runs of five, while the test case covering this part plants its placeholder 33 lines from the
+# end of a 152-line file and therefore passed. The pair is now cases 10 and 22.
+#
+# THE SECOND NARROWING, AND IT IS A DIFFERENT KIND OF MOVE FROM THE FIRST (decisions.md D98 §4). D94
+# narrowed this ban from raw text to STRIPPED text, which removed a class of text — comments — that
+# is not configuration at all. This narrows it by CONTEXT: `value_src` blanks the message of every
+# `${VAR:?message}` expansion before matching, because the only legitimate mention of this string in
+# a rendered file is a refusal explaining what the variable replaced, and
+# docker-compose.prod.yml:219 is exactly that. It is bounded to the expansion's own `}` rather than
+# to end of line, so a real value written after one on the same line is still caught (case 26), and
+# `:-` is deliberately NOT excluded — a DEFAULT is how this placeholder reached the production
+# profile, part 3's own refusal says so, and case 25 is red without it.
+#
+# .claude/ is pruned for the same reason target/ is, one directory kind along: an agent worktree is a
+# second full checkout INSIDE this one — measured, 135 further .yml files in the main checkout today,
+# exactly doubling the walk — so without this the success line's "in the repository" is a claim about
+# two repositories, and a finding in one of them names a path the operator cannot fix and CI, which
+# has no worktrees, will never see. The workspace's own guide records the same shape for `eslint .`.
 placeholders=""
 while IFS= read -r f; do
-  conf_src "$f" | grep -q 'my-server-url-to-change' && placeholders="$placeholders $f"
-done < <(find "${HC_YML_ROOT:-.}" -name target -prune -o -name node_modules -prune -o \( -name '*.yml' -o -name '*.yaml' \) -print | sort)
+  if value_has "$f" 'my-server-url-to-change'; then placeholders="$placeholders $f"; fi
+done < <(find "${HC_YML_ROOT:-.}" -name target -prune -o -name node_modules -prune -o -name .claude -prune -o \( -name '*.yml' -o -name '*.yaml' \) -print | sort)
 if [ -n "$placeholders" ]; then
   for f in $placeholders; do
     err "$f contains JHipster's placeholder base-url. Every activation and password-reset link this estate sends would point at a host that does not exist, and the mail would be DELIVERED (decisions.md D94)." "$f"
@@ -421,9 +554,19 @@ fi
 if [ -f "$PROD_SCRIPT" ]; then
   # Stripped ONCE to a file rather than held in a variable, because the variable form disagreed with
   # itself between two runs of this check over an unchanged deploy-prod.sh — a 36KB string through
-  # `$( )` and `printf '%s' | grep`, and whatever the cause, an instrument that answers differently
-  # twice is not one to reason from (the workspace guide's rule: suspect the instrument before the
-  # code). A file and a plain `grep -q` are deterministic and they are what this asserts with.
+  # `$( )` and `printf '%s' | grep`.
+  #
+  # THE CAUSE IS KNOWN NOW AND IT IS NEW-71 / D98: `printf | grep -q` is a pipeline, `grep -q` exits
+  # at its first match, printf takes SIGPIPE and dies 141, and `pipefail` hands the pipeline that. A
+  # 36KB producer is far past the ~4.5KB threshold, so this was not a mystery and not flakiness — it
+  # was a match being reported as a failure whenever the match came early enough. This comment said
+  # "whatever the cause, an instrument that answers differently twice is not one to reason from",
+  # which was the right conclusion from the wrong knowledge, and it is what the rest of this file has
+  # now been brought in line with.
+  #
+  # It keeps its OWN temp file rather than using has_in's $STRIP_BUF, and that is not tidiness: the
+  # awk lift below and the grep beside it must read the same stripped text, and a shared buffer any
+  # later assertion may overwrite is a second instrument answering a question about the first.
   script_src="$(mktemp)"
   conf_src "$PROD_SCRIPT" > "$script_src"
   # THE ARRAY'S OWN VALUE, NOT THE NAME ANYWHERE IN THE FILE — D78 §13's lesson about SSH_OPTS. The
@@ -437,7 +580,7 @@ if [ -f "$PROD_SCRIPT" ]; then
     err "no CONNECTION_KEYS=( … ) array in $PROD_SCRIPT. Preflight checks every required value by name on the host before the stack is touched; without that array it checks none of them, and a deploy rotates .env and then dies at \`up\` on the compose file's own :? — the eleven-key defect of 2026-09-05." "$PROD_SCRIPT"
   else
     for var in HC_MAIL_HOST HC_MAIL_PORT HC_MAIL_BASE_URL; do
-      if printf '%s\n' "$keys" | grep -qw "$var"; then
+      if grep -qw "$var" <<< "$keys"; then
         ok "deploy-prod.sh's CONNECTION_KEYS holds $var"
       else
         err "$PROD_SCRIPT's CONNECTION_KEYS does not hold $var. Preflight checks every required value by NAME on the host before the stack is touched, so a value missing from that array is a deploy that rotates .env and then dies at \`up\` on the compose file's own :? (decisions.md D94)." "$PROD_SCRIPT"
@@ -550,7 +693,7 @@ for f in "$PROD_ZONES" "$QUALITY_VHOST"; do
   missing=""
   for p in $permit_paths; do
     case " $UNLIMITED_BY_DECISION " in *" $p "*) continue ;; esac
-    printf '%s\n' "$limited" | grep -qxF "$p" || missing="$missing $p"
+    grep -qxF "$p" <<< "$limited" || missing="$missing $p"
   done
   if [ -n "$missing" ]; then
     err "$f does not rate-limit:$missing. Every permitAll path under /api is an unauthenticated public door; NEW-47 named /api/authenticate, /api/register and /api/account/reset-password/init, and the two exclusions are argued in decisions.md D94 §5. A path that is neither limited nor argued is a door nobody decided to leave open." "$f"
@@ -561,7 +704,7 @@ for f in "$PROD_ZONES" "$QUALITY_VHOST"; do
   # defect as one never limited, and only an exact-set assertion sees it — D67's rule, one file along.
   surplus=""
   for p in $UNLIMITED_BY_DECISION; do
-    printf '%s\n' "$limited" | grep -qxF "$p" && surplus="$surplus $p"
+    if grep -qxF "$p" <<< "$limited"; then surplus="$surplus $p"; fi
   done
   [ -z "$surplus" ] || ok "$f limits$surplus as well, which D94 §5 recommends — update HC_UNLIMITED_BY_DECISION and D94 §5 together"
   for p in $limited; do
@@ -581,7 +724,7 @@ done
 for z in hc_market_login hc_market_account; do
   for f in "$PROD_VHOST" "$QUALITY_VHOST"; do
     [ -f "$f" ] || continue
-    if conf_src "$f" | grep -qE "limit_req[[:space:]]+zone=$z"; then
+    if conf_has "$f" -E "limit_req[[:space:]]+zone=$z"; then
       ok "$f applies zone=$z"
     else
       err "$f declares no 'limit_req zone=$z'. The zone existing is not the limit applying: nginx accounts nothing without a limit_req directive in a location the request reaches (decisions.md D94)." "$f"
@@ -589,7 +732,7 @@ for z in hc_market_login hc_market_account; do
   done
   for f in "$PROD_ZONES" "$QUALITY_VHOST"; do
     [ -f "$f" ] || continue
-    if conf_src "$f" | grep -qE "limit_req_zone .*zone=$z:"; then
+    if conf_has "$f" -E "limit_req_zone .*zone=$z:"; then
       ok "$f declares zone $z"
     else
       err "$f does not declare 'zone=$z'. Without it nginx refuses the whole configuration — 'zero size shared memory zone' on 1.28.3, 'unknown limit_req zone' on older builds — and the reload is refused for every site on this host." "$f"
@@ -597,14 +740,22 @@ for z in hc_market_login hc_market_account; do
   done
 done
 
-if conf_src "$PROD_VHOST" | grep -qE '^[[:space:]]*(limit_req_zone|map)[[:space:]]'; then
+# THE THIRD FAIL-OPEN OF THE SAME FAMILY, and the only one NOT observed to invert: a ban's match is
+# the finding, so a swallowed match prints ok. hc-market-app.conf strips to 3,788 bytes — inside one
+# stdio block, so the producer always won — but the file is 299 lines and grows, the threshold is
+# about 4.5KB, and a guard that is correct because a file is small today is not a guard. What it
+# costs when it goes is every site on this host: nginx -t refuses the whole configuration.
+if conf_has "$PROD_VHOST" -E '^[[:space:]]*(limit_req_zone|map)[[:space:]]'; then
   err "$PROD_VHOST declares an http-scope directive (limit_req_zone or map). This file is included INSIDE server { }, so nginx refuses it with 'directive is not allowed here' and the reload fails for every site on the host. Both belong in deploy/prod-server/nginx-conf.d/ (decisions.md D94)." "$PROD_VHOST"
 else
   ok "$PROD_VHOST declares no http-scope directive"
 fi
 
 if [ "$fail" = 0 ]; then
-  printf '\naccount lifecycle guards: ok\n'
+  # The part count is derived from the numbered banners rather than written as 6: a seventh part
+  # would otherwise go stale silently, which is this file's own complaint about quoted counts.
+  printf '\naccount lifecycle guards: ok (%s assertions over %s parts)\n' \
+    "$asserted" "$(grep -cE '^# --- [0-9]+\. ' "${BASH_SOURCE[0]}")"
 else
   printf '\naccount lifecycle guards: FAILED\n'
 fi

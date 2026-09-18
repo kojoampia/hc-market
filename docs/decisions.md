@@ -18451,3 +18451,300 @@ neighbours — is **declined as cargo cult**: the `isDebugEnabled` guards exist 
 every environment and the guarded calls would otherwise render `Arrays.toString(getArgs())` and
 `String.valueOf(result)` on every method call in the estate. WARN is on everywhere, the arguments are no
 longer rendered, and a guard that is always true costs a branch and buys a reader nothing.
+
+---
+
+## D98 — A match reported as a failure, and a ban narrowed for the second time
+
+**Backlog NEW-71.** Closed 2026-09-18. Opened by D97 §8, which found it while running D97's own
+gates and reported it rather than fixing it, because the repair makes CI red on `main` for a
+separate reason (§5).
+
+Two decisions were asked for and a third was surfaced by measuring the first. All three are taken
+here; none needed a person or an outside fact.
+
+### §1 What was wrong, in one sentence
+
+`.github/checks/account-lifecycle-guards.sh` is `set -Eeuo pipefail`, and eleven of its assertions
+asked their question through `producer | grep -q`. `grep -q` exits at its **first match**; the
+producer then takes `SIGPIPE` and dies **141**; `pipefail` makes that the *pipeline's* status. So a
+**match arrives as a failure**, and the three assertions whose finding *is* the match could not
+report one.
+
+### §2 THE ITEM AND D97 §8 BOTH BLAMED MACHINE LOAD, AND THAT IS THE WRONG VARIABLE
+
+This is the correction worth more than the fix, because the wrong explanation is the one that makes
+the defect look like flakiness — and "flaky" is a thing people re-run rather than repair.
+
+Both documents recorded the two outcomes as *"eight quiet runs reported `ok`; two runs racing a
+Maven build reported the file"*. The direction is **inverted** — a suppressed match is what prints
+`ok`, and a killed producer is what suppresses it, so load can only make `ok` *more* likely, not
+less — and more importantly load is not what decides it. Measured on this tree with the match on
+line 1 and **only the amount of following text varied**:
+
+```
+stripped bytes   1127  3327  4319  4539 | 5527  8827  13227
+pipeline status  0     0     0     0    | 141   141   141      (5 runs each, no variance)
+```
+
+The threshold is the producer's own stdio block: if its whole output fits before `grep -q` closes
+the pipe, it exits 0 and there is no signal. That is a **property of the file**, and it is why the
+same command "answers differently twice" — not because the box was busy, but because it was pointed
+at a different file. On a loaded workstation the real subject measured **141 five runs of five**,
+which is the opposite of what the item predicted and is the state that prints `ok`.
+
+The mechanism was reproduced with a control before anything was changed: the same producer, the same
+pattern, one shell option apart — `rc=0` without `pipefail`, `rc=141` with it, three of three each
+way.
+
+### §3 DECISION ONE — the shape, and it is "no pipeline" in two spellings
+
+`grep -c … || true` against 0, a herestring, and `grep -q` against a **file** all answer honestly.
+The choice is not between them but between *inventing a shape* and *adopting the one already in this
+file*: part 5 strips once to a temp file and greps the file, and its comment records this exact
+symptom without naming the cause. So the rule is **no pipeline**, spelled by where the text already
+is:
+
+- **text that must be stripped out of a file** → `has_in` strips once into `$STRIP_BUF` and greps
+  the file. `java_has`, `conf_has` and `value_has` are its three faces.
+- **text already in a variable** → a herestring, which is not a pipeline, so the question cannot
+  arise. This is what D97 hardened its own step with.
+
+`grep -c … || true` lost for a reason that matters: `|| true` discards **grep's** status too, so
+grep's `2` — an unreadable file, a bad pattern — becomes indistinguishable from a clean tree, which
+is this item again in a second costume. `has_in` therefore treats `0` as match, `1` as no match and
+**anything else as a stop**, and it status-checks the stripper for the same reason. The `exit` is
+deliberate: `return 1` would be swallowed wherever the helper is used as an `if` condition, where
+errexit does not apply.
+
+The accumulating sites are now `if … then var=… fi` rather than `cmd && var=`. That is not style. A
+left operand that fails inside `&&` is **exempt from errexit**, and its status then becomes the loop
+body's — which is precisely how eleven inverted pipelines ran to completion and printed `ok`.
+
+**WHAT IS DELIBERATELY LEFT AS A PIPELINE**: the ones whose **output** is used rather than their
+status. An early-exiting `head` can still kill its producer there, but the value is complete when it
+does, each carries a `|| true` argued in place, and nothing reads the status. Rewriting them would be
+making lines look consistent rather than be correct.
+
+⚠ **THAT SET IS DERIVED AND NOT LISTED, BECAUSE THE LIST WAS WRONG TWICE IN ONE COMMIT** (review
+round 2). This paragraph named **six** — *"`default_days`, part 3's two `head -1` value reads, the
+two `sed -n` report readers and `limited_in`"* — while the guard's own comment named **four**, and
+both were short: the `sed -n` report readers alone are **five**, in two groups (three over `$report`,
+two over `$permit_report`). Three enumerations, three answers, none of them the file's. So the rule
+is stated and the membership is read off the file:
+
+```bash
+awk -f .github/checks/strip-sh-comments.awk .github/checks/account-lifecycle-guards.sh \
+  | grep -nE '\| *(grep|head|sed|sort|cut|tr)'
+```
+
+Everything that lists is an output pipeline and belongs; anything matching `| grep -q` is a status
+pipeline and does not. **This is *"trust the list, not the number"* failing inside the decision that
+cites it** — and the deeper lesson is that a list was the wrong instrument: the property is
+mechanical and therefore derivable, so writing it down by hand was a choice to maintain something
+that did not need maintaining.
+
+### §4 THE ELEVEN, BY DIRECTION — and the item said one was fail-open when three are
+
+The item's §3 reads *"Part 4's is the one whose direction is fail-**open**; the others are
+`if ! … ; then err` shapes"*. Enumerated rather than counted:
+
+| # | line | site | direction | observed inverting? |
+| --- | --- | --- | --- | --- |
+| 1 | 89 | part 1, `@Scheduled` anywhere in the gateway → `&& scheduled=` | **fail-OPEN** | at a position that cannot occur — see §4b |
+| 2 | 122 | `DEFAULT_SWEEP_CRON` is still the generated one | fail-closed | — |
+| 3 | 346 | dev/quality pass `SPRING_MAIL_*` | fail-closed | — |
+| 4 | 373 | `SPRING_MAIL_HOST` names a container in the same file | fail-closed | — |
+| 5 | 410 | part 4, the placeholder base-url → `&& placeholders=` | **fail-OPEN** | **yes — 141 five of five** |
+| 6 | 440 | `CONNECTION_KEYS` holds each mail key | fail-closed | — |
+| 7 | 553 | every `permitAll` path is rate-limited → `\|\| missing=` | fail-closed | — |
+| 8 | 564 | the surplus advisory → `&& surplus=` | fail-open **in shape**, no assertion behind it | no |
+| 9 | 584 | `limit_req zone=` is applied | fail-closed | — |
+| 10 | 592 | `limit_req_zone` is declared | fail-closed | — |
+| 11 | 600 | part 6's ban on an http-scope directive in the snippet | **fail-OPEN** | no — see below |
+
+**Three fail-open, not one** — that half of the item's §3 is wrong and the correction stands.
+
+### §4b THE RANKING WAS WRONG, AND IT RESTED ON A FIXTURE THAT DOES NOT COMPILE
+
+This section's first version led with part 1 as the worst of the three, on the grounds that a
+regeneration restores `@Scheduled` on `UserService.removeNotActivatedUsers` — the **top row of the
+regeneration table**, where the estate acquires two account sweeps and the generated one destroys a
+login, both names, an email address and a password hash at a hard-coded three days. The measurement
+offered for it was *"a class-level `@Scheduled` at line 29 of an 11,600-byte stripped file, 141 three
+runs of three"*.
+
+**The measurement is valid and the scenario is impossible.** `@Scheduled` is
+`@Target({METHOD, ANNOTATION_TYPE})` — read out of `spring-context-7.0.9.jar` with `javap -v`:
+`value=[METHOD, ANNOTATION_TYPE]` — so **a class-level `@Scheduled` does not compile and no
+generator can emit one**. The 141 is a true statement about a *text* guard given a fixture that is
+not legal Java, and it was offered as evidence for a regeneration that puts the annotation somewhere
+else entirely.
+
+**And the harm story it was ranked on is one the broken guard already caught.** Measured at the only
+legal position — `@Scheduled` above `removeNotActivatedUsers()`, **602 stripped bytes following** —
+the old pipeline answered **0 three runs of three**, i.e. reported it. Test case 1 passes at base for
+that reason, and the mutation battery shows it: reverting part 1 alone reddens **only case 21**.
+
+So the corrected ranking is:
+
+| site | claim to "worst" |
+| --- | --- |
+| **part 4** | **observed.** The repository's one real occurrence was measurably unreportable — 141 five of five, `ok` printed. This is the strongest claim and the item was right to lead with it. |
+| part 1 | **hypothetical position.** The blind spot is real — any match with more than ~4.5KB following it, e.g. scheduled work on an early method of a long class, or a new `@Scheduled` in a larger gateway source — but not the regeneration case. |
+| part 6 | **unobservable today.** 3,788 bytes, inside one stdio block; reverting it reddens nothing. |
+
+**The repair is unchanged in all three** and the argument for part 1 does not need the impossible
+case: a guard whose reach depends on where in a file the defect lands is not a guard, and the file it
+scans is a whole source tree that grows.
+
+**What the mistake was, as a method rather than a fact.** The probe measured the thing it was pointed
+at — a text scan over bytes — and the sentence written from it claimed something about *Java*, which
+the probe could not see and which one `javap` would have settled. That is this file's own
+`/proc/1/cmdline` shape for the fourth time, arriving inside the decision whose §2 corrects the same
+error in the item it closes. **A fixture for a text guard should still be legal in the language the
+text is written in**, or the guard's coverage story is about a state the compiler forbids.
+
+**Number 11 is fixed on argument and nothing can see it, which is stated rather than dressed up.**
+`hc-market-app.conf` strips to **3,788 bytes** — inside one stdio block, so the producer always wins
+— and the mutation battery confirms it: reverting that one site to a pipeline leaves **every test
+case green**. It is repaired anyway because the file is 299 lines and grows, the threshold is about
+4.5KB, and a guard that is correct because a file is small today is not a guard. What it costs when
+it goes is every site on the host, since `nginx -t` refuses the whole configuration.
+
+Number 8 is the honest oddity: it is the fail-open shape with no refusal behind it — a swallowed
+match loses an informational `ok` line and nothing else. It is rewritten for uniformity, and saying
+so is better than promoting it to a finding.
+
+### §5 DECISION TWO — the pattern, and narrowing a ban twice is not the same move twice
+
+Fixing the pipeline made part 4 able to see a file for the first time in its life, and the file is a
+false positive: `docker-compose.prod.yml:219` mentions the placeholder inside the **error message**
+of a `${HC_MAIL_BASE_URL:? … }` expansion, explaining what the variable replaced. Measured: with the
+narrowing removed, CI is red on `main`, naming that file, with nothing wrong with it.
+
+The item's recommendation is taken — match the placeholder only where it is not inside a `:?` — and
+the reason for saying so **in place** is that this ban has now been narrowed twice, which is a
+pattern worth naming rather than a fix worth repeating:
+
+- **D94's narrowing removed a class of TEXT.** Raw → stripped: comments are not configuration, in
+  any file, and the transformation is estate-wide and language-level.
+- **D98's narrowing removes a CONTEXT.** A `${VAR:?message}` message is prose that happens to live
+  in configuration, and only this one ban has a legitimate mention of its own banned string.
+
+The second kind is the more dangerous kind and is bounded accordingly. `value_src` blanks the message
+of a `:?` expansion **up to that expansion's own `}`**, never to end of line, so a real value written
+after one on the same line is still caught. And `:-` is deliberately **not** excluded — a default is
+exactly how this placeholder reached the production profile, part 3's own refusal message says so,
+and the test is red without it.
+
+**The rule generalising out of the pair**: a ban may be narrowed by what a thing *is* — a comment, a
+string literal — freely, because that is a statement about the language. Narrowing it by what a
+mention *means* costs a test per direction, and this one has three: the exclusion, the `:-` form it
+must still catch, and the same-line value it must not swallow.
+
+### §6 THE THIRD DECISION, WHICH THE ITEM DID NOT ANTICIPATE — the walk crosses into a second checkout
+
+Part 4 is the only assertion here that walks the tree rather than reading named files, and it walks
+`find "${HC_YML_ROOT:-.}"`. Agent git worktrees are created at `<repo>/.claude/worktrees/agent-*/`,
+**inside** the repository. Measured in the main checkout: **135 further `.yml` files, exactly
+doubling the 135 it is meant to walk.**
+
+Nothing was wrong with the estate and nothing is red today, which is why this is worth writing down
+rather than just patching: the harm is a *claim*. The success line says "no .yml in **the
+repository**" having walked two of them, and a finding in the nested one names a path the operator
+cannot fix and CI — which has no worktrees — will never reproduce. That is the shape the workspace
+guide records for `eslint .` in three sibling products, arriving in a CI check instead of a linter.
+
+`.claude` is pruned beside `target` and `node_modules`, and for the same reason one directory kind
+along: build output and somebody else's checkout are both not this repository's configuration. The
+alternative — leave it, so an agent's own worktree is scanned — was rejected because over-reporting
+on an unfixable path is how a gate stops being run (D46's lesson about `verify-cycle.sh` calling
+another tool's success a fault).
+
+### §7 What was watched failing, and the one thing that cannot be
+
+Red first, then fixed. The test grew from **35 assertions to 43** — now printed as **37 refusals and
+6 controls**, reconciled against what `report` saw, because the old `$((pass - 2))` trailer was a
+constant that overstated in both directions and two readers derived two different answers from it
+(§8). The new cases exist because **cases 1, 10 and 16 all passed the broken tree** — each one's
+mutation lands near the end of its file, so the producer finishes and the status is honest. Case 10
+plants its placeholder 33 lines from the end of a 152-line file; the real occurrence is 273 lines
+from the end of a 492-line file. **Both are correct cases and neither could see the defect**, which
+is the sharpest single lesson here: a check's test can be green because of where its own fixture puts
+the thing.
+
+**And §4b is the same lesson one turn further in** — a fixture can also be green, or red, at a
+position the language does not permit. Case 21 is kept because its blind spot is real, and its
+comment now says in place that the harm it was first justified with is not the harm it guards.
+
+So 21, 22 and 23 sit beside 1, 10 and 16 with the same mutation moved to the **top** of the same
+file, and the pair is the point — the old case pins that the assertion works, the new one pins that
+it works wherever the defect lands. The mutation battery, each mutation applied alone and the tree
+restored byte-identical after every one:
+
+| mutation | red cases |
+| --- | --- |
+| part 4 back to a pipeline | 22, 25, 26, **28** |
+| part 1 back to a pipeline | **21 only — case 1 stays green** |
+| the `.claude` prune removed | 27 |
+| the `:?` narrowing removed | 0 and 24, plus every case expecting green |
+| the stripper's status folded | 28 |
+| part 6's ban back to a pipeline | **NONE** |
+| one case's `refusal`/`control` call removed | the reconciliation, naming the shortfall |
+
+Two of those rows are the findings. **Part 1's mutation reddens only the new case**, which is the
+proof that the pre-existing case could never have caught it — and, read with §4b, also the proof that
+the old shape was already adequate for the regeneration position. **Part 6's reddens nothing**, which
+is the limit §4 states.
+
+**`mut-5` was invalid the first time** and the rewritten one attributes to case 28 alone; the first
+version forced an unconditional `exit`, so every case went red and the run "proved" coverage it had
+not established. A mutation that breaks the subject outright is not a measurement.
+
+Case 28 is a review finding against this package's own first draft. Its first version sed-ed the
+shell stripper's path inside a copy of the check written to a temp directory — and the check derives
+`ROOT` from its own `BASH_SOURCE`, so the copy could find **neither** stripper and reproduced case 19
+instead, reporting a pass for a different guard. *A probe that cannot reach its subject reports on
+something else.* Both stripper paths are absolutised now and the case has an explicit arm that calls
+out that failure mode by name if it ever recurs.
+
+**Three instruments in this package were wrong before the code was**, which is the pattern worth more
+than any of them: case 28's probe could not reach its subject, `mut-5` broke its subject outright, and
+**NEW-73's inventory script reproduced the very defect it was built to count** — `awk … | grep -q
+pipefail && pf=yes`, reporting `pipefail=no` for two files that plainly set it. Each failed in the
+direction that looks like an answer. Suspect the instrument before the code.
+
+### §8 A count that is prose, and why that is the right way round
+
+After the fix the file still matches `| grep -q` **five times** — all five inside the paragraphs
+explaining the defect. Read through `strip-sh-comments.awk` it matches **zero**. That asymmetry is
+this repository's own stripper rule arriving in its own subject matter: a check counting these
+occurrences raw would be asserting the length of an argument — and it is why **NEW-73's inventory is
+a stripped count (50) and not the raw one (57)**.
+
+**And the check now derives and prints its own assertion count**, like `refusal-logging-level-test.sh`
+beside it, because writing this section produced the same defect in miniature: CLAUDE.md's claim that
+both counts were stale was itself wrong. The check's *"36 assertions"* was accidentally still correct
+while the test's *"20 broken states"* had become 43 — and **a quoted count that happens to still be
+right is indistinguishable from one that is maintained**, which is the whole argument for deriving it
+rather than the size of either number.
+
+### §9 What is surfaced and not taken — NEW-73
+
+**There are 50 status pipelines left across 15 shell scripts, counted from stripped text, and every
+one of them is under `pipefail`.** This package fixed the 11 in the one file the item named and where
+the fail-opens were measured, plus the 4 its own new test cases introduced (converted to herestrings
+at review — the item inventorying the shape was briefly made stale by the commit fixing it). The rest
+are **NEW-73**, deliberately not swept here. **Quote the stripped figure, not `git grep`'s 57**, and
+re-run the inventory rather than trusting either: NEW-73 carries the loop. The item's own
+warning is the reason — *"a sweep is only worth doing once somebody has decided (1), or it produces
+twenty edits in twenty shapes"* — and (1) is decided above, so the sweep now has a shape to follow
+and a threshold to triage by: a producer under about 4.5KB cannot invert today, which makes this a
+per-site question rather than a blanket rewrite. What it must not become is a blind substitution:
+three of the eleven here were fail-open and eight were not, and the two directions want different
+write-ups.
+
+**Nothing in `deploy-dev.sh` or `deploy-prod.sh` changed**, so the appendices are untouched — but
+`deploy-prod.sh` holds four of the 50 and is Appendix B, which is a re-embed NEW-73 will need and
+this package did not.

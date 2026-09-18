@@ -30,8 +30,38 @@ PRISTINE="$WORK/pristine"
 FIXTURE="$WORK/fixture"
 trap 'rm -rf "$WORK"' EXIT
 
+# --- THIS FILE STILL HOLDS EIGHT `printf | grep -q` PIPELINES, AND THAT IS SCOPED, NOT OVERLOOKED --
+#
+# The subject it tests is `set -Eeuo pipefail` and now asks nothing through a pipe (decisions.md
+# D98). This file is `pipefail` too and its own status reads are pipelines — so the four THIS package
+# added are herestrings, and the eight that predate it are **NEW-73's**, named here so the
+# inconsistency is a scope boundary rather than a thing nobody noticed.
+#
+# Two facts make leaving them correct rather than lazy. `run_check`'s output is about 3KB, under the
+# ~4.5KB threshold at which a producer can be killed mid-write, so none of them can invert today.
+# And their direction is fail-CLOSED: a swallowed match here makes a case report `bad`, which is a
+# test going red on a correct tree — annoying, and the opposite of the hole D98 closed in the check.
+# `case_refuses`'s first arm is the one to look at first when NEW-73 reaches this file: it is a
+# ban-shape, so a swallowed match there changes which message a red run prints.
 pass=0; failed=0
 report() { if [ "$1" = ok ]; then pass=$((pass+1)); printf 'ok   %s\n' "$2"; else failed=$((failed+1)); printf '::error::case %s\n' "$2"; fi; }
+
+# --- WHY THE SUMMARY IS CLASSIFIED AND NOT SUBTRACTED — decisions.md D98 §8, review round 2 --------
+#
+# The trailer used to print `$((pass - 2))` "states it exists to refuse", and the constant was wrong
+# in both directions at once: it said 33 against 31 actual before NEW-71, and 41 against 37 after,
+# because this file mixes cases that assert a REFUSAL with controls that assert a correct tree PASSES
+# and the number of the latter has changed three times. Two readers derived two different answers
+# from it, which is the argument for deriving it rather than choosing one.
+#
+# So every case declares which kind it is, and the trailer refuses to print at all if the two
+# counters do not reconcile with what `report` actually saw — a new case that forgets to classify
+# itself is red rather than silently absorbed into a subtraction. This is D98 §8's own rule landing
+# on the commit that made it: a quoted count that happens to still be right is indistinguishable
+# from one that is maintained.
+refusals=0; controls=0
+refusal() { refusals=$((refusals + 1)); }   # asserts the check REFUSES a constructed broken tree
+control() { controls=$((controls + 1)); }   # asserts the check PASSES a tree that is correct
 
 # The pristine copy of everything the check reads, as the repository has it.
 mkdir -p "$PRISTINE"
@@ -77,6 +107,7 @@ run_check() {                         # prints the check's output; never exits o
 # $1 = name, $2 = a fragment the refusal must contain, rest = the mutation, run against $FIXTURE
 case_refuses() {
   local name="$1" fragment="$2"; shift 2
+  refusal
   copy_tree "$FIXTURE"
   "$@"
   local out; out="$(run_check)"
@@ -90,6 +121,7 @@ case_refuses() {
 }
 
 # --- 0. the positive control, and it is the case every other one leans on -----------------------
+control
 copy_tree "$FIXTURE"
 out="$(run_check)"
 if printf '%s' "$out" | grep -q "lifecycle guards: ok"; then
@@ -227,6 +259,7 @@ case_refuses "17d the notice's OWN SECTION drifts from the code" "does not state
 # And the section pattern itself must be missing-means-ERROR, not missing-means-skip: a renumbered
 # heading otherwise silently turns the whole assertion off, which is the shape of every check in this
 # repository that has ever reported success about a file it could not read.
+refusal
 copy_tree "$FIXTURE"
 # Called directly rather than through run_check, which deliberately fixes its own environment: one
 # more variable in that function is one more thing every other case silently inherits.
@@ -298,6 +331,7 @@ case_refuses "17i a permitAll path that is not a literal" "permits a path this c
 
 # And the control for 17i: the HttpMethod-prefixed form is Spring idiom, is used elsewhere in this
 # gateway, and must NOT be refused — otherwise the fix above is a check that refuses correct code.
+control
 copy_tree "$FIXTURE"
 sed -i 's#\.pathMatchers("/api/register")\.permitAll()#.pathMatchers(HttpMethod.POST, "/api/register").permitAll()#' \
   "$FIXTURE/java/jojoaddison/config/SecurityConfiguration.java"
@@ -359,6 +393,7 @@ io.open(p, "w", encoding="utf-8").write(s.replace(old, new))
 # AND THE NEW PATTERN MUST NOT REFUSE A CORRECT STATEMENT. "Deletion happens on day 3" beside the
 # canonical form is right, and a ban that flagged it would be a check that refuses accurate prose —
 # which is how a check gets deleted rather than fixed.
+control
 copy_tree "$FIXTURE"
 python3 -c '
 import io, sys
@@ -380,6 +415,7 @@ fi
 # Every text-matching check in this repository trusts one file; absent it, the two whose subject is a
 # silent gap passed having read nothing. This asserts the guard rather than the behaviour, because
 # the behaviour would be "everything passes".
+refusal
 copy_tree "$FIXTURE"
 sed 's#\.github/checks/strip-comments\.awk#/nonexistent/strip-comments.awk#' "$CHECK" > "$WORK/check-nostrip.sh"
 missing_out="$( cd "$ROOT" && bash "$WORK/check-nostrip.sh" 2>&1 )" || true
@@ -390,6 +426,7 @@ else
 fi
 
 # --- 20. the control for case 10: a COMMENT about the placeholder must not be a finding ----------
+control
 copy_tree "$FIXTURE"
 printf '\n# A comment about http://my-server-url-to-change, which is what this file replaced.\n' \
   >> "$FIXTURE/yml/application-prod.yml"
@@ -402,6 +439,218 @@ else
   report bad "20 prose was read as configuration: $(printf '%s' "$out" | grep '::error' | head -2)"
 fi
 
+# --- 21-26. NEW-71: THE SAME BROKEN STATES, PLACED WHERE THE OLD SHAPE COULD NOT SEE THEM -------
+#
+#  Cases 1, 10 and 16 above all pass against the OLD `producer | grep -q` shape, and they pass for a
+#  reason that is nothing to do with what they assert: each one's mutation lands near the END of its
+#  file. `grep -q` exits at its first match, the producer then takes SIGPIPE and dies 141, and under
+#  `set -o pipefail` the PIPELINE reports that — so a match arrives as a failure and a `&& var=…`
+#  never fires. When only a few hundred bytes follow the match the producer has already written
+#  everything and exited, there is no SIGPIPE, and the status is 0.
+#
+#  Measured on this tree (decisions.md D98 §2): match on line 1, varying only how much follows it —
+#
+#      stripped bytes   1127  3327  4319  4539 | 5527  8827  13227
+#      status           0     0     0     0    | 141   141   141      (5 runs each, no variance)
+#
+#  so the discriminator is the producer's own stdio block, not machine load. THE ITEM AND D97 §8
+#  BOTH ATTRIBUTED IT TO LOAD AND THAT IS THE WRONG VARIABLE — see D98 §2.
+#
+#  Hence these six. Each is one of the three above with the mutation moved to the TOP of the same
+#  file, plus the controls for the narrowed pattern. Cases 22, 25 and 26 passed a broken tree before
+#  NEW-71; 21 did too, and 23 and 24 are controls — see each one.
+#
+#  THEY ARE NOT DUPLICATES OF 1/10/16 AND MUST NOT BE "TIDIED" INTO THEM. The pair is the point: the
+#  old ones pin that the assertion works at all, these pin that it works wherever the defect lands,
+#  and only running both distinguishes a check from a check's lucky position.
+
+# PART 1's BLIND SPOT, AND IT IS A POSITION NO REGENERATION PRODUCES — read this before citing it.
+# The old shape could not see a match with more than ~4.5KB following it, and this fixture proves the
+# scan now can: 11,600 stripped bytes, match on line 29, old pipeline 141 three runs of three.
+#
+# BUT `@Scheduled` IS `@Target({METHOD, ANNOTATION_TYPE})` — javap on spring-context — so this
+# fixture is NOT legal Java and a generator cannot emit it (D98 §4b). The regeneration case is the
+# annotation on `removeNotActivatedUsers`, which case 1 covers and which the OLD pipeline already
+# caught (602 bytes following, rc=0 three of three). So what this case guards is a real blind spot at
+# a hypothetical position — scheduled work on an early method of a long class — and NOT the two-sweep
+# harm the regeneration table describes. Keep it; do not re-justify it with that harm.
+case_refuses "21 @Scheduled at the TOP of a long generated class" "carries @Scheduled" \
+  python3 -c '
+import io, sys
+p = sys.argv[1]
+s = io.open(p, encoding="utf-8").read()
+old = "public class UserService {"
+assert s.count(old) == 1
+io.open(p, "w", encoding="utf-8").write(s.replace(old, "@Scheduled(cron = \"0 0 1 * * ?\")\n" + old))
+' "$FIXTURE/java/jojoaddison/service/UserService.java"
+
+# PART 4, THE ITEM'S OWN SUBJECT. Case 10 puts the placeholder at line 119 of a 152-line file, so 33
+# lines follow it and the producer finishes: rc=0, reported, green. The real tree's only occurrence
+# is line 219 of a 492-line compose file — 273 lines after it — and that one measured 141 five runs
+# of five. So the ban was demonstrably unable to report the one file in the repository it is about.
+case_refuses "22 the placeholder as a VALUE with a long file after it" "JHipster's placeholder base-url" \
+  python3 -c '
+import io, sys
+p = sys.argv[1]
+s = io.open(p, encoding="utf-8").read()
+old = "    SERVER_PORT: 8080\n"
+assert s.count(old) == 1
+io.open(p, "w", encoding="utf-8").write(
+    s.replace(old, "    PLANTED_BASE_URL: http://my-server-url-to-change\n" + old, 1))
+' "$FIXTURE/yml/prod-compose.yml"
+
+# PART 6's http-scope ban, which is a ban and therefore fail-open in the same direction. It is the
+# one of the three NOT observed to invert on today's tree — hc-market-app.conf strips to 3,788 bytes,
+# inside one stdio block, so the producer always wins — and it is fixed anyway: the file is 299 lines
+# and grows, the threshold is ~4.5KB, and a guard that is correct because a file is small today is
+# not a guard. What it costs when it goes is every site on the host, because nginx -t refuses the
+# whole configuration and the reload is refused for all of them.
+#
+# ⚠ THIS CASE IS GREEN UNDER THE OLD SHAPE TOO, SO IT IS NOT COVERAGE OF THAT FIX. Measured:
+# reverting part 6 alone to a pipeline reddens NO case in this file, this one included. It earns its
+# place by asserting the ban works at the top of the file — where the directive would actually be
+# written — and the pipe fix at that site is guarded by argument only (decisions.md D98 §4). Do not
+# read a green 23 as evidence the shape there is right.
+case_refuses "23 an http-scope directive at the TOP of the production snippet" "declares an http-scope directive" \
+  python3 -c '
+import io, sys
+p = sys.argv[1]
+lines = io.open(p, encoding="utf-8").read().split("\n")
+lines.insert(1, "limit_req_zone $binary_remote_addr zone=oops:1m rate=1r/s;")
+io.open(p, "w", encoding="utf-8").write("\n".join(lines))
+' "$FIXTURE/nginx/app.conf"
+
+# --- THE NARROWED PATTERN: its exclusion, and the two things it must still catch ----------------
+#
+# Fixing the pipeline made part 4 able to see docker-compose.prod.yml:219 for the first time, and
+# that line is a false positive: the placeholder is named inside the error message of a
+# `${HC_MAIL_BASE_URL:? … }` expansion, explaining what the variable replaced. It is prose in a
+# parameter expansion and not a base-url, and the shell stripper cannot tell them apart because both
+# are YAML content. So the ban now blanks the MESSAGE of a `${VAR:?…}` expansion before matching —
+# D94 narrowed this ban once already, from raw text to stripped text, and D98 §4 argues why a second
+# narrowing is a different kind of move from the first.
+#
+# 24 is the exclusion. 25 and 26 are what stops it becoming a hole, and they are the point of it
+# being `:?` rather than "a line mentioning the variable": a `:-` DEFAULT carrying the placeholder is
+# exactly how it reached the production profile in the first place (part 3's own message says so),
+# and it is still red.
+control
+copy_tree "$FIXTURE"
+python3 -c '
+import io, sys
+p = sys.argv[1]
+s = io.open(p, encoding="utf-8").read()
+old = "    SERVER_PORT: 8080\n"
+assert s.count(old) == 1
+io.open(p, "w", encoding="utf-8").write(
+    s.replace(old, "    A_SECOND_ONE: ${HC_SOMETHING:?it was http://my-server-url-to-change once}\n" + old, 1))
+' "$FIXTURE/yml/prod-compose.yml"
+refusal_msg="$(run_check)"
+if grep -q "lifecycle guards: ok" <<< "$refusal_msg"; then
+  report ok "24 the placeholder inside a \${VAR:?…} refusal message is not a finding"
+else
+  report bad "24 a refusal message explaining the placeholder was read as a value: $(printf '%s' "$refusal_msg" | grep '::error' | head -2)"
+fi
+
+case_refuses "25 the placeholder as a \${VAR:-default}, which is how it reached production" "JHipster's placeholder base-url" \
+  python3 -c '
+import io, sys
+p = sys.argv[1]
+s = io.open(p, encoding="utf-8").read()
+old = "    SERVER_PORT: 8080\n"
+assert s.count(old) == 1
+io.open(p, "w", encoding="utf-8").write(
+    s.replace(old, "    A_DEFAULTED_ONE: ${HC_SOMETHING:-http://my-server-url-to-change}\n" + old, 1))
+' "$FIXTURE/yml/prod-compose.yml"
+
+# AND THE EXCLUSION MUST NOT SPAN THE LINE. `${A:?msg}` ends at its own `}`; a real value written
+# after one on the same line is still a value, and blanking to end of line would hide it.
+case_refuses "26 a real value after a \${VAR:?…} on the same line" "JHipster's placeholder base-url" \
+  python3 -c '
+import io, sys
+p = sys.argv[1]
+s = io.open(p, encoding="utf-8").read()
+old = "    SERVER_PORT: 8080\n"
+assert s.count(old) == 1
+io.open(p, "w", encoding="utf-8").write(
+    s.replace(old, "    A_MIXED_ONE: ${HC_SOMETHING:?required} http://my-server-url-to-change\n" + old, 1))
+' "$FIXTURE/yml/prod-compose.yml"
+
+# --- 27. AN AGENT WORKTREE IS A SECOND CHECKOUT INSIDE THIS ONE ---------------------------------
+#
+# Part 4 walks `find "${HC_YML_ROOT:-.}"`, and git worktrees are created at `<repo>/.claude/
+# worktrees/agent-*/`, INSIDE the repository. Measured in the main checkout: 135 further .yml files,
+# exactly doubling the walk. So without the prune the success line's "in the repository" is a claim
+# about two repositories, and a finding in the nested one names a path the operator cannot fix and CI
+# — which has no worktrees — will never reproduce. The workspace guide records the same shape biting
+# `eslint .` in three sibling products.
+control
+copy_tree "$FIXTURE"
+mkdir -p "$FIXTURE/yml/.claude/worktrees/agent-zz"
+printf 'jhipster:\n  mail:\n    base-url: http://my-server-url-to-change\n' \
+  > "$FIXTURE/yml/.claude/worktrees/agent-zz/application-prod.yml"
+nested="$(run_check)"
+if grep -q "lifecycle guards: ok" <<< "$nested"; then
+  report ok "27 a placeholder inside a nested agent worktree is not this repository's finding"
+else
+  report bad "27 a nested worktree was walked as part of the repository: $(printf '%s' "$nested" | grep '::error' | head -2)"
+fi
+
+# --- 28. THE STRIPPER THAT IS PRESENT AND DOES NOT WORK -----------------------------------------
+#
+# Case 19 covers the stripper being ABSENT, which the preamble guard catches. This is the other half
+# and it is the one the new has_in exists for: a stripper that is there, runs, and exits non-zero.
+# Folding that status would make every assertion in the file a question asked of an empty buffer —
+# the ninth fail-open this repository found, which was produced BY consolidating the previous eight.
+# BOTH stripper paths become absolute, and that is not convenience. The check derives ROOT from its
+# own BASH_SOURCE, so a copy living outside .github/checks/ cannot find EITHER stripper and reproduces
+# case 19 instead — which is what the first version of this case did, reporting a pass for the wrong
+# guard entirely. Absolute paths leave the java stripper working and only the shell one broken, which
+# is the one thing this case is about.
+refusal
+copy_tree "$FIXTURE"
+printf 'this is not a valid awk program {{{\n' > "$WORK/broken-strip.awk"
+sed -e "s#^JAVA_STRIP=.*#JAVA_STRIP=\"$ROOT/.github/checks/strip-comments.awk\"#" \
+    -e "s#^SH_STRIP=.*#SH_STRIP=\"$WORK/broken-strip.awk\"#" \
+    "$CHECK" > "$WORK/check-badstrip.sh"
+badstrip="$( cd "$ROOT" && \
+  HC_GATEWAY_MAIN="$FIXTURE/java" \
+  HC_RETENTION_CLASS="$FIXTURE/java/jojoaddison/service/AccountRetention.java" \
+  HC_SECURITY_CONFIG="$FIXTURE/java/jojoaddison/config/SecurityConfiguration.java" \
+  HC_GATEWAY_APP_YML="$FIXTURE/yml/application.yml" \
+  HC_GATEWAY_PROD_YML="$FIXTURE/yml/application-prod.yml" \
+  HC_PROD_COMPOSE="$FIXTURE/yml/prod-compose.yml" \
+  HC_DEV_COMPOSE="$FIXTURE/yml/dev-compose.yml" \
+  HC_QUALITY_COMPOSE="$FIXTURE/yml/quality-compose.yml" \
+  HC_PROD_SCRIPT="$FIXTURE/deploy/deploy-prod.sh" \
+  HC_PROD_VHOST="$FIXTURE/nginx/app.conf" \
+  HC_PROD_ZONES="$FIXTURE/nginx/zones.conf" \
+  HC_QUALITY_VHOST="$FIXTURE/nginx/host-site.conf" \
+  HC_PRIVACY_NOTICE="$FIXTURE/docs/privacy-notice.md" \
+  HC_PROCESSING_RECORD="$FIXTURE/docs/processing-record.md" \
+  HC_YML_ROOT="$FIXTURE/yml" \
+  bash "$WORK/check-badstrip.sh" 2>&1 )" || true
+if grep -q "could not read this file" <<< "$badstrip"; then
+  report ok "28 a stripper that runs and FAILS stops the check rather than matching an empty buffer"
+elif grep -q "is missing" <<< "$badstrip"; then
+  report bad "28 the probe reproduced case 19 instead — the mutant could not find a stripper at all"
+else
+  report bad "28 a failing stripper was folded into 'no match': $(printf '%s' "$badstrip" | grep -cE '^ok') assertions passed"
+fi
+
 printf '\n%s assertions passed, %s failed\n' "$pass" "$failed"
+
+# THE RECONCILIATION, AND IT IS THE POINT OF THE TWO COUNTERS rather than a formality: a case added
+# without calling `refusal` or `control` would otherwise be absorbed silently, which is exactly how
+# the constant this replaced came to overstate by four. It runs before the failure exit so a
+# mis-classified case is reported even on a red run — the summary being wrong and the tree being
+# wrong are two different findings and the second must not hide the first.
+if [ "$((refusals + controls))" != "$((pass + failed))" ]; then
+  printf '::error::%s assertions ran but %s were classified (%s refusals + %s controls). Every case must call `refusal` or `control` so the line below is derived rather than guessed (decisions.md D98 §8).\n' \
+    "$((pass + failed))" "$((refusals + controls))" "$refusals" "$controls"
+  exit 1
+fi
+
 [ "$failed" = 0 ] || exit 1
-printf 'account-lifecycle-guards.sh fails on each of the %s states it exists to refuse\n' "$((pass - 2))"
+printf 'account-lifecycle-guards.sh fails on each of the %s broken states it exists to refuse, and passes %s controls\n' \
+  "$refusals" "$controls"

@@ -5605,7 +5605,52 @@ answered rather than a `grep -c` wired into the first script that would take it.
 
 ---
 
-## NEW-71 — `pipefail` turns `grep -q` inside out, and one CI guard cannot fire · READY
+## NEW-71 — `pipefail` turns `grep -q` inside out, and one CI guard cannot fire · DONE
+
+**Closed 2026-09-18 by `decisions.md` D98**, on `new-71-a-match-reported-as-a-failure`. All three
+questions answered — the pipeline shape, the pattern, and a third the item did not anticipate — and
+**two of this item's own statements below are corrected by the work**, which is why they are left
+standing rather than edited away:
+
+- **§"Measured both ways" attributes the two outcomes to machine LOAD, and that is the wrong
+  variable** (D98 §2). The discriminator is how much the producer still has to write after the
+  match: under about 4.5KB it exits before `grep -q` closes the pipe and the status is honest, past
+  it the status is 141. Measured, 5 runs per size, no variance. The stated direction is also
+  inverted — a *suppressed* match is what prints `ok`, so load can only make `ok` more likely — and
+  the real subject measured **141 five of five on a loaded box**, printing `ok`.
+- **§3 says part 4's is the one fail-open site. THERE ARE THREE** (D98 §4): part 1's `@Scheduled`
+  sweep, part 4's placeholder ban, and part 6's http-scope ban. A fourth, the surplus advisory, is
+  the fail-open *shape* with no assertion behind it. Eight were fail-closed, as the item says.
+  **Part 4's is the worst and the item was right to lead with it**: its one real occurrence in this
+  repository was measurably unreportable. Part 1's blind spot is real but at a **position no
+  regeneration produces** — `@Scheduled` is `@Target({METHOD, ANNOTATION_TYPE})`, so the class-level
+  fixture that measured 141 does not compile, and the position `--force` actually uses was caught
+  even by the broken shape. D98 §4b is that correction; this package's own first draft ranked part 1
+  first and had to be corrected at review.
+
+**What landed**: one shape — *no pipeline* — in two spellings chosen by where the text already is
+(strip once to a file and grep the file; or a herestring for text already in a variable), both
+adopted from shapes this repository already argues for rather than invented. `has_in` stops the
+check on any grep answer that is neither match nor no-match, and on a stripper that runs and fails.
+The ban is narrowed a second time — the message of a `${VAR:?…}` expansion is blanked, bounded to
+that expansion's own `}`, with `:-` deliberately still caught — and D98 §5 names *narrowing a ban
+twice* as a pattern rather than repeating the fix. `.claude` is pruned from part 4's walk.
+
+**The test went from 35 assertions to 43.** Cases 1, 10 and 16 all passed the broken tree because
+each one's mutation lands near the end of its file; 21, 22 and 23 are the same mutations moved to the
+top, and the pair is kept deliberately. The mutation battery is tabulated in D98 §7, including the
+two rows that are findings: part 1's mutation reddens **only** the new case, and part 6's reddens
+**nothing** — that site is fixed on argument and no test can see it, which is stated rather than
+dressed up.
+
+**The sweep is NOT done and is NEW-73**: 61 `| grep -q` pipelines across 37 shell scripts, 21 of the
+check scripts setting `pipefail`. Eleven are closed here, in the one file where the fail-opens were
+measured.
+
+---
+
+<details>
+<summary>The item as filed, kept for the record — two of its claims are corrected above</summary>
 
 **Found 2026-09-18 while running D97's gates**, and it is **pre-existing and not D97's** — reported
 rather than fixed, because the repair makes CI red on `main` for a second, separate reason (§3).
@@ -5695,6 +5740,8 @@ shapes.
 
 **Not blocked.** No decision from a person and no outside fact.
 
+</details>
+
 ---
 
 ## NEW-72 — a document true of the RENDER and false of the ESTATE, and nothing can tell a reader which · READY
@@ -5783,3 +5830,92 @@ fact that a variable can change, say which of the two it is stating.**
   passed — three at WP-07/WP-09, four more in the run of `1eadc7a` (D46). Two of that four were in
   the gate's own tooling, which is the argument for running it every package rather than every fifth:
   the box cannot find anything while the scripts that exercise it cannot address it.
+
+---
+
+## NEW-73 — fifty more pipelines of the same shape, and a threshold to triage them by · READY
+
+**Opened 2026-09-18 by `decisions.md` D98 §9**, which closed NEW-71's eleven and deliberately did not
+sweep the rest. The shape is decided now, which is the precondition NEW-71 named: *"a sweep is only
+worth doing once somebody has decided (1), or it produces twenty edits in twenty shapes."*
+
+### The subject, measured — and read the measure, not just the number
+
+**Counted from STRIPPED text, at the tip of `new-71-a-match-reported-as-a-failure`, 2026-09-18.**
+Both qualifications matter and the first version of this table had neither:
+
+| file | status pipelines | under `pipefail`? |
+| --- | --- | --- |
+| `strip-comments-test.sh` | 12 | yes |
+| `account-lifecycle-guards-test.sh` | 8 | yes — four of its twelve were **closed by D98**; see its own header |
+| `strip-sh-comments-test.sh` | 8 | yes |
+| `signing-key-severance.sh` | 6 | yes — **bans**, so fail-open; measure these first |
+| `deploy-prod.sh` | 4 | yes — **and it is Appendix B** |
+| `admin-seed-wiring.sh` | 2 | yes — a **ban** (D61's bcrypt-hash sweep) |
+| `filter-chain-precedence-test.sh` | 2 | yes |
+| `backlog-table-agrees.sh`, `host-probe-attribution.sh`, `host-probe-attribution-test.sh`, `observability-claims.sh`, `pepper-wiring.sh`, `quality-pepper-persistence-test.sh`, `quality-project-checkout-test.sh`, `probe-infranet-aliases.sh` | 1 each | yes |
+| `account-lifecycle-guards.sh` | **0** | D98's subject — nothing left |
+
+**50 in total, across 15 files, and every one of them is under `pipefail`** — so the "only some
+scripts are exposed" triage the first draft leaned on does not apply to this population at all.
+
+⚠ **THE RAW COUNT IS NOT THIS NUMBER AND MUST NOT BE QUOTED.** `git grep -c '| *grep -q'` answers
+**57** here and **61** at `55781f2`, because it counts the paragraphs *explaining* the defect:
+`account-lifecycle-guards.sh` reads 5 raw and **0** stripped, and its test reads 10 raw and 8
+stripped. That is this repository's own stripper rule applied to its own inventory — a check counting
+these raw would be asserting the length of an argument (D98 §8).
+
+⚠ **AND D98's COMMIT MOVED THE FIGURE, WHICH IS WHY IT IS DATED.** The first draft of this table was
+measured at `55781f2` and was stale the moment it was written: D98 removed 11 from the check and its
+new test cases added 4 more (since converted to herestrings at review). **Re-run the inventory rather
+than trusting the table** — the command is in D98 §3, and the honest form strips first:
+
+```bash
+buf=$(mktemp); for f in $(git ls-files '*.sh'); do
+  awk -f .github/checks/strip-sh-comments.awk "$f" > "$buf"
+  n=$(grep -c '| *grep -q' "$buf" || true); [ "$n" = 0 ] || printf '%3s %s\n' "$n" "$f"
+done; rm -f "$buf"
+```
+
+**That loop is written with a temp file rather than a pipe deliberately**, and not for tidiness: the
+first version of this very inventory used `awk … | grep -q pipefail && pf=yes` and reported
+`pipefail=no` for `deploy-prod.sh` and for `account-lifecycle-guards-test.sh`, **both of which
+plainly set it** — the match sits near the top of a file well past the threshold, awk took `SIGPIPE`,
+and the `&&` never fired. **The defect reproduced itself inside the instrument built to inventory
+it**, in the safe-looking direction. Suspect the instrument.
+
+### What makes this cheap, and what makes it not a blanket substitution
+
+**The threshold is measurable per site** (D98 §2): a producer whose stripped output is under about
+4.5KB finishes before `grep -q` closes the pipe and cannot invert today. So each site is two
+questions — *how big is what it reads*, and *which way does it fail* — and D98 §4's enumeration is
+the format to copy, because **"the check went red" and "the check could not see" want different
+write-ups** and three of NEW-71's eleven were fail-open against eight that were not.
+
+⚠ **A THIRD QUESTION, WHICH D98 §4b PAID FOR**: does the position you measure at *exist*? That
+package ranked part 1 worst on a fixture planting `@Scheduled` at class level — which does not
+compile, so no generator emits it — while the position a regeneration really uses was caught even by
+the broken shape. The 141 was real and the scenario was not. **A fixture for a text guard must still
+be legal in the language the text is written in**, or the coverage story describes a state the
+compiler forbids.
+
+Two sites deserve naming before anybody starts:
+
+- **`deploy-prod.sh`'s four.** It is Appendix B of the spec, so any edit needs
+  `./deploy/sync-appendices.sh` in the same commit. It is also the file D75/D78/D80 spent three
+  packages making honest about *which hop answered*, and a folded pipeline status there is the same
+  family of defect those decisions closed — worth reading D71 §5's *"a die may not fold; a warn and a
+  poll may"* before touching it.
+- **`signing-key-severance.sh`'s six and `admin-seed-wiring.sh`'s two.** Both are **bans** —
+  `admin-seed-wiring.sh` deliberately sweeps for the committed bcrypt hash rather than for logic
+  (D61) — and a ban's finding *is* the match, which is the fail-open direction. These are the ones to
+  measure first.
+
+The three test scripts (28 pipelines between them) are the largest block and the lowest stakes: a
+swallowed match there makes a test's own assertion fail closed. Worth doing last, and worth doing,
+because a test that reddens for the wrong reason is how the subject gets "fixed".
+
+### Not blocked
+
+No decision from a person, no outside fact, and the shape is already chosen and already has a worked
+example beside its own test. What it wants is patience per site rather than a `sed`.
