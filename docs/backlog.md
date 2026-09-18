@@ -5619,10 +5619,14 @@ standing rather than edited away:
   inverted — a *suppressed* match is what prints `ok`, so load can only make `ok` more likely — and
   the real subject measured **141 five of five on a loaded box**, printing `ok`.
 - **§3 says part 4's is the one fail-open site. THERE ARE THREE** (D98 §4): part 1's `@Scheduled`
-  sweep (measured inverting, and the **top row of the regeneration table** — the estate silently
-  acquires a second account sweep), part 4's placeholder ban, and part 6's http-scope ban. Part 1's
-  is the worse of the two observed ones. A fourth, the surplus advisory, is the fail-open *shape*
-  with no assertion behind it. Eight were fail-closed, as the item says.
+  sweep, part 4's placeholder ban, and part 6's http-scope ban. A fourth, the surplus advisory, is
+  the fail-open *shape* with no assertion behind it. Eight were fail-closed, as the item says.
+  **Part 4's is the worst and the item was right to lead with it**: its one real occurrence in this
+  repository was measurably unreportable. Part 1's blind spot is real but at a **position no
+  regeneration produces** — `@Scheduled` is `@Target({METHOD, ANNOTATION_TYPE})`, so the class-level
+  fixture that measured 141 does not compile, and the position `--force` actually uses was caught
+  even by the broken shape. D98 §4b is that correction; this package's own first draft ranked part 1
+  first and had to be corrected at review.
 
 **What landed**: one shape — *no pipeline* — in two spellings chosen by where the text already is
 (strip once to a file and grep the file; or a herestring for text already in a variable), both
@@ -5835,25 +5839,50 @@ fact that a variable can change, say which of the two it is stating.**
 sweep the rest. The shape is decided now, which is the precondition NEW-71 named: *"a sweep is only
 worth doing once somebody has decided (1), or it produces twenty edits in twenty shapes."*
 
-### The subject, counted rather than estimated
+### The subject, measured — and read the measure, not just the number
 
-`git grep -c '| *grep -q' -- '*.sh'` over the tracked tree, 2026-09-18:
+**Counted from STRIPPED text, at the tip of `new-71-a-match-reported-as-a-failure`, 2026-09-18.**
+Both qualifications matter and the first version of this table had neither:
 
-| file | pipelines | sets `pipefail`? |
+| file | status pipelines | under `pipefail`? |
 | --- | --- | --- |
-| `account-lifecycle-guards.sh` | 11 | yes — **closed by D98** |
-| `account-lifecycle-guards-test.sh` | 8 | yes |
 | `strip-comments-test.sh` | 12 | yes |
+| `account-lifecycle-guards-test.sh` | 8 | yes — four of its twelve were **closed by D98**; see its own header |
 | `strip-sh-comments-test.sh` | 8 | yes |
-| `signing-key-severance.sh` | 6 | yes |
+| `signing-key-severance.sh` | 6 | yes — **bans**, so fail-open; measure these first |
 | `deploy-prod.sh` | 4 | yes — **and it is Appendix B** |
-| `admin-seed-wiring.sh` | 2 | yes |
+| `admin-seed-wiring.sh` | 2 | yes — a **ban** (D61's bcrypt-hash sweep) |
 | `filter-chain-precedence-test.sh` | 2 | yes |
 | `backlog-table-agrees.sh`, `host-probe-attribution.sh`, `host-probe-attribution-test.sh`, `observability-claims.sh`, `pepper-wiring.sh`, `quality-pepper-persistence-test.sh`, `quality-project-checkout-test.sh`, `probe-infranet-aliases.sh` | 1 each | yes |
+| `account-lifecycle-guards.sh` | **0** | D98's subject — nothing left |
 
-**61 in total, 50 outstanding. 21 of the 37 tracked shell scripts set `pipefail`**, and only those
-can invert at all — a script without it is unaffected, which is most of what makes this triage rather
-than a rewrite.
+**50 in total, across 15 files, and every one of them is under `pipefail`** — so the "only some
+scripts are exposed" triage the first draft leaned on does not apply to this population at all.
+
+⚠ **THE RAW COUNT IS NOT THIS NUMBER AND MUST NOT BE QUOTED.** `git grep -c '| *grep -q'` answers
+**57** here and **61** at `55781f2`, because it counts the paragraphs *explaining* the defect:
+`account-lifecycle-guards.sh` reads 5 raw and **0** stripped, and its test reads 10 raw and 8
+stripped. That is this repository's own stripper rule applied to its own inventory — a check counting
+these raw would be asserting the length of an argument (D98 §8).
+
+⚠ **AND D98's COMMIT MOVED THE FIGURE, WHICH IS WHY IT IS DATED.** The first draft of this table was
+measured at `55781f2` and was stale the moment it was written: D98 removed 11 from the check and its
+new test cases added 4 more (since converted to herestrings at review). **Re-run the inventory rather
+than trusting the table** — the command is in D98 §3, and the honest form strips first:
+
+```bash
+buf=$(mktemp); for f in $(git ls-files '*.sh'); do
+  awk -f .github/checks/strip-sh-comments.awk "$f" > "$buf"
+  n=$(grep -c '| *grep -q' "$buf" || true); [ "$n" = 0 ] || printf '%3s %s\n' "$n" "$f"
+done; rm -f "$buf"
+```
+
+**That loop is written with a temp file rather than a pipe deliberately**, and not for tidiness: the
+first version of this very inventory used `awk … | grep -q pipefail && pf=yes` and reported
+`pipefail=no` for `deploy-prod.sh` and for `account-lifecycle-guards-test.sh`, **both of which
+plainly set it** — the match sits near the top of a file well past the threshold, awk took `SIGPIPE`,
+and the `&&` never fired. **The defect reproduced itself inside the instrument built to inventory
+it**, in the safe-looking direction. Suspect the instrument.
 
 ### What makes this cheap, and what makes it not a blanket substitution
 
@@ -5862,6 +5891,13 @@ than a rewrite.
 questions — *how big is what it reads*, and *which way does it fail* — and D98 §4's enumeration is
 the format to copy, because **"the check went red" and "the check could not see" want different
 write-ups** and three of NEW-71's eleven were fail-open against eight that were not.
+
+⚠ **A THIRD QUESTION, WHICH D98 §4b PAID FOR**: does the position you measure at *exist*? That
+package ranked part 1 worst on a fixture planting `@Scheduled` at class level — which does not
+compile, so no generator emits it — while the position a regeneration really uses was caught even by
+the broken shape. The 141 was real and the scenario was not. **A fixture for a text guard must still
+be legal in the language the text is written in**, or the coverage story describes a state the
+compiler forbids.
 
 Two sites deserve naming before anybody starts:
 

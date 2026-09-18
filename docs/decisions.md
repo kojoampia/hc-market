@@ -18521,11 +18521,28 @@ The accumulating sites are now `if … then var=… fi` rather than `cmd && var=
 left operand that fails inside `&&` is **exempt from errexit**, and its status then becomes the loop
 body's — which is precisely how eleven inverted pipelines ran to completion and printed `ok`.
 
-**WHAT IS DELIBERATELY LEFT AS A PIPELINE**: the six whose **output** is used rather than their
-status — `default_days`, part 3's two `head -1` value reads, the two `sed -n` report readers and
-`limited_in`. An early-exiting `head` can still kill its producer there, but the value is complete
-when it does, each carries a `|| true` argued in place, and nothing reads the status. Rewriting them
-would be making lines look consistent rather than be correct.
+**WHAT IS DELIBERATELY LEFT AS A PIPELINE**: the ones whose **output** is used rather than their
+status. An early-exiting `head` can still kill its producer there, but the value is complete when it
+does, each carries a `|| true` argued in place, and nothing reads the status. Rewriting them would be
+making lines look consistent rather than be correct.
+
+⚠ **THAT SET IS DERIVED AND NOT LISTED, BECAUSE THE LIST WAS WRONG TWICE IN ONE COMMIT** (review
+round 2). This paragraph named **six** — *"`default_days`, part 3's two `head -1` value reads, the
+two `sed -n` report readers and `limited_in`"* — while the guard's own comment named **four**, and
+both were short: the `sed -n` report readers alone are **five**, in two groups (three over `$report`,
+two over `$permit_report`). Three enumerations, three answers, none of them the file's. So the rule
+is stated and the membership is read off the file:
+
+```bash
+awk -f .github/checks/strip-sh-comments.awk .github/checks/account-lifecycle-guards.sh \
+  | grep -nE '\| *(grep|head|sed|sort|cut|tr)'
+```
+
+Everything that lists is an output pipeline and belongs; anything matching `| grep -q` is a status
+pipeline and does not. **This is *"trust the list, not the number"* failing inside the decision that
+cites it** — and the deeper lesson is that a list was the wrong instrument: the property is
+mechanical and therefore derivable, so writing it down by hand was a choice to maintain something
+that did not need maintaining.
 
 ### §4 THE ELEVEN, BY DIRECTION — and the item said one was fail-open when three are
 
@@ -18534,7 +18551,7 @@ The item's §3 reads *"Part 4's is the one whose direction is fail-**open**; the
 
 | # | line | site | direction | observed inverting? |
 | --- | --- | --- | --- | --- |
-| 1 | 89 | part 1, `@Scheduled` anywhere in the gateway → `&& scheduled=` | **fail-OPEN** | **yes — 141 three of three** |
+| 1 | 89 | part 1, `@Scheduled` anywhere in the gateway → `&& scheduled=` | **fail-OPEN** | at a position that cannot occur — see §4b |
 | 2 | 122 | `DEFAULT_SWEEP_CRON` is still the generated one | fail-closed | — |
 | 3 | 346 | dev/quality pass `SPRING_MAIL_*` | fail-closed | — |
 | 4 | 373 | `SPRING_MAIL_HOST` names a container in the same file | fail-closed | — |
@@ -18546,12 +18563,47 @@ The item's §3 reads *"Part 4's is the one whose direction is fail-**open**; the
 | 10 | 592 | `limit_req_zone` is declared | fail-closed | — |
 | 11 | 600 | part 6's ban on an http-scope directive in the snippet | **fail-OPEN** | no — see below |
 
-**Three fail-open, not one**, and the one the item named is not the worst of them. **Part 1 is**,
-because of what a regeneration brings back: `@Scheduled` on `UserService.removeNotActivatedUsers` is
-the **top row of the regeneration table**, the estate then has two account sweeps, and the generated
-one deletes a login, both names, an email address and a password hash at a hard-coded three days on
-an estate that configured longer. Measured: a class-level `@Scheduled` at line 29 of an 11,600-byte
-stripped file, **141 three runs of three**, not reported, `ok` printed.
+**Three fail-open, not one** — that half of the item's §3 is wrong and the correction stands.
+
+### §4b THE RANKING WAS WRONG, AND IT RESTED ON A FIXTURE THAT DOES NOT COMPILE
+
+This section's first version led with part 1 as the worst of the three, on the grounds that a
+regeneration restores `@Scheduled` on `UserService.removeNotActivatedUsers` — the **top row of the
+regeneration table**, where the estate acquires two account sweeps and the generated one destroys a
+login, both names, an email address and a password hash at a hard-coded three days. The measurement
+offered for it was *"a class-level `@Scheduled` at line 29 of an 11,600-byte stripped file, 141 three
+runs of three"*.
+
+**The measurement is valid and the scenario is impossible.** `@Scheduled` is
+`@Target({METHOD, ANNOTATION_TYPE})` — read out of `spring-context-7.0.9.jar` with `javap -v`:
+`value=[METHOD, ANNOTATION_TYPE]` — so **a class-level `@Scheduled` does not compile and no
+generator can emit one**. The 141 is a true statement about a *text* guard given a fixture that is
+not legal Java, and it was offered as evidence for a regeneration that puts the annotation somewhere
+else entirely.
+
+**And the harm story it was ranked on is one the broken guard already caught.** Measured at the only
+legal position — `@Scheduled` above `removeNotActivatedUsers()`, **602 stripped bytes following** —
+the old pipeline answered **0 three runs of three**, i.e. reported it. Test case 1 passes at base for
+that reason, and the mutation battery shows it: reverting part 1 alone reddens **only case 21**.
+
+So the corrected ranking is:
+
+| site | claim to "worst" |
+| --- | --- |
+| **part 4** | **observed.** The repository's one real occurrence was measurably unreportable — 141 five of five, `ok` printed. This is the strongest claim and the item was right to lead with it. |
+| part 1 | **hypothetical position.** The blind spot is real — any match with more than ~4.5KB following it, e.g. scheduled work on an early method of a long class, or a new `@Scheduled` in a larger gateway source — but not the regeneration case. |
+| part 6 | **unobservable today.** 3,788 bytes, inside one stdio block; reverting it reddens nothing. |
+
+**The repair is unchanged in all three** and the argument for part 1 does not need the impossible
+case: a guard whose reach depends on where in a file the defect lands is not a guard, and the file it
+scans is a whole source tree that grows.
+
+**What the mistake was, as a method rather than a fact.** The probe measured the thing it was pointed
+at — a text scan over bytes — and the sentence written from it claimed something about *Java*, which
+the probe could not see and which one `javap` would have settled. That is this file's own
+`/proc/1/cmdline` shape for the fourth time, arriving inside the decision whose §2 corrects the same
+error in the item it closes. **A fixture for a text guard should still be legal in the language the
+text is written in**, or the guard's coverage story is about a state the compiler forbids.
 
 **Number 11 is fixed on argument and nothing can see it, which is stated rather than dressed up.**
 `hc-market-app.conf` strips to **3,788 bytes** — inside one stdio block, so the producer always wins
@@ -18612,12 +18664,19 @@ another tool's success a fault).
 
 ### §7 What was watched failing, and the one thing that cannot be
 
-Red first, then fixed. The test grew from **35 assertions to 43**, and the new ones exist because
-**cases 1, 10 and 16 all passed the broken tree** — each one's mutation lands near the end of its
-file, so the producer finishes and the status is honest. Case 10 plants its placeholder 33 lines from
-the end of a 152-line file; the real occurrence is 273 lines from the end of a 492-line file. **Both
-are correct cases and neither could see the defect**, which is the sharpest single lesson here: a
-check's test can be green because of where its own fixture puts the thing.
+Red first, then fixed. The test grew from **35 assertions to 43** — now printed as **37 refusals and
+6 controls**, reconciled against what `report` saw, because the old `$((pass - 2))` trailer was a
+constant that overstated in both directions and two readers derived two different answers from it
+(§8). The new cases exist because **cases 1, 10 and 16 all passed the broken tree** — each one's
+mutation lands near the end of its file, so the producer finishes and the status is honest. Case 10
+plants its placeholder 33 lines from the end of a 152-line file; the real occurrence is 273 lines
+from the end of a 492-line file. **Both are correct cases and neither could see the defect**, which
+is the sharpest single lesson here: a check's test can be green because of where its own fixture puts
+the thing.
+
+**And §4b is the same lesson one turn further in** — a fixture can also be green, or red, at a
+position the language does not permit. Case 21 is kept because its blind spot is real, and its
+comment now says in place that the harm it was first justified with is not the harm it guards.
 
 So 21, 22 and 23 sit beside 1, 10 and 16 with the same mutation moved to the **top** of the same
 file, and the pair is the point — the old case pins that the assertion works, the new one pins that
@@ -18632,10 +18691,16 @@ restored byte-identical after every one:
 | the `:?` narrowing removed | 0 and 24, plus every case expecting green |
 | the stripper's status folded | 28 |
 | part 6's ban back to a pipeline | **NONE** |
+| one case's `refusal`/`control` call removed | the reconciliation, naming the shortfall |
 
 Two of those rows are the findings. **Part 1's mutation reddens only the new case**, which is the
-proof that the pre-existing case could never have caught it. **Part 6's reddens nothing**, which is
-the limit §4 states.
+proof that the pre-existing case could never have caught it — and, read with §4b, also the proof that
+the old shape was already adequate for the regeneration position. **Part 6's reddens nothing**, which
+is the limit §4 states.
+
+**`mut-5` was invalid the first time** and the rewritten one attributes to case 28 alone; the first
+version forced an unconditional `exit`, so every case went red and the run "proved" coverage it had
+not established. A mutation that breaks the subject outright is not a measurement.
 
 Case 28 is a review finding against this package's own first draft. Its first version sed-ed the
 shell stripper's path inside a copy of the check written to a temp directory — and the check derives
@@ -18644,17 +18709,19 @@ instead, reporting a pass for a different guard. *A probe that cannot reach its 
 something else.* Both stripper paths are absolutised now and the case has an explicit arm that calls
 out that failure mode by name if it ever recurs.
 
-**And `mut-5` was invalid the first time**, which is the same lesson in the instrument: the mutation
-made the arm exit unconditionally rather than fold, so **every** case went red and the run "proved"
-coverage it had not established. A mutation that breaks the subject outright is not a measurement —
-the rewritten one folds the status genuinely and attributes to case 28 alone.
+**Three instruments in this package were wrong before the code was**, which is the pattern worth more
+than any of them: case 28's probe could not reach its subject, `mut-5` broke its subject outright, and
+**NEW-73's inventory script reproduced the very defect it was built to count** — `awk … | grep -q
+pipefail && pf=yes`, reporting `pipefail=no` for two files that plainly set it. Each failed in the
+direction that looks like an answer. Suspect the instrument before the code.
 
 ### §8 A count that is prose, and why that is the right way round
 
-After the fix the file still matches `| grep -q` **four times** — all four inside the paragraphs
+After the fix the file still matches `| grep -q` **five times** — all five inside the paragraphs
 explaining the defect. Read through `strip-sh-comments.awk` it matches **zero**. That asymmetry is
 this repository's own stripper rule arriving in its own subject matter: a check counting these
-occurrences raw would be asserting the length of an argument.
+occurrences raw would be asserting the length of an argument — and it is why **NEW-73's inventory is
+a stripped count (50) and not the raw one (57)**.
 
 **And the check now derives and prints its own assertion count**, like `refusal-logging-level-test.sh`
 beside it, because writing this section produced the same defect in miniature: CLAUDE.md's claim that
@@ -18665,9 +18732,12 @@ rather than the size of either number.
 
 ### §9 What is surfaced and not taken — NEW-73
 
-**There are 61 `| grep -q` pipelines across this repository's shell scripts and 21 of the check
-scripts set `pipefail`.** This package fixed the 11 in the one file the item named and where the
-fail-opens were measured; the other 50 are **NEW-73**, deliberately not swept here. The item's own
+**There are 50 status pipelines left across 15 shell scripts, counted from stripped text, and every
+one of them is under `pipefail`.** This package fixed the 11 in the one file the item named and where
+the fail-opens were measured, plus the 4 its own new test cases introduced (converted to herestrings
+at review — the item inventorying the shape was briefly made stale by the commit fixing it). The rest
+are **NEW-73**, deliberately not swept here. **Quote the stripped figure, not `git grep`'s 57**, and
+re-run the inventory rather than trusting either: NEW-73 carries the loop. The item's own
 warning is the reason — *"a sweep is only worth doing once somebody has decided (1), or it produces
 twenty edits in twenty shapes"* — and (1) is decided above, so the sweep now has a shape to follow
 and a threshold to triage by: a producer under about 4.5KB cannot invert today, which makes this a

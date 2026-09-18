@@ -1471,8 +1471,19 @@ the deployed image is the built one.
 `set -o pipefail` the *pipeline's* status is the producer's — so **a match arrives as a failure** and a
 `producer | grep -q PAT && found="$found $f"` never fires. `account-lifecycle-guards.sh` is
 `set -Eeuo pipefail`, and **three of its eleven were fail-open**: part 1's `@Scheduled` sweep, part 4's
-placeholder-base-url ban and part 6's http-scope ban. Two were measured inverting on the real tree —
-part 1 at **141 three of three** and part 4 at **141 five of five** — with `ok` printed both times.
+placeholder-base-url ban and part 6's http-scope ban.
+
+**Part 4's is the one with observed harm and the others are not equal to it** — D98 §4b, which corrects
+this package's own first draft. Part 4 could not report the repository's *one real occurrence* of the
+placeholder (11,673 stripped bytes, **141 five runs of five**, `ok` printed). Part 1's blind spot is
+real but sits at a **position that cannot occur**: `@Scheduled` is `@Target({METHOD, ANNOTATION_TYPE})`
+— `javap` on `spring-context` — so the class-level fixture that measured 141 **does not compile and no
+generator emits it**, while the position `--force` actually uses (on `removeNotActivatedUsers`, 602
+bytes from the end) was reported correctly *even by the broken shape*. Part 6's does not invert on
+today's tree at all. **The lesson is bigger than the ranking: a fixture for a text guard must still be
+legal in the language the text is written in**, or its coverage story describes a state the compiler
+forbids — the `/proc/1/cmdline` shape again, this time inside the decision whose §2 corrects the same
+error in the item it closes.
 
 **The discriminator is the producer's own stdio block, NOT machine load**, and both the item and D97 §8
 said load. Measured with the match on line 1 and only the following text varied: **0 0 0 0 | 141 141
@@ -1493,9 +1504,18 @@ and *fails* — case 19 covers a stripper that is **absent**, case 28 the one th
 
 **Two things about it that are easy to get wrong.** The accumulating form must be `if … then var=… fi`
 and never `cmd && var=`: a left operand that fails inside `&&` is **exempt from errexit**, which is how
-eleven inverted pipelines ran to completion and printed `ok`. And the six pipelines whose **output** is
-used rather than their status are deliberately untouched — an early-exiting `head` can still kill its
-producer there, but the value is complete when it does and nothing reads the status.
+eleven inverted pipelines ran to completion and printed `ok`. And the pipelines whose **output** is used
+rather than their status are deliberately untouched — an early-exiting `head` can still kill its
+producer there, but the value is complete when it does and nothing reads the status. **Do not quote a
+count of those**: this sentence said "six", the guard's own comment said "four", and both were short
+(the `sed -n` report readers alone are five). The property is mechanical, so it is derived now — D98 §3
+carries the one-line command, and anything matching `| grep -q` is the forbidden kind.
+
+**The remaining population is 50 across 15 files and every one is under `pipefail`** (NEW-73) — but
+**that is a STRIPPED count and the raw one is 57**, because `git grep` counts the paragraphs explaining
+the defect: `account-lifecycle-guards.sh` reads 5 raw and **0** stripped. **The inventory script's own
+first version had the defect it was measuring**, reporting `pipefail=no` for two files that plainly set
+it, because its own probe was `awk … | grep -q pipefail && pf=yes`. Suspect the instrument.
 
 **And the test's own fixture position decided what it could see, which is the sharpest lesson here.**
 Cases 1, 10 and 16 all **passed the broken tree**: each mutation lands near the end of its file, so the
@@ -1505,6 +1525,13 @@ producer finishes and the status is honest. Case 10 plants the placeholder 33 li
 deliberately — the old case pins that the assertion works, the new one that it works wherever the defect
 lands. Reverting part 1 alone reddens **only** case 21; reverting part 6 alone reddens **nothing**, and
 that site is fixed on argument with no test able to see it, which D98 §4 states rather than dresses up.
+
+**That test's summary line is classified rather than subtracted, since review round 2.** It printed
+`$((pass - 2))` "states it exists to refuse" and the constant overstated in both directions — 33 against
+31 before NEW-71, 41 against 37 after — because the file mixes refusal cases with green controls and two
+readers derived two different answers from it. Every case now calls `refusal` or `control`, and **the
+trailer refuses to print unless the two counters reconcile with what `report` saw**, so a case added
+without classifying itself is red rather than absorbed. Today: **37 refusals, 6 controls, 43 total.**
 
 **That ban is now narrowed twice, and the two narrowings are different kinds of move** (D98 §5). D94
 went raw → **stripped**, which removes a class of *text* — comments are not configuration, in any

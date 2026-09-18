@@ -97,10 +97,15 @@ value_src() { conf_src "$1" | sed 's/:?[^}]*}/:?}/g'; }
 #
 # so the discriminator is whether the producer's whole output fits its own stdio block before grep
 # closes the pipe. NEW-71 and D97 §8 both attributed the two outcomes to machine LOAD; that is the
-# wrong variable and D98 §2 is the correction. What it cost here was measured, not reasoned: part 1
-# could not report an `@Scheduled` at the top of UserService.java (11,600 bytes, 141 three of three)
-# and part 4 could not report the repository's one real occurrence of the placeholder base-url
-# (11,673 bytes, 141 five of five) — both fail-OPEN, both silent, both printing `ok`.
+# wrong variable and D98 §2 is the correction.
+#
+# WHAT IT COST, AND THE TWO CASES ARE NOT EQUAL. Part 4 could not report the repository's one real
+# occurrence of the placeholder base-url — 11,673 stripped bytes, the match 273 lines from the end,
+# 141 five runs of five, `ok` printed. That is an OBSERVED unreportable finding and it is the worst
+# of the three. Part 1's blind spot is real but HYPOTHETICAL: the position a regeneration actually
+# uses is caught even by the old pipeline (D98 §4), because `@Scheduled` cannot legally appear at
+# class level. Part 6's is not observable on today's tree at all. Rank them that way round — the
+# first version of this note led with part 1 on the strength of a fixture that does not compile.
 #
 # THE SHAPE IS THEREFORE "NO PIPELINE", IN TWO SPELLINGS CHOSEN BY WHERE THE TEXT ALREADY IS:
 #
@@ -111,11 +116,20 @@ value_src() { conf_src "$1" | sed 's/:?[^}]*}/:?}/g'; }
 #   * text ALREADY IN A VARIABLE                  → a herestring, which is not a pipeline at all, so
 #     the question cannot arise. D97's own step and test use this and say so at the site.
 #
-# WHAT IS DELIBERATELY NOT CHANGED: the pipelines whose OUTPUT is used rather than their status —
-# `default_days`, the two `head -1` value reads in part 3, and `limited_in`. An early-exiting `head`
-# can still kill its producer there, but the value is already complete when it does, every one of
-# them carries a `|| true` argued in place, and nothing reads the status. A sweep that rewrote those
-# too would be changing lines to look consistent rather than to be correct.
+# WHAT IS DELIBERATELY NOT CHANGED, STATED AS A RULE AND NOT AS A LIST: a pipeline whose **status**
+# is read is forbidden here; a pipeline whose **output** is used is fine. An early-exiting `head` can
+# still kill its producer in the second kind, but the value is already complete when it does, each
+# carries a `|| true` argued in place, and nothing reads the status. Rewriting them would be making
+# lines look consistent rather than correct.
+#
+# DERIVE THE SURVIVORS, DO NOT QUOTE THEM. This comment named four and D98 §3 named six, and both
+# were short — the `sed -n` report readers alone are five, in two groups (D98 §3, as reviewed). The
+# discriminator is mechanical, so read it off the file:
+#
+#     awk -f .github/checks/strip-sh-comments.awk "$0" | grep -nE '\| *(grep|head|sed|sort|cut|tr)'
+#
+# Anything that command lists is an output pipeline and belongs. Anything matching `| grep -q` is a
+# status pipeline and does not — and stripped, this file now has zero of those.
 #
 # The other 50 `| grep -q` pipelines in this repository's shell scripts are NEW-73, not this file.
 STRIP_BUF="$(mktemp)"
@@ -169,9 +183,18 @@ ok()  { printf 'ok   %s\n' "$1"; asserted=$((asserted + 1)); }
 scheduled=""
 if [ -d "$GATEWAY_MAIN" ]; then
   while IFS= read -r f; do
-    # FAIL-OPEN, AND MEASURED FAILING — see the note above has_in. The pipeline this replaced could
-    # not report an @Scheduled near the top of a long class, which is precisely where a regeneration
-    # puts a class-level one, and this is the top row of the regeneration table.
+    # FAIL-OPEN IN SHAPE — see the note above has_in. The pipeline this replaced reported a match as
+    # a failure whenever more than ~4.5KB of the stripped file followed it, so this scan had a blind
+    # spot that depended on WHERE the annotation sat.
+    #
+    # BUT NOT AT THE POSITION A REGENERATION USES, and the first version of this comment claimed
+    # otherwise (D98 §4, corrected at review). `@Scheduled` is `@Target({METHOD, ANNOTATION_TYPE})`
+    # — read out of spring-context with javap — so a CLASS-LEVEL one does not compile and cannot be
+    # generated. What `--force` restores is the annotation on `removeNotActivatedUsers`, 602 stripped
+    # bytes from the end of that file, and the OLD pipeline caught that three runs of three. The
+    # blind spot is real and is hypothetical: scheduled work on an early method of a long class, or a
+    # new `@Scheduled` in a larger gateway source. Do not re-justify this with the regeneration case.
+    #
     # `if` rather than `&&`: the accumulating form is what made the old defect silent, because a
     # left operand that fails is exempt from errexit and its status is then the loop body's.
     if java_has "$f" '@Scheduled'; then scheduled="$scheduled $f"; fi
@@ -729,7 +752,10 @@ else
 fi
 
 if [ "$fail" = 0 ]; then
-  printf '\naccount lifecycle guards: ok (%s assertions over 6 parts)\n' "$asserted"
+  # The part count is derived from the numbered banners rather than written as 6: a seventh part
+  # would otherwise go stale silently, which is this file's own complaint about quoted counts.
+  printf '\naccount lifecycle guards: ok (%s assertions over %s parts)\n' \
+    "$asserted" "$(grep -cE '^# --- [0-9]+\. ' "${BASH_SOURCE[0]}")"
 else
   printf '\naccount lifecycle guards: FAILED\n'
 fi
