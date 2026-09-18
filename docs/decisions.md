@@ -18765,12 +18765,30 @@ that neither D98 nor the item accounted for. **The shape is D98's and is not reo
 **Eighteen pipelines converted, thirty-three left, and the line is drawn where a swallowed match
 LOSES A FINDING or DRIVES A HARMFUL ACTION rather than where a payload is large.**
 
-| direction | what a swallowed match does | population | disposition |
-| --- | --- | --- | --- |
-| **fail-OPEN** | the finding is lost and the check prints `ok` | 13 | **converted** |
-| **rollback-biased** | a healthy production estate is reverted | 3 | **converted** |
-| fail-CLOSED | a loud refusal on a correct tree; somebody looks | 32 | **left**, with its number |
-| warn-only | one advisory line differs; nothing decides | 2 | 1 left, 1 converted (§6) |
+**The population column counts PIPELINES, and a converted site stays in the row for its own
+direction** — so the four rows sum to §3's 51 and not to the 33 that were left. Getting this wrong is
+how the first version of this table summed to 50:
+
+| direction | what a swallowed match does | pipelines | converted | left |
+| --- | --- | --- | --- | --- |
+| **fail-OPEN** | the finding is lost and the check prints `ok` | 13 | **13** | 0 |
+| **rollback-biased** | a healthy production estate is reverted | 3 | **3** | 0 |
+| fail-CLOSED | a loud refusal on a correct tree; somebody looks | **33** | 1 | 32 |
+| warn-only | one advisory line differs; nothing decides | 2 | 1 | 1 |
+| | | **51** | **18** | **33** |
+
+The single converted fail-closed pipeline is `signing-key-severance.sh`'s **second** one on the line
+§3 is about: it shares its `if` with a fail-open and could not be left behind. The converted warn-only
+one is argued in §6(d).
+
+⚠ **THE FIRST VERSION OF THIS TABLE SUMMED TO 50, AND THE MISSING MEMBER WAS THE 51st — the very
+pipeline §3 exists to point out.** It carried 32 in the fail-closed row, which is the *left* count, in
+a column labelled *population*; §6(a) then said *"nine of the 18 guard ones"* where ten guard
+pipelines fail closed. **This is §3's own genre — "count the list, not the number" — recurring two
+sections below the correction that states it**, and it is recorded rather than quietly fixed because
+that is the third time in three packages that a count in this family has been wrong in the document
+announcing a count was wrong. **Name the measure beside every number**: pipelines or lines,
+population or disposition.
 
 Direction is a **structural** property of the surrounding branch. It does not change when a file
 grows, when CI's runner image moves, or when somebody swaps `awk` for `sed`. That is the whole
@@ -18794,9 +18812,18 @@ Same fixture — match on line 1, only the following text varied — across six 
 
 **Three things follow and each one kills "measure and leave alone" separately.**
 
-- **The quoted threshold is not even conservative.** The Java stripper inverts at 4,851 B in CI and
-  ~4.6KB locally — *below* the 4.5KB that was offered as safe. A rule whose safe side is unsafe for
-  one of its own producers is not a rule.
+- **The quoted threshold is not even conservative, and the comparison has to name POST-MATCH BYTES to
+  say so.** Measured finely in CI on the Java stripper, varying only the bytes *following* the match
+  (10 runs each): **4,200 clean ten-of-ten → 4,410 FLAKY (`X.XX.XX.X.`) → 4,494 solid 141.** So the
+  **flaky onset at 4,410 B and solid inversion at 4,494 B are both under 4.5 KB (4,500) and under
+  4.5 KiB (4,608)** — the safe side of the offered rule is measurably unsafe for one of its own
+  producers. A rule like that is not a rule.
+  ⚠ **The table above quotes TOTAL probe bytes and this bullet quotes POST-MATCH bytes** — the mechanism
+  depends on the second, and the first version of this bullet compared a total-bytes figure (4,851)
+  against a threshold about post-match bytes and read as arithmetically false. Two measures, named.
+  **And a second instrument put the same boundary at 4,355 clean / 4,545 flaky / 4,735 solid** — ~100
+  to 240 B higher, which is not a disagreement but the *flakiness this section is about*, so quote the
+  onset as a band and the instrument with it.
 - **The local measurement is the optimistic one, taken in the environment that does not matter.**
   `cat` never inverts here and always inverts at 32KB in CI, and that gap is an **implementation**
   difference rather than a speed one: `cat` is uutils 0.8.0 on this box and GNU 9.4 in CI, and `awk`
@@ -18821,18 +18848,28 @@ one direction it can be used in is the conservative one.
 two sites that fail the same way. Not for deciding whether to repair one. Quote it with its producer
 and its machine or do not quote it.
 
+⚠ **EVERY FIGURE IN THIS DECISION IS BYTES, MEASURED AS `printf '%s' "$var" | wc -c`, and the first
+version of them was CHARACTERS.** `${#var}` counts characters, and these payloads carry em-dashes:
+`$arm` has exactly two (U+2014, 3 bytes each, so +2 bytes over 1 character each → delta 4), the
+stripped seeder has four → delta 8, and `$table_rows` → delta 24. The figures read 1,171 / 256 /
+6,385 / 2,950 / 3,358 and are 1,175 / 260 / 6,393 / 2,974 / 3,366. **No conclusion moves** — every one
+is orders of magnitude from its boundary — but **SIGPIPE is a function of bytes written to the pipe,
+not of characters**, so bytes is the only correct unit in a threshold table, and a number labelled
+with the wrong measure is the exact defect this section exists to warn about. The measuring expression
+is named so the next reader reproduces rather than re-derives.
+
 **AND IN THIS POPULATION SIZE AND DANGER ARE ANTI-CORRELATED, which is the fact that settles it.** The
 intuition a size rule runs on — bigger payload, more dangerous — is not merely unreliable here, it
 points the wrong way:
 
 | site | producer | bytes | direction |
 | --- | --- | --- | --- |
-| `admin-seed-wiring.sh:85, :91` | `printf "$stripped"` | **6,385** — the largest in the guard population | fail-**closed** |
-| `signing-key-severance.sh:62` | `printf "$arm"` | 1,171 | **fail-OPEN** |
+| `admin-seed-wiring.sh:85, :91` | `printf "$stripped"` | **6,393** — the largest in the guard population | fail-**closed** |
+| `signing-key-severance.sh:62` | `printf "$arm"` | 1,175 | **fail-OPEN** |
 | `signing-key-severance.sh:89` | `printf "$msg"` | **256** — among the smallest | **fail-OPEN** |
 
 The largest real producer in the eight guard scripts was driven with the match early, so essentially
-all 6,385 bytes follow it: **`0 0 0 0 0` on GNU grep 3.12 and `0 0 0 0 0` on 3.11.** Roughly a 5×
+all 6,393 bytes follow it: **`0 0 0 0 0` on GNU grep 3.12 and `0 0 0 0 0` on 3.11.** Roughly a 5×
 margin to the nearest `printf` boundary, and it is the site a size rule would have reached for first.
 Independently, all seven runnable guard scripts produce identical exit codes and identical output
 under both greps on a clean tree. **No site in the eight guard scripts is near inverting today** —
@@ -18871,8 +18908,8 @@ attributed the direction of a construct to two pipelines that are not that const
 a site that was not measured at the site*, which is §8's subject arriving in the item's own inventory.
 
 The consequence is not cosmetic. Those two were flagged as the priority and are two of the safest
-things in the population (§2's table, 6,385 bytes with a 5× margin and the wrong direction to matter),
-while the two that are genuinely fail-open sat one file away, unremarked, at 1,171 and 256 bytes.
+things in the population (§2's table, 6,393 bytes with a 5× margin and the wrong direction to matter),
+while the two that are genuinely fail-open sat one file away, unremarked, at 1,175 and 260 bytes.
 
 ### §4 THE GUARD/TEST SPLIT IS THE WRONG AXIS, AND THE WORST SITE IN THE POPULATION IS IN A TEST
 
@@ -18912,11 +18949,17 @@ the ban population and would have left the worst single site until last.
 Three of that file's four sites are neither fail-open nor safely fail-closed. A swallowed match drives
 `gate_exhausted` and `smoke_test` toward **rolling back a production deployment that is fine**:
 
-| site | a swallowed match means | consequence |
+**Each is named by the FUNCTION it sits in, and the base line is labelled as such, because the line
+numbers went stale in this very commit** — the comment blocks this package added pushed every one of
+them down: `1032 → 1045`, `1201 → 1222`, `1247 → 1272`, `1275 → 1300`. §8 cites *"D78 §7's line
+numbers were stale one commit later"* as the reason not to enumerate the 33 by line, and then this
+table did it anyway. **A line number is not a name.**
+
+| site — function, and base line at `83857ee` | a swallowed match means | consequence |
 | --- | --- | --- |
-| `:1032` blip arm | a service reporting `running healthy` is not seen | it joins `$unproven`, the blip arm empties, the router reverts |
-| `:1201` brokerage | payout **does** hold terms in force | `return 1` → `smoke_test` fails → revert |
-| `:1247` mail | the gateway **can** send mail | `return 1` → revert |
+| `gate_exhausted`'s blip arm (base `:1032`) | a service reporting `running healthy` is not seen | it joins `$unproven`, the blip arm empties, the router reverts |
+| `smoke_test`'s brokerage probe (base `:1201`) | payout **does** hold terms in force | `return 1` → `smoke_test` fails → revert |
+| `smoke_test`'s mail probe (base `:1247`) | the gateway **can** send mail | `return 1` → revert |
 
 That is **NEW-36's own harm arriving through the premise of its fix** — the same sentence D78 §14
 wrote about dropping the health column from `--format`, one mechanism along. Driven on the lifted blip
@@ -18937,11 +18980,13 @@ only producers in this population whose size is set by **somebody else's host**,
 them can be measured at all — `deploy-prod.sh` has never run against a host (D49) and there is no
 production estate.
 
-**`:1275` IS LEFT AS A PIPELINE, and the distinction is load-bearing.** It warns either way and
-decides nothing, which is exactly what D71 §5 permits: *a `die` may not fold; a `warn` and a poll may.*
+**`smoke_test`'s VERSION probe (base `:1275`) IS LEFT AS A PIPELINE, and the distinction is
+load-bearing.** It warns either way and decides nothing, which is exactly what D71 §5 permits: *a
+`die` may not fold; a `warn` and a poll may.*
 
 ⚠ **D78 §8's "these two probes still fold, as a decision" is about a DIFFERENT fold and does not
-license this one.** That decision folds the `ssh … || true` on `:1201` and `:1247`, deliberately,
+license this one.** That decision folds the `ssh … || true` on the brokerage and mail probes,
+deliberately,
 because the condition is silent and an unestablished answer must not ship. The **pipeline** folds the
 opposite way — it turns a *satisfied* condition into a failure — so the two folds push in opposite
 directions and the argument for one is not an argument for the other. Appendix B is re-embedded in
@@ -18949,17 +18994,19 @@ this commit.
 
 ### §6 THE LOSERS, EACH ARGUED
 
-**(a) Convert all 51.** Rejected. Twenty-three of the 33 test pipelines and nine of the 18 guard ones
-fail *closed* — a swallowed match makes them refuse a correct tree, which is the direction D71 §5
-exists to permit, and converting them changes no behaviour while producing a diff nobody can review
-per site. That is how the next fail-open gets in. It would also churn
+**(a) Convert all 51.** Rejected. Twenty-three of the 33 test pipelines and **ten** of the 18 guard
+ones fail *closed* — 33, reconciling with §1's row — a swallowed match makes them refuse a correct
+tree, which is the direction D71 §5 exists to permit, and converting them changes no behaviour while
+producing a diff nobody can review per site. That is how the next fail-open gets in. It would also churn
 `account-lifecycle-guards-test.sh`, the file a reviewer most needs to read cleanly against D98.
 
 **(b) Convert only what is measurably over the threshold.** Rejected on §2, and rejected harder than
-expected: the threshold mis-triages in **both** directions. `admin-seed-wiring.sh`'s `$stripped` is
-**6,385 bytes** — comfortably over the quoted 4.5KB, and a `printf` producer that is clean to 8KB in
-CI, so the rule calls it unsafe when it is safe. The Java stripper inverts at 4,851 B, so the rule
-calls its callers safe just below where they are not. And a site left alone on today's number needs
+expected — **it converts nothing, because nothing in the population is over it**, so it closes this
+item with no edit and two fail-open guards standing. It also mis-triages in **both** directions.
+`admin-seed-wiring.sh`'s `$stripped` is **6,393 bytes** — comfortably over the quoted 4.5KB, and a
+`printf` producer measured clean ten-of-ten at that payload on GNU grep 3.12 *and* 3.11, so the rule
+calls it unsafe when it is safe. The Java stripper's callers invert from ~4,410 post-match bytes, so
+the rule calls them safe just below where they are not. And a site left alone on today's number needs
 that number recorded or the next reader cannot tell *measured and safe* from *not looked at* — which
 is a maintenance burden on a fact with a half-life of one runner-image bump.
 
@@ -18989,11 +19036,11 @@ that a status moved:
 | `signing-key-severance.sh:62` | `Do NOT copy it from` → `Take it from` (mention kept) | — | reports *"without forbidding it ('Do NOT copy it from')"*, 1 `::error` |
 | `signing-key-severance.sh:89` | `:?` message → *"platform JWT secret is required"* (D37's original defect) | — | reports *"describes this estate's signing key as the platform"*, 1 `::error` |
 | `probe-infranet-aliases.sh:136` | 600 extra containers, `gateway` on line 1 | **141 ×5 → reports a TAKEN name as FREE** | `0 ×5`, TAKEN |
-| `deploy-prod.sh:1032` | every service `running healthy`, 28KB table | **ROLLS BACK a healthy estate** | refuses, reverts nothing |
+| `deploy-prod.sh` `gate_exhausted` blip arm | every service `running healthy`, 28KB table | **ROLLS BACK a healthy estate** | refuses, reverts nothing |
 
 **Three of the eighteen cannot be watched and that is stated rather than dressed up**, exactly as D98
 §4 did for its part 6. `pepper-wiring.sh:81` ($report, 3 lines), the `signing-key-severance.sh` pair
-($arm 1,171 B, $msg 256 B) and the nine strip-test probes (248–341 B) all behave **identically** before
+($arm 1,175 B, $msg 260 B) and the nine strip-test probes (248–341 B) all behave **identically** before
 and after: measured on `pepper-wiring.sh` with a compose file whose pepper had lost its `:?`, both
 forms emitted exactly **1** `::error`. They are repaired on §1 and §2, and the control run is clean
 (rc=0, 0 errors) in both.
@@ -19055,8 +19102,8 @@ worth watching for *growth*, being the only ones whose producer is not effective
 
 | site | producer grows with | today | CI headroom |
 | --- | --- | --- | --- |
-| `account-lifecycle-guards-test.sh` ×8 | the check's own assertion count (~93 B each, 36 now) | **3,358 B** | `printf` clean at 8,019 B, flaky by 16 KB → ~86 assertions |
-| `deploy-prod.sh:1032` | **the estate** — remote `compose ps -a`, one line per container | ~900 B (11 containers) | project-scoped, so bounded; **converted anyway** (§5) |
+| `account-lifecycle-guards-test.sh` ×8 | the check's own assertion count (~93 B each, 36 now) | **3,366 B** | `printf` clean at 8,019 B, flaky by 16 KB → ~86 assertions |
+| `deploy-prod.sh` `gate_exhausted` blip arm | **the estate** — remote `compose ps -a`, one line per container | ~900 B (11 containers) | project-scoped, so bounded; **converted anyway** (§5) |
 | `observability-claims.sh:204` | the meter count declared in `GatewayIdentityMeters` | **49 B** | three orders of magnitude clear |
 
 The first is the one number in the left-alone population worth watching, and D98 took that file from
@@ -19072,7 +19119,7 @@ which are fail-closed.
 `elif`, which reports `bad` anyway unless `$out` holds **both** the success line and the refusal
 fragment. That combination is not reachable today — the check prints its `ok` trailer only when
 `fail == 0`, and the fragments are `::error` text — so the case still goes red, with the wrong
-diagnosis. At 3,358 bytes it cannot invert at all.
+diagnosis. At 3,366 bytes it cannot invert at all.
 
 **Two items opened, neither fixed here**: **NEW-74**, an ERROR count has three different measures and
 the naive instrument counts the opposite population; **NEW-75**, the quality rate limits are in force

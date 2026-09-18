@@ -5849,8 +5849,8 @@ away:
   measure. Neither is the ban.** They are `printf … | grep -qE … || err` — *requirements*, so
   fail-**closed** — and D61's bcrypt-hash sweep is a separate loop twenty lines above with **no
   `| grep -q` in it at all**, never in this population. The two flagged as the priority hold the
-  **largest** producer in the guard population (6,385 B) with a 5× margin and the harmless direction;
-  the two genuinely fail-open sat one file away at 1,171 and 256 bytes. D99 §3b.
+  **largest** producer in the guard population (6,393 B) with a 5× margin and the harmless direction;
+  the two genuinely fail-open sat one file away at 1,175 and 260 bytes. D99 §3b.
 - **§"The three test scripts are the largest block and the lowest stakes" is false for 9 of 33.**
   The **worst site in the whole population is in a test script**:
   `host-probe-attribution-test.sh:712`, case 44's aim control, whose finding *is* the match —
@@ -5964,18 +5964,24 @@ example beside its own test. What it wants is patience per site rather than a `s
 ### The 33 that were left, with their numbers
 
 Every one is fail-closed — a swallowed match makes the check **refuse a correct tree**, which is the
-direction D71 §5 permits — except `deploy-prod.sh:1275`, which warns either way and decides nothing.
+direction D71 §5 permits — except `deploy-prod.sh`'s **version probe** in `smoke_test`, which warns
+either way and decides nothing. (Named by its function, not its line: this package's own comment
+blocks moved every `deploy-prod.sh` line number, so the base-relative ones are labelled in D99 §5.)
+
+**Figures are BYTES**, measured as `printf '%s' "$var" | wc -c`. The first version of this table
+reported `${#var}` — *characters* — which reads 4 to 24 low wherever the payload carries an em-dash;
+SIGPIPE depends on bytes written to the pipe, so bytes is the only correct unit here (D99 §2).
 Producer sizes measured at `83857ee`; re-derive with the loop above rather than trusting these.
 
 | file | sites | producer | bytes |
 | --- | --- | --- | --- |
-| `account-lifecycle-guards-test.sh` | 8 | the check's own output | **3,358** — the largest left, ~93 B/assertion |
+| `account-lifecycle-guards-test.sh` | 8 | the check's own output | **3,366** — the largest left, ~93 B/assertion |
 | `strip-comments-test.sh` | 7 | inline Java probes | 341 |
-| `signing-key-severance.sh` | 4 | `$arm`, `$prodmsg`, a 3-line `sed` window | 1,171 / 256 / 900 |
+| `signing-key-severance.sh` | 4 | `$arm`, `$prodmsg`, a 3-line `sed` window | 1,175 / 260 / 900 |
 | `strip-sh-comments-test.sh` | 4 | inline shell probes | 248 |
-| `admin-seed-wiring.sh` | 2 | stripped `InitialSetupMigration.java` | 6,385 (raw 12,080) |
+| `admin-seed-wiring.sh` | 2 | stripped `InitialSetupMigration.java` | 6,393 (raw 12,080) |
 | `filter-chain-precedence-test.sh` | 2 | the check's own output | 74 |
-| `backlog-table-agrees.sh` | 1 | `$table_rows` | 2,950 (19 rows) |
+| `backlog-table-agrees.sh` | 1 | `$table_rows` | 2,974 (19 rows) |
 | `host-probe-attribution.sh` | 1 | two-stage `awk` over the prod compose | 256 |
 | `observability-claims.sh` | 1 | `$declared`, from the meter class | 49 |
 | `quality-pepper-persistence-test.sh` | 1 | `sed` function range | 329 |
