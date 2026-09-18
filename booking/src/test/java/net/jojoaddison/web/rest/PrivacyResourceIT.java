@@ -55,16 +55,31 @@ class PrivacyResourceIT {
     }
 
     /**
-     * A stated policy is never reported as an applied one.
+     * A stated policy is never reported as an applied one — and this estate does not apply one.
      *
-     * <p>This is the assertion that matters most and the one most likely to be quietly broken. Three
-     * populated categories look far more like a working retention regime than the single unset
-     * integer they replaced, so the honest {@code enforced: false} beside them is doing more work
-     * than it was before. Nothing in this estate schedules a sweep; the day something does, this test
-     * should fail and be changed deliberately.
+     * <p>This is the assertion that matters most and the one most likely to be quietly broken.
+     * Populated categories look far more like a working retention regime than the single unset integer
+     * they replaced, so the honest {@code enforced: false} beside them is doing more work than it was
+     * before.
+     *
+     * <p><strong>It said "nothing in this estate schedules a sweep; the day something does, this test
+     * should fail and be changed deliberately" — and that day was {@code decisions.md} D96.</strong>
+     * So it has been changed deliberately, and what changed is not the expected value: it is still
+     * {@code false}, because {@link net.jojoaddison.service.RetentionSweep} is off by default and, when
+     * enabled, is in dry run by default. What changed is <em>why</em> — the resource derives the flag
+     * from the sweep's own two switches now instead of returning a constant, so this asserts that an
+     * unconfigured estate is not enforcing rather than that the field is hardcoded.
+     *
+     * <p>Which means this case can no longer see the derivation being wrong: it passes against
+     * {@code enforced = false} restored as a literal, and it would pass against any expression that
+     * happens to be false on the test config. That half is
+     * {@code TheRetentionSweepIsOffUntilTwoDecisionsUnitTest.theDeskReportsTheDerivation}, which drives
+     * all three states through this same resource, and it is where a widening belongs — <strong>not
+     * here</strong>: making the flag true from an IT means a second Spring context for one boolean.
+     * What this case still does, and no unit test can, is prove the wire body carries the field at all.
      */
     @Test
-    @DisplayName("a configured period is not an enforced one, and says so")
+    @DisplayName("a configured period is not an enforced one, and this estate enforces none")
     @WithMockUser(username = "desk", authorities = "ROLE_BROKERAGE")
     void doesNotClaimToEnforceAnything() throws Exception {
         mvc.perform(get(URL)).andExpect(status().isOk()).andExpect(jsonPath("$.enforced").value(false));

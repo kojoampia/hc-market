@@ -133,6 +133,31 @@ x-service: &service
     HC_RETENTION_FINANCIAL_DAYS: ${HC_RETENTION_FINANCIAL_DAYS:-2190}
     HC_RETENTION_OPERATIONAL_DAYS: ${HC_RETENTION_OPERATIONAL_DAYS:-365}
     HC_DPC_REGISTRATION: ${HC_DPC_REGISTRATION:-}
+    # --- The two sweeps that apply those promises -- decisions.md D96, backlog NEW-52 -----------
+    #
+    # PASSED WITH NO DEFAULT, deliberately: `${X:-}` sets an EMPTY variable, blank counts as absent,
+    # and every default lives in Java (PrivacyProperties.Retention, DisputeSlaProperties). They are
+    # passed anyway rather than omitted, because a variable this repository documents and no compose
+    # file carries is a variable that silently does nothing -- D46 and D50 found that in both
+    # end-to-end scripts, and D94 repeated it for the account retention window.
+    #
+    # THE RETENTION SWEEP IS OFF HERE AND MUST STAY OFF, and quality is the one estate where that is
+    # not merely the default being inherited. It erases customers with no booking activity for six
+    # years by calling ErasureWorkflow.eraseCustomer -- irreversibly, on a timer -- and this box
+    # holds the SEED: 18 invented professionals, 256 sessions and the only payout batch this
+    # platform has ever recorded. The seeded bookings are date-anchored, so an enabled sweep here
+    # would judge them against a real clock. Turning it on is not a way to test it; RetentionSweepIT
+    # passes the cutoff as a parameter precisely so nobody has to.
+    HC_RETENTION_SWEEP_ENABLED: ${HC_RETENTION_SWEEP_ENABLED:-}
+    HC_RETENTION_SWEEP_DRY_RUN: ${HC_RETENTION_SWEEP_DRY_RUN:-}
+    HC_RETENTION_SWEEP_CRON: ${HC_RETENTION_SWEEP_CRON:-}
+    # The dispute sweep is ON by default and is safe to leave on: it reads two columns and logs one
+    # WARN line, changing nothing. Note it WILL be heard on this box -- the seed carries disputes
+    # whose dueBy is in the past, so the 07:00 line is expected here rather than a fault. WARN and
+    # never ERROR, because this stack's zero-ERROR count is load-bearing (see the JAVA_OPTS note
+    # below, and backlog NEW-65).
+    HC_DISPUTE_OVERDUE_SWEEP_ENABLED: ${HC_DISPUTE_OVERDUE_SWEEP_ENABLED:-}
+    HC_DISPUTE_OVERDUE_SWEEP_CRON: ${HC_DISPUTE_OVERDUE_SWEEP_CRON:-}
     # --- OpenTelemetry: the agent is IN the image and is NOT attached here ----------------------
     #
     # decisions.md D63, backlog NEW-23. `/app/otel-javaagent.jar` is present in all five images at

@@ -385,8 +385,46 @@ healthconnect:
     retention:
       financial-days: ${HC_RETENTION_FINANCIAL_DAYS:2190}
       operational-days: ${HC_RETENTION_OPERATIONAL_DAYS:365}
+      # THE SWEEP THAT APPLIES THE PERIODS ABOVE -- decisions.md D96, backlog NEW-52.
+      #
+      # All three carry NO DEFAULT IN THIS FILE and their defaults live in Java, in
+      # PrivacyProperties.Retention. That is D94's finding and it is forced rather than stylistic:
+      # compose's ${X:-} sets an EMPTY variable rather than leaving it unset, so a `:default` here
+      # would be skipped in favour of the empty string on every estate that passes the variable
+      # through -- and passing it through is what stops it being a variable that silently does
+      # nothing (D46, D50). An empty cron is not a missing cron, it is an invalid one. Blank counts
+      # as absent and the Java default applies.
+      #
+      # sweep-enabled defaults to FALSE and sweep-dry-run defaults to TRUE, so reaching a deletion
+      # takes two separate decisions. An estate that sets only the first gets a nightly count at
+      # WARN and erases nothing, and GET /api/desk/privacy keeps reporting enforced: false -- which
+      # it derives, so it cannot disagree with what the estate will actually do.
+      #
+      # A value that is set and unreadable REFUSES STARTUP rather than being interpreted.
+      # Boolean.parseBoolean answers false for every string that is not "true", so a mistyped
+      # sweep-dry-run would read as dry-run OFF and delete people; both booleans are parsed
+      # strictly and accept only true/false.
+      sweep-enabled: ${HC_RETENTION_SWEEP_ENABLED:}
+      sweep-dry-run: ${HC_RETENTION_SWEEP_DRY_RUN:}
+      sweep-cron: ${HC_RETENTION_SWEEP_CRON:}
     controller-registration: ${HC_DPC_REGISTRATION:P0021484082}
   #   pepper: injected, never written here
+  disputes:
+    # THE OVERDUE-DISPUTE SWEEP -- decisions.md D96, backlog NEW-52. The other half of that item, and
+    # deliberately not the same shape as the block above it: this one reads two columns and writes a
+    # WARN line, so it is ON by default. A promise kept by nothing is not made safer by a sweep
+    # shipped switched off. Same String-and-blank convention, same reason.
+    #
+    # WARN and not ERROR on purpose: quality/compose.yml rests an argument on these services carrying
+    # zero ERROR lines across their whole life, and an overdue dispute is ordinary business on a busy
+    # marketplace. See backlog NEW-65 for the generated LoggingAspect doing this by accident.
+    #
+    # working-days-to-resolve is NOT here: DisputeWorkflow reads it with a @Value and its default (5)
+    # lives there. Left alone rather than moved, which would be a change to a working class for
+    # tidiness -- and DisputeSlaProperties binding this prefix without declaring that key is
+    # harmless, because Spring ignores properties a holder has no field for.
+    overdue-sweep-enabled: ${HC_DISPUTE_OVERDUE_SWEEP_ENABLED:}
+    overdue-sweep-cron: ${HC_DISPUTE_OVERDUE_SWEEP_CRON:}
 
 # ===================================================================
 # Liquibase must finish BEFORE the seed loader runs.

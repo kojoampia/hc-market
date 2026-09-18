@@ -83,7 +83,7 @@ production. Phases are sequential where stated and their items are independent w
 |---|---|---|---|
 | **1** | a person can hold an account | ~~NEW-47~~ **DONE** (D94) | — |
 | **2** | the application | NEW-48 | phase 1 for anything behind a token; D90 §3 for its shape |
-| **3** | the promises the API already makes | NEW-49, NEW-50, ~~NEW-51~~ **DONE** (D95), NEW-52, NEW-53 | nothing; cheaper with phase 2's screens |
+| **3** | the promises the API already makes | NEW-49, NEW-50, ~~NEW-51~~ **DONE** (D95), ~~NEW-52~~ **DONE** (D96), NEW-53 | nothing; cheaper with phase 2's screens |
 | **4** | money for real | WP-13, NEW-54 | Act 987, provider credentials, a callback route |
 | **5** | deploy | WP-18, WP-19, NEW-55 | the four gates below |
 
@@ -2728,8 +2728,28 @@ state D65's "no volumes is a first run and still generates" and D67's "no contai
 first run and proceeds" branches were written for and which nothing had ever exercised. That was the
 reason this shape beat the containers-only recommendation, and it is now available to be used.
 
-Status is `BLOCKED` rather than `READY` because what remains is a person with root, not engineering.
-Nothing was destroyed by the attempt — five containers and five volumes are exactly as they were.
+**That closing sentence read "Status is `BLOCKED` rather than `READY` because what remains is a person
+with root, not engineering. Nothing was destroyed by the attempt — five containers and five volumes
+are exactly as they were." until 2026-09-17, and it contradicted this item's own heading.** It was
+written before the `CLEARED` paragraph above it and never revised, so an item whose `## ` heading said
+`DONE (D72)` closed by declaring itself blocked on a person who had already done the thing. The heading
+wins by the rule at the top of this file — and the general lesson is the one this file keeps recording
+about itself: **a status in prose beside a status in a heading is one fact in two places**, and the
+prose copy is the one nobody updates. Nothing else in this item is changed; the record of what was
+wedged, why, and what cleared it is what it is for.
+
+**RE-VERIFIED 2026-09-17, independently, and it has stayed cleared**: `docker ps -a` names **no**
+`healthconnect-dev` or `hc-market-dev` container, `docker volume ls` holds **0** `healthconnect-dev_*`
+volumes, and `docker compose ls -a` does not list the `healthconnect-dev` **project** at all — the
+third of those being the probe this repository's own guidance says to use, because a filter built from
+the name you expected cannot find what you did not expect. The control in the same output:
+`hc-market-quality` reads `running(11)`, so the daemon was answering and a zero means something.
+
+**It was resolved by an act outside these work packages** and this item claims no credit for it: D72
+records the architect restarting the daemon on 2026-09-10 and a `down --clean` taking two runs. What
+2026-09-17 adds is only that the state did not come back in the week since — which matters because
+*five containers the daemon would not release* is exactly the kind of state that gets cleared once and
+quietly returns.
 
 ---
 
@@ -2797,7 +2817,10 @@ repair is guarded too.
 
 **What did not run is the script.** Everything was measured on the shipped function lifted out by
 `awk`, as in D66, D67 and D69: D65 and D67 both correctly refuse this worktree, and `deploy-dev.sh`
-cannot run at all while NEW-31 stands. Three folded reads survive in the two files deliberately — a
+could not run at all while NEW-31 stood — **which it no longer does, cleared 2026-09-10 and
+re-verified 2026-09-17.** So the reason this package measured a lifted function is a fact about the
+week it was written in and not a standing constraint: the dev estate is now a genuine first run, and
+the refusal paths D66 and D69 could reach only by `awk` are available to be exercised for real. Three folded reads survive in the two files deliberately — a
 `warn`, a poll and `running()` — because the rule is *a `die` may not fold; a `warn` and a poll may*
 (D71 §5), and "always check the status" would have made a transient flake fatal in the health-wait
 loop. **That poll has an edge, stated at review**: its exhaustion *is* a `die`, so a daemon dying
@@ -4256,7 +4279,75 @@ the whole of the internal record, and only *automated* settlement waits on couns
 
 ---
 
-## NEW-52 — two configured promises with no SWEEP behind either · READY
+## NEW-52 — two configured promises with no SWEEP behind either · DONE (D96)
+
+> **CLOSED 2026-09-17 — `decisions.md` D96. Two sweeps, built as two things, and one of them is
+> deliberately switched off.**
+>
+> | | |
+> | --- | --- |
+> | **retention** | `RetentionSweep` + `RetentionSweepRepository` in booking. Erases every customer with **no booking activity** for the financial period, through the same `ErasureWorkflow.eraseCustomer` the desk calls — so it is recorded on the `erased_subject` register like any other erasure (D39), for free rather than by a second mechanism. **Off by default**, and **dry run by default when enabled**: two independent decisions between an estate and an irreversible deletion. `GET /api/desk/privacy`'s `enforced` is **derived** from those two switches instead of the literal `false` it returned before, so the desk cannot disagree with what the estate will do |
+> | **`Dispute.dueBy`** | `DisputeSlaSweep` + `DisputeSlaRepository` + `DisputeSlaProperties`. Reports unresolved disputes past their recorded deadline, **on by default**, at **WARN**, mutating nothing — no status change and no `DisputeStatusChange`, because a deadline passing is not an act anybody took |
+>
+> **The asymmetry is the decision, not an oversight.** One destroys records on a timer with nobody
+> watching; the other reads two columns and writes a log line. They share a trigger and nothing else:
+> separate classes, separate properties holders, separate repositories, separate defaults — and a test
+> asserts the separation, because a later refactor folding them together would leave every behavioural
+> assertion in both files still true.
+>
+> **Gates**: `cd booking && ./mvnw clean verify` — **279** unit and **146** integration tests, 0
+> failures, modernizer clean. **Nine mutations run, each separately, all red**: the two defaults
+> inverted, `parseStrictBoolean` replaced by `Boolean.parseBoolean` (which reads a mistyped
+> `sweep-dry-run` as *dry run off* — the direction that deletes), `isEnforcing()` losing its dry-run
+> conjunct, the desk reverted to a literal, the dry-run branch removed, the register exclusion dropped
+> from the eligibility query, the query rewritten row-level, and `UNDER_REVIEW` dropped from the
+> overdue predicate. All five mutated files restored byte-identical.
+>
+> **Three things it settled that the item did not anticipate**, each opened rather than taken:
+> **NEW-67** (the register cannot say *why* somebody was erased — two callers now write identical
+> rows meaning opposite things), **NEW-68** (the **operational** period still has no sweep, in
+> messaging, and fanning this one out would apply a six-year clock to one-year data), **NEW-69** (who
+> is told about an overdue dispute — the brokerage cannot be named from booking).
+>
+> **The brief's own anticipated decision does not arise**, and that is worth recording: it expected
+> `eraseCustomer` to record an acting staff member with nothing for a sweep to put there. Verified —
+> `ErasedSubject` holds a pseudonym and an instant, `ErasureRun` holds no actor, and nothing on that
+> path reads `SecurityUtils`. Which is *why* NEW-67 exists: the absence of that column is the gap.
+>
+> **Both counsel-facing drafts are corrected.** `docs/processing-record.md` §3/§5/§6.2 and
+> `docs/privacy-notice.md` §7 said "configured, not enforced"; the honest statement is now a third
+> thing — the means exist for one period and are switched off, and the other period has nothing. A
+> regulator-facing document understating a capability is as wrong as one overstating it.
+>
+> **REVIEWED 2026-09-18, nothing blocked, three findings and four nits — all taken, two of which
+> changed behaviour** (D96 §12). The one worth reading: **the continue-on-failure property was
+> asserted by nothing**, and `RetentionSweepIT` is structurally incapable of asserting it — it is
+> `@Transactional` and `eraseCustomer` is `REQUIRED`, so the erasure joins the test's transaction and
+> the per-customer boundary does not exist to be observed. **Measured**: with `sweep()` mutated to
+> abandon the run at the first failure, that IT passed all 8. `OneFailedErasureDoesNotAbandonTheSweepTest`
+> (no context, Mockito) covers it now and pins the absent `@Transactional` besides.
+> **A kill switch was surfaced by a nit about configuration rebinding**: `configureTasks` runs once, so
+> the registered task survives a rebind — an operator disabling the sweep on a running estate was
+> silently ignored and the nightly erasure continued. `sweep()` re-checks now. Enabling by rebind still
+> needs a restart, which is the safe asymmetry. **And that test was vacuous on its first draft** — an
+> unstubbed mock made it pass against the very mutation it exists to catch, caught by running the
+> mutation rather than trusting the green, and it now carries an explicit control.
+> Two regulator-facing over-statements corrected with it: §6.2's unscoped *"no longer missing
+> engineering"* (the sweep is **one activity wide** — a customer's data in booking; §2.6's payout rows,
+> a professional's identity, and the operational period are all outside it) and §2.7's claim to store
+> *"the acting staff member's sign-in name"*, which **no table holds** — the fact this package itself
+> established, and NEW-67's premise.
+>
+> **Also verified rather than assumed**, from §5 of the brief: `@EnableScheduling` is live in booking
+> under `@Profile("!testdev & !testprod")` (so active in dev, test and prod, and — note —
+> **inactive under the test suite**, which is why no scheduled erasure can fire inside a build — though
+> the *pattern* is exercised: D94's sweep fired on its own cron on the quality gateway at
+> 2026-09-18T01:00:00.437Z through the identical `SchedulingConfigurer` path, measured at review, so
+> what is untested is these two beans and not the mechanism); the
+> three period property names and their committed fallbacks; that `PrivacyResourceIT` was the test
+> pinning `enforced: false`; and that `eraseCustomer` needs no HTTP request in scope.
+
+**The item as it was written follows.**
 
 **Phase 3.** `@Scheduled` appears in exactly **two** places in all five services' main sources, measured:
 `booking/.../OutboxPublisher.java:69` (the outbox poll) and `gateway/.../UserService.java:291` (the
@@ -5044,7 +5135,278 @@ integration test in that JVM shares — a different kind of test from anything i
 which is the other half of why it was not written speculatively.
 
 **Not blocked**, and not urgent while no estate has settled anything — production has never been
-deployed and the dev estate is wedged (NEW-31), so no batch exists anywhere to be owed back or to fail.
+deployed and there is **no dev estate at all** (NEW-31, cleared 2026-09-10, re-verified 2026-09-17:
+zero containers, zero volumes, no compose project), so no batch exists anywhere to be owed back or to
+fail. **The quality box is the exception to that sentence as of 2026-09-17** and it is worth naming
+here rather than leaving the reader to infer it: it holds `PAY-202602-p1-01`, `PAID`, 31 ledger rows
+attached and 235 unsettled — the first payout batch this platform has ever recorded. So "no batch
+exists anywhere" was true when this was written and is now false of one estate.
+
+---
+
+## NEW-65 — a deliberate business refusal logs at ERROR with its arguments, in all five services · READY
+
+**Found 2026-09-17** while opening NEW-52, and it is **pre-existing and generated** rather than
+anything a recent package introduced — which is the first thing to establish about it, because it
+lands on a signal NEW-51 has just started moving.
+
+**Verified at `payout/src/main/java/net/jojoaddison/aop/logging/LoggingAspect.java:113`**, and the same
+line at the same number in **all five** services (`grep -rn "Illegal argument" --include=LoggingAspect.java`
+answers five files, every one at `:113`):
+
+```java
+} catch (IllegalArgumentException e) {
+    log.error("Illegal argument: {} in {}()", Arrays.toString(joinPoint.getArgs()), joinPoint.getSignature().getName());
+    throw e;
+}
+```
+
+**Two things are absent and both matter.** There is **no `isDebugEnabled` guard** — unlike the two
+`log.debug` calls eleven and six lines above it in the same method, which are guarded — and there is
+**no profile gate** on the advice, so this fires on `prod` exactly as it fires on `dev`. The pointcut
+is `applicationPackagePointcut() && springBeanPointcut()`, so its subject is our own beans.
+
+**So a refusal this estate makes ON PURPOSE is logged at ERROR, with the arguments that caused it.**
+`IllegalArgumentException` is the ordinary spelling of "the caller asked for something that is not
+allowed" throughout these services, and `Arrays.toString(joinPoint.getArgs())` renders whatever was
+passed. A settle refusal put a **bank reference** in the log by this route. That is the disclosure
+half, and it is the smaller half.
+
+**The larger half is a signal this repository has written down as load-bearing.**
+`quality/compose.yml:150` calls payout's zero-ERROR count *"the estate's one free signal"* and *"the
+load-bearing half"* — the argument being D64/D73's: all five quality services have carried **zero**
+ERROR lines across their entire life, so an ERROR line means something, and that is the only way an
+unattached OTel agent or a dead collector is visible at all. **NEW-51 ships a desk that refuses by
+design** (D95: a period past the payout lag, a batch netting zero or below, a `PAID` batch re-stamped,
+a `FAILED` one settled) — every one of those an `IllegalStateException` or an `IllegalArgumentException`
+depending on the site. The moment the desk is used, ERROR stops being zero **in normal operation**, and
+the signal is spent.
+
+**What bounds the harm.** No alert fires: `deploy/observability/hc-market-rules.yaml` keys on 5xx rates
+and these refusals are 4xx, so nothing pages anybody. And no estate has exercised the desk in anger
+yet. So the cost today is a *lost* signal and arguments in a log, not an incident.
+
+**Done means** deciding what an ERROR is for in this estate and making the aspect agree with it. The
+obvious repair — drop it to WARN, or guard it, or exclude `web.rest` — is **not** obviously right and
+should not be applied without answering the question underneath: *is a deliberate refusal an error?*
+Three candidate positions, and the middle one is probably right:
+
+- **WARN with the arguments** — keeps the diagnostic, frees the signal, still prints the bank
+  reference;
+- **WARN without the arguments, naming the method and the exception message only** — the message is
+  ours and is composed at the boundary (D44's rule, already the house style for provider prose), so
+  it says what was wrong without echoing what was sent. This is the one that fits the rules already
+  written down;
+- **remove the advice** — it is generated, it duplicates what the exception translator already
+  reports, and nothing in this repository has ever read one of its lines.
+
+**It is a GENERATED file in all five services**, so whatever is chosen belongs in the regeneration
+table in `CLAUDE.md` with the symptom spelled out, or `--force` puts it back in silence. Note the
+asymmetry that makes this survivable to find late: the two `debug` calls beside it are guarded, so the
+*enter/exit* tracing everybody worries about is already off at INFO — it is only the failure arm that
+was left unguarded, which is why nobody reading the class casually would notice.
+
+**Not blocked.** No decision from a person, no outside fact — but it does want the question answered
+rather than the line edited.
+
+---
+
+## NEW-66 — `--dry-run` cannot run without production credentials, and ends by claiming the tag is live · READY
+
+**Found 2026-09-17**, two defects in one command, both verified twice at the source. `deploy-prod.sh
+--dry-run` is documented in `CLAUDE.md` as *"safe; prints everything, changes nothing"* and is the one
+thing anybody runs **before** touching production. Neither defect changes anything on a host; both
+attack the one command whose whole value is that it can be trusted.
+
+**One — it dies without a registry token.** `deploy/deploy-prod.sh:556`:
+
+```
+  if (( DO_PUSH )); then
+    [[ -n "$REGISTRY_TOKEN" ]] || die "registry credentials missing — set $CRED_HINT"
+```
+
+`DO_PUSH` defaults to `1` (`:179`) and `--dry-run` does not clear it (`:282` sets `DRY_RUN=1` and
+nothing else), so the `die` is reached on a plain `--dry-run`. The `if (( DRY_RUN ))` branch that
+prints *"would authenticate to $REGISTRY_HOST"* is at **`:562`** — six lines **below** the gate that
+already refused. So reading a plan requires exporting a real production registry token, which is
+pressure to put a live credential in a shell for a command that contacts nothing. **`--no-push` is the
+way round** and is not documented as being necessary.
+
+**The irony is the record worth keeping.** The comment at **`:558`**, immediately under that `die`,
+documents fixing this exact pattern *at this exact login*: *"A tick here used to print under
+--dry-run too, while the login it claims was skipped. That is false confidence in the one command
+somebody runs BEFORE touching production."* The fix was applied to the **tick** and the **gate above
+it** was left where it was — so the same command is still unusable for the same reason the comment
+gives for caring.
+
+**Two — a dry run ends by asserting the deployment is live.** `deploy/deploy-prod.sh:1376`:
+
+```
+  if health_gate deploy && smoke_test; then
+    record_success
+    step "Done"
+    ok "HealthConnect $TAG live on $HOST via the '$CHANNEL' channel ($IMAGE_PREFIX)"
+```
+
+Under `--dry-run`, `health_gate` returns 0 at `:914` (`[dry-run] skipped`) and `smoke_test` returns 0
+at `:1073` (same), so the branch is **always** taken; `record_success` is correctly guarded at `:1326`
+(`(( DRY_RUN )) && return 0`) and contacts nothing. **So the defect is the claim, not the action** —
+nothing is deployed, nothing is recorded, and the last line an operator reads is a green `✓` saying a
+tag is live on the production host. This is D78/D80's subject one line further on: every refusal in
+that file was taught to say which hop answered, and the success line was never asked the same question.
+
+**Done means** `--dry-run` runs with no credential of any kind, and every terminal claim it prints is
+true of a run that contacted nothing. Two small changes and one judgement:
+
+- move the `REGISTRY_TOKEN` gate **inside** the non-dry-run arm, or skip it when `DRY_RUN` — and keep
+  it fatal for a real push, which is the direction it exists for;
+- guard the `Done` line, printing what a dry run actually established (*the plan resolved, the tag
+  resolved, nothing was contacted*) rather than the deployment's sentence;
+- decide whether `--dry-run` should imply `--no-push`. It probably should not: *"would push to X"* is
+  part of the plan an operator wants to read, and the answer is to stop needing the token rather than
+  to stop printing the intent.
+
+**And whatever is done needs a test that runs the program**, not a grep. D80 established that parts
+1-6 of `host-probe-attribution.sh` drive lifted functions and part 7 is the only one that **executes**
+the file — and that three successive guards on this script were each one step short of the binding
+because of it. A dry run that contacts nothing is precisely a property only execution can assert:
+part 7 already stubs `ssh`, `scp`, `docker`, `curl` and `git` and already refuses a run that asked the
+host nothing, so the scenario belongs there and the harness for it exists.
+
+**Not blocked**, and it must be fixed **without ever supplying a credential to pass the gate** — the
+gate being unpassable is the finding.
+
+---
+
+## NEW-67 — the erasure register cannot say WHY somebody was erased · READY, and a decision with it
+
+**Surfaced by D96 / NEW-52 rather than found**, and it is a decision before it is work. The brief that
+opened NEW-52 predicted a different version of this — *"`eraseCustomer` records an acting staff member,
+and a sweep has no staff member, so what goes in that column is a decision"* — and **there is no such
+column**: verified, `ErasedSubject` holds `pseudonym` and `erasedAt` and nothing else, `ErasureRun`
+holds a fan-out attempt's outcome and no actor, and nothing on the erasure path reads `SecurityUtils`.
+So that decision does not arise. The one underneath it does.
+
+**The register is now written by two callers that mean different things.** Until D96 every row in
+`erased_subject` was a data subject request that a person at the desk had identity-checked and acted on
+(D40: erasure is desk-operated by decision, not self-service). Since D96 a row may also be the financial
+retention period expiring on a timer. **The rows are identical** — an alias and an instant — so an
+operator asked *"why was this customer erased?"* has nothing to read, and the two answers have opposite
+implications: one is a right exercised, the other is a policy applied.
+
+**Why it matters more than it looks.** `docs/processing-record.md` §6.3 already records that nothing
+audits staff access; this is the same shape one step along, on the estate's one irreversible act. And an
+erasure receipt is *the artefact filed against a legal request* (D31/D39) — if a subject asks whether
+their request was honoured, a register that cannot distinguish their request from a clock cannot answer.
+
+**The decision, and it is not just "add a column":**
+
+- **what the values may be.** `SUBJECT_REQUEST` and `RETENTION` are the two that exist today. A third
+  arrives with every new caller, and an enum in an append-only legal record is a schema commitment;
+- **whether an actor goes on beside it.** For a desk erasure the acting login is knowable and would make
+  §6.3's audit gap smaller in exactly the place it matters most. It is also a *staff member's* identity
+  in a table that must be kept for ever, which is a disclosure decision of D47's kind — the reviewer's
+  login is deliberately kept off the public profile for the same reason;
+- **what happens to the rows already there.** Everything written before D96 is a subject request, and
+  that is knowable only because the sweep did not exist. A nullable column reading `null` for those is
+  honest; backfilling them is a claim, and this repository's rule is that a retrospective fact nobody
+  measured does not get written down.
+
+**Cost.** A JDL change to `ErasedSubject` in three services (booking, catalog, messaging — it is one of
+the copied families' neighbours and all three hold the table), and therefore an **additive** Liquibase
+changelog rather than a regenerated entity one: regenerating the entity changelog invalidates the
+checksum every existing database recorded, which is D87's `meeting_link` lesson and the
+`ValidationFailedException` CLAUDE.md warns about. Not large. The decision is the expensive half.
+
+**Not blocked on a person** in the sense that the recommendation is clear — **`reason`, nullable, the
+two values, no actor until §6.3 is answered as a whole** — but it should be *taken* rather than
+implemented by whoever picks it up.
+
+---
+
+## NEW-68 — the operational retention period has no sweep, and it is the shorter one · READY
+
+**The other half of NEW-52, left undone deliberately and named rather than folded in** — D96 §scope.
+
+D96 built `RetentionSweep` in **booking**, which holds the financial rows (bookings, disputes) and
+applies the **financial** period, 2,190 days. The **operational** period — 365 days, six times shorter
+— governs *message bodies, notifications and conversations*, which live in **messaging**. Nothing
+sweeps them and nothing ever has.
+
+**Why it was not done by fanning the existing sweep out.** `ErasureFanout` exists (D38) and booking can
+already mint a token messaging accepts, so one call would have reached them. It would also have applied
+**booking's six-year clock to data whose stated period is one year** — and then filed a receipt saying
+the customer had been erased, which is D39's "a count that is too large reads as data was still
+exposed" in its worst form: the receipt would be right about what it did and wrong about what the
+policy required. Two periods need two cutoffs, and a sweep with one cutoff cannot have two.
+
+**It is the larger exposure of the two, which is the argument for doing it.** Six years of message
+bodies is the substance of what people wrote to each other, under a policy that says one year. The
+financial rows the D96 sweep covers are the ones the platform is *obliged* to keep.
+
+**Done means** a sweep in messaging on the operational period, and the shape is mostly settled by D96 —
+off by default, dry-runnable with a count, recorded on messaging's own `erased_subject` register, its
+own properties holder, its own class. Three things are genuinely different and want thinking about
+rather than copying:
+
+- **there is no `eraseCustomer` in messaging that the operational period alone should call.** Its
+  `ErasureWorkflow` erases a *subject*, and a subject's conversations are not the same selection as
+  "message bodies older than a year" — a live thread with one old message in it is the case to get
+  right, and deleting a body out of a thread the other party can still read is a different act from
+  pseudonymising a person;
+- **the other party.** A conversation has two people and a professional's retention interest is not the
+  customer's. Booking's sweep had no equivalent question because a booking has one customer;
+- **messaging's register is CONSULTED, not merely written** (`ErasureRegisterGuard`, D32) — the one
+  place in the estate where an erasure record changes later behaviour, so adding rows to it by a timer
+  needs its guard re-read rather than assumed.
+
+**Not blocked.** No decision from a person, and worth pairing with NEW-67 since both touch the register.
+
+---
+
+## NEW-69 — nobody is told when a dispute misses its five working days · READY, and a decision with it
+
+**Surfaced by D96 / NEW-52, which closed half of it.** `Dispute.dueBy` was recorded and read back by
+nothing; `DisputeSlaSweep` now reads it and reports. What it cannot do is **notify a person**, and that
+is a decision this estate cannot take inside a payment or a sweep.
+
+**The promise is the prototype's**: a customer who raises a dispute is offered a resolution in five
+working days. It binds *the brokerage*.
+
+**Why the sweep logs instead.** Each alternative needs somebody else's answer, and the cheapest is not
+obviously right:
+
+- **the brokerage cannot be named.** The desk is `ROLE_BROKERAGE`, an authority granted in the
+  **gateway's** account store; booking holds no list of its holders and has no business acquiring one.
+  Messaging's notification rows are keyed by *login*, so there is no recipient to write. Enumerating
+  them would be a third internal cross-service lookup of D74's kind — a disclosure decision, not a
+  plumbing one;
+- **an outbox event reaches messaging and is dropped.** Its consumer's `default ->` arm logs
+  `no notification defined for {}` at DEBUG, so publishing `dispute.overdue` today is a published event
+  nothing consumes — the silent nothing this repository keeps finding (D59, D62). Adding a consumer
+  needs a recipient, which is the first question again;
+- **telling the customer** is a product decision with a commercial edge: it is the platform announcing
+  it has missed its own commitment, and possibly inviting a remedy nobody has priced.
+
+**So the interim recipient is the estate's log** — one WARN line naming the count and the references,
+greppable and alertable by whoever runs the box, deliberately **not** ERROR (NEW-65's subject, and
+`quality/compose.yml` rests an argument on the zero-ERROR count). That is a real reader and it is not
+the brokerage.
+
+**Done means** deciding who is told and how. **Recommended: the desk screens, as part of NEW-53** —
+which is already ratified for after phase 2 (D92 §5) and is where a person who works disputes will
+actually be looking. An overdue count on that screen needs no recipient, no event and no new
+disclosure; the sweep's log covers the gap until then. **What would change my mind**: if the brokerage
+turns out to be one or two people with an email address, a notification is cheaper than a screen — but
+then the address is configuration, and configuration naming a person is its own small decision.
+
+**Also worth settling with it**: whether an overdue dispute should *escalate* rather than merely be
+reported. D96 deliberately wrote no transition into an "overdue" state — there is none in
+`DisputeStatus`, and inventing one would put a value in an append-only audit trail that no desk
+decision produced. If the answer is that it should, that is a state-machine change with a migration
+behind it, not a sweep change.
+
+**Not blocked on engineering.** The report exists; the recipient is the open question.
 
 ---
 

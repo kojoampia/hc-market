@@ -36,7 +36,11 @@ public class PrivacyResource {
         return new Policy(
             new RetentionView(r.getFinancialDays(), r.getOperationalDays()),
             privacy.registrationIsAbsent() ? null : privacy.getControllerRegistration(),
-            false
+            // DERIVED, never a literal — decisions.md D96. This was `false` until the estate acquired
+            // a sweep, and a hardcoded honest answer is one deployment away from being a hardcoded
+            // dishonest one. `isEnforcing()` is true only when a row is actually deleted: the sweep
+            // enabled AND not in dry run.
+            r.isEnforcing()
         );
     }
 
@@ -47,10 +51,15 @@ public class PrivacyResource {
      * @param controllerRegistration null when {@code HC_DPC_REGISTRATION} is unset or blank. Reported
      *     as null rather than as an empty string so "not configured" cannot be mistaken for "registered
      *     with a number nobody can read"
-     * @param enforced always false today: nothing schedules a sweep. Reported beside the periods rather
-     *     than assumed, so a stated policy is never mistaken for an applied one — which matters more
-     *     since D42 than it did before, because populated categories look far more like a working
-     *     regime than one unset integer did
+     * @param enforced whether a customer past the financial window is actually erased —
+     *     {@code decisions.md} D96. <strong>Derived from the sweep's own two switches</strong>
+     *     ({@code PrivacyProperties.Retention.isEnforcing()}), not a literal: it read a hardcoded
+     *     {@code false} until the estate had a sweep at all, which was honest then and would have
+     *     become a lie the moment one was switched on. Still {@code false} on every estate that
+     *     configures nothing, because the sweep is off by default and, when enabled, is in dry run by
+     *     default — and a dry run is <em>not</em> enforcement, which is the distinction this field
+     *     exists to keep. Reported beside the periods rather than assumed, so a stated policy is never
+     *     mistaken for an applied one
      */
     public record Policy(RetentionView retention, String controllerRegistration, boolean enforced) {}
 

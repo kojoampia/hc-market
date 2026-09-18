@@ -135,6 +135,20 @@ healthconnect:
     retention:
       financial-days: 2190
       operational-days: 365
+      # THE THREE SWEEP VALUES ARE DELIBERATELY ABSENT HERE -- decisions.md D96, backlog NEW-52.
+      #
+      # Do not "complete" this block by copying them across from the main config. Their defaults live
+      # in Java (PrivacyProperties.Retention), so absent here means the documented default means the
+      # sweep is OFF and in dry run under test -- which is what RetentionSweepIT and
+      # PrivacyResourceIT.doesNotClaimToEnforceAnything both want, and what makes the suite's estate
+      # of bookings safe from a scheduled erasure running inside it.
+      #
+      # This is NOT the shadowing trap the three lines above are about. The periods are here because
+      # a test must assert counsel's figures against something, and without them they bind to null;
+      # the sweep switches have working Java defaults, so absence costs nothing and asserting the
+      # defaults from a yml would be asserting the yml. The cases that need the sweep on pass the
+      # mode as a parameter (sweepAsAt) or construct the holder directly, precisely so that turning
+      # it on never means a second Spring context.
     # THE COMMITTED REGISTRATION, repeated for the same reason the periods are: this file shadows the
     # main one, so without this line the desk reports null under test and an IT asserting the number
     # would be asserting a fiction. The MAIN config's fallback is what production and a bare `./mvnw`

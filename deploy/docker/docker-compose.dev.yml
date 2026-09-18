@@ -151,6 +151,25 @@ x-service-base: &service-base
     HC_RETENTION_FINANCIAL_DAYS: ${HC_RETENTION_FINANCIAL_DAYS:-2190}
     HC_RETENTION_OPERATIONAL_DAYS: ${HC_RETENTION_OPERATIONAL_DAYS:-365}
     HC_DPC_REGISTRATION: ${HC_DPC_REGISTRATION:-}
+    # --- The two sweeps that apply those promises -- decisions.md D96, backlog NEW-52 -----------
+    #
+    # PASSED WITH NO DEFAULT: `${X:-}` sets an EMPTY variable, blank counts as absent, and every
+    # default lives in Java (PrivacyProperties.Retention, DisputeSlaProperties). Passed anyway
+    # rather than omitted, because a variable this repository documents and no compose file carries
+    # is one that silently does nothing -- D46 and D50's finding, D94's repeat of it.
+    #
+    # The retention sweep is OFF and in dry run by default, so reaching a deletion takes two
+    # decisions. A developer machine is the right place to watch a DRY RUN -- set
+    # HC_RETENTION_SWEEP_ENABLED=true and read the WARN count -- and the wrong place to leave
+    # sweep-dry-run=false lying in deploy/.env, because the dev estate seeds and those seeded
+    # bookings are real rows to a real clock.
+    HC_RETENTION_SWEEP_ENABLED: ${HC_RETENTION_SWEEP_ENABLED:-}
+    HC_RETENTION_SWEEP_DRY_RUN: ${HC_RETENTION_SWEEP_DRY_RUN:-}
+    HC_RETENTION_SWEEP_CRON: ${HC_RETENTION_SWEEP_CRON:-}
+    # The dispute sweep is ON by default and changes nothing -- it logs one WARN line naming the
+    # overdue references. The seed carries disputes already past their dueBy, so expect it to speak.
+    HC_DISPUTE_OVERDUE_SWEEP_ENABLED: ${HC_DISPUTE_OVERDUE_SWEEP_ENABLED:-}
+    HC_DISPUTE_OVERDUE_SWEEP_CRON: ${HC_DISPUTE_OVERDUE_SWEEP_CRON:-}
     # --- OpenTelemetry: the agent is IN the image and is NOT attached here ----------------------
     #
     # decisions.md D63, backlog NEW-23. This file carried no JAVA_OPTS at all until D63, which is
