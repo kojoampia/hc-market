@@ -474,6 +474,7 @@ regeneration.
 | The `healthconnect.accounts` block with its two `${HC_UNACTIVATED_ACCOUNT_*}` placeholders | gateway `config/application.yml` | **silent, and it takes away a policy rather than breaking one** (D94). Both values fall back to their Java defaults in `AccountRetention` — 3 days and `0 0 1 * * ?`, which is the ratified policy — so the estate keeps deleting exactly what it should and nothing goes red. What is lost is the **overridability**: `HC_UNACTIVATED_ACCOUNT_RETENTION_DAYS=14` binds to nothing and the estate deletes at three days while its operator believes otherwise, which is D57's brokerage row one service along. The defaults are in Java rather than in the yml for exactly this reason, and because the generated test copy shadows this file |
 | The mail placeholders — `host: ${SPRING_MAIL_HOST}`, `port: ${SPRING_MAIL_PORT}`, `base-url: ${JHIPSTER_MAIL_BASE_URL}` | gateway `config/application-prod.yml` | **the front door swallows people again** (D94, NEW-47). `--force` restores `host: localhost`, `port: 25` and `base-url: http://my-server-url-to-change`, and every one of them is a value that looks configured: `POST /api/register` answers **201 without waiting for the mail**, `MailService` catches the failure and logs one **WARN**, and the sweep deletes the account three days later. `MailServiceIT` mocks `JavaMailSender`, so no test in the estate can see it. What survives the regeneration is `MailDeliveryGuard` (a new file), which refuses loopback and the placeholder under `prod` — so the estate refuses to start rather than swallowing registrations. CI checks the three placeholders by name and bans the placeholder string in every `.yml` |
 | The **whole of** `InitialSetupMigration` | gateway `config/dbmigrations/` | **the worst row in this table, because what comes back is a working credential** (D61, NEW-22). This is the only entry here that is a Java class rather than config, and it is here because the generated version is not a stub to fill in — it is the defect. `--force` restores `@ChangeUnit(id = "users-initialization")` with **no `@Profile`**, creating `admin` with a committed bcrypt hash of the string `admin`, activated, carrying `ROLE_ADMIN`. `mongock.migration-scan-package` is in the **base** `application.yml`, so it runs in `prod` too, and a first production deploy creates exactly the empty database it seeds. **Completely silent**: the estate comes up, every test passes, and `admin`/`admin` works against the gateway that issues tokens all five services accept. What is lost is the `ApplicationRunner` rewrite — the not-production gate on the demo accounts, the configured `gateway.admin-password`, the refusal to create an administrator without one, and `saveUserIfMissing`'s idempotency, which is what stops a restart resetting a rotated password. **CI catches this one**, and deliberately by sweeping for the *hash* rather than for the logic (`.github/checks/admin-seed-wiring.sh`), because a check reasoning about the new logic would be matching a file that no longer contains any of it |
+| Both `.warn` in `logAfterThrowing` and the one in `logAround`'s catch, and the **absence** of `Arrays.toString(joinPoint.getArgs())` from that catch | **all five** `aop/logging/LoggingAspect.java` | **it spends the estate's one free signal and puts a bank reference in the log, and the second one is the smaller half** (D97, NEW-65). The second Java class in this table. `--force` restores `log.error` in **both** advices and `Arrays.toString(joinPoint.getArgs())` in the `IllegalArgumentException` arm, so every refusal this estate makes **on purpose** is an ERROR again — `Illegal argument: [PAY-202602-p1-01, GCB-TRF-99881726] in settle()`, measured, which is D95's desk refusing a settlement and publishing the bank reference it was handed. The signal half is the larger one: an ERROR line here is the only way a dead collector or an unattached agent is visible (D64, D73, and `quality/compose.yml`'s own note), and nothing pages on it because `hc-market-rules.yaml` keys on 5xx rates. **Do not quote a live count from this table** — all five quality services had carried **zero** across their whole life at 09:54 on 2026-09-18 and were at 49/38/35/27/24 by 13:10 the same day, from an OTLP collector that could not accept and a broker starved at load 200+, with nothing announcing either (backlog NEW-70). The argument for WARN rests on an ERROR line *meaning* something, not on the number being zero today. **Do not read this as one line.** `logAfterThrowing` is a *separate* advice on the same pointcut and logs every `Throwable`, so an `IllegalArgumentException` refusal is **two** ERROR lines and an `IllegalStateException` one — which is most of the desk — is **one**, through an advice the item that found this never mentioned: a `:113`-only repair leaves the count non-zero. It fires on `dev` and `test` and **not on `prod`**, because `LoggingAspectConfiguration` gates the bean on `@Profile(SPRING_PROFILE_DEVELOPMENT)` and `spring.profiles.group.prod` is `[kafka]` — so quality, which runs `dev,test`, is exactly the estate the zero-ERROR argument rests on. **CI catches this one** (*"A deliberate refusal may not be logged at ERROR, nor echo its arguments"*, derived from `jdl/*.jdl`, with `refusal-logging-level-test.sh` driving its own states — read the count off its last line, which it derives on every run, rather than from here) **and so does `LoggingAspectRefusalUnitTest`**, which is a new file in all five and is therefore the only thing left red after the regeneration that undoes the config |
 
 **Per app — generated classes to delete.** Each would otherwise win or tie an ambiguous mapping
 against the hand-written resource that replaced it:
@@ -1085,11 +1086,30 @@ a fact about today's membership, not a theorem: the day something joins `quality
 on `hcnet`, re-run the probe.
 
 Off by measurement rather than by taste: against a collector that is down — which
-`monitoring-quality` on this host has been since 2026-09-05 — the agent writes **35 ERROR lines with
-stack traces every 150 seconds** at its own default intervals, and all five quality services carry
-**zero** ERROR lines across their entire life. `deploy/observability/hc-market-rules.yaml` says so
-at the top and carries a `NOT-YET-ATTACHED` marker that CI holds against what the compose files
-render, in both directions.
+`monitoring-quality` on this host **was on 2026-09-05** — the agent writes **35 ERROR lines with
+stack traces every 150 seconds** at its own default intervals, and all five quality services
+**carried zero** ERROR lines across their entire life. `deploy/observability/hc-market-rules.yaml`
+says so at the top and carries a `NOT-YET-ATTACHED` marker that CI holds against what the compose
+files render, in both directions.
+
+**BOTH OF THOSE ARE DATED FACTS AND NEITHER HOLDS TODAY** (2026-09-18, D97/NEW-70). `monitoring-quality`
+is **up** — `otel-collector-quality` 30 hours, `loki-quality` 2 hours — and the zero is **gone on all
+five**: 49/38/35/27/24 at 13:10, from OTLP export failures against a collector that could not accept
+plus Kafka listener errors at load 200+, measured five hours after the same five read 0/0/0/0/0.
+Neither was an application fault and nothing announced either. The paragraph above is left in the past
+tense rather than rewritten because the **35-per-150-seconds** figure is what the decision rests on and
+is still the right number for a dead endpoint; what went stale is the state of the host. This is the
+concrete case the regeneration table's *"do not quote a live count"* warning was written for, and it
+was found by a reviewer reading the paragraph rather than by a grep — `git grep -nE "zero ERROR"` does
+**not** match it, because the source is `**zero** ERROR` with markdown between the words.
+
+**And the rules file's header is the same hazard one document along, unresolved — backlog NEW-72.** It
+says *"NOTHING ANSWERS THESE QUERIES TODAY, AND NOTHING EVER HAS"* and *"NO ENVIRONMENT ATTACHES IT"*,
+which is **true of the rendered compose** (`HC_OTEL_JAVA_OPTS` defaults empty, D73 §3's deliberate
+choice) and **false of the running estate** (the agent is attached on all five quality services,
+measured in `/proc/1/environ`). CI is not wrong and is not red: its marker check holds the file against
+the *render*, which is the right subject for a check about a default. What is wrong is that a reader
+takes the header as a statement about the estate.
 
 **That was measured on 2026-09-10 and the agent is QUIET against a live collector** (D73). The
 sentence here used to read "nobody has measured it against a LIVE collector, and D64 did not either",
@@ -1432,6 +1452,15 @@ the deployed image is the built one.
   question, and the rate limits at both edges with the unlimited set pinned **exactly**. Its own test
   drives 20 broken states, and three of the six parts were rewritten because running that test showed
   them passing a broken tree.
+  Since D97 it also holds **what an ERROR line means** — *"A deliberate refusal may not be logged at
+  ERROR, nor echo its arguments"*, derived from `jdl/*.jdl`, with `refusal-logging-level-test.sh`
+  driving a synthetic estate whose fixtures are the real files — **it prints its own assertion count on
+  every run; read that line rather than a number from here**, which was written as 17 and was 19 one
+  review round later. It is the guard whose subject is a **generated** file, so it asserts a property
+  and not only the five copies' identity. Three of its cases are **green**-expected controls, and that
+  is not padding: the ban covers both slf4j spellings (`.error(` and the fluent `atError`), so the
+  matching `atWarn` rewrite must stay green or the guard refuses correct code — which is how a ban gets
+  loosened by the next person who meets it.
 
 **Any check that matches source text must strip comments with `.github/checks/strip-comments.awk`,
 and never its own expression.** *"A check whose reach depends on prose is not a check"* has been the
@@ -1691,8 +1720,9 @@ time.**
     count and not the logins of the people about to be erased; the dispute line prints references and
     never `reason` or `raisedByLogin`. A log is a place the erasure sweep does not reach and cannot
     re-key. And it is **WARN, never ERROR**, deliberately — see the zero-ERROR argument in
-    `quality/compose.yml` and NEW-65, which is the generated `LoggingAspect` making that mistake by
-    accident.
+    `quality/compose.yml` and NEW-65, which was the generated `LoggingAspect` making that mistake by
+    accident and is **closed by D97**, the decision that states the rule these two sweeps were already
+    following.
   **Three decisions were surfaced rather than taken**: NEW-67 (the register records an alias and an
   instant, so it cannot say *why* — a subject's request and a clock expiring now write identical rows),
   NEW-68 (the **operational** period still has no sweep, in messaging, and fanning this one out would
@@ -1700,12 +1730,44 @@ time.**
   overdue dispute — `ROLE_BROKERAGE` lives in the gateway's account store and booking cannot enumerate
   it). **`prod` still refuses to seed and that is untouched** — these sweeps are not seed data and share
   no namespace with `healthconnect.seed`.
-- **FIVE families of file are copied verbatim across services, and CI diffs the copies.** There is no
+- **An ERROR line is a fact about this estate that is wrong and that nobody chose; a caller asking for
+  something not allowed is a WARN** (`decisions.md` D97, backlog NEW-65). The level is authored by the
+  code that knows which of the two it is — so a generic interceptor, which sees an exception crossing a
+  boundary and nothing else, logs WARN. That is what the generated `LoggingAspect` was getting wrong in
+  all five services: **both** its advices logged every exception at ERROR, and its
+  `IllegalArgumentException` arm rendered `Arrays.toString(joinPoint.getArgs())` with it, so
+  `PayoutRun.settle` refusing a settlement published the bank reference it was handed. It is a
+  **generated** file and therefore on the regeneration table above.
+  **Three things about the rule are worth knowing before applying it.**
+  - **The reason it matters is a signal, not a disclosure.** An ERROR line on the quality box is the
+    only way D63's dead-collector case (35 ERROR lines per 150 seconds) is ever noticed, and nothing
+    pages on it: `hc-market-rules.yaml` keys on 5xx rates.
+    **DO NOT QUOTE A LIVE COUNT FROM HERE, and the reason is a measurement rather than caution.** All
+    five had carried **zero** across their whole life at 09:54 on 2026-09-18 — the figure D64, D73 and
+    D97 all rest on — and by **13:10 the same day**, same roll, they read **49 / 38 / 35 / 27 / 24**.
+    Neither cause was an application fault: OTLP exporter failures against a collector that could not
+    accept (`loki-quality` restarted beneath it), and Kafka listener errors while this workstation sat
+    at load average 200+ under eight other products' Maven builds. **Nothing announced any of it** — it
+    surfaced because a package writing about the count happened to re-measure before finishing, which
+    is **NEW-70** turned from a prediction into an observation. Three decisions have turned on a number
+    produced by a person typing `grep -c`, and that number has a half-life of hours.
+  - **The estate's own `log.error` calls were enumerated against the rule and all obey it** — D97 §5
+    lists every one. That enumeration is evidence, **not a licence to sweep**: if a check ever makes the
+    zero awkward, the cheap way to keep it green is to drop a real ERROR to WARN at a site that knows it
+    is an error, and that is this defect inverted.
+  - **`isDebugEnabled` guards are not the pattern to copy onto the WARN calls.** They exist because
+    DEBUG is off in every environment and the guarded lines would otherwise render
+    `Arrays.toString(getArgs())` and `String.valueOf(result)` on every advised call in the estate. WARN
+    is on everywhere and the arguments are gone, so a guard that is always true buys a reader nothing.
+- **SIX families of file are copied verbatim across services, and CI diffs the copies.** There is no
   shared library here, so a derivation whose answers must match across services is duplicated instead;
-  edit one copy and you must edit them all identically, **comments included**. All are new files, so a
-  regeneration leaves them alone. **The count in this sentence has been wrong before** — it read "two"
-  while listing three, from D51 until D62's review — so trust the list and not the number, and CI is
-  what actually holds each family together.
+  edit one copy and you must edit them all identically, **comments included**. **The count in this
+  sentence has been wrong before** — it read "two" while listing three, from D51 until D62's review, and
+  "five" over a six-item list is exactly as easy to leave behind — so trust the list and not the number,
+  and CI is what actually holds each family together.
+  **Five of the six are new files and a regeneration leaves them alone. The sixth is not**:
+  `LoggingAspect` is generated, which changes what its diff is worth, and D97 is the entry to read
+  before assuming the pattern.
   - `SubjectPseudonym.java` + `SubjectPseudonymUnitTest.java` — **booking, catalog, messaging** (D35).
     The erasure alias. Diverge and one person acquires two irreconcilable aliases.
   - `SeedCalendar.java` + `SeedCalendarUnitTest.java` — **catalog, booking, messaging, payout** (D48).
@@ -1747,6 +1809,17 @@ time.**
     bytes rather than as behaviour. It is the second family whose reference is not payout's and the
     first whose reference is not the alphabetically-first service, so read the check rather than
     assuming the pattern.
+  - `LoggingAspect.java` + `LoggingAspectRefusalUnitTest.java` — **all five** (D97, NEW-65). What an
+    ERROR line means in this estate: both advices log at WARN, and the `IllegalArgumentException` arm
+    names the method and the exception's own message rather than `Arrays.toString(joinPoint.getArgs())`.
+    **It is the only family whose main-source member is GENERATED**, and that is the difference to
+    carry: the other five drift because somebody edits one copy, this one reverts because `--force`
+    puts the same wrong thing back in **all five at once** — so five identical copies of the defect
+    satisfy the diff, and the CI step therefore asserts a **property** (no `.error(` anywhere in the
+    file, `getArgs()` only on the guarded `log.debug` lines, the catch's first statement logging at
+    WARN) beside the identity. The *test* half is a new file and is what survives the regeneration.
+    Same rules otherwise: the service list is derived from `jdl/*.jdl`, the reference is derived (first
+    in sorted order, printed on every run) and a family of one is refused.
 - **The scripts and the spec appendices are the same bytes in two places.** Appendix A is
   `deploy/deploy-dev.sh`, Appendix B is `deploy/deploy-prod.sh`. This is enforced mechanically —
   after editing either script, re-embed; before trusting the spec, check:

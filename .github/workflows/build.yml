@@ -1572,6 +1572,213 @@ jobs:
       # that step, because the step already derives exactly that service list from `jdl/*.jdl` and
       # duplicating the derivation here is how the two would eventually disagree. Named here so that
       # somebody maintaining the copy families finds all four from one place. See decisions.md D62.
+      #
+      # THE SIXTH IS THE STEP DIRECTLY BELOW — `LoggingAspect` and its guard test (D97). It is the
+      # first family whose main-source member is a GENERATED file, which is why that step asserts a
+      # property as well as an identity: five identical copies of the wrong thing would satisfy a
+      # diff, and a regeneration produces exactly that.
+
+      # A deliberate business refusal is a WARN, it names no argument, and the aspect that decides
+      # both is regenerated — decisions.md D97, backlog NEW-65.
+      #
+      # WHAT THIS GUARDS, and it is two different things in one step. The generated `LoggingAspect`
+      # logged every exception crossing its pointcut at ERROR, and its `IllegalArgumentException` arm
+      # rendered `Arrays.toString(joinPoint.getArgs())` with it — so `PayoutRun.settle` refusing a
+      # settlement put a bank reference in the log, and D95's desk, which refuses by design at several
+      # sites, spent the estate's zero-ERROR count the first time anybody used it. Measured before the
+      # fix, against a real Spring AOP context: one `IllegalArgumentException` refusal produced **two**
+      # ERROR lines (`logAfterThrowing` then `logAround`'s catch, the second carrying
+      # `[PAY-202602-p1-01, GCB-TRF-99881726]`) and one `IllegalStateException` refusal produced **one**
+      # — through `logAfterThrowing`, which never reaches the catch at all. That last number is why
+      # this check bans `.error(` across the WHOLE file rather than guarding the one line the item
+      # named: most of the desk's refusals are `IllegalStateException` and would have stayed at ERROR.
+      #
+      # WHY ERROR IS WORTH A CHECK. All five quality services have carried zero ERROR lines across
+      # their entire life, with the agent attached (D64, D73, and quality/compose.yml's own note), so
+      # an ERROR line there is the only way a dead OTLP collector or an unattached agent is visible.
+      # Nothing alerts on it — deploy/observability/hc-market-rules.yaml keys on 5xx rates — so the
+      # cost of losing it is silent, which is exactly the kind of thing that needs a check.
+      #
+      # IT IS A GENERATED FILE, so `jhipster jdl --force` restores the ERROR calls and the arguments
+      # in silence. The guard test is a NEW file and survives that regeneration; this step is what
+      # fails if somebody deletes the test instead of the defect.
+      - name: A deliberate refusal may not be logged at ERROR, nor echo its arguments
+        run: |
+          fail=0
+          stripper=.github/checks/strip-comments.awk
+          # The one file every text-matching check here trusts. Absent, the greps below match nothing
+          # and this step reports ok having read no code at all — D77's ninth fail-open.
+          if [ ! -f "$stripper" ]; then
+            echo "::error::$stripper is missing, so every expression below would match nothing and this check would pass having read no code. See decisions.md D77."
+            exit 1
+          fi
+          # TWO FAIL-CLOSED EDGES, STATED AND DELIBERATELY NOT CLOSED (D97's review). A JDL that is not
+          # an application — a shared enum or entity file, which this repository does not have today —
+          # would make this demand a LoggingAspect for a service directory that does not exist; and
+          # assertion 5's `@Profile(.*SPRING_PROFILE_DEVELOPMENT` would accept a negated expression.
+          # Both go red on a correct tree rather than green on a broken one, and neither is a spelling
+          # anybody writes by accident. They are left alone because this step passed six mutations at
+          # review that it was not designed for, and editing a derivation in that state to chase an edge
+          # nothing has ever hit is how a working guard acquires its first real defect. The Kafka-sample
+          # check's `messageBroker kafka` key is the pattern to copy if a non-application JDL ever lands.
+          #
+          # Derived from jdl/*.jdl — the model of record, and the same file a regeneration reads. Every
+          # JHipster application gets a LoggingAspect, so no key needs testing: one JDL is one service.
+          jdls=$(ls jdl/*.jdl 2>/dev/null || true)
+          if [ -z "$jdls" ]; then
+            echo "::error::jdl/*.jdl matched nothing — this check would scan no application and pass. See decisions.md D97."
+            exit 1
+          fi
+          scanned=0
+          aspects=""
+          guards=""
+          for jdl in $jdls; do
+            svc=$(basename "$jdl" .jdl)
+            aspect="$svc/src/main/java/net/jojoaddison/aop/logging/LoggingAspect.java"
+            guard="$svc/src/test/java/net/jojoaddison/aop/logging/LoggingAspectRefusalUnitTest.java"
+            cfg="$svc/src/main/java/net/jojoaddison/config/LoggingAspectConfiguration.java"
+            scanned=$((scanned + 1))
+            if [ ! -f "$aspect" ]; then
+              echo "::error file=$jdl::$aspect does not exist, but $jdl declares an application — either JHipster stopped generating the aspect or it has been renamed, and either way this check can no longer see what $svc logs a refusal at. See decisions.md D97."
+              fail=1
+              continue
+            fi
+            stripped=$(awk -f "$stripper" "$aspect")
+            # POSITIVE CONTROL. Every assertion below is a ban, and text that is not there cannot be
+            # matched — so a stripper that ate the file, or a rewrite that renamed both advices, would
+            # satisfy all of them. Assert the subject is present before asserting anything about it.
+            # It matches the DECLARATION and not the bare name: `grep -q logAfterThrowing` is a
+            # substring match, so a rename to `logAfterThrowingRenamed` satisfied it — measured, and
+            # the run was then green on the ban and red only on the copy diff, which would not have
+            # fired had all five copies been renamed together.
+            # HERESTRINGS, not `printf | grep -q`, and that is not a style preference. `grep -q` exits
+            # at the first match, so its producer takes SIGPIPE and dies 141 — and under
+            # `set -o pipefail` the PIPELINE then reports a match as FAILURE. Measured on this
+            # repository's own `account-lifecycle-guards.sh`, which is `set -Eeuo pipefail`: the same
+            # shape there cannot report the placeholder base-url it exists to ban, and it answers
+            # differently under load (backlog NEW-71). This step runs under Actions' default `bash -e`,
+            # which has no pipefail, so it is correct today and one `defaults: run: shell:` away from
+            # not being. A herestring is not a pipeline and the question cannot arise.
+            if ! grep -q 'void logAfterThrowing(JoinPoint' <<< "$stripped" \
+               || ! grep -q 'catch (IllegalArgumentException' <<< "$stripped"; then
+              echo "::error file=$aspect::$aspect strips to something with no logAfterThrowing or no IllegalArgumentException catch in it, so the bans below would pass having found nothing. See decisions.md D97."
+              fail=1
+              continue
+            fi
+            # 1. No ERROR anywhere in the aspect. Both advices, both profile arms. Not just the line
+            #    NEW-65 named: an IllegalStateException refusal never reaches that line and was one
+            #    ERROR line all by itself.
+            #
+            #    BOTH SLF4J SPELLINGS, and the second is a self-review finding rather than a
+            #    hypothetical. `.error(` is what the generator writes and what `--force` restores, so
+            #    it is the one that matters for the regeneration hazard — but slf4j 2.x also has the
+            #    fluent `log.atError().setMessage(…).log()`, which contains no `.error(` at all and
+            #    would have walked straight past a ban written only for the first. Nothing in the
+            #    estate uses the fluent API today (measured: zero `atError`/`atWarn`/`atDebug` in any
+            #    service's main sources), which is exactly when closing a door is free. `atError` is
+            #    matched WITHOUT a leading dot so a static import or a local `var e = log.atError()`
+            #    cannot slip between the two.
+            errs=$(printf '%s\n' "$stripped" | grep -cE '\.error\(|atError' || true)
+            if [ "$errs" -ne 0 ]; then
+              echo "::error file=$aspect::$aspect has $errs ERROR-level call(s) (.error( or atError). This aspect sees an exception crossing a boundary and nothing else, so it cannot tell a deliberate refusal from a fault and may not author the estate's one free signal — five quality services at zero ERROR for their whole life is what makes a dead collector visible. WARN. A regeneration puts these back and nothing else in the build goes red except LoggingAspectRefusalUnitTest. See backlog NEW-65 and decisions.md D97."
+              fail=1
+            fi
+            # 2. The arguments may be rendered only on the DEBUG lines, which are guarded by
+            #    isDebugEnabled and off unless somebody asks. Anywhere else is D44's rule broken: a
+            #    message this estate composes, never a value it was handed.
+            leaks=$(printf '%s\n' "$stripped" | grep -n 'getArgs()' | grep -v 'log\.debug(' || true)
+            if [ -n "$leaks" ]; then
+              echo "::error file=$aspect::$aspect renders joinPoint.getArgs() somewhere other than a log.debug line: $(printf '%s' "$leaks" | tr '\n' ' '). PayoutRun.settle takes a bank reference and this is the route by which one reached the log. See backlog NEW-65 and decisions.md D97/D44."
+              fail=1
+            fi
+            # 3. The refusal arm must still SAY something, and say it at WARN. Read as the first
+            #    non-blank line after the catch rather than a window, because the stripper blanks
+            #    comment lines in place and a fixed -A window silently moves with the prose.
+            #
+            #    LIMIT, STATED SO THIS IS NOT READ AS COVERING IT: the awk takes the FIRST
+            #    `catch (IllegalArgumentException` in the file and stops. A decoy catch carrying a
+            #    `log.warn` planted in a helper ABOVE `logAround`, with the real refusal's log line
+            #    deleted in all five copies, exits 0 here — measured at review. That is deliberate
+            #    division of labour rather than a hole: `LoggingAspectRefusalUnitTest.aRefusalIsAWarning`
+            #    asserts exactly ONE event is heard for one refusal, so a gutted advice is red there,
+            #    in all five services, and it is a new file that survives the regeneration. Widening
+            #    this to "every such catch" would mean the check deciding which one is the advice,
+            #    which is the aspect's structure restated in awk and rots the first time the generator
+            #    moves it. The rule the whole guard rests on: this step reads the SOURCE, the unit test
+            #    reads the BEHAVIOUR, and neither is a substitute for the other.
+            #
+            #    BOTH SLF4J SPELLINGS HERE TOO, and the symmetry is the whole point rather than tidiness.
+            #    Widening the ERROR ban above to catch fluent `atError` while leaving this side matching
+            #    the literal `log.warn(` made the check REFUSE a refusal arm rewritten as
+            #    `log.atWarn().setMessage(…).log()` — accurate code, rejected, with a message insisting it
+            #    "does not log at WARN" when it plainly does. Caught by this check's own case 3c before it
+            #    shipped, and that is what the control is for: a guard that refuses correct code is
+            #    loosened by the next person who meets it, which is how the hole it was closing comes back.
+            #    The two halves must be widened together or not at all.
+            arm=$(printf '%s\n' "$stripped" | awk '/catch \(IllegalArgumentException/ { seen = 1; next } seen && NF { print; exit }')
+            if ! grep -qE 'log\.warn\(|atWarn' <<< "$arm"; then
+              echo "::error file=$aspect::the first statement in $aspect's IllegalArgumentException catch is '$(printf '%s' "$arm" | sed 's/^ *//')', which logs at neither log.warn( nor atWarn. D97 kept this advice rather than deleting it: the exception translator reports to the CALLER and logs only at DEBUG, so with this line gone a refusal leaves no record anywhere. See decisions.md D97."
+              fail=1
+            fi
+            # 4. The guard test travels with the aspect. It is the only thing that goes red after a
+            #    regeneration, which is the whole reason it is a new file.
+            if [ ! -f "$guard" ]; then
+              echo "::error file=$jdl::$guard is missing — the aspect is a generated file, so this test is the only thing in $svc that fails when the edit is undone. See decisions.md D97."
+              fail=1
+              continue
+            fi
+            # 5. The premise the decision rests on for PRODUCTION: the bean is dev-profile-only, so
+            #    `prod` never registers the aspect at all. Pinned rather than trusted, because the
+            #    decision's "production is unaffected today" is a statement about this one annotation.
+            #    It is not load-bearing for the WARN property — post-D97 the aspect is safe in any
+            #    profile — so this arm is about keeping the decision's text true.
+            if [ ! -f "$cfg" ]; then
+              echo "::error file=$jdl::$cfg does not exist, so nothing establishes which profiles register $svc's LoggingAspect. See decisions.md D97."
+              fail=1
+              continue
+            fi
+            if ! grep -q '@Profile(.*SPRING_PROFILE_DEVELOPMENT' <<< "$(awk -f "$stripper" "$cfg")"; then
+              echo "::error file=$cfg::$cfg no longer gates the LoggingAspect bean on the development profile, so the aspect is registered in prod too. That is not a disclosure any more — D97 took the arguments out and dropped both arms to WARN — but it makes D97's 'production never registers it' false, and that sentence is quoted in CLAUDE.md. Re-argue it there or restore the annotation. See decisions.md D97."
+              fail=1
+            fi
+            aspects="$aspects $aspect"
+            guards="$guards $guard"
+            echo "ok   $svc logs a refusal at WARN, echoes no argument, carries the guard test and registers the aspect under dev only"
+          done
+          # THE SIXTH VERBATIM-COPY FAMILY. Both members are copied byte-identically across every
+          # service, so an edit made in one place and not the others un-guards the rest silently. The
+          # reference is DERIVED — the first service in the sorted list the loop above built from
+          # jdl/*.jdl — and never enumerated: D52's review established that a hard-coded list lets a
+          # rogue copy sit unchecked in a service nobody listed.
+          for family in "$aspects" "$guards"; do
+            count=$(printf '%s\n' $family | grep -c . || true)
+            if [ "$count" -lt 2 ]; then
+              echo "::error::only $count copy in that family — a copied file with no copy to compare against is not being compared with anything, and this check would pass having diffed nothing. See decisions.md D97."
+              fail=1
+              continue
+            fi
+            reference=$(printf '%s\n' $family | head -1)
+            echo "reference copy: $reference ($count copies)"
+            # A missing copy is already an error above and `fail` is 1, so this cannot pass — but
+            # "diffed 4 of 5" must read as itself rather than as a clean run.
+            if [ "$count" -ne "$scanned" ]; then
+              echo "::error::$count of $scanned services carry $reference's family, so the comparison below covers fewer services than were scanned. See decisions.md D97."
+              fail=1
+            fi
+            for copy in $family; do
+              [ "$copy" = "$reference" ] && continue
+              if ! diff -u "$reference" "$copy"; then
+                echo "::error file=$copy::$copy differs from $reference — every service must answer the same way about what an ERROR line means here, comments included. See decisions.md D97."
+                fail=1
+              else
+                echo "ok   $copy identical to $reference"
+              fi
+            done
+          done
+          exit "$fail"
+
+      - name: …and that check must fail on each of the states it exists to refuse
+        run: bash .github/checks/refusal-logging-level-test.sh
 
       # …and nothing anywhere in the five services may read a date from an implicit zone.
       #

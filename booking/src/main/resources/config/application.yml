@@ -415,9 +415,16 @@ healthconnect:
     # WARN line, so it is ON by default. A promise kept by nothing is not made safer by a sweep
     # shipped switched off. Same String-and-blank convention, same reason.
     #
-    # WARN and not ERROR on purpose: quality/compose.yml rests an argument on these services carrying
-    # zero ERROR lines across their whole life, and an overdue dispute is ordinary business on a busy
-    # marketplace. See backlog NEW-65 for the generated LoggingAspect doing this by accident.
+    # WARN and not ERROR on purpose: an ERROR line on the quality box is meant to mean something --
+    # quality/compose.yml rests an argument on that -- and an overdue dispute is ordinary business on
+    # a busy marketplace. The generated LoggingAspect was doing this by accident -- backlog NEW-65,
+    # closed by D97, which states the rule: an ERROR is a fact about this estate that is wrong and
+    # that nobody chose; a caller asking for something not allowed is a WARN.
+    #
+    # No live ERROR count is quoted here deliberately. The count was zero across every service's whole
+    # life when D97 was written and moved the same day, from causes that were not application faults
+    # and that nothing announced (backlog NEW-70). The reason for the level does not depend on the
+    # number being zero today, only on an ERROR line meaning something.
     #
     # working-days-to-resolve is NOT here: DisputeWorkflow reads it with a @Value and its default (5)
     # lives there. Left alone rather than moved, which would be a change to a working class for
