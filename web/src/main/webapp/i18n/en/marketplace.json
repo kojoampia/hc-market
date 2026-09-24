@@ -1,0 +1,197 @@
+{
+  "marketplace": {
+    "nav": {
+      "discover": "Discover",
+      "browse": "Browse"
+    },
+    "scope": {
+      "label": "Scope note.",
+      "body": "Everyone on this marketplace is a non-medical wellbeing professional. They do not diagnose, prescribe or replace clinical care. Where a need is clinical, the platform routes it back to your BridgeCare care team rather than to a listing.",
+      "short": "This professional is non-medical. They do not diagnose, prescribe or replace clinical care."
+    },
+    "mode": {
+      "ONLINE": "Online",
+      "IN_PERSON": "In person",
+      "HOME_VISIT": "Home visit"
+    },
+    "verification": {
+      "VERIFIED": "Verified",
+      "PENDING": "Verification in progress",
+      "UNVERIFIED": "Not yet verified",
+      "SUSPENDED": "Verification suspended"
+    },
+    "rating": {
+      "unrated": "No reviews yet",
+      "outOfFive": "{{value}} out of 5",
+      "reviewCount": "({{count}})"
+    },
+    "price": {
+      "from": "From",
+      "fromPerSession": "from / session",
+      "perSession": "/ session",
+      "free": "Free",
+      "onEnquiry": "Price on enquiry",
+      "hasFreeService": "Free service available"
+    },
+    "state": {
+      "loading": {
+        "title": "Loading…",
+        "detail": "Fetching listings from the catalogue."
+      },
+      "failed": {
+        "title": "The marketplace could not be reached",
+        "detail": "The catalogue did not answer. Nothing is lost — try again in a moment.",
+        "retry": "Try again"
+      },
+      "empty": {
+        "title": "Nothing here yet",
+        "detail": "There is nothing to show."
+      }
+    },
+    "discover": {
+      "pageTitle": "Discover · Abofonsa BridgeCare Marketplace",
+      "eyebrow": "Abofonsa BridgeCare · Wellbeing Marketplace",
+      "title": "Find the person who actually helps, not the first one who answers.",
+      "lede": "Verified non-medical health professionals — coaches, therapists, trainers and carers — brokered, background-checked and booked in one place.",
+      "search": {
+        "what": "What do you need",
+        "whatPlaceholder": "e.g. nutritionist, massage, elder care",
+        "where": "Where",
+        "anywhere": "Anywhere",
+        "how": "How",
+        "anyFormat": "Any format",
+        "go": "Search"
+      },
+      "stats": {
+        "professionals": "Professionals",
+        "verified": "Verified",
+        "reviews": "Reviews"
+      },
+      "categories": {
+        "title": "Browse by need",
+        "lede": "Four families of care. Everyone listed is non-medical — we broker alongside your clinician, never instead of one.",
+        "empty": {
+          "title": "No categories published",
+          "detail": "The catalogue has no categories to browse yet."
+        }
+      },
+      "featured": {
+        "title": "Highly rated",
+        "lede": "Ranked by rating weighted for review volume — not by what anyone paid us.",
+        "seeAll": "See all {{count}}",
+        "empty": {
+          "title": "No professionals listed yet",
+          "detail": "This marketplace has no listings to show."
+        }
+      },
+      "how": {
+        "title": "How the brokerage works",
+        "lede": "Four steps, and money only moves after the session happens.",
+        "search": {
+          "title": "1 · Search",
+          "body": "Filter by need, format, city, price and rating. Every profile shows credentials and real reviews."
+        },
+        "request": {
+          "title": "2 · Request",
+          "body": "Send a request for a specific slot. The professional accepts or proposes another time."
+        },
+        "meet": {
+          "title": "3 · Meet",
+          "body": "Online, at their studio, or at your home. Carers and home visitors are all background-checked."
+        },
+        "settle": {
+          "title": "4 · Settle",
+          "body": "The fee is held and released after the session, with the brokerage fee already included in the price you see. The free cancellation window is shown before you confirm."
+        }
+      }
+    },
+    "browse": {
+      "pageTitle": "Browse professionals · Abofonsa BridgeCare Marketplace",
+      "title": "Browse professionals",
+      "matchCount": "{{count}} match your filters",
+      "sort": {
+        "label": "Sort",
+        "recommended": "Most relevant",
+        "rating": "Highest rated",
+        "reviews": "Most reviewed",
+        "price-asc": "Price: low to high",
+        "price-desc": "Price: high to low",
+        "experience": "Most experienced",
+        "response": "Replies fastest"
+      },
+      "filters": {
+        "search": "Search",
+        "searchPlaceholder": "Name, need, service…",
+        "category": "Category",
+        "speciality": "Speciality",
+        "format": "Format",
+        "city": "City",
+        "any": "Any",
+        "priceUpTo": "Price up to",
+        "priceNote": "The cheapest service you can actually buy. A listing that publishes only free services is not priced and does not appear in a budget.",
+        "rating": "Rating",
+        "anyRating": "Any rating",
+        "ratingAndUp": "{{value}}★ and up",
+        "ratingNote": "A professional with no reviews yet is not rated, so a rating filter does not include them.",
+        "trust": "Trust",
+        "verifiedOnly": "Verified professionals only",
+        "verifiedNote": "Verification covers identity, stated credentials and — for home visitors — a police clearance.",
+        "clearAll": "Clear all filters"
+      },
+      "pager": {
+        "label": "Result pages"
+      },
+      "empty": {
+        "title": "Nothing matches those filters",
+        "detail": "Try widening the price range or clearing a filter."
+      },
+      "emptyCatalogue": {
+        "title": "No professionals are listed yet",
+        "detail": "This marketplace has no listings to browse. Please come back soon."
+      }
+    },
+    "professional": {
+      "pageTitle": "Professional · Abofonsa BridgeCare Marketplace",
+      "breadcrumb": "Breadcrumb",
+      "insured": "Insured",
+      "policeClearance": "Police clearance",
+      "verifiedMeaning": "Verified means BridgeCare saw this professional's documents. There is no public register for non-medical professionals, so this is a check of documents, not a licence.",
+      "verifiedMeaningOn": "Verified means BridgeCare saw this professional's documents on {{date}}. There is no public register for non-medical professionals, so this is a check of documents, not a licence.",
+      "yearsPractising": "{{years}} years practising",
+      "responseMinutes": "Replies in about {{minutes}} minutes",
+      "rebookRate": "{{percent}}% rebook",
+      "about": "About",
+      "credentials": "Credentials",
+      "practicalities": "Practicalities",
+      "languages": "Languages",
+      "formats": "Formats",
+      "basedIn": "Based in",
+      "timesShownIn": "Times shown in",
+      "services": "Services & prices",
+      "feeIncluded": "The brokerage fee is included in these prices.",
+      "minutes": "{{minutes}} minutes",
+      "reviews": "Reviews",
+      "reviewsNote": "Only clients who completed and paid for a booking through BridgeCare can review.",
+      "reviewPager": "Review pages",
+      "replied": "Replied",
+      "noReviews": {
+        "title": "No reviews yet",
+        "detail": "This professional has not been reviewed through BridgeCare."
+      },
+      "availability": "Next 10 days",
+      "availabilityZone": "Times are the professional's own ({{zone}}).",
+      "notAvailable": "Not available",
+      "noAvailability": {
+        "title": "No published openings",
+        "detail": "This professional has published no openings in the next ten days."
+      },
+      "protection": {
+        "title": "How BridgeCare protects you",
+        "held": "The fee is held until the session is complete.",
+        "cancel": "The free cancellation window is shown before you confirm a booking.",
+        "clearance": "Police clearance on file.",
+        "disputes": "Disputes are handled by the BridgeCare brokerage desk."
+      }
+    }
+  }
+}

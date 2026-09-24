@@ -1,0 +1,324 @@
+<main class="abm-pro">
+  @switch (detail().status) {
+    @case ('ready') {
+      @if (detail().value; as profile) {
+        <nav class="abm-crumbs" [attr.aria-label]="'marketplace.professional.breadcrumb' | translate">
+          <a routerLink="/" abmTranslate="marketplace.nav.discover">Discover</a>
+          <span aria-hidden="true">›</span>
+          <a routerLink="/browse" [queryParams]="{ category: profile.card.categoryCode }">{{ profile.card.speciality }}</a>
+          <span aria-hidden="true">›</span>
+          <span class="abm-crumbs__here">{{ profile.card.displayName }}</span>
+        </nav>
+
+        <section class="abm-pro__hero">
+          <span class="abm-pro__avatar" [style.background]="gradient()" aria-hidden="true">{{ profile.card.initials }}</span>
+
+          <div class="abm-pro__identity">
+            <div class="abm-pro__titleline">
+              <h1>{{ profile.card.displayName }}</h1>
+              @if (verified()) {
+                <span class="abm-pill abm-pill--verified" abmTranslate="marketplace.verification.VERIFIED">Verified</span>
+              } @else {
+                <span class="abm-pill" [abmTranslate]="'marketplace.verification.' + profile.card.verification">Verification pending</span>
+              }
+              @if (profile.card.insured) {
+                <span class="abm-pill" abmTranslate="marketplace.professional.insured">Insured</span>
+              }
+              @if (profile.card.policeClearance) {
+                <span class="abm-pill abm-pill--free" abmTranslate="marketplace.professional.policeClearance">Police clearance</span>
+              }
+            </div>
+
+            <p class="abm-pro__headline">{{ profile.card.headline }}</p>
+
+            <!-- WHAT THE BADGE MEANS, BESIDE THE BADGE — the prototype's own placement and D16's
+                 reasoning: there is no public register for non-medical professionals, so a tick is a
+                 statement that documents were seen by a person. The DATE appears only when the
+                 verification audit trail records one; all eighteen seeded professionals predate it
+                 and `verifiedOn` is null, so most profiles honestly say less. -->
+            @if (verified()) {
+              @if (profile.verifiedOn) {
+                <p
+                  class="abm-pro__badgenote"
+                  abmTranslate="marketplace.professional.verifiedMeaningOn"
+                  [translateValues]="{ date: profile.verifiedOn }"
+                >
+                  Verified means BridgeCare saw this professional's documents. It is a check of documents, not a licence.
+                </p>
+              } @else {
+                <p class="abm-pro__badgenote" abmTranslate="marketplace.professional.verifiedMeaning">
+                  Verified means BridgeCare saw this professional's documents. There is no public register for non-medical professionals, so
+                  this is a check of documents, not a licence.
+                </p>
+              }
+            }
+
+            <div class="abm-pro__facts">
+              <abm-stars [rating]="profile.card.rating" [reviewCount]="profile.card.reviewCount" />
+              <span>{{ profile.card.city }}</span>
+              @if (profile.card.yearsPractising !== null) {
+                <span abmTranslate="marketplace.professional.yearsPractising" [translateValues]="{ years: profile.card.yearsPractising }"
+                  >years practising</span
+                >
+              }
+              @if (profile.card.responseMinutes !== null) {
+                <span abmTranslate="marketplace.professional.responseMinutes" [translateValues]="{ minutes: profile.card.responseMinutes }"
+                  >replies quickly</span
+                >
+              }
+              @if (profile.card.rebookRatePct !== null) {
+                <span abmTranslate="marketplace.professional.rebookRate" [translateValues]="{ percent: profile.card.rebookRatePct }"
+                  >rebook</span
+                >
+              }
+            </div>
+
+            <div class="abm-pro__pills">
+              @for (mode of profile.card.deliveryModes; track mode) {
+                <span class="abm-pill">{{ 'marketplace.mode.' + mode | translate }}</span>
+              }
+              @for (highlight of profile.highlights; track highlight) {
+                <span class="abm-pill abm-pill--muted">{{ highlight }}</span>
+              }
+            </div>
+          </div>
+
+          <!-- THE PRICE PANEL, AND DELIBERATELY NO BUTTON. Booking, messaging and saving all need a
+               token; Stage B has none, and a control that does nothing is worse than no control.
+               D103 §7. -->
+          <aside class="abm-pro__pricebox">
+            <p class="abm-pro__pricelabel" abmTranslate="marketplace.price.from">From</p>
+            @switch (priceState()) {
+              @case ('paid') {
+                <p class="abm-pro__price">{{ fromPrice() }}</p>
+                <p class="abm-pro__perlabel" abmTranslate="marketplace.price.perSession">/ session</p>
+              }
+              @case ('free') {
+                <p class="abm-pro__price" abmTranslate="marketplace.price.free">Free</p>
+              }
+              @case ('enquire') {
+                <p class="abm-pro__price abm-pro__price--muted" abmTranslate="marketplace.price.onEnquiry">Price on enquiry</p>
+              }
+            }
+            @if (profile.card.hasFreeService) {
+              <span class="abm-pill abm-pill--free" data-cy="freeServiceMarker" abmTranslate="marketplace.price.hasFreeService"
+                >Free service available</span
+              >
+            }
+          </aside>
+        </section>
+
+        <div class="abm-pro__body">
+          <div class="abm-pro__main">
+            <section class="abm-panel">
+              <h2 abmTranslate="marketplace.professional.about">About</h2>
+              @if (profile.bio) {
+                <p class="abm-pro__bio">{{ profile.bio }}</p>
+              }
+              @if (profile.credentials.length) {
+                <h3 abmTranslate="marketplace.professional.credentials">Credentials</h3>
+                <ul class="abm-pro__creds">
+                  @for (credential of profile.credentials; track credential) {
+                    <li>{{ credential }}</li>
+                  }
+                </ul>
+              }
+              <h3 abmTranslate="marketplace.professional.practicalities">Practicalities</h3>
+              <dl class="abm-pro__kv">
+                <dt abmTranslate="marketplace.professional.languages">Languages</dt>
+                <dd>{{ profile.card.languages.join(', ') }}</dd>
+                <dt abmTranslate="marketplace.professional.formats">Formats</dt>
+                <dd>
+                  @for (mode of profile.card.deliveryModes; track mode; let last = $last) {
+                    <span>{{ 'marketplace.mode.' + mode | translate }}{{ last ? '' : ' · ' }}</span>
+                  }
+                </dd>
+                <dt abmTranslate="marketplace.professional.basedIn">Based in</dt>
+                <dd>{{ profile.card.city }}</dd>
+                <dt abmTranslate="marketplace.professional.timesShownIn">Times shown in</dt>
+                <dd>{{ profile.card.zoneId }}</dd>
+              </dl>
+            </section>
+
+            <section class="abm-panel">
+              <h2 abmTranslate="marketplace.professional.services">Services &amp; prices</h2>
+              <!-- The brokerage fee is INSIDE the price and is not added to it. The RATE is not
+                   named: it is configurable per estate (D57) and no endpoint publishes it without a
+                   token — see D103 §6 and backlog NEW-83. -->
+              <p class="abm-pro__note" abmTranslate="marketplace.professional.feeIncluded">
+                The brokerage fee is included in these prices.
+              </p>
+              @for (service of profile.services; track service.ref) {
+                <div class="abm-svc" [attr.data-cy]="'service-' + service.ref">
+                  <div class="abm-svc__what">
+                    <b>{{ service.name }}</b>
+                    @if (service.description) {
+                      <p>{{ service.description }}</p>
+                    }
+                    @if (service.durationMinutes) {
+                      <p
+                        class="abm-svc__duration"
+                        abmTranslate="marketplace.professional.minutes"
+                        [translateValues]="{ minutes: service.durationMinutes }"
+                      >
+                        minutes
+                      </p>
+                    }
+                  </div>
+                  <div class="abm-svc__price">
+                    @if (service.priceMinor > 0) {
+                      {{ money(service.priceMinor, service.currency) }}
+                    } @else {
+                      <span abmTranslate="marketplace.price.free">Free</span>
+                    }
+                  </div>
+                </div>
+              }
+            </section>
+
+            <section class="abm-panel">
+              <h2 abmTranslate="marketplace.professional.reviews">Reviews</h2>
+              <p class="abm-pro__note" abmTranslate="marketplace.professional.reviewsNote">
+                Only clients who completed and paid for a booking through BridgeCare can review.
+              </p>
+
+              @if (distributionTotal() > 0) {
+                <ul class="abm-dist" data-cy="starDistribution">
+                  @for (bucket of distribution(); track bucket.stars) {
+                    <li>
+                      <span class="abm-dist__label">{{ bucket.stars }}★</span>
+                      <span class="abm-dist__bar"><i [style.width]="barWidth(bucket.count)"></i></span>
+                      <span class="abm-dist__count">{{ bucket.count }}</span>
+                    </li>
+                  }
+                </ul>
+              }
+
+              @switch (reviewState()) {
+                @case ('ready') {
+                  <ol class="abm-reviews" data-cy="reviewList">
+                    @for (review of reviews().value?.content ?? []; track review.ref) {
+                      <li class="abm-review">
+                        <div class="abm-review__head">
+                          <span class="abm-review__who">{{ review.authorName }}</span>
+                          <span class="abm-review__when">{{ review.publishedOn }}</span>
+                        </div>
+                        <abm-stars [rating]="review.stars" [reviewCount]="null" [showValue]="false" />
+                        <p class="abm-review__body">{{ review.body }}</p>
+                        <!-- `""` from the seed and `null` from the API both mean "no reply". -->
+                        @if (hasReply(review)) {
+                          <div class="abm-review__reply">
+                            <b abmTranslate="marketplace.professional.replied">Replied</b>
+                            <p>{{ review.professionalReply }}</p>
+                          </div>
+                        }
+                      </li>
+                    }
+                  </ol>
+                  @if (reviewPages().length > 1) {
+                    <nav class="abm-pager" [attr.aria-label]="'marketplace.professional.reviewPager' | translate">
+                      @for (index of reviewPages(); track index) {
+                        <button
+                          type="button"
+                          class="abm-pager__page"
+                          [class.abm-pager__page--on]="index === reviewPage()"
+                          [attr.aria-current]="index === reviewPage() ? 'true' : null"
+                          (click)="loadReviews(index)"
+                        >
+                          {{ index + 1 }}
+                        </button>
+                      }
+                    </nav>
+                  }
+                }
+                @case ('empty') {
+                  <abm-load-state
+                    kind="empty"
+                    emptyTitleKey="marketplace.professional.noReviews.title"
+                    emptyDetailKey="marketplace.professional.noReviews.detail"
+                  />
+                }
+                @default {
+                  <abm-load-state [kind]="reviewState() === 'failed' ? 'failed' : 'loading'" (retry)="loadReviews(reviewPage())" />
+                }
+              }
+            </section>
+          </div>
+
+          <aside class="abm-pro__side">
+            <section class="abm-panel">
+              <h2 abmTranslate="marketplace.professional.availability">Next 10 days</h2>
+              <p
+                class="abm-pro__note"
+                abmTranslate="marketplace.professional.availabilityZone"
+                [translateValues]="{ zone: profile.card.zoneId }"
+              >
+                Times are the professional's own.
+              </p>
+              @switch (availabilityState()) {
+                @case ('ready') {
+                  <ul class="abm-days" data-cy="availability">
+                    @for (day of availability().value ?? []; track day.date) {
+                      <li>
+                        <span class="abm-days__date">{{ day.date }}</span>
+                        <span class="abm-days__slots">
+                          @for (slot of day.slots; track slot) {
+                            <span class="abm-pill">{{ slot }}</span>
+                          } @empty {
+                            <span class="abm-days__none" abmTranslate="marketplace.professional.notAvailable">Not available</span>
+                          }
+                        </span>
+                      </li>
+                    }
+                  </ul>
+                }
+                @case ('empty') {
+                  <abm-load-state
+                    kind="empty"
+                    emptyTitleKey="marketplace.professional.noAvailability.title"
+                    emptyDetailKey="marketplace.professional.noAvailability.detail"
+                  />
+                }
+                @default {
+                  <abm-load-state [kind]="availabilityState() === 'failed' ? 'failed' : 'loading'" (retry)="load()" />
+                }
+              }
+            </section>
+
+            <section class="abm-panel abm-panel--quiet">
+              <h2 abmTranslate="marketplace.professional.protection.title">How BridgeCare protects you</h2>
+              <ul class="abm-pro__protect">
+                <li abmTranslate="marketplace.professional.protection.held">The fee is held until the session is complete.</li>
+                <li abmTranslate="marketplace.professional.protection.cancel">
+                  The free cancellation window is shown before you confirm a booking.
+                </li>
+                @if (profile.card.policeClearance) {
+                  <li abmTranslate="marketplace.professional.protection.clearance">Police clearance on file.</li>
+                }
+                <li abmTranslate="marketplace.professional.protection.disputes">Disputes are handled by the BridgeCare brokerage desk.</li>
+              </ul>
+            </section>
+
+            <!-- The scope note follows a visitor onto the profile, because this is the screen where
+                 somebody decides who comes into their home. `hc-market/CLAUDE.md`: a hard boundary,
+                 not copy. -->
+            <p class="abm-scope" data-cy="scopeNote">
+              <b abmTranslate="marketplace.scope.label">Scope note.</b>
+              <span abmTranslate="marketplace.scope.short">
+                This professional is non-medical. They do not diagnose, prescribe or replace clinical care.
+              </span>
+            </p>
+          </aside>
+        </div>
+      }
+    }
+    @case ('failed') {
+      <!-- A ref that does not exist is a 404 and reaches this arm too: both mean "there is nothing
+           at this address", and a public page must not tell a stranger which of the two it is. -->
+      <abm-load-state kind="failed" (retry)="load()" />
+    }
+    @default {
+      <abm-load-state kind="loading" />
+    }
+  }
+</main>

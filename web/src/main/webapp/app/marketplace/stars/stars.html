@@ -1,0 +1,24 @@
+@if (rated()) {
+  <span class="abm-stars">
+    <!-- The glyphs are decoration: five characters differing only in fill are not a rating to a
+         screen reader, so the accessible name is the number and the glyphs are hidden. -->
+    <span class="abm-stars__glyphs" aria-hidden="true">
+      @for (filled of glyphs(); track $index) {
+        <span class="abm-stars__glyph" [class.abm-stars__glyph--filled]="filled">{{ filled ? '★' : '☆' }}</span>
+      }
+    </span>
+    <span class="visually-hidden" abmTranslate="marketplace.rating.outOfFive" [translateValues]="{ value: formatted() }"
+      >{{ formatted() }} out of 5</span
+    >
+    @if (showValue()) {
+      <span class="abm-stars__value" aria-hidden="true">{{ formatted() }}</span>
+    }
+    @if (reviewCount() !== null) {
+      <span class="abm-stars__count" abmTranslate="marketplace.rating.reviewCount" [translateValues]="{ count: reviewCount() }"
+        >({{ reviewCount() }} reviews)</span
+      >
+    }
+  </span>
+} @else {
+  <span class="abm-stars abm-stars--unrated" abmTranslate="marketplace.rating.unrated">No reviews yet</span>
+}

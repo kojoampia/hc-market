@@ -1,0 +1,131 @@
+.abm-card {
+  background: var(--abm-white);
+  color: var(--abm-on-white);
+  border: 1px solid var(--abm-line);
+  border-radius: var(--abm-r);
+  height: 100%;
+  transition:
+    box-shadow 0.15s ease,
+    transform 0.15s ease;
+
+  &:hover,
+  &:focus-within {
+    box-shadow: 0 6px 22px rgb(13 48 88 / 12%);
+    transform: translateY(-2px);
+  }
+
+  &__link {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    height: 100%;
+    padding: 1rem 1.1rem 1.1rem;
+    color: inherit;
+    font-weight: inherit;
+    text-decoration: none;
+  }
+
+  &__top {
+    display: flex;
+    gap: 0.75rem;
+    align-items: flex-start;
+  }
+
+  &__avatar {
+    position: relative;
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 46px;
+    height: 46px;
+    border-radius: 50%;
+
+    // Every seeded gradient runs between two mid-to-dark hues, so white is the legible foreground
+    // here and it is NOT the banned pairing: none of the twelve gradients is gold. The tick below
+    // is navy on gold, which is 4.85:1 — the permitted direction, per `_hc-tokens.scss`.
+    color: var(--abm-white);
+    font-weight: 700;
+    font-size: 0.95rem;
+    letter-spacing: 0.02em;
+  }
+
+  &__avatar-tick {
+    position: absolute;
+    right: -3px;
+    bottom: -3px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--abm-gold);
+    color: var(--abm-on-gold);
+    font-size: 0.65rem;
+    border: 2px solid var(--abm-white);
+  }
+
+  &__identity {
+    min-width: 0;
+    flex: 1;
+  }
+
+  &__name {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--abm-navy);
+  }
+
+  &__where {
+    margin: 0 0 0.25rem;
+    font-size: 0.83rem;
+    color: var(--abm-grey);
+  }
+
+  &__headline {
+    margin: 0;
+    font-size: 0.88rem;
+    color: var(--abm-ink);
+  }
+
+  &__pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+  }
+
+  &__foot {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.4rem;
+    margin-top: auto;
+    padding-top: 0.6rem;
+    border-top: 1px solid var(--abm-line);
+  }
+
+  &__amount {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--abm-navy);
+
+    &--muted {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--abm-grey);
+    }
+  }
+
+  &__per {
+    margin-left: 0.3rem;
+    font-size: 0.78rem;
+    color: var(--abm-grey);
+  }
+}
+
+// `.abm-pill` is deliberately NOT here: it is used by three marketplace components, and a
+// component stylesheet is scoped, so a copy per component is three copies of a brand pairing.
+// It lives in `content/scss/global.scss` beside the tokens it pairs.

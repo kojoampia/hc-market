@@ -20,7 +20,7 @@ jdl/        the five JDL files — the model of record
 deploy/     deploy-dev.sh, deploy-prod.sh, docker/, demo/, observability/, prod-server/
 quality/    the jacserver quality stack — compose, vhost, startup.sh
 docs/       the spec, the decisions log, the prototype
-web/        hcMarket   Angular 21, client-only   SCAFFOLD — builds, lints, tests; no screen yet
+web/        hcMarket   Angular 21, client-only   THREE PUBLIC SCREENS — rendered from the live estate
 api/        EMPTY. Not created by this build; left alone deliberately.
 ```
 
@@ -34,8 +34,99 @@ rewrites the OpenTelemetry block out of `pom.xml`. `enableTranslation` is **on**
 **`abm`** (D92 §2). Its gates are `npm run lint`, `npm run prettier:check`, `npm test`,
 `npm run webapp:prod` and `npm run check:built-assets`, in that order, and `build.yml`'s `web` job runs
 exactly those.
-**It has never been run against a live gateway** — no screen exists yet, nothing serves it, and which
-origin it will address is deliberately undecided until Phase 5.
+**It HAS now been run against a live gateway, and that sentence said the opposite until 2026-09-24**
+(D103, Stage B). `app/marketplace/` holds **Discover (`/`), Browse (`/browse`) and the public profile
+(`/professionals/:ref`)**, all three rendered from the running quality estate through
+`HC_GATEWAY_PORT=15509 npm start` and read in headless Chrome. **No token anywhere** — every endpoint
+behind them is `permitAll` in catalog, which is what makes this the part of the client somebody with no
+account can look at. What is still undecided is **which origin a built bundle addresses**, which is
+Phase 5's and is cheap because `SERVER_API_URL` is `''` and every URL is relative.
+
+⚠ **THE CARD'S HEADLINE PRICE IS `fromPaidPriceMinor` AND IT MUST STAY THAT WAY** (D100, D103 §2).
+`fromPriceMinor` is the literal minimum including a free service, so p12 and p13 report **0** there
+while their cheapest purchasable services are ₵280 and ₵420 — a card rendering it says *"from ₵0"* for a
+doula whose packages run to ₵3,200, which is the defect D100 closed one layer down. It is also **not**
+the quantity `maxPriceMinor` filters on, so the slider and the headline would describe different
+catalogues. `hasFreeService` is a **marker beside the price** reading "Free service available", and it
+deliberately does not call the service an intro (D100 §3). **Four price states, and the two that have
+never existed on any estate are the ones to be careful with**: `fromPaidPriceMinor` null with the marker
+is **`Free`** (this is NEW-78's answer), and null without it is **"Price on enquiry"**. `rating` null is
+**"No reviews yet"** and never five empty stars.
+
+⚠ **`app.routes.ts` MUST LIST THE MARKETPLACE BEFORE `entity.routes`, AND THE FAILURE IS SILENT.**
+`entity.routes` is the generated `Routes = [/* needle */]` — an **empty array** behind `path: ''`.
+Ordered first it matches the empty URL, consumes it, finds no child and **does not backtrack**, so the
+landing page is a navbar over an empty `<router-outlet>`. Measured in a browser: `/browse` rendered 18
+cards while `/` rendered nothing, with **lint, prettier, 260 unit tests, `webapp:prod` and
+`check:built-assets` all green and no console error** — a component spec instantiates its component
+directly and never asks the router anything. `app/app.routes.spec.ts` asks the router and goes red on
+`/` alone. Do not reorder those two entries, and do not delete the entities one: its needle is where a
+generated entity route lands.
+
+⚠ **NEVER BIND `[value]` ON A `<select>` WHOSE OPTIONS COME FROM AN `@for` — put `[selected]` ON THE
+OPTION** (D103 §13(a), found at review). Angular writes the select's `value` **before the options
+exist**, so the DOM keeps `''`, the browser default-selects option 0, and nothing rewrites it because
+the bound value never changes again. Measured through CDP against the live gateway: `?sort=price-asc`
+returned the right cards — p3, p9, p4 — while the menu read **"Most relevant"**, and the same for
+`rating`, `reviews` and `experience`. **First render only, which is every shared link, bookmark, reload
+and back-navigation**; choosing a sort inside the app always worked, which is why it survives review.
+The discriminating control is that `[value]` on the search `<input>` beside it renders correctly — the
+signal was right the whole time, so **no assertion over `query()` can see this**. Browse's spec asserts
+the **rendered** selection for four URL-supplied sorts, with the in-app `change` path as its control.
+
+**Three guards will fire on the next screen and none of them should be loosened** (D103 §9).
+`endpoint-construction.spec.ts` keys on the **method name**, so a literal `params.get('ref')` is an
+offender to it — use `app/marketplace/route-params.ts`, which exists for exactly that and is the shape
+to copy in Stages C to E. `anyComponentStyle` is 2 kB warn / 4 kB error per component stylesheet, and
+Stage B met it by **hoisting shared primitives into `content/scss/global.scss`** rather than raising it;
+the three page stylesheets still exceed the *warning* deliberately. And a
+`subscribe({ next })` with **no `error` arm rethrows** — in a browser that is an uncaught exception on a
+page whose own failure state renders correctly, and it cost three unhandled errors with every assertion
+green.
+
+**Every screen branches on THREE states through `app/marketplace/load-state/`** — loading, failed with a
+retry, and empty with the screen's own words. The prototype has markup for none of them, because every
+one of its screens reads an array already in memory; **"a spinner for ever" is what a two-state template
+does on every failure** and is a decision nobody took. A **404 and a 502 render identically** on the
+profile, deliberately.
+
+**No screen states the commission rate or the cancellation window.** Both are configurable per estate
+(D57) and no endpoint publishes them without a token, so a `12%` in a template is a number that goes
+wrong silently — backlog **NEW-83**.
+
+⚠ **This said *"two specs assert the absence"* and those two specs could not see either place the
+number would actually be typed** (D103 §13(b)). `TranslateDirective` sets `innerHTML` from the
+translation, so in a `TestBed` with **no bundle loaded** ngx-translate returns the KEY and **a
+template's `abmTranslate` fallback prose is never in the DOM at all**. Measured: the 12% sentence
+pasted into `discover.html`'s fallback, and again into `i18n/en/marketplace.json`, left every test
+green. What guards it now is **`terms-are-not-quoted.spec.ts`**, which reads the FILES — every
+`i18n/en/*.json` value and every template under `app/` — plus the two screen specs, which load the
+real bundle through `marketplace.fixtures.ts`'s `loadEnglish()`. **Any spec asserting over rendered
+TEXT must call `loadEnglish()`**, or it is asserting over translation keys; and the ban is deliberately
+narrow enough to let a professional's own `88% rebook` through, with a control that pins it.
+
+> ⚠ **AND THAT NEW GUARD MISSED ONE OF THE PROTOTYPE'S OWN SIX SENTENCES, IN BOTH ARMS** (D103 §14,
+> re-review). The prototype's `Cancellation` practicalities row reads **`Free up to 24 hours before the
+> session`** — the window with the noun in the *label cell beside it* — so the hours patterns, which
+> required `cancel|cancellation|refund`, matched nothing: planted as a bundle value it left 279/279
+> green. **`free` is in both hours patterns now**, and dropping the noun requirement instead is wrong
+> (`reset.json`'s "valid for 24 hours" is correct copy). The prototype writes **six** rate-and-window
+> sentences and the original four patterns caught five; all six are in the positive control.
+> Two scopes were also narrower than they read, both measured green with the defect planted: the
+> template walk stopped at `app/marketplace` while `footer.html` renders on all three public screens,
+> and the two screen specs' prose controls keyed on `marketplace.discover.`/`marketplace.professional.`
+> while both screens render `marketplace.scope.*` — so a deleted `marketplace.scope.body`, the one piece
+> of prose this file calls a hard boundary, rendered its own key to a visitor with everything green.
+> **The lesson is the one about a count: `templates.length > 4` against a real 6** let the walk lose a
+> file in silence, and it is four named files now.
+
+**The seeded availability is anchored in the past**, so every profile's ten-day strip renders its empty
+state on quality today (measured on five professionals; the seed is at 2026-08-10). That is **NEW-84**
+and not a client defect — do not go looking for a bug in the panel.
+
+**Cypress has still never run**, nothing is deployed, no compose file or vhost has been touched, and
+**no human has looked at the layout** — a DOM dump establishes figures and states and nothing about
+legibility.
 
 ### Read these in this order
 
@@ -1723,6 +1814,16 @@ Case 12 went red first time — the probe had a closing `*/` above its marker, a
 stripper **recovers at the first `*/` it meets**, so case 7 had been passing under both versions and
 distinguishing nothing. Keep every assertion's subject above the only `*/` in that probe; it says so in
 place.
+
+**⚠ A GATEWAY IT REDDENS UNRELATED PULL REQUESTS INTERMITTENTLY — backlog NEW-86, do not debug your own
+diff first.** `GatewayIdentityMetricsIT.gaugesPartitionTheCollection` fails `expected: 6L but was: 2L`,
+which is the string that test's own javadoc quotes as the failure **NEW-57 closed**. The cause is one
+line above it in the job log: BlockHound catches `Unsafe#park` on the event loop inside the refresh, the
+refresher keeps the previous reading and warns, and the test's **first** reading has no supersession guard
+where its second one does. **It has now been found twice by pull requests containing no Java at all**
+(NEW-57 on PR #69, four `docs/*.md`; NEW-86 on PR #82, `web/` and four markdown files), so the first
+thing to check is whether your branch touches `gateway` — and a green re-run is evidence the park did not
+land on the event loop that time, not that it is gone.
 
 There was no CI before this. That is how the whole suite came to be skipped for a week: D9 switched
 local builds to `-DskipTests`, nothing else ran them, and when they were finally run booking had 137

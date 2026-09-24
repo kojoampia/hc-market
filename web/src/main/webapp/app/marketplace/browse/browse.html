@@ -1,0 +1,250 @@
+<main class="abm-browse">
+  <header class="abm-browse__head">
+    <div>
+      <h1 abmTranslate="marketplace.browse.title">Browse professionals</h1>
+      @if (results().status === 'ready') {
+        <p
+          class="abm-browse__count"
+          data-cy="browseCount"
+          abmTranslate="marketplace.browse.matchCount"
+          [translateValues]="{ count: total() }"
+        >
+          matches
+        </p>
+      }
+    </div>
+    <div class="abm-browse__sort">
+      <label for="browseSort" abmTranslate="marketplace.browse.sort.label">Sort</label>
+      <!-- ⚠ THE SELECTION IS ON THE OPTION, NEVER `[value]` ON THE SELECT. Angular writes a
+           `<select>`'s `value` BEFORE an `@for` has created its options, so the DOM keeps `''`, the
+           browser default-selects option 0, and nothing rewrites it because the bound value never
+           changes again. Measured against the live gateway: `?sort=price-asc` returned the right
+           cards while this menu read "Most relevant" — and the same for `rating`, `reviews` and
+           `experience`. First render only, which is every shared link, bookmark, reload and back
+           navigation. `browse.ts`'s own `asSort` argues against exactly that shape.
+
+           `[selected]` is a property binding on the option, so it is evaluated when the option
+           exists and re-evaluated whenever `query()` changes. -->
+      <select id="browseSort" data-cy="browseSort" (change)="set('sort', $any($event.target).value)">
+        @for (option of sorts; track option) {
+          <option [value]="option" [selected]="option === selectedSort()">
+            {{ 'marketplace.browse.sort.' + option | translate }}
+          </option>
+        }
+      </select>
+    </div>
+  </header>
+
+  <div class="abm-browse__layout">
+    <aside class="abm-filters" data-cy="browseFilters">
+      <div class="abm-filters__group">
+        <h2 abmTranslate="marketplace.browse.filters.search">Search</h2>
+        <input
+          type="search"
+          data-cy="filterQ"
+          [value]="query().q ?? ''"
+          (change)="set('q', $any($event.target).value)"
+          placeholder="{{ 'marketplace.browse.filters.searchPlaceholder' | translate }}"
+          [attr.aria-label]="'marketplace.browse.filters.search' | translate"
+        />
+      </div>
+
+      <!-- SINGLE-VALUED, because the server's filter is. See the component javadoc — the prototype's
+           checkbox groups would mean unioning result sets the server has already paged. -->
+      <fieldset class="abm-filters__group">
+        <legend abmTranslate="marketplace.browse.filters.category">Category</legend>
+        <label class="abm-opt">
+          <input type="radio" name="category" [checked]="query().category === undefined" (change)="set('category', undefined)" />
+          <span abmTranslate="marketplace.browse.filters.any">Any</span>
+        </label>
+        @for (facet of options()?.categories ?? []; track facet.value) {
+          <label class="abm-opt" [attr.data-cy]="'filterCategory-' + facet.value">
+            <input type="radio" name="category" [checked]="query().category === facet.value" (change)="set('category', facet.value)" />
+            <span>{{ facet.label }}</span>
+            @if (countFor('categories', facet.value) !== null) {
+              <span class="abm-opt__count">{{ countFor('categories', facet.value) }}</span>
+            }
+          </label>
+        }
+      </fieldset>
+
+      <fieldset class="abm-filters__group abm-filters__group--scroll">
+        <legend abmTranslate="marketplace.browse.filters.speciality">Speciality</legend>
+        <label class="abm-opt">
+          <input type="radio" name="speciality" [checked]="query().speciality === undefined" (change)="set('speciality', undefined)" />
+          <span abmTranslate="marketplace.browse.filters.any">Any</span>
+        </label>
+        @for (facet of options()?.specialities ?? []; track facet.value) {
+          <label class="abm-opt">
+            <input
+              type="radio"
+              name="speciality"
+              [checked]="query().speciality === facet.value"
+              (change)="set('speciality', facet.value)"
+            />
+            <span>{{ facet.label }}</span>
+            @if (countFor('specialities', facet.value) !== null) {
+              <span class="abm-opt__count">{{ countFor('specialities', facet.value) }}</span>
+            }
+          </label>
+        }
+      </fieldset>
+
+      <fieldset class="abm-filters__group">
+        <legend abmTranslate="marketplace.browse.filters.format">Format</legend>
+        <label class="abm-opt">
+          <input type="radio" name="mode" [checked]="query().mode === undefined" (change)="set('mode', undefined)" />
+          <span abmTranslate="marketplace.browse.filters.any">Any</span>
+        </label>
+        @for (facet of options()?.deliveryModes ?? []; track facet.value) {
+          <label class="abm-opt">
+            <input type="radio" name="mode" [checked]="query().mode === facet.value" (change)="set('mode', facet.value)" />
+            <span>{{ 'marketplace.mode.' + facet.value | translate }}</span>
+            @if (countFor('deliveryModes', facet.value) !== null) {
+              <span class="abm-opt__count">{{ countFor('deliveryModes', facet.value) }}</span>
+            }
+          </label>
+        }
+      </fieldset>
+
+      <fieldset class="abm-filters__group">
+        <legend abmTranslate="marketplace.browse.filters.city">City</legend>
+        <label class="abm-opt">
+          <input type="radio" name="city" [checked]="query().city === undefined" (change)="set('city', undefined)" />
+          <span abmTranslate="marketplace.browse.filters.any">Anywhere</span>
+        </label>
+        @for (facet of options()?.cities ?? []; track facet.value) {
+          <label class="abm-opt">
+            <input type="radio" name="city" [checked]="query().city === facet.value" (change)="set('city', facet.value)" />
+            <span>{{ facet.label }}</span>
+            @if (countFor('cities', facet.value) !== null) {
+              <span class="abm-opt__count">{{ countFor('cities', facet.value) }}</span>
+            }
+          </label>
+        }
+      </fieldset>
+
+      <!-- THE SLIDER READS AND WRITES `fromPaidPriceMinor` — the quantity the card's headline
+           shows and the quantity `maxPriceMinor` filters on. D100 §4, D103 §3. Its scale comes from
+           the UNFILTERED facets and does not move; at the top of the scale no parameter is sent,
+           because the ceiling is the highest FLOOR in the catalogue and not the highest price. -->
+      @if (priceFloor() !== null && priceCeiling() !== null && priceCeiling()! > priceFloor()!) {
+        <div class="abm-filters__group">
+          <h2>
+            <span abmTranslate="marketplace.browse.filters.priceUpTo">Price up to</span>
+            <span class="abm-filters__value" data-cy="priceValue">{{ priceLabel() }}</span>
+          </h2>
+          <input
+            type="range"
+            class="abm-range"
+            data-cy="filterPrice"
+            [min]="priceFloor()"
+            [max]="priceCeiling()"
+            step="500"
+            [value]="priceValue()"
+            (change)="setPrice($any($event.target).value)"
+            [attr.aria-label]="'marketplace.browse.filters.priceUpTo' | translate"
+          />
+          <div class="abm-filters__scale">
+            <span>{{ money(priceFloor(), currency()) }}</span>
+            <span>{{ money(priceCeiling(), currency()) }}+</span>
+          </div>
+          <p class="abm-filters__note" abmTranslate="marketplace.browse.filters.priceNote">
+            The cheapest service you can actually buy. A listing that publishes only free services is not priced and does not appear in a
+            budget.
+          </p>
+        </div>
+      }
+
+      <fieldset class="abm-filters__group">
+        <legend abmTranslate="marketplace.browse.filters.rating">Rating</legend>
+        @for (step of ratingSteps; track $index) {
+          <label class="abm-opt">
+            <input type="radio" name="minRating" [checked]="(query().minRating ?? null) === step" (change)="setRating(step)" />
+            @if (step === null) {
+              <span abmTranslate="marketplace.browse.filters.anyRating">Any rating</span>
+            } @else {
+              <span abmTranslate="marketplace.browse.filters.ratingAndUp" [translateValues]="{ value: step }">and up</span>
+            }
+          </label>
+        }
+        <p class="abm-filters__note" abmTranslate="marketplace.browse.filters.ratingNote">
+          A professional with no reviews yet is not rated, so a rating filter does not include them.
+        </p>
+      </fieldset>
+
+      <div class="abm-filters__group">
+        <h2 abmTranslate="marketplace.browse.filters.trust">Trust</h2>
+        <label class="abm-opt">
+          <input
+            type="checkbox"
+            data-cy="filterVerified"
+            [checked]="query().verifiedOnly === true"
+            (change)="set('verifiedOnly', $any($event.target).checked)"
+          />
+          <span abmTranslate="marketplace.browse.filters.verifiedOnly">Verified professionals only</span>
+        </label>
+        <p class="abm-filters__note" abmTranslate="marketplace.browse.filters.verifiedNote">
+          Verification covers identity, stated credentials and — for home visitors — a police clearance.
+        </p>
+      </div>
+
+      @if (hasFilters()) {
+        <button type="button" class="btn btn-outline-primary btn-sm" data-cy="clearFilters" (click)="clear()">
+          <span abmTranslate="marketplace.browse.filters.clearAll">Clear all filters</span>
+        </button>
+      }
+    </aside>
+
+    <div class="abm-browse__results">
+      @switch (resultState()) {
+        @case ('ready') {
+          <div class="abm-grid" data-cy="browseGrid">
+            @for (card of results().value?.content ?? []; track card.ref) {
+              <abm-professional-card [card]="card" />
+            }
+          </div>
+          @if (totalPages() > 1) {
+            <nav class="abm-pager" [attr.aria-label]="'marketplace.browse.pager.label' | translate">
+              @for (index of pageNumbers(); track index) {
+                <a
+                  class="abm-pager__page"
+                  [class.abm-pager__page--on]="index === pageIndex()"
+                  [attr.aria-current]="index === pageIndex() ? 'page' : null"
+                  [attr.data-cy]="'page-' + index"
+                  routerLink="."
+                  queryParamsHandling="merge"
+                  [queryParams]="{ page: index === 0 ? null : index }"
+                  >{{ index + 1 }}</a
+                >
+              }
+            </nav>
+          }
+        }
+        @case ('empty') {
+          <!-- TWO SENTENCES, NOT ONE. `load-state.ts` argues that "no professional matches these
+               filters" and "this marketplace has no professionals" are different sentences and that
+               "only the screen knows which it is" — and this arm used one set of words for both until
+               2026-09-24, which is that argument stated and not followed. Unreachable on quality (18
+               listings) and reachable on production's first day, when the catalogue is empty and a
+               visitor with no filters set would be told to widen a price range they never touched. -->
+          @if (hasFilters()) {
+            <abm-load-state kind="empty" emptyTitleKey="marketplace.browse.empty.title" emptyDetailKey="marketplace.browse.empty.detail" />
+            <button type="button" class="btn btn-primary mt-3" data-cy="clearFiltersEmpty" (click)="clear()">
+              <span abmTranslate="marketplace.browse.filters.clearAll">Clear all filters</span>
+            </button>
+          } @else {
+            <abm-load-state
+              kind="empty"
+              emptyTitleKey="marketplace.browse.emptyCatalogue.title"
+              emptyDetailKey="marketplace.browse.emptyCatalogue.detail"
+            />
+          }
+        }
+        @default {
+          <abm-load-state [kind]="resultState() === 'failed' ? 'failed' : 'loading'" (retry)="load()" />
+        }
+      }
+    </div>
+  </div>
+</main>

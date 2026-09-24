@@ -273,4 +273,205 @@ BridgeCare tokens as CSS custom properties
   --abm-r-lg: #{$abm-r-lg};
 }
 
+/* ==========================================================================
+Marketplace primitives — shared by Discover, Browse and the public profile
+==========================================================================
+
+   These are here rather than in a component stylesheet because Angular scopes component styles,
+   so three screens using `.abm-pill` would be three copies of a brand pairing — and a pairing
+   that exists in three places is a pairing that will be wrong in one of them.
+
+   THE GOLD RULE IS IMPLEMENTED HERE, NOT MERELY OBEYED. `--abm-on-gold` is navy (4.85:1); gold on
+   any light surface is 2.74:1 on white and 2.50:1 on cream and fails AA in BOTH directions, which
+   is why gold is only ever a background below and never a text colour. `_hc-tokens.scss` holds the
+   map and `src/main/webapp/brand-contrast.spec.ts` refuses a pairing under 4.5:1. */
+
+.abm-pill {
+  display: inline-block;
+  padding: 0.12rem 0.5rem;
+  border: 1px solid var(--abm-line);
+  border-radius: 999px;
+  background: var(--abm-cream);
+  color: var(--abm-on-cream);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.abm-pill--verified {
+  background: var(--abm-navy);
+  color: var(--abm-on-navy);
+  border-color: var(--abm-navy);
+}
+
+.abm-pill--free {
+  background: var(--abm-gold);
+  color: var(--abm-on-gold);
+  border-color: var(--abm-gold);
+  font-weight: 600;
+}
+
+.abm-pill--muted {
+  background: transparent;
+  color: var(--abm-grey);
+}
+
+/* The three load states. `failed` is a render and not a blank, and nothing here is an indefinite
+   spinner — see `app/marketplace/load-state.ts`. */
+.abm-state {
+  padding: 2rem 1rem;
+  border: 1px dashed var(--abm-line);
+  border-radius: var(--abm-r);
+  background: var(--abm-cream);
+  color: var(--abm-on-cream);
+  text-align: center;
+}
+
+.abm-state__title {
+  margin: 0 0 0.35rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--abm-navy);
+}
+
+.abm-state__detail {
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--abm-grey);
+}
+
+/* The card grid, the pager and the scope note are used by more than one screen for the same
+   reason as `.abm-pill`. The scope note in particular is a HARD BOUNDARY rather than copy
+   (`hc-market/CLAUDE.md`): everyone listed here is non-medical and may not diagnose or prescribe,
+   and it renders identically on Discover and on the profile because it is one rule. */
+
+.abm-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(255px, 1fr));
+  gap: 1rem;
+}
+
+.abm-pager {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 1.2rem;
+}
+
+.abm-pager__page {
+  min-width: 2rem;
+  padding: 0.25rem 0.55rem;
+  border: 1px solid var(--abm-line);
+  border-radius: var(--abm-r-sm);
+  background: var(--abm-white);
+  color: var(--abm-navy-700);
+  font-size: 0.85rem;
+  text-align: center;
+  text-decoration: none;
+}
+
+.abm-pager__page--on {
+  background: var(--abm-navy);
+  color: var(--abm-on-navy);
+  border-color: var(--abm-navy);
+}
+
+.abm-scope {
+  margin: 0;
+  padding: 1rem 1.1rem;
+  border-left: 4px solid var(--abm-gold);
+  border-radius: var(--abm-r-sm);
+  background: var(--abm-gold-050);
+  color: var(--abm-on-gold-050);
+  font-size: 0.88rem;
+}
+
+/* The panel and the breadcrumb are shared for the same reason as `.abm-pill`: Angular scopes a
+   component stylesheet, and Stages C to E all render a card surface and a trail. They are also what
+   keeps the three page stylesheets inside `anyComponentStyle`'s budget — see D103 §9. */
+
+.abm-panel {
+  padding: 1.1rem;
+  border: 1px solid var(--abm-line);
+  border-radius: var(--abm-r);
+  background: var(--abm-white);
+  color: var(--abm-on-white);
+}
+
+.abm-panel h2 {
+  margin: 0 0 0.6rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--abm-navy);
+}
+
+.abm-panel h3 {
+  margin: 1rem 0 0.35rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--abm-grey);
+}
+
+.abm-panel--quiet {
+  background: var(--abm-cream);
+  color: var(--abm-on-cream);
+}
+
+.abm-crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.9rem;
+  font-size: 0.82rem;
+  color: var(--abm-grey);
+}
+
+.abm-crumbs a {
+  color: var(--abm-navy-700);
+}
+
+.abm-crumbs__here {
+  color: var(--abm-ink);
+  font-weight: 600;
+}
+
+/* The day/slot strip. Profile-only today and shared by construction tomorrow: Stage C's booking
+   wizard picks a slot from the same strip the profile renders, which is the prototype's own step 2.
+   It is also what brings `professional.scss` back inside `anyComponentStyle`'s error budget —
+   stated rather than glossed, because "the budget made me move it" is not on its own a reason.
+   D103 §9. */
+
+.abm-days {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.abm-days li {
+  display: flex;
+  gap: 0.6rem;
+  align-items: baseline;
+  padding: 0.4rem 0;
+  border-top: 1px solid var(--abm-line);
+}
+
+.abm-days__date {
+  flex: 0 0 5.6rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--abm-ink);
+}
+
+.abm-days__slots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.abm-days__none {
+  font-size: 0.78rem;
+  color: var(--abm-grey);
+}
+
 /* jhipster-needle-scss-add-main JHipster will add new css style */
