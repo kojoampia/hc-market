@@ -111,7 +111,16 @@ public class MarketplaceService {
         List<ProfessionalCard> matching = browse(filter);
         Map<String, String> categoryNames = categories.findAll().stream().collect(Collectors.toMap(Category::getCode, Category::getName, (a, b) -> a));
 
-        List<Long> prices = matching.stream().map(ProfessionalCard::fromPriceMinor).filter(java.util.Objects::nonNull).sorted().toList();
+        // fromPaidPriceMinor, the same quantity maxPriceMinor filters on — decisions.md D100. This
+        // range is what a client draws the price slider from, so reading the literal minimum here
+        // gave the slider a ₵0 floor selecting a bracket the filter then matched nobody in. NEW-50
+        // named the filter and the two comparators; this is the fourth site on that quantity.
+        List<Long> prices = matching
+            .stream()
+            .map(ProfessionalCard::fromPaidPriceMinor)
+            .filter(java.util.Objects::nonNull)
+            .sorted()
+            .toList();
 
         return new Facets(
             tally(matching, ProfessionalCard::categoryCode, code -> categoryNames.getOrDefault(code, code)),
@@ -303,7 +312,7 @@ public class MarketplaceService {
     }
 
     private ProfessionalCard toCard(Professional p, Optional<ProfessionalRating> rating) {
-        Long fromPrice = marketplace.findFromPriceMinor(p.getReference());
+        PriceFloors prices = priceFloors(p.getReference());
         return new ProfessionalCard(
             p.getReference(),
             p.getDisplayName(),
@@ -325,10 +334,51 @@ public class MarketplaceService {
             // null, not zero: no reviews means unrated, which is not the same as rated badly.
             rating.map(ProfessionalRating::getRating).orElse(null),
             rating.map(ProfessionalRating::getReviewCount).orElse(0L),
-            fromPrice,
+            prices.minor(),
+            prices.paidMinor(),
+            prices.hasFreeService(),
             "GHS",
             p.getZoneId()
         );
+    }
+
+    /**
+     * The two "from" prices of one professional — {@code decisions.md} D100, backlog NEW-50.
+     *
+     * @param minor the literal cheapest active service, {@code 0} when something is free, null when
+     *     nothing is published
+     * @param paidMinor the cheapest active service that costs something, null when there is none
+     */
+    private record PriceFloors(Long minor, Long paidMinor) {
+        /**
+         * {@code priceMinor} is {@code required min(0)} in the JDL, so a literal minimum of zero can
+         * only have come from a service priced at zero. Equality rather than {@code <= 0} for that
+         * reason — a negative would be a data defect and reading it as "free" would hide one.
+         */
+        boolean hasFreeService() {
+            return minor != null && minor == 0L;
+        }
+    }
+
+    /**
+     * Reads one row of two aggregates and never trusts it to be there.
+     *
+     * <p>An aggregate query with no {@code group by} yields exactly one row — of two nulls when
+     * nothing matched — so the empty branch is unreachable today. It is written anyway because the
+     * alternative is an {@code IndexOutOfBoundsException} on a public read if that ever stops being
+     * true, and "no active services" is the answer either way.
+     */
+    private PriceFloors priceFloors(String reference) {
+        List<Object[]> rows = marketplace.findPriceFloors(reference);
+        if (rows.isEmpty()) {
+            return new PriceFloors(null, null);
+        }
+        Object[] row = rows.get(0);
+        return new PriceFloors(asLong(row[0]), asLong(row[1]));
+    }
+
+    private static Long asLong(Object value) {
+        return value == null ? null : ((Number) value).longValue();
     }
 
     private static List<String> split(String commaSeparated) {
@@ -357,6 +407,17 @@ public class MarketplaceService {
      *
      * <p>{@code minRating} deliberately excludes unrated professionals rather than treating them as
      * 0.0 — asking for "4 stars and up" should not surface someone with no reviews at all.
+     *
+     * <p><strong>{@code maxPriceMinor} follows that precedent, on {@code fromPaidPriceMinor}</strong>
+     * — {@code decisions.md} D100, backlog NEW-50. A budget is a question about what a listing sells
+     * for, so it is asked of the cheapest service somebody can buy rather than of the literal
+     * minimum: measured on quality before D100, "up to ₵90" — the floor of the prototype's own
+     * slider — answered with two professionals whose cheapest paid services were ₵280 and ₵420,
+     * because each publishes one free consultation. A listing with no paid service at all is
+     * excluded rather than matched at every budget, which is {@code minRating}'s refusal exactly:
+     * a filter over a quantity somebody does not have cannot answer for them, and inventing a zero
+     * is how "free" and "unpriced" become the same row. Finding those listings wants a marker
+     * filter, which does not exist yet — backlog NEW-77.
      */
     public record BrowseFilter(
         String category,
@@ -374,7 +435,7 @@ public class MarketplaceService {
             if (speciality != null && !speciality.isBlank() && !speciality.equalsIgnoreCase(c.speciality())) return false;
             if (city != null && !city.isBlank() && !city.equalsIgnoreCase(c.city())) return false;
             if (mode != null && !mode.isBlank() && c.deliveryModes().stream().noneMatch(m -> m.equalsIgnoreCase(mode))) return false;
-            if (maxPriceMinor != null && (c.fromPriceMinor() == null || c.fromPriceMinor() > maxPriceMinor)) return false;
+            if (maxPriceMinor != null && (c.fromPaidPriceMinor() == null || c.fromPaidPriceMinor() > maxPriceMinor)) return false;
             if (minRating != null && (c.rating() == null || c.rating().compareTo(minRating) < 0)) return false;
             if (verifiedOnly && !"VERIFIED".equals(c.verification())) return false;
             if (q != null && !q.isBlank()) {
@@ -401,8 +462,10 @@ public class MarketplaceService {
             return switch (sort == null ? "recommended" : sort) {
                 case "rating" -> byRating;
                 case "reviews" -> Comparator.comparingLong(ProfessionalCard::reviewCount).reversed();
-                case "price-asc" -> Comparator.comparing(ProfessionalCard::fromPriceMinor, Comparator.nullsLast(Comparator.naturalOrder()));
-                case "price-desc" -> Comparator.comparing(ProfessionalCard::fromPriceMinor, Comparator.nullsLast(Comparator.reverseOrder()));
+                // Both on fromPaidPriceMinor, and nullsLast in BOTH directions — see the record's
+                // javadoc. An unpriced listing is neither the cheapest nor the dearest.
+                case "price-asc" -> Comparator.comparing(ProfessionalCard::fromPaidPriceMinor, Comparator.nullsLast(Comparator.naturalOrder()));
+                case "price-desc" -> Comparator.comparing(ProfessionalCard::fromPaidPriceMinor, Comparator.nullsLast(Comparator.reverseOrder()));
                 case "experience" -> Comparator.comparing(ProfessionalCard::yearsPractising, Comparator.nullsLast(Comparator.reverseOrder()));
                 case "response" -> Comparator.comparing(ProfessionalCard::responseMinutes, Comparator.nullsLast(Comparator.naturalOrder()));
                 // "recommended" is rating first, then volume — the prototype's default order.
