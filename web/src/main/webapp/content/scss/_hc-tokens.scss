@@ -1,0 +1,78 @@
+// ============================================================
+// Abofonsa BridgeCare Marketplace — design tokens
+//
+// The palette is the estate's, not this application's: navy #0D3058, gold #C59437, cream #F7F4EE,
+// with the chart roles #256ABF / #EDA100 / #1BAF7A / #7A5AA8. hc-market/CLAUDE.md is the source and
+// this file is where the marketplace client holds them. `_bootstrap-variables.scss` feeds them into
+// Bootstrap; `global.scss` re-publishes them as CSS custom properties so component-scoped SCSS can
+// reach them without importing anything.
+//
+// The three sibling products implement these same values through three different stacks
+// (`hc-admin/app` Bootstrap, `hc-professional/web` Tailwind + Material, `hc-crowdfund-app` Material),
+// so the VALUES copy between products and the MARKUP does not.
+// ============================================================
+
+// ---- Surfaces and ink -------------------------------------------------------------------------
+$abm-navy: #0d3058;
+$abm-navy-700: #12406f;
+$abm-navy-900: #092239;
+$abm-gold: #c59437;
+$abm-gold-300: #ddb868;
+$abm-gold-050: #fbf4e6;
+$abm-cream: #f7f4ee;
+$abm-white: #ffffff;
+$abm-ink: #16202c;
+$abm-grey: #5b6470;
+$abm-line: #e6e2d9;
+
+// ---- Chart roles ------------------------------------------------------------------------------
+// hc-market/CLAUDE.md's chart palette, in order. Do not substitute them for nicer hues: they carry
+// a lightness band and a chroma floor, and every one of them is paired below.
+$abm-series-1: #256abf;
+$abm-series-2: #eda100;
+$abm-series-3: #1baf7a;
+$abm-series-4: #7a5aa8;
+
+// ---- THE PAIRINGS, AND WHY THEY ARE A MAP RATHER THAN A CONVENTION -----------------------------
+//
+// "Never white text on gold" is a rule this estate states in three documents and that nothing has
+// ever checked. A rule nobody can run is a claim, so it is written here as DATA: one entry per
+// surface naming the ONE foreground that surface is allowed to carry, and
+// `src/main/webapp/brand-contrast.spec.ts` reads this file, computes the WCAG 2.1 ratio for every
+// entry and refuses anything under 4.5:1.
+//
+// MEASURED 2026-09-24 with that spec's own contrast function, which reproduces CLAUDE.md's
+// published 2.74 for white-on-gold exactly — that agreement is what makes the other figures worth
+// anything:
+//
+//   gold   + white   2.74  FAIL   <- the rule, and it is in the spec as a NEGATIVE control
+//   gold   + navy    4.85  AA
+//   gold   + ink     6.00  AA
+//   navy   + white  13.28  AA
+//   cream  + navy   12.10  AA
+//   white  + navy   13.28  AA
+//
+// AND THE RULE IS WIDER THAN THE SENTENCE THAT STATES IT. Gold fails as a FOREGROUND too — 2.74 on
+// white and 2.50 on cream — so gold and the light surfaces must never be paired in EITHER
+// direction. `$abm-gold` is therefore a surface and an accent, never body text on a light
+// background. The spec checks the map, so a pairing that is not in the map is not checked at all:
+// adding a surface means adding its row here, which is the one thing a reader has to remember.
+$abm-text-on: (
+  'navy': $abm-white,
+  'navy-700': $abm-white,
+  'navy-900': $abm-white,
+  'gold': $abm-navy,
+  'gold-300': $abm-navy,
+  'gold-050': $abm-ink,
+  'cream': $abm-navy,
+  'white': $abm-ink,
+  'series-1': $abm-white,
+  'series-2': $abm-navy,
+  'series-3': $abm-navy,
+  'series-4': $abm-white,
+);
+
+// ---- Shape ------------------------------------------------------------------------------------
+$abm-r-sm: 8px;
+$abm-r: 14px;
+$abm-r-lg: 20px;

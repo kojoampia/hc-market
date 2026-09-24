@@ -1,0 +1,23 @@
+{
+  "generator-jhipster": {
+    "applicationType": "monolith",
+    "authenticationType": "jwt",
+    "baseName": "hcMarket",
+    "clientFramework": "angular",
+    "clientTheme": "none",
+    "creationTimestamp": 1790251872556,
+    "databaseType": "no",
+    "defaultCommand": "app",
+    "enableTranslation": true,
+    "entities": [],
+    "jhiPrefix": "abm",
+    "jhipsterVersion": "9.2.0",
+    "languages": ["en"],
+    "monorepository": true,
+    "nativeLanguage": "en",
+    "skipCommitHook": true,
+    "skipServer": true,
+    "testFrameworks": ["cypress"],
+    "withAdminUi": true
+  }
+}

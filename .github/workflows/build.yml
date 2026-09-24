@@ -111,6 +111,82 @@ jobs:
           retention-days: 7
 
   # ---------------------------------------------------------------------------------------------
+  # The marketplace client — `web/`, a client-only JHipster 9.2.0 Angular application (decisions.md
+  # D92 §2, D101; backlog NEW-48 Stage A).
+  #
+  # Its own job rather than a sixth entry in the matrix above: it is Node and not Java, it has no
+  # ./mvnw, and a matrix that had to branch on the tool would be two jobs wearing one name.
+  #
+  # THE BUILT-OUTPUT STEP IS THE POINT OF THIS JOB, and it is last for a reason. `npm test` and
+  # `npm run lint` read SOURCE; the Sass-publishing defect D90 §3 names is a property of what
+  # `ng build` COPIES, and `angular.json`'s glob is exactly the thing that looks right while the
+  # directory ships anyway. `hc-admin/app` publishes its own design tokens on admin.abofonsa.com
+  # today because nothing there ever looked at built output. So: build, then assert over the output.
+  # ---------------------------------------------------------------------------------------------
+  web:
+    name: Marketplace client
+    runs-on: ubuntu-latest
+    env:
+      # Nothing in this job runs Cypress — the generated e2e suite needs a running gateway, and this
+      # estate has no origin to serve the client from yet (D101 §6). Skipping the ~100MB binary
+      # download keeps `npm ci` from depending on a second CDN for something no step uses.
+      #
+      # ⚠ The consequence, stated rather than discovered: `npm run e2e` on a runner configured this
+      # way fails with "Cypress executable not found". Drop this variable in the same change that
+      # first runs e2e.
+      CYPRESS_INSTALL_BINARY: '0'
+    steps:
+      - uses: actions/checkout@v4
+
+      # The version is read from web/.nvmrc rather than written here, so the pin has ONE home and
+      # `nvm use` locally and this job cannot disagree. `package.json`'s `engines.node` carries the
+      # same floor.
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: web/.nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install
+        working-directory: web
+        run: npm ci
+
+      # `npm test` runs `pretest`, which runs `npm run lint`, so lint failures surface here first.
+      # It is still worth naming lint separately below: a reader of a red run should not have to
+      # know that a test job failed on a formatting rule.
+      - name: Lint
+        working-directory: web
+        run: npm run lint
+
+      # LINT DOES NOT COVER FORMATTING FOR EVERY FILE, which is the easy thing to assume here.
+      # `eslint-plugin-prettier` means `npm run lint` really does enforce prettier — but only over
+      # files ESLint has a configuration for. Measured: `npx eslint` on `_hc-tokens.scss` and on
+      # `README.md` both answer "File ignored because no matching configuration was supplied".
+      # So `.scss`, `.md` and `.json` are format-ungated by lint alone — including `_hc-tokens.scss`,
+      # which is the one file `brand-contrast.spec.ts` parses off disk. This step is green today, so
+      # it costs nothing now, and it is the spirit of NEW-62 (the formatter with no door) one
+      # application along.
+      - name: Format
+        working-directory: web
+        run: npm run prettier:check
+
+      - name: Test
+        working-directory: web
+        run: npm test
+
+      - name: Production build
+        working-directory: web
+        run: npm run webapp:prod
+
+      # Reads target/classes/static and refuses a build that published a Sass source, or that
+      # stopped publishing an asset the source directory still has. Neither rule reads angular.json:
+      # that would be the configuration checked against itself.
+      - name: Built output
+        working-directory: web
+        run: npm run check:built-assets
+
+  # ---------------------------------------------------------------------------------------------
   # Checks with no sibling equivalent, because no sibling has these artefacts. Each one guards a
   # class of drift that has already happened in this repository at least once.
   # ---------------------------------------------------------------------------------------------

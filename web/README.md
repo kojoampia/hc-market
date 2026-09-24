@@ -1,0 +1,144 @@
+# hcMarket
+
+This application was generated using JHipster 9.2.0, you can find documentation and help at [https://www.jhipster.tech/documentation-archive/v9.2.0](https://www.jhipster.tech/documentation-archive/v9.2.0).
+
+## Project Structure
+
+## Development
+
+The build system will install automatically the recommended version of Node and npm.
+
+We provide a wrapper to launch npm.
+You will only need to run this command when dependencies change in [package.json](package.json).
+
+```bash
+./npmw install
+```
+
+We use npm scripts and [Angular CLI](https://angular.dev/tools/cli) with esbuild as our build system.
+
+Run the following commands in two separate terminals to create a blissful development experience where your browser
+auto-refreshes when files change on your hard drive.
+
+```bash
+./npmw run backend:start
+./npmw run start
+```
+
+Npm is also used to manage CSS and JavaScript dependencies used in this application. You can upgrade dependencies by
+specifying a newer version in [package.json](package.json). You can also run `./npmw update` and `./npmw install` to manage dependencies.
+Add the `help` flag on any command to see how you can use it. For example, `./npmw help update`.
+
+The `./npmw run` command will list all the scripts available to run for this project.
+
+### PWA Support
+
+JHipster ships with PWA (Progressive Web App) support, and it's turned off by default. One of the main components of a PWA is a service worker.
+
+The service worker initialization code is disabled by default. To enable it, uncomment the following code in `src/main/webapp/app/app.config.ts`:
+
+```typescript
+ServiceWorkerModule.register('ngsw-worker.js', { enabled: false }),
+```
+
+### Managing dependencies
+
+For example, to add [Leaflet](https://leafletjs.com/) library as a runtime dependency of your application, you would run the following command:
+
+```bash
+./npmw install --save --save-exact leaflet
+```
+
+To benefit from TypeScript type definitions from [DefinitelyTyped](https://definitelytyped.org/) repository in development, you would run the following command:
+
+```bash
+./npmw install --save-dev --save-exact @types/leaflet
+```
+
+Then you would import the JS and CSS files specified in library's installation instructions so that [esbuild][] knows about them:
+Edit [src/main/webapp/app/app.config.ts](src/main/webapp/app/app.config.ts) file:
+
+```typescript
+import 'leaflet/dist/leaflet.js';
+```
+
+Edit [src/main/webapp/content/scss/vendor.scss](src/main/webapp/content/scss/vendor.scss) file:
+
+```typescript
+@import 'leaflet/dist/leaflet.css';
+```
+
+Note: There are still a few other things remaining to do for Leaflet that we won't detail here.
+
+For further instructions on how to develop with JHipster, have a look at [Using JHipster in development](https://www.jhipster.tech/development/).
+
+### Using Angular CLI
+
+You can also use [Angular CLI](https://angular.dev/tools/cli) to generate some custom client code.
+
+For example, the following command:
+
+```bash
+ng generate component my-component
+```
+
+will generate few files:
+
+```bash
+create src/main/webapp/app/my-component/my-component.html
+create src/main/webapp/app/my-component/my-component.ts
+update src/main/webapp/app/app.config.ts
+```
+
+## Building for production
+
+## Testing
+
+### Client tests
+
+Unit tests are run by Vitest. They're located near components and can be run with:
+
+```bash
+./npmw test
+```
+
+#### E2E tests
+
+UI end-to-end tests are powered by [Cypress][]. They're located in [src/test/javascript/cypress/](src/test/javascript/cypress/)
+and can be run by starting Spring Boot in one terminal (`./npmw run app:start`) and running the tests (`./npmw run e2e`) in a second one.
+
+Before running Cypress tests, it's possible to specify user credentials by overriding the `CYPRESS_E2E_USERNAME` and `CYPRESS_E2E_PASSWORD` environment variables.
+
+```bash
+export CYPRESS_E2E_USERNAME="<your-username>"
+export CYPRESS_E2E_PASSWORD="<your-password>"
+```
+
+See Cypress documentation for setting OS [environment variables](https://docs.cypress.io/app/references/environment-variables#Setting) to learn more.
+
+#### Lighthouse audits
+
+You can execute automated [Lighthouse audits](https://developer.chrome.com/docs/lighthouse/overview) with [cypress-audit](https://github.com/mfrachet/cypress-audit) by running `./npmw run e2e:cypress:audits`.
+
+You should only run the audits when your application is packaged with the production profile.
+
+The Lighthouse report is created in `target/cypress/lhreport.html`.
+
+## References
+
+- [JHipster Homepage and latest documentation](https://www.jhipster.tech/)
+- [JHipster 9.2.0 archive](https://www.jhipster.tech/documentation-archive/v9.2.0)
+- [Using JHipster in development](https://www.jhipster.tech/documentation-archive/v9.2.0/development/)
+- [Using Docker and Docker-Compose](https://www.jhipster.tech/documentation-archive/v9.2.0/docker-compose)
+- [Using JHipster in production](https://www.jhipster.tech/documentation-archive/v9.2.0/production/)
+- [Running tests page](https://www.jhipster.tech/documentation-archive/v9.2.0/running-tests/)
+- [Code quality page](https://www.jhipster.tech/documentation-archive/v9.2.0/code-quality/)
+- [Setting up Continuous Integration](https://www.jhipster.tech/documentation-archive/v9.2.0/setting-up-ci/)
+- [Node.js](https://nodejs.org/)
+- [NPM](https://www.npmjs.com/)
+- [BrowserSync](https://www.browsersync.io/)
+- [Jest](https://jestjs.io)
+- [Leaflet](https://leafletjs.com/)
+- [DefinitelyTyped](https://definitelytyped.org/)
+- [Angular CLI](https://angular.dev/tools/cli)
+- [Cypress](https://www.cypress.io/)
