@@ -5057,6 +5057,37 @@ separable from any package's diff and reviewable as "only whitespace and line jo
 package's to take — it changes four earlier packages' files and adds a committed lockfile, which is a
 dependency-management decision for the repository rather than for a backlog item.
 
+**⚠ IN THREE OF THE FIVE SERVICES THE INSTRUCTION IS NOT EXPENSIVE — IT DOES NOT EXIST. Measured
+2026-09-24 at NEW-50's close**, which hit it: that package edited `catalog` and could not run the
+command its own gate list names.
+
+| service | `prettier:format` / `prettier:check` | `prettier` + `prettier-plugin-java` in devDependencies | `.prettierrc` |
+| --- | --- | --- | --- |
+| `gateway` | **both** | yes | yes |
+| `messaging` | **both** | yes | yes |
+| `catalog` | **neither** | yes | yes |
+| `booking` | **neither** | yes | yes |
+| `payout` | **neither** | yes | yes |
+
+Everything above was measured in `gateway/`, and the three options inherit that premise without
+saying so. In `catalog`, `booking` and `payout` the workspace guide's *"`npm run prettier:format` —
+formats Java here too, run after editing"* fails with npm's **missing-script** error. **The tool is
+installed and configured in all five** — same plugins, a `.prettierrc` each — and only the two script
+lines are absent, which is why this reads as "prettier is not set up in this service" when what is
+missing is one line of `package.json`.
+
+**Two things follow, and the second changes an option.** The instruction being impossible is a
+documentation defect of this repository's most common class — a document asserting a property the code
+lacks. And **option 3 is not available for three of the five**, because there is nothing to run;
+option 1's cost is a `gateway` figure too, since those three services' Java has never been through
+this formatter, so what a first `prettier:format` would rewrite there is **unmeasured** and is not the
+17 files quoted above. Measure all five before costing it — `npx prettier --check` resolves the plugin
+from each service's own `node_modules` and needs no script.
+
+**Deliberately not fixed by NEW-50.** Adding the two lines per service is trivial and is the same
+decision as the rest of this item: it makes a formatter runnable that would then reformat files four
+earlier packages own. It belongs to whoever picks 1, 2 or 3.
+
 **Not blocked.** It needs the architect to pick one.
 
 ---
