@@ -4551,7 +4551,18 @@ built is what that person uses.
 
 ---
 
-## NEW-54 — no environment in this estate can receive a provider callback · READY, and a decision with it
+## NEW-54 — no environment in this estate can receive a provider callback · BLOCKED (decision taken, D92 §6)
+
+> **⚠ THIS HEADING READ `READY, and a decision with it` UNTIL 2026-09-24, AND BOTH HALVES WERE FALSE**
+> (`decisions.md` D102). The decision was **taken on 2026-09-16** — D92 §6, *wait for production
+> behind the DNS-hold*, against this item's own recommendation, and the item's first blockquote
+> records it. And it is not `READY`: this item's own last line says *"Still blocked, unchanged: Act 987
+> (counsel), and Paystack live credentials with a test account"*, which D90 §7 confirms with owners.
+> A stale heading is what put it in a queue of six decisions needing a person, where it consumed a
+> review of a question nobody had to answer. **The premise below is still accurate** — re-verified
+> 2026-09-24: `market.abofonsa.com` does not resolve, all three providers are `enabled=false` with
+> empty secrets, and the webhook path answers 401 rather than 404 from both the loopback port and
+> through nginx, so the whole chain works and only the public name is absent.
 
 > **RATIFIED 2026-09-16 — `decisions.md` D92 §6. Wait for production behind the DNS-hold**, against the
 > recommendation of a time-boxed tunnel to quality. **So the payment path's first real execution is in
@@ -4992,7 +5003,33 @@ that limit has cost anything.
 
 ---
 
-## NEW-61 — an unactivated login is identifiable by anyone, with no password, and answers 500 to its owner · READY, and a decision with it
+## NEW-61 — an unactivated login is identifiable by anyone, with no password, and answers 500 to its owner · READY — ANSWERED (D102 §1)
+
+> **ANSWERED by the architect 2026-09-24 — `decisions.md` D102 §1.** **401 for every failure mode,
+> with one message: *"Sorry you can not log in. If your login is correct, check your email for further
+> instructions."* — and then send a new activation link by email.** The response is identical for a
+> wrong password, an unknown login and an unactivated account, so nothing is disclosed to a caller;
+> the truth goes to the one channel only the owner can read. It takes neither horn of the disclosure
+> trade this item offered.
+>
+> ⚠ **It is NO LONGER a one-line fix and must not be taken as one.** Sending mail is a behaviour. The
+> package must also decide **a per-account resend throttle** (the nginx ceiling bounds the *caller*,
+> not the *recipient* — without one, failing a login repeatedly mails that person on demand) and
+> **where the resend fires** (`DomainUserDetailsService` throws *before* the password is checked, so a
+> resend there fires for anyone naming the login; after it verifies, only for the owner — both leak
+> nothing, so it is a choice about what is promised).
+>
+> ⛔ **The status fix goes in `ExceptionTranslator.getMappedStatus` and nowhere else.** Converting the
+> exception earlier would take D84's `GatewayIdentityMetricsIT` with it and blank two of the six
+> gateway-identity dashboard panels.
+>
+> ⛔ **Sequence it behind the frontend route.** The activation mail points at `${baseUrl}/account/activate?key=…`,
+> which answers 401 here — **NEW-60** — and NEW-48 Stage A (D101) deliberately did not close it. Land
+> this first and it mails people a link that does not work.
+>
+> **Two probes narrowed it and belong with the answer**: there are **zero** unactivated accounts on the
+> only estate today, so nothing is being enumerated; and the login rate limit **is** installed and in
+> force on quality (1r/s, burst 5), contrary to `CLAUDE.md` — that is **NEW-75**.
 
 **Opened by NEW-47's walk, 2026-09-17; corrected the same day by NEW-47's review, and the correction
 is the item.** The first version of this entry called the disclosure *"a narrow oracle (it needs the
@@ -5515,7 +5552,22 @@ gate being unpassable is the finding.
 
 ---
 
-## NEW-67 — the erasure register cannot say WHY somebody was erased · READY, and a decision with it
+## NEW-67 — the erasure register cannot say WHY somebody was erased · READY — ANSWERED (D102 §2)
+
+> **ANSWERED by the architect 2026-09-24 — `decisions.md` D102 §2.** `reason`, **`NOT NULL`**, exactly
+> two values — `SUBJECT_REQUEST` and `RETENTION` — stored as `varchar` with the value set validated in
+> Java (this estate's precedent: `payout.status` is `varchar(255)` with `PayoutStatus` in Java, so
+> extending the set is a code change where a PostgreSQL enum would be a migration). **No actor**,
+> deferred to `docs/processing-record.md` §6.3 so the staff-access gap is answered whole rather than
+> half.
+>
+> ⏳ **`NOT NULL` IS AVAILABLE ONLY UNTIL PRODUCTION'S FIRST ERASURE, and that is a date nobody
+> controls.** Measured 2026-09-24: **zero** rows in `erased_subject` in booking, catalog and messaging,
+> **zero** in `erasure_run`, and there is no second estate. So this item's third sub-decision — nullable
+> versus backfill — describes a population of size zero and does not arise. The day production erases
+> somebody it arises permanently and the column is nullable-and-unbackfillable for good.
+>
+> **Pair it with NEW-68**, which adds a third writer to this same register.
 
 **Surfaced by D96 / NEW-52 rather than found**, and it is a decision before it is work. The brief that
 opened NEW-52 predicted a different version of this — *"`eraseCustomer` records an acting staff member,
@@ -5647,7 +5699,30 @@ behind it, not a sweep change.
 
 ---
 
-## NEW-70 — the estate's one free signal is watched by nothing · READY, and a decision with it
+## NEW-70 — the estate's one free signal is watched by nothing · READY — §2 ANSWERED (D102 §3)
+
+> **ANSWERED by the architect 2026-09-24 — `decisions.md` D102 §3: get `hc-market-rules.yaml` loaded
+> into a ruler.** It is a **cross-repository** action, so this repository cannot finish it alone.
+>
+> ⛔ **THIS ITEM'S TITLE IS THE PART THAT IS WRONG, and measurement is what showed it.** Something *is*
+> watching, it is not ours, and it fired: the monitoring repository's generic
+> `ServiceStoppedReportingTelemetry` — `count by (service_name)(jvm_thread_count offset 1h) unless
+> count by (service_name)(jvm_thread_count)` — went **critical for all five hc-market services within
+> four minutes** when a roll dropped this estate's OpenTelemetry agent on 2026-09-24 (see **NEW-79**).
+> Meanwhile **our own five alert rules are loaded into no ruler at all**: measured against the quality
+> Mimir, it holds seven groups and **none** of `hc-market-availability`, `hc-market-errors` or
+> `hc-market-latency`. Five rules shipped, zero loaded, for this estate's whole life.
+>
+> So the gap is not *"nothing watches the signal"* — it is **our own alerting has never run anywhere
+> while somebody else's covered for it unannounced**. Our two `absent(jvm_thread_count{...})` rules
+> would have caught the same outage and are already written.
+>
+> **§1 and the instrument remain engineering's** and need no architect: the measure is the anchored,
+> ANSI-stripped, application-only form, reported for **both** windows and asserted for neither. That is
+> the same question **NEW-74** poses, and answering it here makes NEW-74 a one-commit implementation.
+>
+> **Fold `hc-market-rules.yaml`'s header into the same package** — *"NOTHING ANSWERS THESE QUERIES
+> TODAY, AND NOTHING EVER HAS"* is true of the render and false of the estate, which is **NEW-72**.
 
 **Surfaced by D97 / NEW-65**, 2026-09-18, and it is the question that item's whole argument rests on
 without answering.
@@ -6365,3 +6440,83 @@ fixes with different blast radii.
 ### Not blocked
 
 No decision from a person; it wants NEW-48's card design to say what the tile should read.
+
+---
+
+## NEW-79 — a roll silently detaches the OpenTelemetry agent, and only another repository notices · READY
+
+**Found 2026-09-24 by doing it**, while rolling quality to `6e6c3b0` for NEW-50. Not a hypothetical
+and not a near-miss: the estate ran dark for about forty minutes.
+
+`./quality/startup.sh --local` with `TAG` set and nothing else brings all five services up **without
+the agent**. `quality/compose.yml` renders `JAVA_OPTS: ${HC_JAVA_OPTS:--Xmx512m -Xms256m}
+${HC_OTEL_JAVA_OPTS:-}`, and `HC_OTEL_JAVA_OPTS` defaults empty — **deliberately**, by D73 §3, because
+`monitoring-quality` belongs to another repository and an attached estate against a dead collector
+writes 35 ERROR lines per 150 seconds per service. The default is right and is not what this item asks
+to change.
+
+**What is missing is that nothing says which way it went.** Measured on the day:
+
+| | |
+| --- | --- |
+| `JAVA_OPTS` after the roll | `-Xmx512m -Xms256m` — no `-javaagent`, all five |
+| `/proc/1/environ` `javaagent` count | **0** of 5 |
+| Mimir `jvm_thread_count{service_name=~"hc-market.*"}` | all five at 11:45 UTC, **none** at 11:55 |
+| what noticed | the **monitoring repository's** `ServiceStoppedReportingTelemetry`, critical, five services, within four minutes |
+| what hc-market noticed | nothing — `--verify` passed, all eleven containers healthy, zero ERROR lines |
+
+The estate's own `--verify` cannot see it, every healthcheck stays green, and the ERROR count reads
+zero for the *wrong reason* — no agent means no exporter, so the collector-death detector the zero is
+supposed to represent is simply unplugged. **A zero measured without the agent attached is not the
+zero D97's argument rests on**, and nothing in the output distinguishes them.
+
+**The cheap fix is a line in the closing banner.** `startup.sh` already prints a block naming the
+site, the gateway, the five ports, the mail catcher and the active profiles. One more line — *"OTel
+agent: attached / not attached (set `HC_OTEL_JAVA_OPTS` — see `quality/compose.yml`)"* — read off what
+the containers actually got rather than off the variable, makes the state self-evident at the moment
+somebody is looking. Reading it from `/proc/1/environ` rather than from the environment matters: the
+variable is what was *asked for*, the process is what *happened*.
+
+**Two things deliberately not proposed.** Defaulting the agent on — that is D73 §3's decision and it
+stands. And a healthcheck or an alert on agent absence — the estate should not page itself about an
+optional exporter, and once **NEW-70 §2** lands, the `absent(jvm_thread_count{...})` rules cover
+exactly this from the monitoring side, which is where it belongs.
+
+### Not blocked
+
+No decision from a person. It is one banner line and one probe, in a script this repository owns.
+
+---
+
+## NEW-80 — the marketplace client commits `admin`/`admin`, in a public repository · READY
+
+**Found 2026-09-24 at NEW-48 Stage A's merge gate**, by the secret scan rather than by review —
+neither the author nor two reviewers flagged it, because it is generated and it looks like furniture.
+
+`web/cypress.config.ts` carries `adminPassword: 'admin'` and `password: 'admin'` as literals.
+
+**This is not a leak today and the item should not be read as one.** Three things make it benign, and
+all three are already written down: this repository **publishes the rule anyway** — `CLAUDE.md` states
+that dev and test create `admin` and `user` with passwords derived from their own logins; **production
+refuses that path** — under `prod` the gateway will not create an administrator without
+`HC_GATEWAY_ADMIN_PASSWORD` and fails the deploy rather than falling back (D61); and **Cypress has
+never run**, anywhere, against anything.
+
+**What makes it worth an item is the shape, not the exposure.** A literal credential string sitting in
+a public repository is a thing a reader has to *reason* about before concluding it is safe — and the
+reasoning depends on D61, on which profile is active, and on a rule three documents away. This estate's
+standing instruction is the same one inverted: *"Never add a default `base64-secret` to a profile that
+actually runs"*, and the committed defaults are confined to `*-secret-samples.yml`, `src/test/resources`
+and a config server nothing loads. The cheap change is to read both values from the environment with
+the current literals as the documented dev default, so the file states where the value comes from
+instead of what it is.
+
+⚠ **Whoever takes it should check the siblings before assuming this is ours.** `cypress.config.ts` is
+generated, so `hc-admin/app`, `hc-patient/web` and `hc-professional/web` are likely to carry the same
+two lines — and those three products are **deployed**, which this one is not. That is their backlog's
+business, not this repository's, but the sweep is one `grep` and the answer changes who should care.
+
+### Not blocked
+
+No decision from a person, unless the sibling sweep finds something, in which case the finding is
+theirs to route.
