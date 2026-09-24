@@ -3967,7 +3967,71 @@ defect.
 
 ---
 
-## NEW-48 — there is no application: the front end the prototype has been specifying all along · READY
+## NEW-48 — there is no application: the front end the prototype has been specifying all along · STAGE A DONE (D101), B–E READY
+
+> **STAGE A CLOSED 2026-09-24 — `decisions.md` D101**, on branch `worktree-agent-ac33a5a41567fdcc6`
+> off `f4a3368`. `web/` holds a client-only **JHipster 9.2.0 / Angular 21.2.17** application:
+> `skipServer: true`, `enableTranslation: true`, `jhiPrefix: abm`, `hc-admin/app`'s shape. `npm run
+> lint` rc=0, `npm run prettier:check` rc=0, `npm test` **203 tests over 36 files** green, `npm run
+> webapp:prod` rc=0, and a new `check:built-assets` reports **74 built files, 0 Sass artefacts, 22
+> content assets**. A `web` job in `build.yml` runs all five in that order. **No screen is delivered**
+> — the generated home, login and five `ROLE_ADMIN` monitoring pages are the whole UI.
+>
+> **Two review rounds after the first commit, seven findings, ALL of them in this package's own new
+> guards rather than in the scaffold** — which is the shape worth carrying: the generated application
+> was correct and the things written to *guard* it were where the defects were.
+> `endpoint-construction.spec.ts` was **blind to a wrapped call** — and `printWidth: 140` means
+> prettier *produces* that shape, so it would have fired with no intent to evade; it is D60's zone-write
+> widening one language along, fixed the same way and fail-closed, watched red in both shapes
+> separately with the narrowed scanner reproducing the blindness while a new synthetic control alone
+> went red. D101 §4's *"nine call sites, nine `getEndpointFor`"* **is deleted rather than corrected**:
+> three people derived three different pairs, every one by a grep carrying that same blindness, so the
+> spec prints the numbers now and names which population each counts. **lint does not gate formatting
+> for `.scss`, `.md` or `.json`** — `npx eslint` on `_hc-tokens.scss` answers *"File ignored because no
+> matching configuration was supplied"* and exits **0** — so `prettier:check` is a CI step.
+>
+> ⚠ **AND THE SPEC'S OWN COMMENT STRIPPER WAS STRING-BLIND — D77 RECREATED IN TYPESCRIPT**, in the
+> paragraph the previous round had just rewritten. `readonly hint = 'a /* b';` above a literal
+> `'/services/healthconnectcatalog/api/…'` handed to `this.http.get` was **invisible to all three
+> bans** (7 passed); deleting only the `hint` line gave **3 failed**. Both the decision and the
+> javadoc said the failure was *fail-closed*: **hiding code from a ban IS fail-open**, which is D77's
+> own words about the identical sentence on the Java stripper. Four states now, with
+> `strip-comments.awk`'s reset rule — block and template carry, ordinary strings reset at end of line
+> — five new cases, one embedding the version it replaced and one asserting **real code survives**.
+> Exposure was nil: **2 files, 2 lines, 0 truncated to EOF** over the 97 files, measured line by line.
+>
+> **All three day-one traps are closed and each was watched going red on its OWN mutant**, restored
+> by `cp` from a pristine snapshot: the bare-string `assets` → `check:built-assets` rc=1 naming **4**
+> Sass artefacts under two independent rules; the missing `.claude/` ignore with a nested checkout
+> planted → `npm run lint` rc=1 on `parserOptions.project`, and **rc=0 with the checkout still
+> present** once restored; `'gold': $abm-white` → 2 of 16 brand-contrast assertions red.
+>
+> ⚠ **THE `.claude/` IGNORE IS PROPHYLACTIC HERE, AND THE ITEM IMPLIED OTHERWISE.** hc-admin and
+> hc-vendor have the Angular app AT the repository root, so worktrees land inside it. Here `web/` is a
+> subdirectory and worktrees land at `<repo>/.claude/worktrees/`, a **sibling** `eslint .` never
+> walks. Measured three ways (D101 §3): today's real shape is **unaffected**. It is one line and it
+> closes the shape that appears the day anything roots a checkout at `web/` — but it fixes nothing
+> today and must not be reported as if it did.
+>
+> ⚠ **GENERATING INSIDE AN AGENT WORKTREE SILENTLY PRODUCES AN UNTRANSLATED, UNFORMATTED APP** —
+> D101 §2, and the finding of the package. `isTranslatedAngularFile` is
+> `new Minimatch('**/*{.html,.ts}')` with no `dot: true`, matched against the **absolute** path, so a
+> `.claude` dot-segment makes it match **nothing**: the transform is queued, its name is printed, it
+> processes zero files and the generator **exits 0** with 19 files carrying raw
+> `__jhiTranslateTag__(…)` and 2466 prettier errors. The trigger is a dot-segment anywhere in the
+> path — not a worktree and not git. Generate from a dot-free path and copy the tree in. A row is
+> added to `CLAUDE.md`'s regeneration-hazard section.
+>
+> **Two decisions surfaced rather than taken** (D101 §6): how the built app is served and therefore
+> what origin it addresses — deferred to Phase 5, and made cheap by `SERVER_API_URL: ''` so every URL
+> is relative; and whether the five `ROLE_ADMIN` monitoring pages belong in a public marketplace
+> client, kept per the ratified shape, measured to work against the gateway's own exposure list, and
+> reversible in two lines. **The account-pages half dissolved**: `skipUserManagement` follows from
+> `databaseType: no`, so **no account screens were generated at all** — which is also why **NEW-60 is
+> not closable by this scaffold**, the activation mail pointing at `/account/activate` and this
+> application serving no such route.
+>
+> **Stages B–E are untouched and unchanged below.**
 
 > **RATIFIED 2026-09-16 — `decisions.md` D92 §2.** **Client-only JHipster 9.2.0 Angular into `web/`**,
 > `skipServer: true`, to `hc-admin/app`'s shape — so the gateway is never regenerated and D61's
