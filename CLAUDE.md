@@ -1304,11 +1304,33 @@ keeps the estate uniformly Boot 4 — and matches all three sibling products. Se
 
 - **Money is `long` minor units (pesewas)** plus an explicit ISO currency, never `double`. `28000` is
   ₵280.00, and the 12% brokerage fee is **inside** the price, not added to it. Two seeded services
-  are genuinely free (`priceMinor: 0`) — a "from ₵0" listing is correct, not a bug, and **no provider
-  is ever asked to authorize zero** (D44): `BookingPayments.take` answers `NOTHING_TO_PAY` without
-  reaching an adapter, and the booking is created in `REQUESTED` with `booking.requested` published
-  and no `payment_attempt` row. Not `PENDING_PAYMENT` — nothing would ever confirm a payment that was
-  never started, and that state has no expiry sweep.
+  are genuinely free (`priceMinor: 0`) — a free service is a real offer rather than a defect, and
+  **no provider is ever asked to authorize zero** (D44): `BookingPayments.take` answers
+  `NOTHING_TO_PAY` without reaching an adapter, and the booking is created in `REQUESTED` with
+  `booking.requested` published and no `payment_attempt` row. Not `PENDING_PAYMENT` — nothing would
+  ever confirm a payment that was never started, and that state has no expiry sweep.
+  **⚠ THAT SENTENCE READ *"a 'from ₵0' listing is correct, not a bug"* UNTIL D100, AND AS GUIDANCE IT
+  WAS WRONG** (backlog NEW-50). The datum is fine; the headline is not. The prototype has always
+  filtered `s.price > 0` at all three of its sites, so **the API was the side that diverged**, and the
+  repository javadoc two lines above the query claimed parity with the prototype while not having it.
+  A `ProfessionalCard` carries **three** quantities now, all derived per read from one query — no
+  column, no changelog: **`fromPriceMinor`** is the literal minimum with `0` included and is
+  **unchanged for all eighteen**, the only thing that tells an all-free listing from one publishing
+  nothing; **`fromPaidPriceMinor`** is the cheapest service somebody can actually buy and is the
+  headline; **`hasFreeService`** is the marker D92 §4 ratified in place of a ₵0 headline.
+  **The filter was the sharper half and the item was not written about it.** `maxPriceMinor`, both
+  comparators and the facet price range all read `fromPaidPriceMinor` now, and a listing with no paid
+  service is **excluded** from a price filter rather than matched at every budget — `minRating`'s
+  refusal to read an unrated professional as `0.0`, verbatim one field along — and sorts last in both
+  directions. Measured on quality before the roll, `?maxPriceMinor=9000` (₵90, the floor of the
+  prototype's own slider) answered with **three** professionals, two of them p12 and p13, whose
+  cheapest purchasable services are ₵280 and ₵420; after the roll it answers **p3 alone**.
+  **The facet range moved at BOTH ends and only the floor was predicted** — measured on the roll to
+  `6e6c3b0`, `0 → 9000` and `38000 → 42000`. The ceiling follows from the same line and is correct
+  rather than a surprise: it is now the largest *paid* minimum (p13's 42000) rather than the largest
+  literal one (p17's 38000), and a slider stopping at 38000 could not express a budget that reaches
+  p13's cheapest purchasable service at all. **Quote the range as a pair**; reasoning about the floor
+  alone is what left the ceiling unstated for a package.
 - **The rate is struck when the BOOKING happened, and the moment travels on the event** (D53). Payout
   prices a ledger row against the `BrokerageConfig` in force at `bookingCompletedAt`, and a late fee at
   `bookingCancelledAt` — two fields booking's `OutboxRecorder` puts on the payload, named like
