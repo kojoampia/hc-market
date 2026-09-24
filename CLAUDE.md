@@ -1318,8 +1318,8 @@ narrowing: every consumer in the repository already goes through `/api/**`.
 **Since D74 there are TWO `/internal/**` prefixes in this estate and only one of them is private by
 routing.** catalog's is D28's, above. **The gateway's is not**: `GET /internal/customers/{login}/email`
 sits on the gateway itself, so no route predicate is in front of it, both nginx vhosts proxy
-`location /` here, and dev and quality publish the gateway's port on every interface — it is reachable
-from outside on every estate and is refused by a credential instead. Do not read one prefix's argument
+`location /` here, and **nginx is what puts it outside** — it is reachable from outside on every estate
+and is refused by a credential instead. Do not read one prefix's argument
 onto the other; D72 §3 did, and D74 §3 is the correction.
 
 **The route being narrow is not the same as the endpoint being guarded, and nine endpoints proved
@@ -2487,8 +2487,16 @@ time.**
   transfer to it** (D74). catalog's `/internal/professionals/{ref}/login` is private because no route
   matches it; the gateway's `GET /internal/customers/{login}/email` **is on the gateway itself**, so there
   is no route in front of it, both nginx vhosts end in a `location /` that proxies everything here, and
-  the dev and quality compose files publish the gateway's port on every interface. **That path is
-  reachable from outside on every estate.** What refuses a stranger is the credential —
+  the **dev** compose file publishes the gateway's port on every interface. **That path is
+  reachable from outside on every estate**, but by two different mechanisms, and this paragraph said
+  one of them until 2026-09-24: **quality binds LOOPBACK ONLY** — `quality/compose.yml`'s
+  `ports: ["127.0.0.1:${GATEWAY_PORT:-15509}:8080"]`, as do all five of its app services, and
+  production binds loopback too — so what puts the path outside there is **nginx**, not the port
+  mapping. Only `docker-compose.dev.yml`'s `'${HC_GATEWAY_PORT:-8080}:8080'` is a wildcard bind. The
+  conclusion is unchanged and was reached by measurement (a `/internal/customers/{login}/email` from
+  outside the container answers 401, not a connection refusal); the stated mechanism was wrong, and
+  anyone reasoning "quality binds 0.0.0.0" from it will reason wrongly about any other port.
+  What refuses a stranger is the credential —
   `ROLE_CUSTOMER_CONTACT_READ` is granted by no login, so only a holder of `JWT_BASE64_SECRET` can mint
   one — plus `ContactLookupToken.mayRead`, which is what stops the *authority alone* being enough:
   `POST /api/admin/authorities` creates an authority by name and `UserResource` grants it, so an

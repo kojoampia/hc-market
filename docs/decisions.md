@@ -19767,3 +19767,138 @@ touched, and the quality stack was not contacted in either direction. **The gate
 build and unit-test gates; the first real exercise of this client is Stage B**, and this estate's own
 rule — *end in a real browser* — has not been satisfied and could not be, because nothing serves it
 yet.
+
+---
+
+## D102 — Three answers from the architect, and the probes that shrank two of them first
+
+**Taken 2026-09-24.** Backlog NEW-61, NEW-67 and NEW-70 §2 had each sat as `READY, and a decision
+with it` — the item's own author saying a person has to choose. They were put to the architect
+together, after a read-only sweep costed all six items carrying that marker.
+
+**Measuring first removed more than it answered, which is the part worth carrying.** Of the six, only
+three reached the architect at all: **NEW-54 was already answered** by D92 §6 eight days earlier and
+its heading was simply stale; **NEW-69's recipient** was already ratified by D92 §5; and **NEW-64's
+urgency** dissolved against the data (0 negative ledger rows, 0 reversals, 0 disputes, and both
+`FAILED` and `IN_PROGRESS` unwritable anywhere in stripped main source). A queue of six was a queue of
+three, and nothing but probing said so.
+
+### §1 NEW-61 — one answer for everyone, and the truth goes by mail
+
+**The architect's answer, verbatim:** *401 with the message "Sorry you can not log in. If your login
+is correct, check your email for further instructions." Then send a new activation link per email.*
+
+Today `DomainUserDetailsService` throws `UserNotActivatedException` before any password check; it
+carries no `@ResponseStatus`, `ExceptionTranslator.getMappedStatus` maps five other exceptions and
+falls through to **500** — so an unactivated account answers 500 while every other failure answers
+401. That is an existence oracle, and the 500 reaches its own owner as "this platform is broken".
+
+**Why this shape rather than the two alternatives.** *Option 1, a bare 401,* was the recommendation
+and is a strict subset of what was chosen. *Option 2, a distinct actionable answer,* loses because it
+is a deliberate disclosure on the front door — and this estate's rule (D47, D74) is that disclosures
+are chosen and written down, never inherited from a missing annotation. The answer takes **neither
+horn**: the *response* is identical for every failure mode, so nothing is disclosed to a caller, and
+the *truth* is delivered through a channel only the account's owner can read. It is the instinct
+`AccountResource.requestPasswordReset` already follows — *"Pretend the request has been successful to
+prevent checking which emails really exist."*
+
+⚠ **This is no longer a one-line fix, and the package that takes it must not inherit that framing.**
+NEW-61 was costed as one line in `getMappedStatus`. Sending mail is a behaviour: it needs the mail
+path, a throttle and tests. Three things the answer does **not** settle, all of which are the
+package's:
+
+1. **A per-account resend throttle.** The nginx ceiling (`hc_market_login`, 1r/s burst 5 — installed
+   and in force on quality, contrary to `CLAUDE.md`, which is NEW-75) bounds the **caller**, not the
+   **recipient**. Without a throttle, repeatedly failing a login against a known unactivated address
+   mails that person on demand. Configured, not a literal — `AccountRetention`'s neighbourhood.
+2. **Where the resend fires.** `DomainUserDetailsService` throws *before* the password is checked, so
+   a resend triggered there fires for anyone who names the login. Triggering it only after the
+   password verifies reaches only the real owner. **Both leak nothing** — the response is identical
+   either way — so this is a choice about what is promised, not about disclosure. Decide it in the
+   open.
+3. **The status fix belongs in `getMappedStatus` and NOWHERE ELSE.** Converting the exception earlier
+   in `DomainUserDetailsService` would take `GatewayIdentityMetricsIT` with it: D84 measures that
+   `UserNotActivatedException` survives Spring's authentication manager (unlike
+   `UsernameNotFoundException`, which is converted to `BadCredentialsException` to prevent
+   enumeration), and the `outcome="not-activated"` bucket that asymmetry creates is a target on two
+   of the six gateway-identity dashboard panels.
+
+⛔ **And the mail it sends points at a page nothing serves.** The activation template composes
+`${baseUrl}/account/activate?key=…`, a *frontend* route, which answers **401** on this estate —
+**NEW-60**. NEW-48 Stage A (D101) did not close it and says so: `skipUserManagement` follows from
+`databaseType: no`, so the scaffold generates no account pages at all. **Sequence NEW-61 behind the
+Stage that delivers that route**, or the fix mails people a link that does not work, which is the
+defect it exists to remove wearing a different hat.
+
+### §2 NEW-67 — `reason`, `NOT NULL`, two values, no actor
+
+**Taken as recommended.** `ErasedSubject` gains `reason`, **`NOT NULL`**, with exactly two values —
+`SUBJECT_REQUEST` and `RETENTION` — stored as `varchar` with the value set validated in Java. That
+storage choice is this estate's own precedent rather than taste: `payout.status` is `varchar(255)`
+with `PayoutStatus` in Java, so extending the set is a code change; a PostgreSQL enum would be a
+migration.
+
+**`NOT NULL` is available only because a probe found the population empty, and that window closes.**
+Measured 2026-09-24: **zero** rows in `erased_subject` in booking, catalog and messaging, **zero** in
+`erasure_run`, and there is no second estate (one compose project, five volumes, no dev estate). So
+the item's third sub-decision — *"a nullable column reading `null` for existing rows is honest;
+backfilling them is a claim"* — describes a population of size **zero** and simply does not arise.
+**At production's first erasure it arises permanently**, and the column is nullable-and-unbackfillable
+for good. That is a scheduling fact, not a design one, and it belongs in the item.
+
+The reasoning for refusing nullable is worth keeping: a caller that cannot say why it erased somebody
+should not be allowed to erase somebody.
+
+**No actor**, deferred to `docs/processing-record.md` §6.3 — the staff-access audit — so that gap is
+answered whole rather than half. D47's precedent applies directly: the verification reviewer's login
+is deliberately kept off the public profile, and a staff login in an append-only register kept for
+ever is the same decision one table along.
+
+**Pair it with NEW-68**, which adds a *third* writer to this register; that item should not land
+before the register can say which writer wrote a row.
+
+### §3 NEW-70 §2 — get `hc-market-rules.yaml` loaded into a ruler
+
+**Taken as recommended, and it is a cross-repository action rather than one this repository can
+finish.** Measured 2026-09-24 against the quality Mimir: it holds seven rule groups —
+`container_alerts`, `container_resource_usage_recording_rules`, `host_alerts`, `host_disk_alerts`,
+`monitoring_self_alerts`, `slo_burn_alerts`, `slo_sli_recording_rules` — and **none** of
+`hc-market-availability`, `hc-market-errors` or `hc-market-latency`. **Five alert rules shipped, zero
+loaded, for this estate's whole life.**
+
+**What actually watches this estate is the monitoring repository's own generic rule**, and it is
+better at the job than the ERROR count ever was. `ServiceStoppedReportingTelemetry` —
+`count by (service_name)(jvm_thread_count offset 1h) unless count by (service_name)(jvm_thread_count)`
+— fired **critical for all five hc-market services within four minutes** when this estate's
+OpenTelemetry agent was dropped by a roll on 2026-09-24. Our own two `absent(jvm_thread_count{...})`
+rules would have done the same and are already written.
+
+So the gap NEW-70 names is real but misdescribed: it is not *"nothing watches the signal"*, it is
+**our own alerting has never run anywhere**, while somebody else's has been covering for it
+unannounced. Getting the file loaded is smaller and worth more than wiring a log-level alert, and the
+ERROR count then keeps the job it is genuinely good at — *did the application itself complain* — read
+by a person running `--verify`, reported for both windows and asserted for neither.
+
+**Two consequences to carry into whoever takes it:**
+
+- **`deploy/observability/hc-market-rules.yaml`'s header is false of the estate.** It says *"NOTHING
+  ANSWERS THESE QUERIES TODAY, AND NOTHING EVER HAS"*, which is true of the **render** and false of
+  the **running system** — precisely **NEW-72**'s subject, one file along. Fix it in the same package
+  rather than separately.
+- **The workspace guide's *"Alert rules are mounted per application, never appended to a shared fleet
+  file"* does not hold for hc-market** — nothing of ours is mounted anywhere at all. That correction
+  belongs in `../CLAUDE.md`, which is not this repository's file.
+
+### §4 What these three have in common, and it is not their subject
+
+Each was recorded as needing a person, and in each case the **probe changed the question before the
+person saw it** — NEW-61's urgency (zero unactivated accounts today, and a rate limit that is actually
+installed), NEW-67's third sub-decision (a population of zero, with an expiry date), NEW-70's premise
+(something *is* watching, from another repository, and it is firing). None of that was visible from
+the items' own text, and two of the three items state their premise confidently.
+
+**The rule this supports is the one this log keeps rediscovering**: an item's author can name a
+decision that the code, the data or a neighbouring system has already settled — so cost a decision by
+probing it, not by reading it. It is the same discipline as D53's *"reading a mechanism out of a
+config file without establishing which environment loads it is not a statement about the running
+system"*, applied to a backlog instead of a config file.
