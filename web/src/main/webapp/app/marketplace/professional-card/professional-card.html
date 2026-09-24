@@ -1,0 +1,54 @@
+<article class="abm-card" data-cy="professionalCard" [attr.data-ref]="card().ref">
+  <!-- The whole card is one link. The prototype makes the <article> clickable with an onclick,
+       which is not reachable by keyboard and has no address to copy. -->
+  <a class="abm-card__link" [routerLink]="['/professionals', card().ref]" [attr.data-cy]="'professionalCardLink-' + card().ref">
+    <div class="abm-card__top">
+      <span class="abm-card__avatar" [style.background]="gradient()" aria-hidden="true">
+        {{ card().initials }}
+        @if (verified()) {
+          <span class="abm-card__avatar-tick">✓</span>
+        }
+      </span>
+      <div class="abm-card__identity">
+        <h3 class="abm-card__name">{{ card().displayName }}</h3>
+        <p class="abm-card__where">{{ card().speciality }} · {{ card().city }}</p>
+        <abm-stars [rating]="card().rating" [reviewCount]="card().reviewCount" />
+      </div>
+    </div>
+
+    <p class="abm-card__headline">{{ card().headline }}</p>
+
+    <div class="abm-card__pills">
+      @for (mode of card().deliveryModes; track mode) {
+        <span class="abm-pill">{{ 'marketplace.mode.' + mode | translate }}</span>
+      }
+      @if (verified()) {
+        <span class="abm-pill abm-pill--verified" abmTranslate="marketplace.verification.VERIFIED">Verified</span>
+      }
+    </div>
+
+    <div class="abm-card__foot">
+      <!-- THE HEADLINE PRICE. Three states, never two — see the component javadoc and D100. -->
+      <div class="abm-card__price">
+        @switch (priceState()) {
+          @case ('paid') {
+            <span class="abm-card__amount">{{ fromPrice() }}</span>
+            <span class="abm-card__per" abmTranslate="marketplace.price.fromPerSession">from / session</span>
+          }
+          @case ('free') {
+            <span class="abm-card__amount" abmTranslate="marketplace.price.free">Free</span>
+          }
+          @case ('enquire') {
+            <span class="abm-card__amount abm-card__amount--muted" abmTranslate="marketplace.price.onEnquiry">Price on enquiry</span>
+          }
+        }
+      </div>
+      @if (card().hasFreeService) {
+        <!-- D100 §3: a marker, not a price, and it does not call the service an "intro". -->
+        <span class="abm-pill abm-pill--free" data-cy="freeServiceMarker" abmTranslate="marketplace.price.hasFreeService"
+          >Free service available</span
+        >
+      }
+    </div>
+  </a>
+</article>

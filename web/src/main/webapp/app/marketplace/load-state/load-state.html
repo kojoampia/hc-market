@@ -1,0 +1,25 @@
+@switch (kind()) {
+  @case ('loading') {
+    <div class="abm-state" data-cy="stateLoading" role="status" aria-live="polite">
+      <p class="abm-state__title" abmTranslate="marketplace.state.loading.title">Loading the marketplace…</p>
+      <p class="abm-state__detail" abmTranslate="marketplace.state.loading.detail">Fetching listings from the catalogue.</p>
+    </div>
+  }
+  @case ('failed') {
+    <div class="abm-state" data-cy="stateFailed" role="alert">
+      <p class="abm-state__title" abmTranslate="marketplace.state.failed.title">The marketplace could not be reached</p>
+      <p class="abm-state__detail" abmTranslate="marketplace.state.failed.detail">
+        The catalogue did not answer. Nothing is lost — try again in a moment.
+      </p>
+      <button type="button" class="btn btn-primary mt-3" data-cy="stateRetry" (click)="retry.emit()">
+        <span abmTranslate="marketplace.state.failed.retry">Try again</span>
+      </button>
+    </div>
+  }
+  @case ('empty') {
+    <div class="abm-state" data-cy="stateEmpty">
+      <p class="abm-state__title" [abmTranslate]="emptyTitleKey()">Nothing here yet</p>
+      <p class="abm-state__detail" [abmTranslate]="emptyDetailKey()">There is nothing to show.</p>
+    </div>
+  }
+}

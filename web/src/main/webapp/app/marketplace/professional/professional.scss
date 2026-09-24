@@ -1,0 +1,292 @@
+.abm-pro {
+  display: block;
+  max-width: 1160px;
+  margin: 0 auto;
+  padding: 1.2rem 0 3rem;
+
+  &__hero {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.2rem;
+    padding: 1.4rem;
+    margin-bottom: 1.4rem;
+    border: 1px solid var(--abm-line);
+    border-radius: var(--abm-r-lg);
+    background: var(--abm-white);
+    color: var(--abm-on-white);
+  }
+
+  &__avatar {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 78px;
+    height: 78px;
+    border-radius: 50%;
+    color: var(--abm-white);
+    font-size: 1.5rem;
+    font-weight: 700;
+  }
+
+  &__identity {
+    flex: 1 1 280px;
+    min-width: 0;
+  }
+
+  &__titleline {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+
+    h1 {
+      margin: 0;
+      font-size: 1.7rem;
+      font-weight: 600;
+      color: var(--abm-navy);
+    }
+  }
+
+  &__headline {
+    margin: 0.4rem 0 0;
+    font-size: 1rem;
+    color: var(--abm-ink);
+  }
+
+  &__badgenote {
+    max-width: 58ch;
+    margin: 0.5rem 0 0;
+    font-size: 0.8rem;
+    color: var(--abm-grey);
+  }
+
+  &__facts,
+  &__pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-top: 0.7rem;
+    font-size: 0.83rem;
+    color: var(--abm-grey);
+  }
+
+  &__pills {
+    gap: 0.35rem;
+  }
+
+  &__pricebox {
+    flex: 0 0 auto;
+    align-self: flex-start;
+    min-width: 190px;
+    padding: 1rem;
+    border-radius: var(--abm-r);
+    background: var(--abm-cream);
+    color: var(--abm-on-cream);
+  }
+
+  &__pricelabel,
+  &__perlabel {
+    margin: 0;
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--abm-grey);
+  }
+
+  &__price {
+    margin: 0.1rem 0;
+    font-size: 1.7rem;
+    font-weight: 700;
+    color: var(--abm-navy);
+
+    &--muted {
+      font-size: 1rem;
+      color: var(--abm-grey);
+    }
+  }
+
+  &__body {
+    display: grid;
+    grid-template-columns: 1fr minmax(240px, 320px);
+    gap: 1.2rem;
+    align-items: start;
+
+    @media (width <= 860px) {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  &__main,
+  &__side {
+    display: flex;
+    flex-direction: column;
+    gap: 1.2rem;
+    min-width: 0;
+  }
+
+  &__bio {
+    margin: 0 0 0.8rem;
+    color: var(--abm-ink);
+  }
+
+  &__note {
+    margin: 0 0 0.8rem;
+    font-size: 0.78rem;
+    color: var(--abm-grey);
+  }
+
+  &__creds {
+    margin: 0 0 0.8rem;
+    padding-left: 1.1rem;
+    font-size: 0.87rem;
+  }
+
+  &__kv {
+    display: grid;
+    grid-template-columns: minmax(90px, auto) 1fr;
+    gap: 0.25rem 0.8rem;
+    margin: 0;
+    font-size: 0.87rem;
+
+    dt {
+      font-weight: 600;
+      color: var(--abm-grey);
+    }
+
+    dd {
+      margin: 0;
+    }
+  }
+
+  &__protect {
+    margin: 0;
+    padding-left: 1.1rem;
+    font-size: 0.84rem;
+    line-height: 1.6;
+    color: var(--abm-ink);
+  }
+}
+
+.abm-svc {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 0.7rem 0;
+  border-top: 1px solid var(--abm-line);
+
+  &__what {
+    min-width: 0;
+
+    b {
+      font-size: 0.92rem;
+    }
+
+    p {
+      margin: 0.15rem 0 0;
+      font-size: 0.82rem;
+      color: var(--abm-grey);
+    }
+  }
+
+  &__duration {
+    font-size: 0.75rem;
+  }
+
+  &__price {
+    flex: 0 0 auto;
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--abm-navy);
+    white-space: nowrap;
+  }
+}
+
+.abm-dist {
+  margin: 0 0 1rem;
+  padding: 0;
+  list-style: none;
+
+  li {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.25rem;
+  }
+
+  &__label {
+    width: 2rem;
+    font-size: 0.75rem;
+    color: var(--abm-grey);
+  }
+
+  &__bar {
+    flex: 1;
+    height: 8px;
+    border-radius: 999px;
+    background: var(--abm-line);
+    overflow: hidden;
+
+    i {
+      display: block;
+      height: 100%;
+      background: var(--abm-navy);
+    }
+  }
+
+  &__count {
+    width: 1.6rem;
+    font-size: 0.75rem;
+    text-align: right;
+    color: var(--abm-grey);
+  }
+}
+
+.abm-reviews {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.abm-review {
+  padding: 0.8rem 0;
+  border-top: 1px solid var(--abm-line);
+
+  &__head {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.6rem;
+    font-size: 0.85rem;
+  }
+
+  &__who {
+    font-weight: 600;
+    color: var(--abm-ink);
+  }
+
+  &__when {
+    color: var(--abm-grey);
+    font-size: 0.78rem;
+  }
+
+  &__body {
+    margin: 0.35rem 0 0;
+    font-size: 0.87rem;
+    color: var(--abm-ink);
+  }
+
+  &__reply {
+    margin-top: 0.5rem;
+    padding: 0.6rem 0.75rem;
+    border-left: 3px solid var(--abm-gold);
+    border-radius: var(--abm-r-sm);
+    background: var(--abm-cream);
+    color: var(--abm-on-cream);
+    font-size: 0.84rem;
+
+    p {
+      margin: 0.15rem 0 0;
+    }
+  }
+}

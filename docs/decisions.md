@@ -19902,3 +19902,661 @@ decision that the code, the data or a neighbouring system has already settled �
 probing it, not by reading it. It is the same discipline as D53's *"reading a mechanism out of a
 config file without establishing which environment loads it is not a statement about the running
 system"*, applied to a backlog instead of a config file.
+
+---
+
+## D103 — The marketplace has three screens, and the first thing they found was an empty landing page
+
+**Recorded 2026-09-24**, against branch `new-48-stage-b-the-public-screens` off `e331f8e`. Closes
+backlog **NEW-48 Stage B**. Changes nothing outside `web/`, `docs/backlog.md` and this file.
+
+Stage A (D101) built a client that had **never been run against a live gateway** — *"no `ng serve`,
+no login, no token obtained"* — and said so. This package is the first time it meets the estate, and
+**that is where the finding is**: with lint, prettier, 260 unit tests, the production build and
+`check:built-assets` all green, the landing page rendered a navbar over an empty outlet. §8.
+
+Three screens are delivered — Discover, Browse and the public profile — rendered from the live
+quality estate, no token anywhere, every string behind an `abmTranslate` key, every URL through
+`getEndpointFor`.
+
+### §1 What is on screen, and what it was measured against
+
+`http://127.0.0.1:14320` (`ng serve`, `HC_GATEWAY_PORT=15509`) against the quality gateway, rendered
+with `google-chrome --headless=new --dump-dom --virtual-time-budget=25000`. **Every figure below was
+compared against the estate's own answer rather than against a fixture**, which is this repository's
+most expensive defect class — the prototype's "Sessions brokered" tile read a plausible **269** for
+as long as it existed while the estate seeds **256**.
+
+| rendered | the estate's answer | how asked |
+| --- | --- | --- |
+| `18` Professionals | **18** | `GET /api/professionals/facets` → `total` — **corrected at review: this row said `/professionals/count`, which Discover never requests.** Both answer `18`, measured, so the tile was right and the prose was not; §13(d) |
+| `16` Verified | **16** | `GET /api/professionals?verifiedOnly=true&size=1` → `totalElements` |
+| `73` Reviews | **73** | `GET /api/reviews/count` — seed 63 **plus 10 written by `verify-cycle.sh` runs**, which is the count being right rather than the seed being wrong |
+| category tiles 5 / 4 / 5 / 4 | FITNESS 5, NUTRITION 4, WELLNESS 5, CARE 4 | `GET /api/categories` |
+| featured strip p15, p6, p13, p2 | same four, same order | `GET /api/professionals?sort=recommended&size=4` |
+| p15 **₵280**, p6 **₵210**, p13 **₵420**, p2 **₵220** | `fromPaidPriceMinor` 28000 / 21000 / 42000 / 22000 | the same response |
+
+**A human still has to look at the layout.** The DOM dump establishes the figures and the states; it
+establishes nothing about whether the page is legible.
+
+### §2 THE DECISION THE ITEM ASKED FOR: what the card's headline is
+
+**`fromPaidPriceMinor`, and the free service is a marker beside it.** D100 gave `ProfessionalCard`
+three quantities and left the card design to this stage; there were two other ways to spend them and
+both lose.
+
+| | why it loses |
+| --- | --- |
+| **`fromPriceMinor` as the headline** — the literal minimum | It is the misrepresentation D100 §2(b) rejected, arrived at one layer up: p13 would read **"from ₵0"** for a doula whose packages run to ₵3,200. And it is **the quantity the server's `maxPriceMinor` filter does not read**, so the slider and the headline would describe different catalogues — which is the *filter* half of D100, rebuilt in the client. |
+| **`fromPaidPriceMinor` with no marker** | Loses the offer to tidy the headline. A free consultation is a conversion tool, and D92 §4 ratified a marker precisely so it is not hidden. Nothing else on the card carries `hasFreeService`, so it would be a published field no client renders. |
+
+**Measured in a browser against the live estate**, which is what makes this more than an assertion:
+p13's public profile renders **"From ₵420 / session"** with **"Free service available"** beside it,
+and the services list below shows **"Doula consultation … Free"**. So *"Free"* appears exactly where
+it is honest — on a service that costs nothing — and never as the listing's headline.
+
+**The marker's words are `Free service available` and it does not call the service an intro**, which
+is D100 §3 carried through rather than re-decided: the two free services in the seed are *"Discovery
+session"* and *"Doula consultation"*, and `ServiceOffering.name` is free text its own professional
+types (NEW-58), so neither the purpose nor the name may be published on a card.
+
+**FOUR price states, not two, and the two that have never existed are the ones written down.**
+
+| `fromPaidPriceMinor` | `hasFreeService` | renders | seen on the estate |
+| --- | --- | --- | --- |
+| a number | false | `₵150` + *from / session* | 16 of 18 |
+| a number | true | `₵420` + the marker | p12, p13 |
+| **null** | true | **`Free`** | never |
+| **null** | false | **`Price on enquiry`** | never |
+
+**The third row is the answer NEW-78 was waiting for.** That item is the prototype rendering
+`money(Math.min.apply(null, []))` — which is **`Infinity`** — for a listing whose every service is
+free, under a comment claiming it handles that edge; D100 §5 deferred the correct value to this card
+design. It is **`Free`**: not ₵0 (which is the collapse D100 closed), not ₵∞, and not "Price on
+enquiry" (which is the *fourth* row and a different fact). **NEW-78 is informed, not closed** — the
+prototype is the seed's source and block 1 is sandboxed by the extractor, so patching it here could
+move 289 KB of seed data.
+
+`priceState()` is a three-valued computed rather than two `@if`s, because a template branching twice
+makes one arm mean "whatever is left" — which is how the all-free listing became "Price on enquiry"
+in this component's own first draft.
+
+### §3 The slider binds to the same quantity, and its scale does not move
+
+`maxPriceMinor`, whose range is `Facets.minPriceMinor`/`maxPriceMinor` — **9000–42000**, read off the
+estate, which is D100 §4's fourth site. **The budget a customer sets and the number on the card are
+one quantity**; bind the slider to `fromPriceMinor` and its floor is ₵0, a bracket the filter then
+matches nobody in.
+
+Three things about it are decisions:
+
+- **The range is read ONCE, unfiltered, and never re-read.** `facets(query)` tallies over the
+  **filtered** set, so the range narrows as you filter — a slider whose own scale moved under the
+  thumb would make "up to ₵420" mean something different on every render.
+- **At the top of the scale no `maxPriceMinor` is sent at all.** ₵420 is the highest *floor* in the
+  catalogue, not the highest price, so "up to ₵420" already means everybody; sending it would exclude
+  any listing whose floor is above the range the facets last reported.
+- **"Any rating" deletes the parameter rather than sending `0`.** `minRating` **excludes** unrated
+  professionals rather than reading them as 0.0 (D100 §4's precedent, and CLAUDE.md's central rule),
+  so `minRating=0` would silently drop every unrated listing from a filter that says "any".
+
+⚠ **D100 §9 listed three figures it could not measure — *"no `after` state was measured on the
+quality estate"* — and two of them are measured here, through a client**:
+`?maxPriceMinor=9000` answers **p3 alone** (rendered: *"1 match your filters"*, Naa Adjeley Quaye,
+₵90), and the facet floor reads **9000**. **The third is measured too, at review** — verifying §13(a)'s
+fix needed every sort driven in a real browser anyway, and `?sort=price-asc` rendered **p3, p9, p4**,
+which is exactly what D100 §9 predicted. So all three of that decision's unmeasured figures are now
+observed through a client.
+
+### §4 Every filter is single-valued, because the server's is
+
+`category`, `speciality`, `mode` and `city` are one `String` each on `MarketplaceResource`. The
+prototype renders checkbox groups; a client doing the same would have to union result sets **the
+server has already paged**, so it would be filtering one page of six. Radio groups with an explicit
+"Any" are the honest rendering of the API that exists. A multi-valued filter is a server change —
+**NEW-85**.
+
+**The options come from the UNFILTERED facets and the counts from the filtered ones, and a count is
+suppressed inside the group that carries a selection.** Both halves are correctness rather than
+taste. `facets(query)` tallies over the fully filtered set, so with `city=Accra` chosen the filtered
+facets hold **Accra alone**: render the options from that and choosing a city removes every other
+city from the sidebar, and the filter cannot be changed back. And the count beside "Kumasi" would be
+`0` meaning *"0 within Accra"*, which reads as **"there is nobody in Kumasi"**. The prototype
+computes each group's counts ignoring that group's own selection; this API cannot answer that in one
+request, so the counts are **hidden rather than shown wrong**. Visible in the `?maxPriceMinor=9000`
+render above: every option is listed, and the counts read 0/1/0/0.
+
+**The state is the URL.** Every filter, the sort and the page are query parameters, so a filtered
+catalogue is a link and the back button works; Discover's hero search navigates into it.
+
+### §5 "Available soonest" is omitted, and that is a decision with a loser
+
+The prototype ranks a Discover section and a Browse sort by `nextAvailable(p.id)`. **Neither is
+built**, and the reason is not effort:
+
+- `ProfessionalCard` carries **no availability**, and **no server sort reads one** — the seven the
+  server offers are `recommended`, `rating`, `reviews`, `price-asc`, `price-desc`, `experience`,
+  `response`.
+- Computing it in the client is **one `/availability` request per card** on an unauthenticated public
+  read — eighteen for one Discover render.
+- **And every one of them would answer `[]` today.** Measured 2026-09-24 on p1, p2, p3, p12, p13: the
+  seed's slots are anchored at **2026-08-10** (`$meta.demoToday`, `anchor-dates=true` on quality) and
+  the endpoint's default window runs from the marketplace's today, so the section would render empty
+  for every visitor at the cost of eighteen requests.
+
+A menu entry the server silently ignores is worse than an absent one: it reorders nothing and reads
+as a broken control, so an unknown `sort` in the URL becomes `undefined` rather than being forwarded.
+**The server-side answer is NEW-82**; the card's "Next: …" line goes with it.
+
+**The "Sessions brokered" tile is omitted for the same class of reason and by the prototype's own
+argument** — nothing this estate publishes counts bookings for an anonymous reader, and the
+prototype's live block already replaces `sessionsBrokered()` with one returning `null`. **A tile with
+no number renders nothing rather than a zero**, which is `rating`'s rule one figure along.
+
+### §6 No percentage and no cancellation window are named on any screen
+
+The prototype writes *"minus a 12% brokerage fee"* and *"Free cancellation up to 24 hours before"*.
+Both are **configurable per estate** — `HC_BROKERAGE_COMMISSION_RATE`,
+`HC_BROKERAGE_FREE_CANCELLATION_HOURS`, D57 — and **no endpoint publishes them without a token**:
+`GET /api/internal/brokerage/split` is gateway-routed but needs one, and `/management/info`'s
+`brokerage.termsInForce` is payout's.
+
+So a `12%` compiled into a template is a number that **goes wrong silently** on the first estate
+priced differently, which is D57's own argument for keeping the defaults in Java. The screens say the
+fee is *included* and that the cancellation window is *shown before you confirm*, both of which are
+true on every estate. A public terms endpoint is **NEW-83**.
+
+⚠ **THE GUARD BEHIND THAT SENTENCE COULD NOT SEE EITHER PLACE THE NUMBER WOULD BE TYPED — see §13(b).**
+This section read *"two specs assert the absence"*; both asserted over a rendered component's
+`textContent` in a `TestBed` with **no translation bundle loaded**, and `TranslateDirective` sets
+`innerHTML` from the translation, so with no bundle ngx-translate returns the KEY and a template's
+fallback prose is never in the test DOM at all. Measured by mutation: the 12% sentence pasted into
+`discover.html`'s fallback → **green**; pasted into `i18n/en/marketplace.json` → **green**. It is
+`terms-are-not-quoted.spec.ts` plus a loaded bundle now, and both mutations are red.
+
+### §7 The profile carries no booking, message or save control
+
+All three need a token and are Stage C's. A control that does nothing is worse than no control, and
+this stage has no token anywhere — so the price panel states what a session costs and stops. Asserted
+in both the card's spec and the profile's, because "add a Book button, we'll wire it later" is a
+one-line change that looks like progress.
+
+**What an empty or unreachable estate renders is the other half of the same decision**, and the
+prototype has no markup for it: every one of its screens reads an array already in memory. Three
+named states in one component, and all three are demonstrated rather than only tested:
+
+- **loading** — a labelled statement that a request is in flight. Not a bare spinner: `@if (loaded)
+  { … } @else { spinner }` is **indistinguishable from a failure** for as long as somebody is willing
+  to wait, which is a decision nobody took.
+- **failed** — a named failure **with a retry**, no status code (the estate's own
+  `ExceptionTranslator` redacts under `prod`, and a 502 on a marketplace page is noise a visitor
+  cannot act on). **Rendered in a browser** against a dev server proxying to a closed port: two
+  panels reading *"The marketplace could not be reached"* with *"Try again"*, the hero figures
+  absent, and the static content still there.
+- **empty** — an ordinary answer with the screen's own words, because "no professional matches these
+  filters" and "this marketplace has no professionals" are different sentences.
+
+**A 404 and a 502 render identically on the profile**, deliberately: both mean "there is nothing at
+this address" to a visitor, and a public page must not tell a stranger which.
+
+**The availability panel's empty state is the one a visitor sees today.** p13's profile renders *"No
+published openings — this professional has published no openings in the next ten days"*, because the
+seed is anchored in the past (§5). That is not a client defect; it is **NEW-84**.
+
+### §8 ⚠ THE FINDING: an empty generated route array swallowed the landing page, and nothing was red
+
+**This is what Stage B was for, and no gate in this repository could have found it.**
+
+`app.routes.ts` ends with two `path: ''` entries. `entity.routes` is the generated
+`Routes = [/* jhipster-needle-add-entity-route */]` — an **empty array**. Ordered first, it matches
+the empty URL, consumes it, finds no child, and **does not backtrack**.
+
+```
+/         -> navbar over an EMPTY <router-outlet>      (measured, headless Chrome)
+/browse   -> 18 cards                                  (measured, same run)
+```
+
+**Everything was green while it was broken**: `npm run lint`, `npm run prettier:check`, **260 unit
+tests**, `npm run webapp:prod`, `check:built-assets`, and every screen's own spec — because a
+component spec instantiates its component directly and never asks the router anything. There is no
+console error; the shell and the navbar render perfectly.
+
+**The asymmetry is what made it diagnosable and is worth more than the fact.** `/browse` working
+while `/` did not is what establishes that an empty children array swallows *exactly* `''` rather
+than everything — which is why the fix is a reorder rather than deleting the entities entry, and why
+`entity.routes` can keep its needle for the day something is generated into it. Moving the
+marketplace first costs nothing: backtracking happens when a parent matches and a child does not,
+which is precisely what an empty children array cannot do.
+
+`app.routes.spec.ts` asks the **router** — `navigateByUrl`, then "was anything activated" — for `/`,
+`/discover`, `/browse` and `/professionals/p1`, plus a control that the profile and Discover activate
+*different* components, since "something was activated" is satisfied by a table that sends every URL
+to one screen. **Watched going red on the exact mutation**: with the two entries swapped back,
+**`/` alone fails** and the other three pass — the same attribution the browser showed, restored by
+`cp` from a pristine copy and the tree diffed clean afterwards.
+
+It has **no outlet and constructs no component**, which is a narrowing taken at review of my own
+first draft: a host with a `<router-outlet>` is a stronger test and a worse one, because it makes this
+file's result depend on every screen it touches being constructible in a bare `TestBed` — the
+generated `Login` immediately produced an unhandled `NG0951` from its own `ngAfterViewInit`. The
+subject here is the route table.
+
+### §9 Four smaller findings, each a decision rather than a repair
+
+**(a) The Stage A endpoint guard fired, and it was NOT narrowed.**
+`endpoint-construction.spec.ts` keys on the **method name**, so `ParamMap.get('category')` is an
+offender to it — eleven of them in `Browse` alone. Its own javadoc calls the over-match the
+fail-closed direction and names `Map.get('key')` explicitly; Stage B is simply the first code to trip
+it. **Loosening a ban the moment it first fires is this repository's standing failure mode** (D97 §5,
+about a different check, in as many words). The code moved instead: `route-params.ts`, three readers,
+which also collapses `null` and `''` into one meaning and removes eleven `?? undefined`. Stages C to
+E will meet this again — reach for the helper, not the guard.
+
+**(b) Two subscriptions had no `error` arm, which is an uncaught exception in a browser.**
+`subscribe({ next })` **rethrows** on the error path. Measured before the fix: the failing-estate case
+produced **three** "Vitest caught unhandled errors" reports with every assertion green. Both arms are
+there now and a spec asserts the state they leave behind.
+
+**(c) The per-component style budget was met by hoisting, not by raising.** `anyComponentStyle` is
+2 kB warn / 4 kB error and `professional.scss` was **4.65 kB**. Raising a budget because your own code
+exceeded it is (a) again, so `.abm-panel`, `.abm-crumbs` and `.abm-days` moved to `global.scss` —
+each on a reuse argument that stands on its own (Stage C's booking wizard picks a slot from the same
+day strip the profile renders, which is the prototype's step 2). **The three page stylesheets still
+exceed the 2 kB WARNING and the budget was left alone**, which is stated rather than glossed: whether
+a page-level component should carry a budget calibrated for widgets is a real question and it is not
+mine.
+
+**(d) The contrast of what actually rendered was computed, and one pair is outside the map.**
+`brand-contrast.spec.ts` checks `$abm-text-on`, a surface → *one* permitted foreground map. The hero
+uses **gold-300 as a foreground on a navy→navy-700 gradient**, and `navy-700` maps to white, so the
+far end of that gradient is not a map entry. Measured by hand with the same formula, and the negative
+control reproduces CLAUDE.md's published 2.74 for white-on-gold, which is what makes the rest worth
+anything:
+
+```
+gold-300 on navy        7.04  AA        navy on gold (control)   4.85  AA
+gold-300 on navy-700    5.60  AA        white on gold (control)  2.74  FAIL
+ink on gold-050        15.02  AA        white on navy-700       10.56  AA
+```
+
+Contrast is symmetric, so the map's `'gold-300': navy` entry does cover the near end. **The map is
+not widened** — one foreground per surface is its whole design, and a second entry would make it a
+list of allowed pairs instead.
+
+### §10 Two things taken out, and one of them is a credential
+
+**The generated `home` component is deleted, not moved.** On a **public** marketplace client it was
+not merely off-brand: `global.messages.info.authenticated.suffix` reads *"you can try the default
+accounts: Administrator (login="admin" and password="admin")"*, and on the estates that run
+`dev`/`test` **that credential works** (D61). The three keys that composed it were removed with it —
+an i18n entry nothing renders still ships in the bundle and is still fetchable. `i18n/en/home.json`
+went too. Discover is the landing page; the navbar's first item is "Discover" and a "Browse" item
+sits beside it.
+
+**The five `ROLE_ADMIN` monitoring pages are untouched**, which is D101 §6(b)'s thin question and
+still the architect's.
+
+### §11 What is verified, what is assumed, and what is not exercised
+
+**Verified by running.** `npm run lint` rc=0; `npm run prettier:check` rc=0; `npm test` **267 tests
+over 43 files**; `npm run webapp:prod` rc=0; `check:built-assets` **78 built files, 0 Sass, 22 content
+assets**; `account-lifecycle-guards.sh` 36 assertions over 6 parts; `backlog-table-agrees.sh`;
+`sync-appendices.sh --check`. Against the **live quality gateway**: Discover, Browse (unfiltered and
+at `?maxPriceMinor=9000`) and two profiles (p1, p13) rendered in headless Chrome, every hero figure
+and every card price compared against the API's own answer; the unreachable-estate state rendered
+against a closed port; the routing mutation watched red on `/` alone and restored.
+
+**Assumed.** That the marker's wording *"Free service available"* is what a customer wants to read —
+it satisfies D100 §3's constraints (no purpose claimed, no professional-authored text) and no user has
+seen it. That single-select filters are acceptable UX; the API allows nothing else without a server
+change.
+
+⚠ **Not exercised.** **Nothing was deployed and no compose file or vhost was touched** — the client
+runs only under `ng serve` and where it will be served is still D101 §6(a)'s open question. **Cypress
+has still never run.** **The quality stack was read from and never written to**: every request was a
+`GET` on a `permitAll` path, nothing was restarted and nothing was reseeded. **No screen was seen by a
+human** — the DOM dump establishes figures and states and says nothing about layout, and this
+estate's own rule asks for eyes. **The two null-price states have no live instance** (no professional
+in either estate publishes only free services, or nothing at all), so they are covered by tests and by
+nothing else — and at review that cover turned out to be their **computation** and not their
+**rendering**: blanking either `@case` body left 279 tests green. Both are asserted over rendered text
+now; §13(c). `/professionals/:ref` for a **missing** ref was not asked of the live estate; the 404
+path is covered by a unit case alone.
+
+### §12 Items opened, and one informed
+
+- **NEW-81** — a public profile publishes a customer's **login** as a review author.
+- **NEW-82** — "Available soonest" has no server answer.
+- **NEW-83** — the brokerage terms are not publicly readable, so no screen may state them.
+- **NEW-84** — the seeded availability is anchored in the past, so every profile's strip is empty.
+- **NEW-85** — Browse's filters are single-valued because the server's are.
+- **NEW-77 is INFORMED and stays open**, which the item asked for explicitly. The card **shows**
+  `hasFreeService`; it cannot **find** one. There is no `hasFreeService` filter and no facet, the
+  result set is server-paged so a client-side filter would filter one page of six, and Stage B must
+  not invent a filter the server does not offer. The item is narrower now: it needs a server-side
+  marker filter **and** a facet, and the card design it was waiting on is settled.
+- **NEW-78 is INFORMED and stays open** — §2 gives the all-free edge its rendering (`Free`); the
+  prototype's own `₵Infinity` is untouched because block 1 is the seed's source.
+
+### §13 Review round 1: one blocking defect, three guards that did not guard, four corrections
+
+**The blocking one was on screen against the live estate and invisible to every assertion in this
+package**, and the three guard findings are all the same shape: *what was asserted was the state a
+screen computed, not the output a reader sees.* That shape is worth more than any of the four
+instances, because §9 of this very decision is about not loosening guards and says nothing about
+guards that were never tight.
+
+#### (a) ⛔ BLOCKING — the sort menu contradicted the order actually applied
+
+`[value]` on a `<select>` whose `<option>`s come from an `@for`. **Angular writes the select's `value`
+before the options exist**, so the DOM keeps `''`, the browser default-selects option 0, and nothing
+rewrites it because the bound value never changes again.
+
+Measured through CDP against the live quality gateway — **results correct, control wrong, every time**:
+
+| URL | first cards | the menu read |
+| --- | --- | --- |
+| `?sort=price-asc` | p3 (₵90), p9, p4 | **"Most relevant"** |
+| `?sort=rating` | p6, p13, p15 | **"Most relevant"** |
+| `?sort=reviews` | p1, p2, p3 | **"Most relevant"** |
+| `?sort=experience` | p15, p14, p11 | **"Most relevant"** |
+
+**First render only — which is every shared link, bookmark, reload and back-navigation.** Choosing a
+sort inside the app always worked, because the `change` handler navigates and `query()` comes back
+changed; that is exactly why it survived a review pass and a browser pass.
+
+**The discriminating control is the search box three lines above it**: `[value]="query().q ?? ''"` on
+an `<input>` renders `coach` correctly on the same render from the same signal. So `query()` was right
+the whole time and **no assertion over it could ever have seen this** — which is what
+`browse.spec.ts` had.
+
+⚠ **This component's own code predicted the defect and did not check for it.** `asSort` drops an
+unknown sort rather than forwarding it precisely because that *"would leave the menu showing nothing
+selected while the list was ordered by something — the shape that reads as a broken control"*. That
+shape was live for all seven **known** sorts.
+
+**All seven sorts were then driven in a real browser against the live gateway and every one shows the
+order it applied** — `recommended` p15/p6/p13, `rating` p6/p13/p15, `reviews` p1/p2/p3, `price-asc`
+p3/p9/p4, `price-desc` p13/p17/p12, `experience` p15/p14/p11, `response` p2/p13/p7 — six of them
+matching the review's own card lists exactly. *(The first CDP target in any run reads `null`: a cold
+lazy-chunk compile in `ng serve`, confirmed by asking for the same sort twice and getting `null` then
+`ok`. A harness artefact, not the app, and worth naming because it looks exactly like the defect.)*
+
+**Fixed with `[selected]` on the option** — a property binding, evaluated when the option exists and
+re-evaluated whenever `query()` changes — and `selectedSort()` named on the component so the template
+reads once. **The assertion is over the RENDERED selection** (`select.value` and
+`selectedOptions[0].value`) for four URL-supplied sorts, and it was **watched red first**:
+`expected 'recommended' to be 'price-asc'`, which is the browser's "Most relevant" reproduced in
+jsdom. Two controls go with it, and both were green throughout: the no-sort case (`recommended`, so a
+"always select option 0" repair would pass it) and the in-app `change` path (so a first-render-only
+repair that broke interaction is red there alone).
+
+#### (b) The commission-rate guard reached only the one site nobody would use
+
+§6 claimed *"two specs assert the absence"*. Measured by mutation:
+
+| the 12% / 24-hour sentence in… | result |
+| --- | --- |
+| `discover.html`'s `abmTranslate` **fallback** text | **green** |
+| `i18n/en/marketplace.json` | **green** |
+| a plain untranslated `<p>` | **1 red** — the control |
+
+`TranslateDirective` sets `innerHTML` from the translation, so in a `TestBed` with **no bundle
+loaded** ngx-translate returns the key: **the bundle is never read and a template's fallback prose is
+never in the DOM at all.** The two sites a *"restore parity with the prototype"* edit would touch were
+both invisible; the one that was covered is the one nobody writes.
+
+**Two halves now, failing for different reasons.** `terms-are-not-quoted.spec.ts` reads the **files** —
+every `i18n/en/*.json` value and every marketplace template — and the two screen specs load the real
+bundle through `loadEnglish()` so their `textContent` assertions read prose. **Both mutations are red**,
+the second in three places. Each half carries its own control: a positive one asserting the pattern
+matches the prototype's actual sentences, a **negative** one asserting it does *not* match
+`88% rebook` (which is `rebookRatePct`, a fact about one listing that every profile renders — a ban
+that refused it would be red on correct code, which is how a ban gets deleted), and in the screen
+specs an assertion that the rendered text is **prose and not keys**, without which "the DOM does not
+contain 12%" is true of a DOM containing no sentences.
+
+#### (c) The four price states were asserted as state, not as output
+
+| mutation | result |
+| --- | --- |
+| blank the card's `@case ('free')` body | **green** — an all-free listing rendered an empty price box |
+| blank the card's `@case ('enquire')` body | **green** |
+| blank the profile's `'free'` **and** `'enquire'` bodies | **green** |
+
+The assertions were `priceState()` — a computed — and `not.toMatch(/Infinity|NaN|undefined|null/)`,
+**which emptiness satisfies**. §11's "covered by tests and by nothing else" was therefore true of the
+computation and false of the rendering, and these are the two states NEW-78's answer rests on.
+
+**Both screens assert the actual strings now** (`Free`, `Price on enquiry`), plus a mechanical case
+over all four rows of §2's table demanding a non-empty amount that is not a translation key. All three
+mutations are red; the negative assertion is kept beside them, with its javadoc rewritten to say that
+a negative assertion is satisfied by emptiness and that is why the positive ones exist.
+
+**For contrast, what was already guarded and stays so**: reverting the headline to `fromPriceMinor`
+→ 2 red; removing a `drive()` error arm → 4 red; rendering `0.0` for a null rating → 2 red.
+
+#### (d) Four documentation corrections, each a claim the code does not support
+
+- **`discover.ts` named a read the screen does not make**, and §1's table repeated it: it listed
+  `professionals/count`, which `load()` never calls. The tile is `facets().total`. **The number was
+  right** — both answer `18`, measured — so this is prose describing a request that is never sent, which
+  is the genre this whole decision keeps finding. The javadoc enumerates the **five** reads now and
+  says why the tile uses the facets (that screen fetches them anyway for its two menus). And
+  `MarketplaceService.professionalCount()` **has no caller**, which is now stated at the method with
+  its reason rather than left to be discovered: the two count endpoints exist for `deploy-dev.sh`'s
+  `verify_seed` and `quality/startup.sh --verify`.
+- **`app.routes.ts` contradicted itself.** Its javadoc said the marketplace is *"loaded last"*; it is
+  not — `entity.routes` and `...errorRoute` follow — and the ⚠ block eight lines below says it **must**
+  precede the first of those. A reader trusting the first sentence rebuilds §8's defect. The stated
+  *reason* was wrong too: `login` and `admin` are declared **above** the marketplace, so nothing below
+  them could shadow them.
+- **"the seven endpoints on `MarketplaceResource`" is eight.** `grep -cE '@GetMapping'` = 8, the
+  service covers all eight, `PUBLIC_GET_PATHS` has eight entries and all eight answer 200 anonymously.
+  The review brief said seven as well, so this is two readers propagating one number.
+- **NEW-81 said "four reviews"** carry `kojo.ampia.addison` on p1. **Four is the page size.** Measured:
+  p1 has 17 reviews and **10** of them carry the login.
+
+**"Four price states" against three enum values is NOT a defect** and was checked: four combinations of
+two fields, three renderings, and both documents enumerate the four rows immediately below the phrase.
+
+#### (e) Two smaller ones
+
+- **Browse used one set of words for filtered-empty and empty-catalogue**, while `load-state.ts` three
+  files away argues those are different sentences and that *"only the screen knows which it is"* — the
+  argument stated and not followed, with `hasFilters()` already sitting three lines below. Split:
+  `marketplace.browse.empty.*` when something is filtering, `marketplace.browse.emptyCatalogue.*`
+  otherwise. Unreachable on quality (18 listings) and reachable on production's first day, when a
+  visitor with no filters set was being told to widen a price range they had never touched.
+- **A one-off failure in `has-any-authority.directive.spec.ts` during a mutation run could not be
+  reproduced.** The suite was run **five** consecutive times on the final tree: **279/279 green** each
+  time, and that spec green within the suite each time. `vitest.sequence.shuffle` is not configured, so
+  order is the default deterministic one — which means a genuinely order-dependent failure would be
+  *consistently* red rather than intermittent, and is evidence against that reading.
+  > ⚠ **That clause overstated what an unconfigured `shuffle` buys, and the conclusion survives the
+  > correction on a different argument** (review round 2, D103 §14). Deterministic *order* is not a
+  > deterministic *run*: `fileParallelism` defaults to **true**, so the 44 files run concurrently in
+  > separate workers and their interleaving is not fixed by anything. What actually rules out the
+  > cross-file reading is **isolation** rather than order — each file gets its own worker and its own
+  > module registry, so no other spec's `TestBed` can reach into this one. This estate has met the
+  > opposite case one stack along: D76's gateway flake was cross-class pollution *inside one JVM*, and
+  > the reason it cannot transfer here is the isolation, which is worth saying rather than assuming.
+  Running it alone
+  with `npx vitest run` **does** fail, and that is not the flake either: it is the path-alias
+  limitation of bypassing the Angular builder (`Cannot find package 'app/core/auth/account.service'`),
+  which `app.routes.spec.ts` hit in this same package.
+  ⚠ **What is worth carrying is a NEW coupling this round introduced**: `loadEnglish()` reads
+  `i18n/en/*.json` **off disk at test time**, so a mutation run that edits a bundle while the suite is
+  reading it can now produce an unrelated-looking failure in any spec that renders text. Suspect that
+  before suspecting an order dependency.
+
+#### What changed in the gates
+
+`npm test` is **279 tests over 44 files** (from 267/43): one new spec file, four new assertions on
+Browse, three on the card, one on the profile, one on Discover. Every mutation above was applied one at
+a time, restored by `cp` from a uniquely-named pristine snapshot, and the four mutated files were
+confirmed **byte-identical to HEAD** afterwards with `git diff`.
+
+### §14 Review round 2: the guard written in round 1 had the defect round 1 was about
+
+Ten mutations by an independent re-review, one blocking. **The blocking one is `terms-are-not-quoted.spec.ts`
+— the file §13(b) added to close a guard that reached nothing — reaching one sentence less than the
+prototype writes, in both of its arms.** Round 1's finding recreated inside round 1's fix, which is this
+repository's most familiar shape and is why the round happened at all.
+
+#### (a) ⛔ BLOCKING — the ban missed one of the prototype's six sentences, in both halves
+
+The file claimed its two scopes were *"every place a number can be typed"*. Measured, by planting the
+prototype's own wording as the profile's existing protection-panel line:
+
+```
+marketplace.professional.protection.cancel = "Free up to 24 hours before the session."   -> 279/279 GREEN
+```
+
+That states `HC_BROKERAGE_FREE_CANCELLATION_HOURS` (D57) in the text a visitor reads on a public
+profile, and **neither half could see it**. The hours arm required `cancel|cancellation|refund` within
+60 characters of the number, and *that sentence contains no such word*: the prototype puts
+**`Cancellation`** in the label cell of a practicalities row and `Free up to 24 hours before the
+session` in the value cell beside it, so a bundle value carrying it says only `free`. The two screen
+specs use the same four patterns, so the rendered-DOM half was blind in exactly the same place.
+
+**Six sentences, not two.** The positive control asserted over *"the prototype's own two sentences"*;
+the prototype writes **six** rate-and-window sentences and the original patterns caught **five**. All
+six are in the control now, read off `docs/Abofonsa_BridgeCare_Marketplace.html`, with the escaped one
+named as the escaped one.
+
+**The fix is `free` in both hours patterns, and the cheaper fix is wrong.** Dropping the noun
+requirement to a bare `/\d+\s*hours?/` is red on `i18n/en/reset.json`'s *"a password request is only
+valid for 24 hours"* — correct copy — so the noun is right and was merely incomplete. Measured after
+widening: **0 hits** over all 14 bundles (389 leaves) and all 29 `app/` templates; the six prototype
+sentences all caught; and six negative controls still allowed, including that reset sentence and the
+card's own `Free` and `Free service available`, which are D100's price states and say `free` beside no
+window at all.
+
+#### (b) The template arm stopped at `app/marketplace`, and the footer renders on all three screens
+
+Both forbidden sentences planted in `app/layouts/footer/footer.html`'s `abmTranslate` fallback: **279/279
+green**. The bundle arm was never scoped that way — a rate in `i18n/en/global.json` was correctly red —
+so the asymmetry was the defect: a translation is never scoped to a screen, and neither is a layout.
+The walk is `app/`-wide now (6 templates → 29).
+
+**Its control was a count, and a count under the real number lets the walk lose a file in silence.**
+`templates.length > 4` against a real 6. Replaced by **names**: the three public screens, plus
+`app/layouts/footer/footer.html`, which is the assertion that the walk left `app/marketplace` at all.
+
+**Two limits are now stated in the file rather than left as an empty column** (this file's own rule about
+a `—` in a column whose other rows carry numbers), and the first of them was **measured rather than
+asserted, which changed what it says**. The arm reads `.html` only. Excluding `*.spec.ts` — a class of
+file rather than a named one, since a sentence in a spec cannot reach a visitor — is enough to keep the
+guard's own probe strings out of its way, so the widening was tried: over the remaining **138** files it
+has exactly **one** hit, and the hit is **correct code**. `app/marketplace/money.ts`'s javadoc carries
+`CLAUDE.md`'s own sentence — *"`28000` is ₵280.00 and the 12% brokerage fee is INSIDE it"* — which states
+the money model in a comment and shows a visitor nothing.
+
+So the `.ts` widening is **not a wider glob; it is a comment stripper**, which in this repository is a
+decision with history: `strip-comments.awk` exists for exactly this, its Java syntax covers TypeScript,
+and D77 is the record of what happens when a caller grows a private one instead. Deferred with the
+remedy named in the spec's own javadoc rather than half-done. **The reason this is worth a paragraph is
+that the cheap reading was "the scope is narrow because of a self-reference"** — true, and not the
+binding constraint; the binding constraint is that source text needs stripping before a ban can read it,
+which is the estate's oldest lesson arriving in a vitest spec.
+
+The second limit: the bundle scope is estate-wide while the template scope is `app/`-down, deliberately,
+and now written where a reader meets it.
+
+#### (c) The two DOM prose controls were prefix-scoped and could not see the scope note
+
+`discover.spec.ts` and `professional.spec.ts` asserted `not.toContain('marketplace.discover.')` and
+`not.toContain('marketplace.professional.')`. Both screens also render `marketplace.scope.*`,
+`marketplace.mode.*`, `marketplace.price.*` and `marketplace.verification.*`. Measured: deleting
+**`marketplace.scope.body`** left 279/279 green while both public screens would render the literal
+string `marketplace.scope.body` to a visitor — and the scope note is the one piece of prose `CLAUDE.md`
+calls *"a hard boundary, not copy"*, whose only other assertion is that its element exists.
+
+Both are the bare `marketplace.` now — the shape `professional-card.spec.ts` already had — and **each was
+bound separately rather than one inheriting the other's evidence**: deleting `scope.body` reddens
+Discover's control (1 test), deleting `scope.short` reddens the profile's (1 test), because the profile
+renders the short form and *not* the body. A single mutation would have looked like coverage of both.
+
+#### (d) The new empty-catalogue arm had no test — §13's own finding, in §13's own commit
+
+§13(e) split Browse's empty state into two arms. `browse.spec.ts` asserted `hasFilters()` — a **computed**
+— in three places and **rendered neither arm**, which is §13(c)'s finding ("asserted as state, not as
+output") one component along in the same commit. The arm that was untested is the one nothing on quality
+can reach: production's first day, catalogue empty, no filter set.
+
+`tells a filtered dead end from an empty catalogue, in the words a visitor reads` renders both arms with
+the real bundle and asserts the **words** plus the presence and absence of `clearFiltersEmpty`. It
+required `loadEnglish()` in `browse.spec.ts`'s `create()`, so that file now has the control the other two
+have.
+
+**Two mutants, and the second is the one that matters.** Deleting the `@else` arm outright is caught by
+the pre-existing `stateEmpty` assertion as well (the unfiltered empty state then renders *nothing*), so
+it proves little. Keeping both arms and giving the else-arm the **filtered** words — precisely the state
+§13(e) fixed — is caught by the new test **and by nothing else**. Both mutants had to be re-cut once:
+`npm test` runs `pretest` → `lint`, and prettier reflowed the shortened attribute list, so the first
+attempt was refused for formatting rather than measured. **A mutation lint can see is not a measurement
+of the assertion.**
+
+#### (e) Four comments corrected, each an overclaim rather than a defect
+
+- **`browse.spec.ts`'s `shows "recommended" when the URL names no sort`** claimed *"it is here so the fix
+  is not 'always select option 0'"*. It cannot fail for that reason: `select.value` is by definition the
+  value at `selectedIndex` and the browser default-selects option 0, so dropping the `?? 'recommended'`
+  fallback leaves it green — measured. **§13(a) had this right and the spec's own comment contradicted
+  it.** Rewritten to say what the case does cover: that the control still renders *a* selection, so a
+  blanked menu or a reordered option list is red there.
+- **`loadEnglish()`'s javadoc** said the bundles are *"deep-merged exactly as `build-plugins/i18n-esbuild.ts`
+  merges them"*. That plugin uses npm `deepmerge`, which **concatenates arrays**; the hand-rolled merge
+  would merge them index-wise. True of the data, not of the code — 389 leaves, every one a string, zero
+  arrays, one shared top-level key both algorithms handle identically — and the javadoc now says which,
+  with the trigger for re-measuring named.
+- **The flake argument in §13(e)** rested on `sequence.shuffle` being unconfigured. That fixes *order*
+  and not *timing* — `fileParallelism` defaults true — so the correction is recorded inline above: what
+  rules out cross-file pollution is worker **isolation**, which is the property D76's gateway flake did
+  not have inside one JVM.
+- **`app.routes.ts`'s ⚠ block** ended *"Moving the marketplace first costs nothing"*, which reads as
+  *first in the array* — exactly what the corrected note three paragraphs above it disclaims. It says
+  "ahead of the entities entry" now.
+
+#### (f) What the re-review checked and did not move
+
+Reported as sound, with the measurements behind them: §13(a)'s `[selected]` fix (a first-render-only
+repair reddens exactly one named test), §13(b)'s bundle arm across **all** `en` bundles, §13(c)'s four
+price states (the card's `free` case reddens with an exact-string message), `loadEnglish()` failing closed
+(6 red across all three specs that call it), and the six documentation corrections of §13(d) — eight
+`@GetMapping` in `MarketplaceResource` against eight paths in the client's javadoc and eight entries in
+`PUBLIC_GET_PATHS`, Discover's five reads, `professionals/count` genuinely never requested, and NEW-81's
+ten reviews re-read off the live catalog. `node:fs` under `app/` was re-confirmed not to reach production
+by **building**: `tsconfig.app.json` is `files: ["src/main/webapp/main.ts"]`, `webapp:prod` and
+`check:built-assets` both exit 0 at 78 files / 0 Sass / 22 content assets, and no fixture prose is in
+`target/classes/static`.
+
+Two smaller observations left as statements rather than changed. `select.value` and
+`selectedOptions[0].value` in `browse.spec.ts` are the **same** assertion for a single-select — harmless
+redundancy, not two checks. And `endpoint-construction.spec.ts`, `brand-contrast.spec.ts`,
+`check-built-assets.mjs` and `angular.json` (budgets included) are **byte-identical to `e331f8e`**:
+nothing was loosened to make either round pass.
+
+#### What changed in the gates
+
+`npm test` is **280 tests over 44 files** (from 279/44): one new Browse case rendering both empty arms,
+six new probes in the terms guard's controls, and four assertions replacing one count. Six mutations this
+round, each applied alone, each proven to have landed, each restored by `cp` from a uniquely-named
+pristine snapshot, with `diff -r` against that snapshot after every restore and `git status` clean of
+everything but the four intended files at the end.
+
+**And CI went red on a service this package does not touch**, which is written up as **NEW-86** rather
+than absorbed: `GatewayIdentityMetricsIT.gaugesPartitionTheCollection` failed `expected: 6L but was: 2L`
+— the string that test's own javadoc quotes as the failure **NEW-57 closed** — because BlockHound caught
+`Unsafe#park` on the event loop inside the refresh, so `refresh().block()` published nothing and the
+gauges kept the first tick's reading. The test's **first** reading has no supersession guard where its
+second one does. The re-run passed, which establishes that it is intermittent and **not** that the park
+is gone. This is the third gateway identity-metrics defect found by a pull request that changes no Java.
+
+**The merged tree was then rendered against the live estate**, because that is this client's house rule
+and round 2 changed no rendered file, so it is a confirmation rather than a first look: no raw
+translation key and no `NaN` in the rendered text of any of the three screens, Discover's **18 / 16 / 73**
+matching the estate's own answers, Browse's **18 matches** with "Most relevant" selected on a URL naming
+no sort, and p13 at **`From ₵420 / session`** with the free marker, no `₵0`, and the fee sentence stating
+no rate.

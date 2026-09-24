@@ -3967,7 +3967,91 @@ defect.
 
 ---
 
-## NEW-48 — there is no application: the front end the prototype has been specifying all along · STAGE A DONE (D101), B–E READY
+## NEW-48 — there is no application: the front end the prototype has been specifying all along · STAGES A+B DONE (D101, D103), C–E READY
+
+> **STAGE B CLOSED 2026-09-24 — `decisions.md` D103**, on branch
+> `new-48-stage-b-the-public-screens` off `e331f8e`. **Discover, Browse and the public profile are
+> delivered and rendered from the LIVE quality estate**, no token anywhere, every string behind an
+> `abmTranslate` key, every URL through `getEndpointFor`. `npm run lint` rc=0, `prettier:check` rc=0,
+> `npm test` **280 tests over 44 files**, `webapp:prod` rc=0, `check:built-assets` **78 files / 0 Sass
+> / 22 content assets**; `account-lifecycle-guards.sh`, `backlog-table-agrees.sh` and
+> `sync-appendices.sh --check` all green.
+>
+> **TWO REVIEW ROUNDS. Round 2's blocking finding is IN ROUND 1'S FIX** (D103 §14):
+> `terms-are-not-quoted.spec.ts`, added to close a guard that reached nothing, reached one sentence less
+> than the prototype writes — **in both of its arms**. The prototype's `Cancellation` row says *"Free up
+> to 24 hours before the session"*, with the noun in the label cell beside it, so the hours patterns
+> matched nothing and the sentence planted as a bundle value left **279/279 green**. `free` is in both
+> patterns now (a bare `/\d+\s*hours?/` instead would be red on `reset.json`'s correct copy); the
+> template walk is `app/`-wide, because the footer renders on all three public screens and was outside
+> it; the two screens' prose controls are the bare `marketplace.` prefix, because a deleted
+> `marketplace.scope.body` rendered its own key to a visitor with everything green; and the walk's
+> control is **four named files** rather than `length > 4` against a real 6. Round 2 also found **the new
+> empty-catalogue arm had no test at all** — round 1's own "asserted as state, not as output" finding
+> recreated in round 1's commit — and corrected **four overclaimed comments**, one of which contradicted
+> D103 §13(a) about what its own test can catch. `npm test` is **280 over 44** and the gate is green.
+>
+> **ROUND 1: five findings, and the blocking one was on screen against the live estate while
+> every assertion in the package was green** (D103 §13). `[value]` on a `<select>` whose options come
+> from an `@for` is written **before the options exist**, so `?sort=price-asc` returned the right cards
+> and the menu read **"Most relevant"** — first render only, which is every shared link, bookmark and
+> reload. The component's own `asSort` argues against exactly that shape. Fixed with `[selected]` on
+> the option; asserted over the **rendered** selection, watched red first.
+>
+> **Three guards asserted a computed state rather than the output a reader sees, and all three were
+> fail-open.** The commission-rate ban could not see the 12% sentence pasted into a template's
+> `abmTranslate` **fallback** or into `i18n/en/marketplace.json` — `TranslateDirective` sets
+> `innerHTML`, so with no bundle loaded a `TestBed` reads keys and never reads the bundle at all. And
+> blanking either null-price `@case` body left every test green, because `priceState()` is a computed
+> and `not.toMatch(/Infinity|NaN/)` is satisfied by emptiness. **Four documentation corrections**
+> besides, each a claim the code does not support — including a javadoc naming a request the screen
+> never makes, and *"seven endpoints"* for eight.
+>
+> **⚠ THE FINDING IS WHAT STAGE B WAS FOR, AND NO GATE IN THIS REPOSITORY COULD SEE IT.** `entity.routes`
+> is the generated `Routes = [/* needle */]` — an **empty array** behind `path: ''`. Ordered before the
+> marketplace it **matched the empty URL, consumed it, and did not backtrack**: measured in headless
+> Chrome against the quality gateway, `/browse` rendered **18 cards** while **`/` rendered a navbar over
+> an empty `<router-outlet>`** — with lint, prettier, 260 unit tests, the production build and
+> `check:built-assets` all green, and no console error. A component spec instantiates its component
+> directly and never asks the router anything. `app.routes.spec.ts` now asks the router, and was watched
+> going red on **`/` alone** under the exact reorder.
+>
+> **The card's headline is `fromPaidPriceMinor` and the free service is a marker beside it** (D103 §2),
+> which is the decision D100 handed over. Demonstrated in a browser: p13 renders **"From ₵420 / session"
+> + "Free service available"**, never "from ₵0", and its services list shows "Doula consultation …
+> Free" — so *Free* appears where it is honest and never as the listing's headline. **Four price states,
+> and the two that have never existed are written down and tested**; the all-free one renders **`Free`**,
+> which is the value **NEW-78** was waiting on.
+>
+> **Every figure was compared against the estate's own answer, not against a fixture** — 18
+> professionals, 16 verified, **73** reviews (seed 63 + 10 written by `verify-cycle.sh`), and the four
+> featured cards' prices. **Two of D100 §9's three unmeasured figures are now measured through a
+> client**: `?maxPriceMinor=9000` answers **p3 alone** and the facet floor reads **9000**.
+>
+> **Three screens omit what the prototype shows, each argued**: "Available soonest" and the card's
+> "Next: …" (no availability on the card, no server sort, and every `/availability` answers `[]` today —
+> **NEW-82**), the "Sessions brokered" tile (the prototype's live block reaches the same answer), and
+> the **12% fee and 24-hour cancellation window** (configurable per estate, D57, and no endpoint
+> publishes them without a token — **NEW-83**).
+>
+> **The generated `home` component is deleted**, and that is not cosmetic: it rendered
+> *"you can try the default accounts: Administrator (login="admin" and password="admin")"* on a
+> **public** client, where that credential works under `dev`/`test` (D61). The three i18n keys went with
+> it — an entry nothing renders still ships in the bundle. **This is a SECOND instance of NEW-80's
+> subject and does not close it**: that item is `web/cypress.config.ts`'s literals, which are untouched.
+>
+> **Three guards fired and none was loosened** (D103 §9): `endpoint-construction.spec.ts` over
+> `ParamMap.get('key')` — the code moved into `route-params.ts` instead; the per-component style budget
+> — shared primitives were hoisted to `global.scss` rather than the budget raised, and the three page
+> stylesheets still exceed the 2 kB *warning* deliberately; and two `subscribe({ next })` with no
+> `error` arm, which rethrow and were producing three unhandled errors with every assertion green.
+>
+> **Not exercised**: nothing deployed, no compose file or vhost touched, **Cypress has still never
+> run**, and **no human has looked at the layout** — the DOM dump establishes figures and states and
+> nothing about legibility. The quality stack was **read from and never written to**: every request a
+> `GET` on a `permitAll` path, nothing restarted, nothing reseeded.
+>
+> **Stages C–E are untouched and unchanged below.**
 
 > **STAGE A CLOSED 2026-09-24 — `decisions.md` D101**, on branch `worktree-agent-ac33a5a41567fdcc6`
 > off `f4a3368`. `web/` holds a client-only **JHipster 9.2.0 / Angular 21.2.17** application:
@@ -4070,9 +4154,13 @@ would name files that may not exist.
   `angular.json` `assets` glob-with-`ignore` (or this app publishes its own Sass, as `hc-admin/app`
   measurably does on a live hostname), `.claude/` in `eslint.config.ts`, and never white on gold
   (`#C59437` on white is 2.74:1, fails AA).
-- **Stage B — the four public screens** (1–3). **No token, so it does not wait on NEW-47** and it is the
-  first thing anybody outside this project can look at. `verify-prototype-live.mjs` already proves these
-  endpoints answer the prototype's own field names, so this stage is layout and state, not discovery.
+- **Stage B — the public screens** (1–3) · **DONE, D103.** **No token, so it did not wait on NEW-47**
+  and it is the first thing anybody outside this project can look at. This bullet said *"layout and
+  state, not discovery"*, on the grounds that `verify-prototype-live.mjs` already proves the endpoints
+  answer the prototype's field names. **That was right about the API and wrong about the stage**: the
+  endpoints were exactly as described, and the discovery was in the client — an empty generated route
+  array swallowing the landing page, with every gate green. **Being the first thing to run against the
+  estate is itself the work.**
 - **Stage C — the customer, authenticated** (4–8). Depends on NEW-47. Two rules carry over from the
   prototype's live mode and are not negotiable: the booking POST **omits** `priceMinor`, `currency` and
   `professionalLogin` so the server establishes them (D22, D28), and **no reply is ever fabricated** in a
@@ -6397,10 +6485,31 @@ beside the existing four, or both — and whether an all-free listing then becom
 It is **cheaper with phase 2's screens** (NEW-48): a filter nothing renders is a parameter nobody sends,
 and the facet counts exist to sit beside controls.
 
+> **INFORMED 2026-09-24 by NEW-48 Stage B (`decisions.md` D103 §2), and still open — the screens now
+> exist and the marker's half of this item is settled.**
+>
+> **The card design is decided**, which is what this item said it was waiting for: the headline is
+> `fromPaidPriceMinor`, the marker reads **"Free service available"** beside it, and an all-free listing
+> renders **`Free`** rather than ₵0 or ₵∞. Demonstrated in a browser against the live estate — p13 shows
+> "From ₵420 / session" with the marker.
+>
+> **So the first bullet above is now sharper, not answered.** A free service is *visible* on every card
+> and in every Discover tile, and it is still **unfindable**: there is no `hasFreeService` parameter and
+> no facet, and Stage B deliberately did not invent one client-side — the result set is server-paged, so
+> a client-side filter would filter one page of six, which is D103 §4's argument about the other four
+> filters applied to this one. **A screen that shows a thing nobody can search for is a weaker state than
+> before, not a stronger one**: it makes the absence visible to a customer.
+>
+> **The second bullet is untouched** — an all-free listing is still excluded from every budget, still
+> harms nobody (no such professional exists in either estate), and the marker filter is still the answer.
+>
+> **The "cheaper with phase 2's screens" line held**: the controls and the facet counts are built, so
+> this is now one parameter, one facet entry and one checkbox rather than a design question.
+
 ### Not blocked
 
-No decision from a person is required to start, but the shape is a product question and the screens are
-not built.
+No decision from a person is required to start. **The screens are no longer the obstacle** — the shape
+of the filter is still a product question, and it is now the only one left.
 
 ---
 
@@ -6437,9 +6546,22 @@ null), but whether the tile then reads "free consultation" or nothing at all is 
 **`money()` has other callers**, so hardening the formula and hardening the renderer are different
 fixes with different blast radii.
 
+> **INFORMED 2026-09-24 by NEW-48 Stage B (`decisions.md` D103 §2), and still open — the value this
+> item was waiting for is decided, and the prototype is untouched.**
+>
+> **The tile should read `Free`.** Not ₵0 — that is the collapse D100 closed — and not "Price on
+> enquiry", which is a *different* state (`fromPaidPriceMinor` null **and** `hasFreeService` false, a
+> listing that publishes nothing). The client implements all four states and tests the two that have
+> never existed, which is the only place they are exercised at all.
+>
+> **The three reasons this stayed an item all still hold**, and the first is why Stage B did not touch
+> it: block 1 is the seed's source and CI asserts `seed-data.json` regenerates byte-identically, so an
+> edit there can move 289 KB of committed data. What has changed is that the *right value* is no longer
+> unknown, so whoever takes it is making one edit rather than a decision.
+
 ### Not blocked
 
-No decision from a person; it wants NEW-48's card design to say what the tile should read.
+No decision from a person. **It no longer waits on NEW-48** — D103 §2 says what the tile should read.
 
 ---
 
@@ -6516,7 +6638,280 @@ generated, so `hc-admin/app`, `hc-patient/web` and `hc-professional/web` are lik
 two lines — and those three products are **deployed**, which this one is not. That is their backlog's
 business, not this repository's, but the sweep is one `grep` and the answer changes who should care.
 
+> **⚠ INFORMED 2026-09-24 by NEW-48 Stage B (`decisions.md` D103 §10) — THERE WAS A SECOND INSTANCE AND
+> IT RENDERED. This item is not closed; its own subject is untouched.**
+>
+> This item names `web/cypress.config.ts`, and it argued the exposure is benign on three grounds. **A
+> second copy of the same credential was in the generated `home` component's i18n**, and the third
+> ground did not cover it: `global.messages.info.authenticated.suffix` reads *"you can try the default
+> accounts: Administrator (login="admin" and password="admin")"*, and unlike Cypress **that string
+> rendered on the landing page of a client meant for the public**. Stage B deleted the component and the
+> three keys with it — an i18n entry nothing renders still ships in the bundle and is still fetchable, so
+> removing the template alone would not have been enough.
+>
+> **The lesson is this item's own reasoning inverted.** *"Cypress has never run"* is a sound argument
+> about `cypress.config.ts` and says nothing about any other copy, and the grep that found the first
+> would have found the second — nobody ran it twice. **`cypress.config.ts` still carries both literals**
+> and the sibling sweep is still unrun, so the item stands exactly as written.
+
 ### Not blocked
 
 No decision from a person, unless the sibling sweep finds something, in which case the finding is
 theirs to route.
+
+---
+
+## NEW-81 — a public profile publishes a customer's login as a review author · READY
+
+**Found 2026-09-24 by looking at a rendered page** (NEW-48 Stage B, `decisions.md` D103). p1's public
+profile on the quality estate renders reviews whose author reads **`kojo.ampia.addison`** — a login, on
+an unauthenticated page, as a person's name.
+
+> **The count is TEN, and this paragraph said "four" for one commit.** Four is the **page size** of
+> `/api/professionals/{ref}/reviews`, so four is what the first page of the profile renders. Measured:
+> p1 carries **17** reviews and **10** of them carry the login (the other seven are seeded display
+> names). *A number read off a screen is a number read off one page* — which is the same shape as
+> D103 §1's own corrections, one document along.
+
+`ReviewWriteResource:134`:
+
+```java
+.authorName(summary.customerName() == null ? login : summary.customerName())
+```
+
+**The fallback is the defect and the null is reachable**, which is why this is not a client fix: the
+booking summary's `customerName` is absent for every review the ten `verify-cycle.sh` runs wrote, and
+those rows now sit in the estate. The 63 seeded reviews carry display names (`Selina Amoah`), so **the
+seed cannot show you this** — only a review written through the API does, which is why it survived
+every count check and D46's rating-derivation check.
+
+⚠ **It is worse than an ordinary disclosure for one reason: there is no endpoint to delete a review.**
+Review integrity is deliberately one-directional (`bookingReference` is unique, the only response is a
+public reply), so a login published here is published **permanently and uncorrectably** — the same
+property D52 records for `review.published_on`, applied to something that identifies a person. The
+erasure sweep does redact `customerLogin`, but `authorName` is a second copy of the same value and
+whether the sweep reaches it is **not established here**.
+
+**Exposure today is one account and it is ours.** `kojo.ampia.addison` is the workstation's own test
+login on a private LAN box, and production has never been deployed. What makes it an item is that the
+next real customer to review a booking with no `customerName` publishes their login on a public health
+services domain, for ever.
+
+**Done means** deciding what a reviewer is called when the booking does not say — initials alone are
+already computed and published (`authorInitials`), "A BridgeCare customer" is a defensible answer, and
+the login is not one — **plus** establishing whether `ErasureWorkflow` redacts `authorName` and not
+merely `customerLogin`. **Whoever takes it should check the ten existing rows on quality**; they are
+correctable there, because quality can be reseeded, and they are not correctable anywhere else.
+
+### Not blocked
+
+No decision from a person to start. The *name* a reviewer is given is a product question and a small
+one; the erasure half is not, and it should be answered in the same commit.
+
+---
+
+## NEW-82 — "Available soonest" has no answer the server can give · READY
+
+**Opened by NEW-48 Stage B** (`decisions.md` D103 §5), 2026-09-24, as a decision surfaced rather than
+taken. The prototype ranks a **Discover section** and a **Browse sort** by `nextAvailable(p.id)`.
+Neither is built, and the reason is three facts rather than effort:
+
+- `ProfessionalCard` carries **no availability field**;
+- the server offers **seven** sorts and none reads one — `recommended`, `rating`, `reviews`,
+  `price-asc`, `price-desc`, `experience`, `response`;
+- computing it client-side is **one `/availability` request per card** on an unauthenticated public
+  read — eighteen for one Discover render.
+
+**And it would render empty for every visitor today**, which is the part that turns a performance
+argument into a correctness one: measured 2026-09-24 on p1, p2, p3, p12 and p13, `/availability`
+answers `[]` for all of them, because the seed's slots are anchored at 2026-08-10 and the default
+window starts from the marketplace's today. That is **NEW-84** and it is a different item; even fixed,
+the three facts above stand.
+
+**Done means** a decision about where the quantity lives. Two shapes, and they are not equivalent:
+
+- **a `nextAvailableOn` on `ProfessionalCard`**, derived per read like the three price fields (D100's
+  pattern, one query in the same pass) plus a `soon` comparator. Cheapest for the client and it makes
+  the value **cacheable and sortable in one place**. It also puts a date that changes hourly into a
+  DTO the whole catalogue maps.
+- **a `sort=soon` alone**, with the card left as it is. Answers the sort and not the card's "Next: …"
+  line, so Discover's section becomes possible and the card's caption does not.
+
+### Not blocked
+
+No decision from a person is needed to start, but which of the two shapes is the product's answer is
+worth one line from the architect before the query is written.
+
+---
+
+## NEW-83 — the brokerage terms are not publicly readable, so no screen may state them · READY
+
+**Opened by NEW-48 Stage B** (`decisions.md` D103 §6), 2026-09-24. The prototype's Discover says
+*"minus a **12%** brokerage fee"* and every profile says *"Free cancellation up to **24 hours**
+before"*. **The client states neither number, and that is a departure from the acceptance target
+recorded rather than a gap left.**
+
+Both are configurable per estate — `HC_BROKERAGE_COMMISSION_RATE` and
+`HC_BROKERAGE_FREE_CANCELLATION_HOURS`, D57 — and **no endpoint publishes them to an unauthenticated
+caller**. `GET /api/internal/brokerage/split` is gateway-routed but needs a token;
+`/management/info`'s `brokerage.termsInForce` is payout's and is not a marketplace read.
+
+**So a `12%` compiled into a template is D57's own defect one layer along**: that decision keeps the
+defaults in Java precisely because a value written twice goes wrong silently, and a number written in
+a client is a third copy nobody can reach to change. An estate priced at 15% would advertise 12% with
+every test green.
+
+**Two specs assert the absence** (`discover.spec.ts`, `professional.spec.ts` — no `\d+%` and no
+`\d+ hours`), because the cheap way to make a screen match the prototype is to type the number back
+in, and it would be a reviewer's job to notice.
+
+**Done means** a public, unauthenticated read of the terms in force — commission rate, free
+cancellation hours, late-cancellation percentage, currency — and the three screens quoting it. It is
+**genuinely small on the server** (`BrokerageTerms.inForceAt` already selects the row and
+`BrokerageResource` already serves arithmetic off it) and it is a **disclosure decision**, not a
+refactor: the commission rate and the cancellation policy are things this platform tells customers
+anyway, but publishing them without a token is a choice nobody has made. D56 notes that
+`/api/internal/brokerage/split` discloses "the public commission rate" by design — so the rate is
+already considered public to any token; this asks for one step further.
+
+### Not blocked
+
+No decision from a person to start the endpoint; whether it is `permitAll` is the architect's.
+
+---
+
+## NEW-84 — the seeded availability is anchored in the past, so every profile's strip is empty · READY
+
+**Found 2026-09-24 by rendering a profile** (NEW-48 Stage B, `decisions.md` D103). Every public
+profile on the quality estate shows *"No published openings — this professional has published no
+openings in the next ten days"*. Measured on p1, p2, p3, p12 and p13: `GET
+/api/professionals/{ref}/availability` answers **`[]`** for all five.
+
+**Nothing is broken.** The seed's slots are anchored at `$meta.demoToday` = **2026-08-10** and quality
+runs with `anchor-dates=true`, which is deliberate (`CLAUDE.md`: *"Tests want `true`"` — anchoring is
+what makes counts reproducible). `MarketplaceResource.availability` defaults its window to the
+**marketplace's today** plus ten days, and today is 2026-09-24. So the data is 45 days behind the
+window and the answer is honest.
+
+Confirmed by asking for the seeded window instead: `?from=2026-08-10&to=2026-08-20` answers **9 days**
+for p1, the first carrying seven slots.
+
+**Why it is worth an item rather than a shrug.** This is the **one screen a visitor uses to decide
+whether to book**, and on the estate that exists to be looked at it is permanently empty — so it can
+neither be demonstrated nor visually reviewed, and Stage C's booking wizard picks a slot from this
+same strip. It is also a **slowly-worsening** state rather than a stable one: the gap grows by a day
+every day, so any future "the strip looks wrong" report will be this and will read as a client defect.
+
+**Done means** choosing between three, and they differ in what they cost elsewhere:
+
+- **reseed quality without `anchor-dates`**, so dates shift to today. Cheapest, and it breaks the
+  reproducible counts `--verify` and `deploy-dev.sh verify_seed` compare against (D46) — that is the
+  whole reason anchoring is on.
+- **re-anchor `$meta.demoToday` in the prototype** and regenerate the seed. The seed is regenerated
+  and never edited, so this is one constant plus a regeneration — but the prototype is the acceptance
+  target and its own `TODAY` is `new Date(2026,7,10)` at three other sites.
+- **give the availability endpoint a documented demo window**, which is a production API carrying a
+  demo concern and should probably be refused.
+
+### Not blocked
+
+No decision from a person to investigate; the choice between the three is worth one line, because the
+first one trades away a check this repository already relies on.
+
+---
+
+## NEW-85 — Browse's filters are single-valued because the server's are · READY
+
+**Opened by NEW-48 Stage B** (`decisions.md` D103 §4), 2026-09-24. `MarketplaceResource.professionals`
+takes `category`, `speciality`, `mode` and `city` as **one `String` each**. The prototype renders all
+four as **checkbox groups**, so the client ships radio groups with an explicit "Any" instead.
+
+**A client-side union is not an alternative and that is the whole argument**: the server **pages** the
+result (`size` defaults to 6), so a client filtering the page it was handed would be filtering six
+rows out of a set the server had already narrowed — and the pager's totals would describe a different
+set from the cards beneath it. That is the prototype's "Sessions brokered" defect in a control rather
+than a tile.
+
+**Two consequences are live and neither is a defect today**, since the prototype's own multi-select is
+unexercised against a real estate:
+
+- a customer cannot ask for *"Accra or Tema"*, or for two specialities at once;
+- **the facet counts inside a group that carries a selection are hidden rather than shown**, because
+  `facets` tallies over the fully filtered set — so with `city=Accra` chosen the count beside "Kumasi"
+  would read `0` meaning *"0 within Accra"*, which a reader takes as "there is nobody in Kumasi". The
+  prototype computes each group's counts ignoring that group's own selection; this API cannot answer
+  that in one request.
+
+**Done means** deciding whether Browse is a multi-select interface. If it is, it is **two server
+changes, not one**: repeated parameters (or a comma-separated list) on the four filters, **and** a
+facets mode that computes each group's counts with that group's own selection lifted — the second is
+the one that makes the counts honest and is easy to forget, because the first makes the screen work.
+
+### Not blocked
+
+No decision from a person to start, but this is a product question about the shape of Browse and the
+screen is usable without it.
+
+---
+
+## NEW-86 — a refresh that FAILED leaves the gauges standing, and the test cannot tell that from one that worked · READY
+
+**Found 2026-09-24 by CI on PR #82**, whose entire diff is `web/` and four markdown files — so it is
+**pre-existing on `main`** and touches no Java this package wrote. This is the third time a gateway
+identity-metrics defect has been found by a pull request that changes no Java: NEW-57 was found on PR #69
+(diff: four `docs/*.md`), and its own review found the error path unguarded. **The same signature is
+back — `expected: 6L but was: 2L`** — which is the string `GatewayIdentityMetricsIT`'s javadoc quotes as
+the failure NEW-57 *closed*.
+
+```
+gateway  GatewayIdentityMetricsIT.gaugesPartitionTheCollection:198  expected: 6L but was: 2L
+```
+
+**The mechanism is one line above it in the same log, and it is not the publication tear NEW-59 holds:**
+
+```
+WARN [tLoopGroup-10-4] IdentityMetricsRefresher : could not count accounts for gateway.identity.accounts,
+  so the previous reading stands and is now stale:
+  reactor.blockhound.BlockingOperationError: Blocking call! jdk.internal.misc.Unsafe#park
+```
+
+So `refresher.refresh().block()` **did not publish anything**: the count failed, the refresher did what it
+says it does — kept the previous reading and warned — and that previous reading was the timer's first tick,
+taken when the collection held **2** documents. The collection then held **6**. Both numbers are honest;
+what is wrong is that the test compared them.
+
+**Two defects, and they want separate answers.**
+
+1. **THE TEST'S FIRST READING HAS NO SUPERSESSION GUARD, AND ITS SECOND ONE DOES.** Lines 190-192 assert
+   `sequence() > Long.MIN_VALUE`, which says *some* observation has landed in this JVM's lifetime — not
+   that **this** refresh landed. Lines 203-205, added by NEW-57, assert the sequence **advanced**, which
+   is exactly the missing guard one reading earlier. The repair is to capture the sequence *before* the
+   first `refresh()` and require it to advance, so a failed refresh is reported as **"the refresh did not
+   publish"** rather than as two numbers disagreeing. That is a one-assertion change and it converts an
+   unexplained red into a named one — but it does **not** make the run green, because the refresh really
+   did fail.
+2. **SOMETHING ON THE REFRESH PATH PARKS A THREAD ON THE EVENT LOOP.** BlockHound is what caught it —
+   `Unsafe#park` on `tLoopGroup-10-4` — so the refresh's Mongo count is reaching a blocking call while
+   running on a non-blocking thread. **This one matters in production and not only under test**: BlockHound
+   is a test-only agent, so outside the test the park simply *happens*, on the gateway's event loop, and the
+   gauge silently keeps a stale reading behind one WARN line. That is D84's own argument about why the
+   gauges are refreshed on a timer into `AtomicLong`s rather than supplied synchronously — arrived at from
+   the other side.
+
+**Why this is intermittent.** BlockHound only reports when the offending work lands on a non-blocking
+thread, and which thread the count runs on depends on scheduling — so the same tree is green on a re-run.
+`gateway` passed at `e331f8e` and the re-run of PR #82 was used to establish that rather than assumed.
+**Do not read a green re-run as evidence the park is gone**: it is evidence the park did not land on the
+event loop that time.
+
+**Done means** the supersession guard on the first reading (cheap, and it makes every future occurrence
+self-describing), plus the park identified and removed — or, if it turns out to be BlockHound's own false
+positive on a JDK 25 internal, that established by measurement and written down, because the production
+half of the claim rests on it being real. NEW-59's two-query tear is a **different** residual and is not
+this: that one makes a pair internally inconsistent by a document or two, where this leaves a whole
+reading behind.
+
+### Not blocked
+
+Nobody needs to decide anything. It needs a measurement (which call parks, and on which scheduler) and
+one test assertion, both in `gateway`.

@@ -1,0 +1,197 @@
+<main class="abm-discover">
+  <section class="abm-hero">
+    <p class="abm-hero__eyebrow" abmTranslate="marketplace.discover.eyebrow">Abofonsa BridgeCare · Wellbeing Marketplace</p>
+    <h1 class="abm-hero__title" abmTranslate="marketplace.discover.title">
+      Find the person who actually helps, not the first one who answers.
+    </h1>
+    <p class="abm-hero__lede" abmTranslate="marketplace.discover.lede">
+      Verified non-medical health professionals — coaches, therapists, trainers and carers — brokered, background-checked and booked in one
+      place.
+    </p>
+
+    <form class="abm-search" [formGroup]="search" (ngSubmit)="submitSearch()" data-cy="heroSearch">
+      <div class="abm-search__field">
+        <label for="heroQ" abmTranslate="marketplace.discover.search.what">What do you need</label>
+        <input
+          id="heroQ"
+          type="search"
+          formControlName="q"
+          data-cy="heroQ"
+          placeholder="{{ 'marketplace.discover.search.whatPlaceholder' | translate }}"
+        />
+      </div>
+      <div class="abm-search__field">
+        <label for="heroCity" abmTranslate="marketplace.discover.search.where">Where</label>
+        <select id="heroCity" formControlName="city" data-cy="heroCity">
+          <option value="" abmTranslate="marketplace.discover.search.anywhere">Anywhere</option>
+          @for (city of overview().value?.cities ?? []; track city.value) {
+            <option [value]="city.value">{{ city.label }}</option>
+          }
+        </select>
+      </div>
+      <div class="abm-search__field">
+        <label for="heroMode" abmTranslate="marketplace.discover.search.how">How</label>
+        <select id="heroMode" formControlName="mode" data-cy="heroMode">
+          <option value="" abmTranslate="marketplace.discover.search.anyFormat">Any format</option>
+          @for (mode of overview().value?.deliveryModes ?? []; track mode.value) {
+            <option [value]="mode.value">{{ 'marketplace.mode.' + mode.value | translate }}</option>
+          }
+        </select>
+      </div>
+      <button type="submit" class="btn btn-secondary abm-search__go" data-cy="heroSearchSubmit">
+        <span abmTranslate="marketplace.discover.search.go">Search</span>
+      </button>
+    </form>
+
+    <!-- THREE FIGURES, ALL FROM THE ESTATE, AND A FOURTH DELIBERATELY ABSENT. The prototype's
+         "Sessions brokered" tile is omitted: nothing this estate publishes counts bookings for an
+         anonymous reader, and the prototype's own live block reaches the same answer. A tile with
+         no number renders nothing rather than a zero — an unknown is not a zero, which is the same
+         rule `rating` follows. -->
+    <dl class="abm-hero__stats" data-cy="heroStats">
+      @if (total() !== null) {
+        <div>
+          <dt>{{ total() }}</dt>
+          <dd abmTranslate="marketplace.discover.stats.professionals">Professionals</dd>
+        </div>
+      }
+      @if (verifiedTotal() !== null) {
+        <div>
+          <dt>{{ verifiedTotal() }}</dt>
+          <dd abmTranslate="marketplace.discover.stats.verified">Verified</dd>
+        </div>
+      }
+      @if (reviewTotal() !== null) {
+        <div>
+          <dt>{{ reviewTotal() }}</dt>
+          <dd abmTranslate="marketplace.discover.stats.reviews">Reviews</dd>
+        </div>
+      }
+    </dl>
+  </section>
+
+  <section class="abm-section">
+    <header class="abm-section__head">
+      <h2 abmTranslate="marketplace.discover.categories.title">Browse by need</h2>
+      <p abmTranslate="marketplace.discover.categories.lede">
+        Four families of care. Everyone listed is non-medical — we broker alongside your clinician, never instead of one.
+      </p>
+    </header>
+
+    @switch (categoryState(categories())) {
+      @case ('ready') {
+        <div class="abm-cats" data-cy="categoryGrid">
+          @for (category of categories().value ?? []; track category.code) {
+            <a
+              class="abm-cat"
+              [routerLink]="['/browse']"
+              [queryParams]="{ category: category.code }"
+              [attr.data-cy]="'cat-' + category.code"
+            >
+              <span class="abm-cat__icon" aria-hidden="true">{{ category.icon }}</span>
+              <span class="abm-cat__count">{{ category.professionalCount }}</span>
+              <span class="abm-cat__name">{{ category.name }}</span>
+              <span class="abm-cat__blurb">{{ category.blurb }}</span>
+            </a>
+          }
+        </div>
+      }
+      @case ('empty') {
+        <abm-load-state
+          kind="empty"
+          emptyTitleKey="marketplace.discover.categories.empty.title"
+          emptyDetailKey="marketplace.discover.categories.empty.detail"
+        />
+      }
+      @default {
+        <abm-load-state [kind]="categoryState(categories()) === 'failed' ? 'failed' : 'loading'" (retry)="load()" />
+      }
+    }
+  </section>
+
+  <section class="abm-section">
+    <header class="abm-section__head abm-section__head--split">
+      <div>
+        <h2 abmTranslate="marketplace.discover.featured.title">Highly rated</h2>
+        <p abmTranslate="marketplace.discover.featured.lede">Ranked by rating weighted for review volume — not by what anyone paid us.</p>
+      </div>
+      @if (total() !== null) {
+        <a class="btn btn-outline-primary btn-sm" routerLink="/browse" data-cy="seeAll">
+          <span abmTranslate="marketplace.discover.featured.seeAll" [translateValues]="{ count: total() }">See all</span>
+        </a>
+      }
+    </header>
+
+    @switch (featuredState(featured())) {
+      @case ('ready') {
+        <div class="abm-grid" data-cy="featuredGrid">
+          @for (card of featured().value?.content ?? []; track card.ref) {
+            <abm-professional-card [card]="card" />
+          }
+        </div>
+      }
+      @case ('empty') {
+        <abm-load-state
+          kind="empty"
+          emptyTitleKey="marketplace.discover.featured.empty.title"
+          emptyDetailKey="marketplace.discover.featured.empty.detail"
+        />
+      }
+      @default {
+        <abm-load-state [kind]="featuredState(featured()) === 'failed' ? 'failed' : 'loading'" (retry)="load()" />
+      }
+    }
+  </section>
+
+  <section class="abm-section">
+    <header class="abm-section__head">
+      <h2 abmTranslate="marketplace.discover.how.title">How the brokerage works</h2>
+      <!-- NO PERCENTAGE AND NO CANCELLATION WINDOW ARE NAMED HERE, and that is a departure from the
+           prototype rather than an omission — D103 §6. Both are configurable per estate
+           (`HC_BROKERAGE_COMMISSION_RATE`, `HC_BROKERAGE_FREE_CANCELLATION_HOURS`, D57) and no
+           endpoint publishes them without a token, so a "12%" compiled in here is a number that
+           goes wrong silently on the first estate priced differently. Backlog NEW-83. -->
+      <p abmTranslate="marketplace.discover.how.lede">Four steps, and money only moves after the session happens.</p>
+    </header>
+    <ol class="abm-steps">
+      <li>
+        <h3 abmTranslate="marketplace.discover.how.search.title">1 · Search</h3>
+        <p abmTranslate="marketplace.discover.how.search.body">
+          Filter by need, format, city, price and rating. Every profile shows credentials and real reviews.
+        </p>
+      </li>
+      <li>
+        <h3 abmTranslate="marketplace.discover.how.request.title">2 · Request</h3>
+        <p abmTranslate="marketplace.discover.how.request.body">
+          Send a request for a specific slot. The professional accepts or proposes another time.
+        </p>
+      </li>
+      <li>
+        <h3 abmTranslate="marketplace.discover.how.meet.title">3 · Meet</h3>
+        <p abmTranslate="marketplace.discover.how.meet.body">
+          Online, at their studio, or at your home. Carers and home visitors are all background-checked.
+        </p>
+      </li>
+      <li>
+        <h3 abmTranslate="marketplace.discover.how.settle.title">4 · Settle</h3>
+        <p abmTranslate="marketplace.discover.how.settle.body">
+          The fee is held and released after the session, with the brokerage fee already included in the price you see. The free
+          cancellation window is shown before you confirm.
+        </p>
+      </li>
+    </ol>
+  </section>
+
+  <!-- THE SCOPE NOTE IS A HARD BOUNDARY, NOT COPY — `hc-market/CLAUDE.md`. Everyone listed is
+       non-medical and may not diagnose or prescribe. It is rendered on the landing page rather than
+       on a policy page nobody opens, which is the prototype's own placement. -->
+  <section class="abm-section">
+    <p class="abm-scope" data-cy="scopeNote">
+      <b abmTranslate="marketplace.scope.label">Scope note.</b>
+      <span abmTranslate="marketplace.scope.body">
+        Everyone on this marketplace is a non-medical wellbeing professional. They do not diagnose, prescribe or replace clinical care.
+        Where a need is clinical, the platform routes it back to your BridgeCare care team rather than to a listing.
+      </span>
+    </p>
+  </section>
+</main>

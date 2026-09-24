@@ -1,0 +1,32 @@
+// The palette reaches this file as CSS custom properties published by `global.scss`, so a
+// component stylesheet needs no `@import` and there is still exactly one definition of the brand.
+.abm-stars {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  white-space: nowrap;
+
+  &__glyph {
+    color: var(--abm-line);
+    letter-spacing: 0.02em;
+
+    // Gold on the card's white/cream surface is 2.74:1 and 2.50:1 — it FAILS as a foreground, in
+    // both directions, which is the half of "never white on gold" that reads as a surprise. A
+    // filled star is therefore navy, and `brand-contrast.spec.ts` is why this is written down here
+    // rather than discovered on a live page.
+    &--filled {
+      color: var(--abm-navy);
+    }
+  }
+
+  &__value {
+    font-weight: 600;
+    color: var(--abm-ink);
+  }
+
+  &__count,
+  &--unrated {
+    color: var(--abm-grey);
+    font-size: 0.85em;
+  }
+}
