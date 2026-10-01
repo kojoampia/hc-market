@@ -7093,3 +7093,54 @@ seeder writes the seed file's own `authorInitials` rather than deriving one.
 Nobody needs to decide anything to measure it. The fix is one `codePointAt` plus a line about
 punctuation; what needs settling before writing it is whether PostgreSQL refuses the surrogate, which
 decides whether this is cosmetic or a 500.
+
+---
+
+## NEW-89 — a suppressed author name is silent, and the row it writes cannot be corrected · READY
+
+**Opened at NEW-81's delta re-review** (`decisions.md` D104 §11), 2026-10-02. Not a defect in what
+D104 built — the suppression is correct and is the whole point of that item — but **nothing anywhere
+records that it happened**, and this is the one column in the estate where that combination is
+expensive.
+
+`ReviewAuthor.displayName` answers `A BridgeCare customer` whenever the booking named nobody, and
+`ReviewWriteResource` stores it. Both are right. What is missing is that **the suppression is
+indistinguishable from the ordinary case in every log, metric and response**:
+
+- a client that stops sending `customerName` looks identical to one that never sent it;
+- **if `booking` ever stopped sending `customerLogin`** on the booking summary, `ReviewAuthor`'s
+  fail-closed null arm refuses *every* name — so **every subsequent review becomes
+  `A BridgeCare customer`**, correct by the rule and wrong about the world, permanently;
+- ⚠ **and there is no endpoint to correct a review**, so the window between a regression and somebody
+  noticing it is written into rows nothing can edit. That is D52's uncorrectability applied to a value
+  that stands in for a person's name.
+
+**Done means a WARN at the suppression site, and it can carry no forbidden value.** `summary.reference()`
+is platform-minted (`"b-" + a UUID prefix`), so a line naming the booking reference and the *reason*
+discloses nothing: **not** `customerName`, **not** either login, and nothing derived from them. Something
+like *"review for booking b-2f8c11a4 published without a display name (the booking named none)"*, with a
+distinguishable second message for the null-identifier arm — those are two different facts and D104 §5's
+own rule is that they must not collapse.
+
+**It belongs in `ReviewWriteResource`, not in `ReviewAuthor`.** D97's rule is that the level is authored
+by the code that knows which of the two it is, and `ReviewAuthor` is a static utility with no logger —
+giving it one would make a pure function log, and it cannot tell a caller's refusal from an estate fault
+anyway. The resource knows it is writing an uncorrectable public row, which is what makes this a WARN
+rather than DEBUG. **WARN, never ERROR** — a booking made without a display name is an ordinary caller
+state, not a fact about this estate that is wrong (D97, and the zero-ERROR argument NEW-70 re-measured).
+
+**Why a counter is the weaker answer and not the answer here.** A `reviews.author.suppressed` meter would
+show the rate moving, but D84's rule applies — no login or name may ever become a tag, so the meter could
+not say *which* booking — and `gateway_identity_*` is the estate's cautionary tale: those series are
+registered, correct, and **transported nowhere by default** (D84 §7, D85). A WARN line lands where
+somebody already reads. A meter beside it later is fine; it is not a substitute.
+
+**What this is NOT.** It is not a reason to publish the name instead, and it is not a reason to loosen the
+null-identifier arm: `anUnreadableIdentifierRefusesRatherThanPublishes` exists because that direction was
+asserted by nothing until a mutation harness said so. The point is to make the refusal **audible**, not
+rarer.
+
+### Not blocked
+
+Nobody needs to decide anything. It is one `LOG.warn` in `ReviewWriteResource` plus a unit assertion, and
+the only judgement is the wording — which must name the booking reference and nothing else.

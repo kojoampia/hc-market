@@ -20813,22 +20813,30 @@ which is the property an aggregate exit status cannot report:
 > **A direction nothing drives is a direction nobody would notice losing**, which is the same sentence
 > §3 uses about the second comparison, found by the harness rather than by reading.
 
-**⚠ THERE ARE TWO MECHANISMS AND THIS SECTION CREDITED THE WRONG ONE — corrected at review, and the
-correction is a better argument for the guard than the original was.** It read as though the sweep is
-what protects the live write. It is not. **Measured**: plant any of the concatenation shapes in
-`ReviewWriteResource` itself and the step exits 1 through the **call-site grep** — *"no longer composes
-the author through `ReviewAuthor.displayName(`"* — because that literal stops appearing. The sweep's
-subject is **every other file**.
+**⚠ THIS SECTION HAS NOW CREDITED THE WRONG MECHANISM TWICE, AND THE SECOND VERSION CONTAINED ITS OWN
+COUNTEREXAMPLE.** Round one said the sweep protects the live write. Round two corrected that to the
+call-site grep and wrote: *"Break the composition inside `ReviewWriteResource` — **including by
+concatenating onto it** — and this is what exits 1, because `ReviewAuthor.displayName(` stops
+appearing."* **Concatenating onto the call does not make the call disappear.** Measured, three ways:
 
-| | holds | how it is driven |
+```
+.authorName(summary.customerName())                     rc=1  via the GREP  (the literal is gone)
+.authorName(ReviewAuthor.displayName(…) + login)         rc=1  via the SWEEP (the grep is satisfied)
+.authorName(ReviewAuthor.displayName(…).concat(login))   rc=0  via NEITHER   ← the blocking finding
+```
+
+So the three mechanisms are:
+
+| | holds | driven by |
 | --- | --- | --- |
-| the call-site grep | **the live write** in `ReviewWriteResource` | cases 1-4, 9, 10, 14 |
-| the sweep | **every other file in catalog** — a second writer, which no test there can see (D60's argument one column along, NEW-15's root cause: nothing in the estate could see an omission from a list) | cases 5, 15-18 |
-| `TheReviewAuthorIsNeverALoginTest` | **the value**, asserted over the row | six mutations above |
+| the call-site grep | **that the call is PRESENT**, and nothing more | cases 2-7 |
+| the sweep | **every other file in catalog** (a second writer, which no test there can see — D60's argument one column along, NEW-15's root cause: nothing in the estate could see an omission from a list) **and that no write composes** | cases 8-22 |
+| `TheReviewAuthorIsNeverALoginTest` | **the value** — the only thing that sees a conforming call whose RESULT is then altered | eight mutations above |
 
-Neither CI half reads a row; between them they establish that the column is written in one place and by
-one rule. *A stated reason that is true but is not the reason doing the work is a defect* — this
-repository's own rule, applied to its own decision.
+Neither CI half reads a row. *A stated reason that is true but is not the reason doing the work is a
+defect* — and the instructive part is that this paragraph was **written to fix exactly that** and got it
+wrong a second time, in a sentence whose own example disproved it. The reason it survived a round is that
+the `+` case does exit 1, so the claim was *correct about every state anyone had driven*.
 
 The sweep walks catalog's whole `src/main` for `.authorName(`, `.authorInitials(`, `.setAuthorName(`
 and `.setAuthorInitials(`, strips comments with the shared `strip-comments.awk`, and prints its own
@@ -20836,39 +20844,80 @@ breakdown: `ok 133 files scanned, 8 author writes in Review.java ErasureWorkflow
 CatalogSeeder.java ReviewWriteResource.java`. **Read that line, not a count from here** — a file joining
 or leaving the population is then visible in the log of a *passing* run.
 
-### §9a THE ALLOWANCES ARE SCOPED PER FILE, AND THAT WAS FOUR HOLES RATHER THAN THE ONE STATED
+### §9a THE ALLOWANCE WIDTH, IN TWO ROUNDS — AND THE SECOND ROUND IS THE BLOCKING ONE
 
-The first version allowed four shapes **line-wide**, and §9 named one hole. **There were four, all
-measured.** The sharp one is the cross-file case, because it is the only one where the guard *reports
-success about a write it never vetted*:
+**Round one.** The first version allowed four shapes **line-wide**, and §9 named one hole. The one with
+real teeth was the cross-file case, because it is the only shape where the guard *reports success about
+a write it never vetted*: a new class in `service/` carrying its own `setAuthorName` whose body reads
+`this.setAuthorName(login)` satisfied the **entity's** allowance, and the counters rose while the
+success line went on claiming every write was accounted for. **A guard printing a reassuring sentence
+about a write it never looked at is this repository's recurring defect** — `/proc/1/cmdline` in a CI
+step.
 
-```
-control                                       ok  133 files scanned, 8 author writes   rc=0
-a new class in service/ carrying its own
-setAuthorName whose body is this.setAuthorName(login)
-                                              ok  134 files scanned, 9 author writes   rc=0
-```
+> ⚠ **THE RANKING IN ROUND ONE'S WRITE-UP WAS WRONG AND THE COORDINATOR CORRECTED IT.** The per-file
+> scoping was reported as reproducing the closed defect on its own. **It does not.** Isolated:
+>
+> | state | rc |
+> | --- | --- |
+> | a wrong-path file, token on the line, **no** composition | **1 — caught** |
+> | a bare `r.setAuthorName(login)` in a wrong-path file | **1 — caught** |
+> | `.concat` in the **allowed** file (the composition hole alone) | **0 — the gap** |
+> | wrong-path file **and** `.concat` together | **0** — the composition alone suffices |
+>
+> **The allowance is a TOKEN on the line, and that is what does the work**: a mis-placed file cannot
+> publish anything by itself. Per-file scoping is **surface narrowing** on top of it — it removes the
+> ability to borrow another file's token — and the round-one demo was the composition hole wearing the
+> scoping's clothes.
 
-The counters rose and the success line still read *"every one of them is composed, seeded or erased"*,
-which was then false. **A guard printing a reassuring sentence about a write it never looked at is this
-repository's recurring defect**, not a cosmetic gap — it is `/proc/1/cmdline` in a CI step.
+**Round two, and this is the blocking finding.** The revocation was **`*+*` alone**, and the success
+line asserted *"none of them concatenating"*. Measured against the lifted shipped step, in the file
+whose token is legitimately allowed:
 
-Two changes close all four, and they are different kinds of move:
+| spelling | live write | `ErasureWorkflow` |
+| --- | --- | --- |
+| `+` | **1** — caught | **1** — caught (the control) |
+| `.concat(` | **0 — PUBLISHED** | **0 — PUBLISHED** |
+| `String.format` | — | **0 — PUBLISHED** |
+| `String.join` | — | **0 — PUBLISHED** |
+| `new StringBuilder` | — | **0 — PUBLISHED** |
+| `.formatted(` | — | 1, but **only because that probe also carried a `+`** |
 
-- **Each allowance is scoped to the file that legitimately has it** — the composer to
-  `ReviewWriteResource`, `REDACTED_*` to `ErasureWorkflow`, the seed's own field to `CatalogSeeder`,
-  `this.setAuthor*` to `domain/Review.java`. The population is **8 writes in 4 files**, re-derived
-  rather than assumed, and a **fifth file matches nothing and is refused out loud** — a new legitimate
-  writer has to be argued here rather than absorbed.
-- **A `+` on an author-write line revokes every allowance, in every file.** This is what closes the
-  rest of the width in one line: `.authorName(login + REDACTED_NAME)`,
-  `.authorName(login + r.authorName())` and
-  `.authorName(ReviewAuthor.displayName(…) + login)` each name an allowed token and publish an
-  identifier beside it. None of the eight real writes concatenates anything, so refusing `+` costs
-  nothing today and fails **closed** if that stops being true.
+So **four spellings published an account login** while the guard printed `ok … and none of them
+concatenating`. That sentence is the house defect — a message reading stronger than the match — **inside
+the rule written to close it**.
 
-**Driven against 19 states — 15 refusals and 4 green controls, all 19 as expected** — by lifting the
-**shipped** step out of `build.yml` by name. Cases 14-18 are the four holes, each now red.
+Two changes close all of it, and they are different kinds of move:
+
+- **Each allowance is scoped to the file that legitimately has it**, with paths **anchored at `$dir`**
+  rather than `*/…` so a copy of a legitimate file under another package cannot inherit its allowance by
+  tail-matching. The composer to `ReviewWriteResource`, `REDACTED_*` to `ErasureWorkflow`, the seed's own
+  field to `CatalogSeeder`, `this.setAuthor*` to `domain/Review.java`.
+- **A composition revokes every allowance, in every file — six spellings**:
+  `+`, `.concat(`, `String.format`, `.formatted(`, `String.join`, `StringBuilder`. None of the eight real
+  writes uses any of them, so refusing all six costs nothing today and fails **closed**. `String.format`
+  is listed beside `.formatted(` deliberately even though modernizer rejects the former: **a check that
+  relies on another plugin's ban is relying on something it cannot see.**
+
+**The population is 8 writes in 4 files, derived on every run and printed with its breakdown** — and
+deduped on the **path** rather than on `basename`, because two writers in different packages sharing a
+file name printed as one, which destroys the only thing the breakdown is for. ⚠ **The allowance LIST is
+not held against that population**: delete `CatalogSeeder`'s two writes and nothing observes that an
+allowance now names a file writing nothing, so the list can rot in the quiet direction. A **fifth** file
+is the loud direction — it matches nothing and is refused.
+
+**It is `.github/checks/review-author-guard-test.sh` now, and that was a review finding rather than a
+courtesy.** §9a claimed "driven against 19 states" against a private harness nobody else had, so two
+reviewers and a coordinator each wrote their own lifter — and one of them found the `.concat` hole. D63's
+rule: *a recipe nobody can re-run is a claim rather than a check.* It lifts the shipped step by name,
+**never touches the real checkout** (every case runs in a synthetic tree, where the private harness
+mutated the working tree in place), checksums every mutation and treats one that changed nothing as
+**fatal**, classifies each case as a `refusal` or a `control`, and **prints its own derived count on the
+last line — read that, not a number from here.** Today: **24 refusals, 5 controls, 29 states.**
+
+**And the harness was checked against its own subject.** With the widening folded back to `+` alone in
+the shipped step, **exactly five cases invert** — `.concat` in the live write, and `.concat`,
+`String.format`, `String.join` and `StringBuilder` in the erasure — and the run goes red. A test that
+cannot see its own subject reports success, which is how this family has failed nine times.
 
 > **⚠ THE HARNESS REPORTED FOUR FALSE FAILURES FIRST, AND THE CAUSE IS THE LESSON.** Four `sed`
 > patterns carried the **two-arg** `displayName(name, login)` call text after §3's correction made the
@@ -20879,12 +20928,17 @@ Two changes close all four, and they are different kinds of move:
 > before and after every mutation and **refuses the case** if nothing changed. *Suspect the instrument
 > before the code* — and a mutation harness must assert that its mutation landed.
 
-**Three limits, stated because the error message reads stronger than the match is.**
+**Three limits, stated because the error message reads stronger than the match is.** ⚠ This list read
+*"the allowance is that the LINE names `ReviewAuthor`, not that the VALUE is `ReviewAuthor`'s, so a line
+concatenating something onto `ReviewAuthor.ANONYMOUS_NAME` passes here — **argued, not measured**"*. It
+was true, it was the blocking finding, and it sat in a bullet list of acceptable limits. **A limit worth
+stating is worth measuring, and a measured limit sometimes turns out to be a hole.**
 
 - **A conforming line can still hand the composer a wrong argument.**
   `ReviewAuthor.displayName(name, name, name)` satisfies both CI halves. Only
   `TheReviewAuthorIsNeverALoginTest` can see that, which is why the test is the primary mechanism and
-  not the sweep.
+  not the sweep. This one is genuinely argued rather than measured, and it is the residue of the limit
+  above after the composition half of it was closed.
 - **The sweep is catalog's alone**, enumerated rather than derived, because `Review` is catalog's entity
   and no other service maps it. That is acceptable for D60's reason and no better one: every failure
   mode it has today exits **1** loudly, including finding no file to scan and finding no write to match.

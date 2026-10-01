@@ -2726,22 +2726,34 @@ time.**
   **The item itself said the `== null ? login` fallback was the defect and that branch is UNREACHABLE
   from `POST /api/bookings`** — the `/proc/1/cmdline` family with the wrong sentence in the work order,
   so a fix to the fallback alone passes every assertion written to the item's description and changes
-  nothing. **THREE mechanisms hold three different things and crediting the wrong one is how this gets
-  loosened** (D104 §9, corrected at review): the CI step's **call-site grep** holds the live write in
-  `ReviewWriteResource` — plant a concatenation there and *it* is what exits 1, not the sweep; the
-  **sweep** holds every *other* file in catalog, which is the second writer no test there can see
-  (D60's argument one column along); and `TheReviewAuthorIsNeverALoginTest` holds the **value**, which
-  neither CI half reads. **Allowances are scoped per FILE and a `+` on an author-write line revokes any
-  of them** — line-wide allowances were four holes, not the one §9 first stated, and the sharp one
-  printed `ok 134 files scanned, 9 author writes` for a new `service/` class writing the login. Keep
-  each write on **one line**: the pattern matches `.authorName(` followed by a non-`)` character or by
-  end of line, so a prettier-wrapped argument is refused, fail-closed, exactly as D60's `.zoneId(` is.
+  nothing. **THREE mechanisms hold three different things, and D104 §9 credited the wrong one TWICE**
+  (§9 as re-reviewed) — which is why the shape is worth carrying rather than the sentence: the CI step's
+  **call-site grep** holds only **that the call is present**; the **sweep** holds every *other* file in
+  catalog — the second writer no test there can see, D60's argument one column along — **and that no
+  write composes**; and `TheReviewAuthorIsNeverALoginTest` holds the **value**, which neither CI half
+  reads. The second wrong version said the grep catches a concatenation *onto* the call, and
+  **concatenating onto a call does not make the call disappear**: measured, the ternary exits 1 via the
+  grep, `+` exits 1 via the **sweep**, and `.concat` exited **0 via neither**.
+  **An allowance is a TOKEN on the line, scoped per FILE with anchored paths, and SIX composition
+  spellings revoke it** — `+`, `.concat(`, `String.format`, `.formatted(`, `String.join`,
+  `StringBuilder`. It was `+` alone for one commit while the success line read *"none of them
+  concatenating"*, and four spellings published a login through it. The token is what does the work: a
+  wrong-path file with no composition is already refused, so per-file scoping is **surface narrowing**
+  and not the guard. Keep each write on **one line**: the pattern matches `.authorName(` followed by a
+  non-`)` character or by end of line, so a prettier-wrapped argument is refused, fail-closed, exactly
+  as D60's `.zoneId(` is. `review-author-guard-test.sh` drives the shipped step in a **synthetic tree**
+  and **prints its own case count** — read that line, not a number from here.
   The erasure half needed no code and is answered: `ErasureWorkflow:106-108` redacts **both** fields and
   `ErasureResourceIT` asserts both — the initials **by value** (`"··"`), because nothing else in catalog
   pins that string. **The ten rows on quality are uncorrected** — that stack is exited and a reseed is
   the operator's. `initials` still takes the first UTF-16 **unit**, which is pre-existing and is
   **NEW-88**: measured, `𝒜nna` yields a lone high surrogate and `...` yields null, colliding with the
-  no-name state.
+  no-name state. **And the suppression is SILENT — NEW-89**: nothing logs that a name was refused, so a
+  `booking` that stopped sending `customerLogin` would turn every subsequent review into
+  `A BridgeCare customer`, correct by the rule and permanent in a column nothing can edit. A WARN
+  belongs in `ReviewWriteResource` and not in `ReviewAuthor` (D97: the level is authored by the code
+  that knows which of the two it is, and a static utility knows neither), carrying
+  `summary.reference()` — platform-minted — and neither name nor either login.
 - Two verification scripts run against a live estate and are the fastest way to know it still
   works end to end. Both need `/tmp/tok-pro.txt` and `/tmp/tok-cust.txt` — HS512 tokens minted with
   the estate's `JWT_BASE64_SECRET`, subject = login, authorities in the `auth` claim:
