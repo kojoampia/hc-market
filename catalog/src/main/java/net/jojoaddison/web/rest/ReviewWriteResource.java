@@ -14,6 +14,7 @@ import net.jojoaddison.security.SecurityUtils;
 import net.jojoaddison.service.BookingClient;
 import net.jojoaddison.service.BookingClient.BookingSummary;
 import net.jojoaddison.service.MarketCalendar;
+import net.jojoaddison.service.ReviewAuthor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -49,6 +50,20 @@ import org.springframework.web.server.ResponseStatusException;
  * <p>There is deliberately no endpoint to remove a review, for anyone, including admins. The only
  * response available to a professional is a public reply. A brokerage that can quietly delete its
  * bad reviews is not running a review system.
+ *
+ * <h2>The author's name never comes from an identifier</h2>
+ *
+ * <p>{@code authorName} and {@code authorInitials} are composed by {@link ReviewAuthor} and by nothing
+ * else — NEW-81, {@code decisions.md} D104. This resource used to write
+ * {@code summary.customerName() == null ? login : summary.customerName()}, and the defect was not the
+ * fallback: booking stores the <strong>login</strong> in {@code customerName} for a booking made
+ * without a display name, so the branch that was reached published {@code kojo.ampia.addison} as a
+ * person's name on a page that needs no account, and the {@code == null} branch is unreachable from
+ * {@code POST /api/bookings} altogether. Repairing the fallback alone would have changed nothing.
+ *
+ * <p>Together with "no delete" above, that is the reason this is worse than an ordinary disclosure and
+ * the reason the rule lives in one named place: a login published here is published permanently, and
+ * there is no endpoint through which any of it could be taken back.
  *
  * <h2>The date it is published on is the marketplace's day</h2>
  *
@@ -131,8 +146,10 @@ public class ReviewWriteResource {
         Review review = new Review()
             .reference("r-" + UUID.randomUUID().toString().substring(0, 8))
             .customerLogin(login)
-            .authorName(summary.customerName() == null ? login : summary.customerName())
-            .authorInitials(initialsOf(summary.customerName(), login))
+            // NEW-81, D104: never the login, and "customerName is present" is not "a name was
+            // supplied" — see ReviewAuthor, which is the one place these two are composed.
+            .authorName(ReviewAuthor.displayName(summary.customerName(), login))
+            .authorInitials(ReviewAuthor.initials(summary.customerName(), login))
             .stars(request.stars())
             // D52: the marketplace's day, not the container's. This value is stored, public and
             // uncorrectable — see the class javadoc.
@@ -159,18 +176,5 @@ public class ReviewWriteResource {
 
         return ResponseEntity.status(HttpStatus.CREATED)
             .body(java.util.Map.of("reference", saved.getReference(), "stars", saved.getStars(), "professionalRef", summary.professionalRef()));
-    }
-
-    /** "Kojo Ampia-Addison" -> "KA". Falls back to the login when there is no display name. */
-    private static String initialsOf(String name, String login) {
-        String source = name == null || name.isBlank() ? login : name;
-        String[] parts = source.split("[ .]+");
-        StringBuilder out = new StringBuilder();
-        for (int i = 0; i < parts.length && out.length() < 2; i++) {
-            if (!parts[i].isEmpty()) {
-                out.append(Character.toUpperCase(parts[i].charAt(0)));
-            }
-        }
-        return out.toString();
     }
 }

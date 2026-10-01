@@ -2703,6 +2703,32 @@ time.**
 - Review integrity is one-directional: there is **no** endpoint to delete a review. The only
   response is a public reply. `bookingReference` is unique, making "one review per booking" a schema
   guarantee.
+  **⚠ THAT IS ALSO WHY A REVIEW'S PUBLIC AUTHOR MAY NEVER COME FROM AN IDENTIFIER, AND WHY
+  "`customerName` IS PRESENT" IS NOT "A NAME WAS SUPPLIED"** (D104, backlog NEW-81). `authorName` and
+  `authorInitials` are served by a `permitAll` endpoint on a page needing no account, and no endpoint
+  can correct a row — so what is wrong there is wrong permanently. **booking launders the login into
+  `customerName`**: `CustomerBookingResource:148` writes
+  `request.customerName() == null || isBlank() ? login : request.customerName()`, which is right where
+  it is (a professional's inbox is an authenticated counterparty to that booking) and arrives at catalog
+  **non-null and equal to the login** for every booking made without a display name — `verify-cycle.sh`
+  sends none, and p1's profile rendered `kojo.ampia.addison` as a person's name for ten of its
+  seventeen reviews. **So catalog must refuse a `customerName` that EQUALS the `customerLogin`**,
+  trimmed and case-folded, and `ReviewAuthor` is the one place both fields are composed:
+  `A BridgeCare customer` and a **null** monogram when the booking named nobody, the supplied name
+  unchanged otherwise. `authorName` is `@NotNull` so the label is **stored prose** rather than a
+  client-rendered label, which is argued in D104 §4 along with the three losers; `authorInitials` is
+  nullable so absence is available there, and it is deliberately **not** the erasure's `··` — an
+  erasure and a nameless booking must stay distinguishable.
+  **The item itself said the `== null ? login` fallback was the defect and that branch is UNREACHABLE
+  from `POST /api/bookings`** — the `/proc/1/cmdline` family with the wrong sentence in the work order,
+  so a fix to the fallback alone passes every assertion written to the item's description and changes
+  nothing. A **test** drives the resource and asserts over the row (six mutations, disjoint red sets);
+  a **CI sweep** — *"A review's public author may not be composed from an identifier"* — is what sees a
+  second writer appearing elsewhere in catalog, which no test there can. Its allowance is that the line
+  **names** `ReviewAuthor`, not that the value is `ReviewAuthor`'s. The erasure half needed no code and
+  is answered: `ErasureWorkflow:106-108` redacts **both** fields and `ErasureResourceIT:112-113` has
+  always asserted both. **The ten rows on quality are uncorrected** — that stack is exited and a reseed
+  is the operator's.
 - Two verification scripts run against a live estate and are the fastest way to know it still
   works end to end. Both need `/tmp/tok-pro.txt` and `/tmp/tok-cust.txt` — HS512 tokens minted with
   the estate's `JWT_BASE64_SECRET`, subject = login, authorities in the `auth` claim:

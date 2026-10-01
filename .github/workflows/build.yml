@@ -2191,6 +2191,92 @@ jobs:
           [ "$fail" -eq 0 ] && echo "ok   $scanned files scanned, $writes zone writes — every one of them parses or is a checked constant"
           exit "$fail"
 
+      # A review's public author may not be composed from an identifier — decisions.md D104,
+      # backlog NEW-81. The write-side twin of the zone check above, in the one column where the
+      # mistake is published to people with no account and cannot afterwards be taken back.
+      #
+      # WHY A CHECK AND NOT ONLY A TEST. TheReviewAuthorIsNeverALoginTest drives the resource and
+      # asserts over the row it writes, so it sees every mutation of the rule and of the one call site.
+      # What no test in catalog can see is a SECOND writer of the column appearing somewhere else —
+      # D60's argument one column along, and the exact shape NEW-15 had: nothing in the estate could
+      # see an omission from a list, so the list is a sweep.
+      #
+      # Review is catalog's entity and no other service maps it, so the sweep is catalog's alone.
+      # That enumeration is acceptable for D60's reason and no better one: every failure mode this
+      # check has today exits 1 loudly, including finding nothing to scan and finding nothing to
+      # match, so it cannot report ok having read nothing.
+      #
+      # WHAT IT DOES NOT ESTABLISH, stated because the error message reads stronger than the match is.
+      # The allowance is that the LINE names ReviewAuthor, not that the VALUE is ReviewAuthor's, so a
+      # line concatenating something onto ReviewAuthor.ANONYMOUS_NAME would pass here. The test is what
+      # asserts the value; this asserts that no third party writes the column at all.
+      - name: A review's public author may not be composed from an identifier
+        run: |
+          fail=0
+          # The shared stripper must EXIST, for the reason every other caller here states: absent,
+          # `awk -f` errors, nothing is matched, and this reports ok having read nothing (D56's review).
+          [ -f .github/checks/strip-comments.awk ] || { echo "::error::.github/checks/strip-comments.awk is missing — this check would strip nothing, match nothing and pass. See decisions.md D56."; exit 1; }
+          # The composer must exist. This check's whole remedy is "go through it", so a rename would
+          # leave every error message pointing at nothing while the allowance silently stopped matching.
+          author=catalog/src/main/java/net/jojoaddison/service/ReviewAuthor.java
+          [ -f "$author" ] || { echo "::error::$author is gone or renamed — nothing composes a review's public author any more, and this check keys on that name. See decisions.md D104."; exit 1; }
+          # …and the one live write must still route through it, by name and by method. The sweep below
+          # would catch a value resolved into a local variable first, but not the call going missing
+          # while a conforming line stayed: `.authorName(ReviewAuthor.ANONYMOUS_NAME)` names the class
+          # and publishes a label for every reviewer, which is the control's mutation, not the ban's.
+          resource=catalog/src/main/java/net/jojoaddison/web/rest/ReviewWriteResource.java
+          # Stripped ONCE into a file and grepped from the file, never `awk … | grep -q`: under
+          # pipefail a match arrives as the producer's 141 and reads as "not found" (D98, NEW-71).
+          # build.yml has no pipefail today, which is what makes the neighbours above correct, and
+          # it is one `defaults: run: shell:` away from not being.
+          stripped=$(mktemp)
+          awk -f .github/checks/strip-comments.awk "$resource" > "$stripped" || { echo "::error::could not strip $resource"; exit 1; }
+          for call in 'ReviewAuthor.displayName(' 'ReviewAuthor.initials('; do
+            if ! grep -qF "$call" "$stripped"; then
+              echo "::error file=$resource::POST /api/reviews no longer composes the author through $call — booking stores the LOGIN in customerName for a booking made without a display name, so the value this writes instead is an account identifier on a page that needs no account, in a row no endpoint can correct. See decisions.md D104, backlog NEW-81."
+              fail=1
+            fi
+          done
+          scanned=0
+          writes=0
+          dir=catalog/src/main/java/net/jojoaddison
+          [ -d "$dir" ] || { echo "::error::$dir does not exist — this check would scan nothing and pass. See decisions.md D104."; exit 1; }
+          while IFS= read -r f; do
+            # An empty find yields one EMPTY line through a here-string, not none.
+            [ -z "$f" ] && continue
+            scanned=$((scanned + 1))
+            awk -f .github/checks/strip-comments.awk "$f" > "$stripped" || { echo "::error::could not strip $f"; exit 1; }
+            hits=$(grep -nE '\.authorName\([^)]|\.authorName\([[:space:]]*$|\.authorInitials\([^)]|\.authorInitials\([[:space:]]*$|\.setAuthorName\(|\.setAuthorInitials\(' "$stripped" | cut -d: -f1)
+            for n in $hits; do
+              writes=$((writes + 1))
+              line=$(sed -n "${n}p" "$stripped")
+              case "$line" in
+                # the one composer, the erasure's own stand-ins, the seed file's own field, and the
+                # entity's own fluent setter delegating to its own setter
+                *ReviewAuthor.*|*REDACTED_NAME*|*REDACTED_INITIALS*) continue ;;
+                *.authorName\(*.authorName\(\)*|*.authorInitials\(*.authorInitials\(\)*) continue ;;
+                *this.setAuthorName\(*|*this.setAuthorInitials\(*) continue ;;
+              esac
+              # The original line, not the stripped one — quote what is written.
+              echo "  $f:$n:$(sed -n "${n}p" "$f")"
+              echo "::error file=$f::a review's public author is written here without going through ReviewAuthor — authorName and authorInitials are served by a permitAll endpoint and there is deliberately no endpoint that could ever correct a review, so an identifier written here is published permanently. See decisions.md D104, backlog NEW-81."
+              fail=1
+            done
+          done <<< "$(find "$dir" -name '*.java' -type f | sort)"
+          rm -f "$stripped"
+          if [ "$scanned" -eq 0 ]; then
+            echo "::error::no Java file was scanned — this check is now blind. See decisions.md D104."
+            exit 1
+          fi
+          # And the sweep itself must still match something. Renaming the field would leave catalog
+          # clean by finding nothing at all, which is this family's recurring fail-open.
+          if [ "$writes" -eq 0 ]; then
+            echo "::error::no author write was found in catalog — the accessors have been renamed and this check is scanning for names nothing uses. See decisions.md D104."
+            exit 1
+          fi
+          [ "$fail" -eq 0 ] && echo "ok   $scanned files scanned, $writes author writes — every one of them is composed, seeded or erased"
+          exit "$fail"
+
       # The moment a rate is struck at travels on the event, so both ends must spell it the same way —
       # decisions.md D53, backlog NEW-13.
       #

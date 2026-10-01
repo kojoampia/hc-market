@@ -20560,3 +20560,268 @@ translation key and no `NaN` in the rendered text of any of the three screens, D
 matching the estate's own answers, Browse's **18 matches** with "Most relevant" selected on a URL naming
 no sort, and p13 at **`From ₵420 / session`** with the free marker, no `₵0`, and the fee sentence stating
 no rate.
+
+---
+
+## D104 — A review's public author is never an identifier, and the fallback was not the defect
+
+**Backlog NEW-81.** Closed 2026-10-02, on branch `new-81-the-review-author-is-never-a-login` off
+`1d3921a`. No decision from a person was needed to start — the item says so, and it is right: what a
+reviewer is called when the booking names nobody is a small product question. What was **not** small is
+that **the item's account of the mechanism is wrong**, and a fix written to its description would have
+shipped, passed, and left the defect entirely live.
+
+### §1 THE ITEM NAMED AN UNREACHABLE BRANCH, AND THAT IS THE FINDING
+
+NEW-81 quotes `ReviewWriteResource:134` and says *"the fallback is the defect and the null is
+reachable"*, on the premise that *"the booking summary's `customerName` is absent for every review the
+ten `verify-cycle.sh` runs wrote"*. Four reads, each re-derived here:
+
+| | |
+| --- | --- |
+| `BookingDtos.BookingView` | **declares** `customerName`, and `BookingMapper.toView` passes `b.getCustomerName()` into it |
+| `BookingClient.BookingSummary` (catalog) | **binds** `customerName` |
+| booking's `CustomerBookingResource:148` | `.customerName(request.customerName() == null \|\| request.customerName().isBlank() ? login : request.customerName())` |
+| `deploy/verify-cycle.sh` | sends **no** `customerName` — `grep -c customerName` answers `0` |
+
+So booking **stores the login in `customerName`**, catalog receives it **non-null**, the ternary takes
+its **else** branch, and `.authorName(summary.customerName())` publishes the login. **The `== null`
+branch is unreachable from `POST /api/bookings` altogether.**
+
+Measured, not reasoned: `TheReviewAuthorIsNeverALoginTest` run against the unmodified resource reports
+
+```
+Tests run: 9, Failures: 6, Errors: 0
+[ERROR] theLoginLaunderedAsADisplayNameIsNotPublished:83
+  Expecting actual:
+    "kojo.ampia.addison"
+  not to be equal to:
+    "kojo.ampia.addison"
+```
+
+**The lesson is this repository's own, arriving through a backlog item rather than a probe.** A fix to
+the `== null ? login` fallback changes nothing at all: every assertion written to the item's own
+description would pass, the author would report the item closed, and p1's next review would publish a
+login. It is the `/proc/1/cmdline` shape one more time — *the branch was read accurately and the value
+arrives by the other one* — and this time the inaccurate sentence was in the **work order**, which is
+the one document an implementer is least likely to re-derive. The brief that commissioned this package
+had already caught it and said so; re-deriving it was the first thing done here, and it held.
+
+### §2 THE ANSWER
+
+`ReviewAuthor` — a new file in `catalog`'s `service` package — is the one place `authorName` and
+`authorInitials` are composed, and `ReviewWriteResource` is its only caller.
+
+| the booking said | `authorName` | `authorInitials` |
+| --- | --- | --- |
+| `Selina Amoah` | `Selina Amoah` | `SA` |
+| `kojo.ampia.addison` (the login, laundered) | **`A BridgeCare customer`** | **null** |
+| `Kojo.Ampia.Addison`, or the login with space round it | **`A BridgeCare customer`** | **null** |
+| null, or blank | **`A BridgeCare customer`** | **null** |
+| *(after an erasure, any of the above)* | `[erased]` | `··` |
+
+**The 63 seeded reviews are untouched by construction** — `CatalogSeeder` writes the seed file's own
+`authorName`, never through this path — and the control that says so is in the test rather than in this
+sentence: a resource that redacted *every* author satisfies all five refusal cases.
+
+### §3 THE DISCRIMINATOR IS EQUALITY, TRIMMED AND CASE-FOLDED
+
+Because booking launders the login into `customerName`, catalog **cannot treat "`customerName` is
+present" as "a display name was supplied"**. The rule is `ReviewAuthor.isLogin`, and three spellings of
+it were weighed:
+
+- **Exact equality.** Rejected as too narrow. `Kojo.Ampia.Addison` and the login with whitespace round
+  it render to a reader as that login, so they are the same disclosure; nothing legitimate is lost,
+  because a display name that differs from a login only in case or in surrounding space **is** that
+  login spelled differently.
+- **Equality, trimmed and case-folded.** **Chosen.** Two mutations pin the two halves separately —
+  `equalsIgnoreCase → equals` reddens the case test alone, dropping both `trim()`s reddens the
+  whitespace test alone.
+- **Resemblance — refuse anything "login-shaped", or anything containing the login.** Rejected, and
+  this is the one with a concrete casualty: a customer logging in as `ama` would have `Ama Mensah`
+  refused. An unbounded rule that rejects real names is how a guard gets loosened by the next person
+  who meets it.
+
+**A customer whose display name genuinely equals their own login is treated as having supplied none,
+and that is correct either way** — publishing it publishes their login, whatever they intended by it.
+
+**A null login fails closed**: a name that *might* be an unknown identifier is not published. It is
+unreachable (`Booking.customerLogin` is not-null and booking 404s for a booking that is not the
+caller's, so the JWT subject and the summary's login are the same string) and it costs nothing to
+refuse. That one comparison therefore covers **both** identifiers this service holds beside the name,
+which is why the signature takes one and not two.
+
+### §4 THE FOUR SHAPES, AND WHY EACH LOSER LOSES
+
+**The hard constraint, re-derived rather than taken from the brief.** `authorName` is
+`authorName String required` in `jdl/catalog.jdl:222` and `@NotNull @Column(nullable = false)` in
+`Review.java:45-47`. **Storing null is therefore unavailable without a JDL change**, and regenerating
+`Review` rewrites `20231205141336_added_entity_Review.xml`, which invalidates the checksum every
+existing database recorded — the `ValidationFailedException` CLAUDE.md documents. That is wildly out of
+proportion to this item. So the answer had to be a **non-null, non-identifying stored value**.
+
+**(a) A stored label — `A BridgeCare customer`. CHOSEN.** The item's own suggestion, with in-house
+precedent: `ErasureWorkflow.REDACTED_NAME = "[erased]"` is already a stored literal the client renders
+verbatim. It reads as a fact about the reviewer beside `Selina Amoah`, and — the deciding property —
+**it is correct on the screen with no client change at all**. `professional.html:203` renders
+`{{ review.authorName }}` with no mapping, and changing that screen belongs to NEW-48's own stages, so
+a value that needs a client change would be read by the public **until** some other package landed one.
+Given "no delete", *until* means *for the life of every row written in between*.
+
+**(b) The initials as the name — `KA`.** Rejected on two counts. It is still **derived from the login**
+when no name exists, so it does not stop the disclosure, it shortens it; and `initialsOf` splits on
+spaces and dots, so a login like `jdoe123` yields `J` — not a monogram, a fragment of an identifier.
+
+**(c) Store null and let the client render a translated label.** The **cleanest** answer and the most
+consistent with "derived, never stored", and it is blocked by the paragraph above. **What would make it
+right later**: a JDL change being paid for by some other item in the same changelog, or a second
+language arriving in `web/` — today `web/.yo-rc.json` has `languages: ['en']` and `i18n/` holds only
+`en`, which is what makes (a)'s untranslated-prose cost theoretical rather than live. Until one of
+those, (c) buys a migration and a checksum fight for a wording nobody can read differently yet.
+
+**(d) Fix the `== null` fallback only — what the item asks for. REJECTED, AND IT IS THE MOST VALUABLE
+REJECTION HERE, BECAUSE IT IS A NO-OP.** §1 is the whole argument: that branch is unreachable from the
+only endpoint that creates bookings, so the change is invisible in every direction — the suite stays
+green, the item reads closed, and the ten rows' successors keep arriving. It is also a *plausible* fix,
+which is the dangerous kind: it is one line, it matches the item's quoted code exactly, and nothing in
+the repository would have contradicted it.
+
+**The prose is pinned as a literal by the test, deliberately.** Re-wording the label is red, and that
+is the point — it is the only moment anyone is going to notice that **the rows already written keep the
+old wording for ever**. D52 records that property for `review.published_on`; here it is applied to the
+value that stands in for a person's name.
+
+### §5 `authorInitials` IS NULL, AND THAT IS THE OPPOSITE CALL FOR THE OPPOSITE REASON
+
+Decided in the same breath rather than left, as the item required. The column is **nullable** —
+`@Size(max = 4)` and no `@NotNull` — so unlike `authorName`, absence is **available**, and it is the
+honest answer: there are no initials of a name that was never given. That is the same line as a
+professional with no reviews having `rating` null rather than `0.0`; **absent and known are not the
+same fact**, and this repository refuses to collapse them.
+
+**It is deliberately NOT the erasure's `··`.** "Nobody supplied a name" and "this person asked to be
+forgotten" are different facts about a review and the second is irreversible. Converging them would
+make an erasure indistinguishable from an ordinary booking — so `authorName` differs (`A BridgeCare
+customer` against `[erased]`) and so does `authorInitials` (null against `··`), and both halves are
+asserted.
+
+**The cost, stated.** This is the **first null** that column has ever held — the seeder writes one, the
+resource wrote one, the erasure writes one — and `web/`'s `marketplace.model.ts:144` types
+`authorInitials: string`. Nothing renders it on the only screen that exists, so no visitor meets it
+today; the type is wrong from this commit onward, and that is **NEW-87** rather than a change to the
+Angular app from here.
+
+### §6 THE ERASURE HALF IS ANSWERED, FROM EVIDENCE, AND THERE IS NO GAP
+
+The item said *"the erasure sweep does redact `customerLogin`, but `authorName` is a second copy of the
+same value and whether the sweep reaches it is **not established here**"*. Established:
+
+| | |
+| --- | --- |
+| `catalog/.../ErasureWorkflow.java:106-108` | inside the `findByCustomerLogin(login)` loop: `setCustomerLogin(alias)`, **`setAuthorName(REDACTED_NAME)`**, **`setAuthorInitials(REDACTED_INITIALS)`** |
+| `ErasureFanoutLegIT:126` | `assertThat(after.getAuthorName()).isEqualTo("[erased]")` |
+| `ErasureResourceIT:112-113` | `getAuthorName()).doesNotContain("Ama").doesNotContain("Forgotten")` **and `getAuthorInitials()).doesNotContain("AT")`** |
+| `ErasureResourceIT:217-218` | the bystander control — a second customer's `authorName` and `authorInitials` are **untouched** |
+
+So **both** author fields are redacted and **both** are already asserted, in both directions. The
+item's second half needed no code. **It did leave one case nothing covered**, which this package adds:
+every one of those fixtures starts from a real name and real initials, so *"the redaction happens"* was
+only ever asserted over rows that **had something to redact**.
+`ErasureResourceIT.erasesAReviewThatNeverHadAName` is the row D104 newly makes possible —
+`A BridgeCare customer` and a null monogram — where there is nothing to hide in `authorName` and the
+sweep must still act, because `customerLogin` is what has to move and the register row is what has to
+be written. A sweep that decided such a row needed no attention would leave the login in place.
+
+### §7 BOOKING'S OWN FALLBACK STAYS, AND THAT IS IN-SCOPE REASONING
+
+`CustomerBookingResource:148` is **not changed**, and the argument is the audience rather than the
+value. Its own javadoc states the intent — *"`kojo.ampia.addison` asked for a Follow-up consultation`
+is what a professional otherwise reads in their inbox"* — and that inbox is an **authenticated
+counterparty to that very booking**, who already knows who booked them. A public profile is not. The
+same string is defensible in one place and a disclosure in the other, so the repair belongs at the
+**boundary that publishes**, which is exactly where D44 put the composition of a provider's refusal
+message and where D22 put the price. Removing booking's fallback would additionally leave a
+professional's inbox unable to name a requester at all, which is a feature taken away to fix a defect
+one service along.
+
+**What that leaves behind is a reader hazard rather than a defect**: the sentence most likely to
+mislead the next person is booking's *"Falls back to the login when absent"*, which is true and makes
+the laundering look harmless downstream. `CLAUDE.md` carries the cross-service fact, which is the file
+whose subject spans services; booking's javadoc was deliberately not edited, because this item's fence
+is behaviour **and** because a one-line note there would be a second place for one rule to drift.
+
+### §8 WHAT IS NOT ESTABLISHED
+
+- **The ten rows on quality are NOT exercised and NOT corrected.** `hc-market-quality` is `Exited`, and
+  neither a restart nor a reseed is this package's to perform. The count of ten, p1's seventeen, and
+  the seven seeded names are the **item's** measurements, carried, not re-measured. Correcting them is
+  a reseed — `./quality/startup.sh --local --clean` then `TAG=<sha> ./quality/startup.sh --local` — and
+  it is the operator's.
+- **Nothing here has run against a live estate**, so no claim is made about what a rendered profile
+  shows. The only reads of the running estate in this entry are the item's.
+- **The concatenation hole in the guard** (§9) is argued, not measured.
+
+### §9 THE GUARD, AND WHAT IT DOES NOT REACH
+
+**A test is the primary mechanism and a sweep is the secondary one, because they see different things.**
+`TheReviewAuthorIsNeverALoginTest` drives the resource and asserts over the `Review` handed to the
+repository, so it sees every mutation of the rule *and* of the one call site. Six mutations of
+`ReviewAuthor`, each applied alone, redden **disjoint minimal sets** — which is the property an
+aggregate exit status cannot report:
+
+| mutation | red |
+| --- | --- |
+| drop the `isLogin` check | the three login cases **and** the initials case (4) |
+| `equalsIgnoreCase` → `equals` | the case-folding case alone (1) |
+| drop both `trim()`s | the whitespace case alone (1) |
+| initials fall back to the login, as before | the initials case alone (1) |
+| the anonymous name **is** the login | all five refusal cases, **no control** (5) |
+| every author is anonymous | **the control alone** (1) |
+
+**What no test in catalog can see is a SECOND writer of the column appearing somewhere else** — D60's
+argument one column along, and NEW-15's root cause: nothing in the estate could see an omission from a
+list. So *"A review's public author may not be composed from an identifier"* sweeps catalog's whole
+`src/main` for `.authorName(`, `.authorInitials(`, `.setAuthorName(` and `.setAuthorInitials(`, strips
+comments with the shared `strip-comments.awk`, and allows exactly four shapes: the composer, the
+erasure's stand-ins, the seed file's own field, and the entity's own fluent setter. It prints
+`ok 133 files scanned, 8 author writes`.
+
+Driven against **14 states — 10 refusals and 4 green controls, all 14 as expected** — by lifting the
+**shipped** step out of `build.yml` by name (the lift refuses an empty result and refuses a block that
+does not contain `ReviewAuthor.displayName(`, so a renamed or reindented step cannot be reported as
+passing). The refusals include the original defect restored verbatim, the author set to the login
+outright, a second writer planted in `MarketplaceService`, the accessors renamed estate-wide (the
+sweep's positive control — it must not pass having matched nothing), the stripper missing, and **a
+comment naming both calls**, which is the fail-open this repository has now found nine times.
+
+**Three limits, stated because the error message reads stronger than the match is.**
+
+- **The allowance is that the LINE names `ReviewAuthor`, not that the VALUE is `ReviewAuthor`'s.**
+  A line concatenating something onto `ReviewAuthor.ANONYMOUS_NAME` passes. The test is what asserts
+  the value; the sweep asserts that no third party writes the column at all. **Argued, not measured.**
+- **The sweep is catalog's alone**, enumerated rather than derived, because `Review` is catalog's entity
+  and no other service maps it. That is acceptable for D60's reason and no better one: every failure
+  mode it has today exits **1** loudly, including finding no file to scan and finding no write to match.
+- **It cannot see the prose going wrong.** That the label is *right* is a product judgement; the check
+  only holds that it is the **only** thing written there.
+
+**It asks its question through no pipe.** The resource's two call-site greps strip once into a temp file
+and grep the file — D98's `has_in` shape. `build.yml` has no `pipefail`, which is what makes the
+neighbouring steps' `awk … | grep -q` correct today and leaves them one `defaults: run: shell:` away
+from not being; this one does not depend on that.
+
+### §10 RESIDUALS
+
+- **NEW-87 (opened).** The label is English in a data column on a client where `enableTranslation` is
+  on, and `authorInitials` is now nullable where `marketplace.model.ts` types it `string`. One item,
+  one state: the client does not model "this review has no author name". It is **conditional** — the
+  prose costs nothing while `en` is the only bundle — and it carries the condition under which §4(c)
+  becomes the right answer instead.
+- **No `web/` file is touched**, by the fence and because none needs to be: the chosen value renders
+  correctly as prose today.
+- **No check was added for "the two stand-ins differ".** It is asserted by the unit test and by
+  `ErasureResourceIT`, and a textual second mechanism for one property is how one of the two rots
+  (D80).
+- **`catalog` has no `prettier:format` script** — NEW-62, three of the five services — so this package
+  matched the surrounding style by hand rather than running a formatter that reformats files it never
+  touched.

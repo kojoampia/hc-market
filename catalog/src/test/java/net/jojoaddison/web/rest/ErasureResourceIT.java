@@ -18,6 +18,7 @@ import net.jojoaddison.repository.ErasedSubjectRepository;
 import net.jojoaddison.repository.FavouriteQueryRepository;
 import net.jojoaddison.repository.ProfessionalRepository;
 import net.jojoaddison.repository.ReviewEraseRepository;
+import net.jojoaddison.service.ReviewAuthor;
 import net.jojoaddison.service.SubjectPseudonym;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -216,6 +217,50 @@ class ErasureResourceIT {
         assertThat(after.getCustomerLogin()).isEqualTo("kwame.stillhere");
         assertThat(after.getAuthorName()).isEqualTo("Kwame Still-Here");
         assertThat(after.getAuthorInitials()).isEqualTo("KS");
+    }
+
+    /**
+     * <strong>An anonymous author is still erased, and the two stand-ins stay apart — NEW-81,
+     * {@code decisions.md} D104.</strong>
+     *
+     * <p>Since D104 a review written for a booking that named nobody carries
+     * {@link ReviewAuthor#ANONYMOUS_NAME} and a null {@code authorInitials}. Both are values the sweep
+     * has never met: every fixture above starts from a real name and real initials, so "the redaction
+     * happens" was asserted only over rows that had something to redact. This is the case where there
+     * was nothing to hide in {@code authorName} and the sweep must still act — because
+     * {@code customerLogin} is what has to move, the register row is what has to be written, and a
+     * sweep that decided such a row needed no attention would leave the login in place.
+     *
+     * <p>It also pins the two stand-ins apart at the one place they meet. "Nobody supplied a name" and
+     * "this person asked to be forgotten" are different facts about a review, and the second is
+     * irreversible; if the anonymous label ever became the erasure's, an erasure would be
+     * indistinguishable from an ordinary booking.
+     */
+    @Test
+    @Transactional
+    @WithMockUser(username = "desk", authorities = "ROLE_BROKERAGE")
+    @DisplayName("a review whose author was already anonymous is still erased, and differently")
+    void erasesAReviewThatNeverHadAName() throws Exception {
+        Review anonymous = reviews.saveAndFlush(
+            new Review()
+                .reference("r-erase-3")
+                .customerLogin(CUSTOMER)
+                .authorName(ReviewAuthor.ANONYMOUS_NAME)
+                .authorInitials(null)
+                .stars(3)
+                .publishedOn(LocalDate.now())
+                .body("No complaints.")
+                .bookingReference("b-erase-3")
+                .professional(professional)
+        );
+
+        mockMvc.perform(post(URL, CUSTOMER).with(csrf())).andExpect(status().isOk()).andExpect(jsonPath("$.reviewsDeidentified").value(2));
+
+        Review after = reviews.findById(anonymous.getId()).orElseThrow();
+        assertThat(after.getCustomerLogin()).isEqualTo(pseudonyms.of(CUSTOMER)).isNotEqualTo(CUSTOMER);
+        assertThat(after.getAuthorName()).isEqualTo("[erased]").isNotEqualTo(ReviewAuthor.ANONYMOUS_NAME);
+        assertThat(after.getAuthorInitials()).isNotNull();
+        assertThat(after.getBody()).isEqualTo("No complaints.");
     }
 
     /**
