@@ -2703,6 +2703,57 @@ time.**
 - Review integrity is one-directional: there is **no** endpoint to delete a review. The only
   response is a public reply. `bookingReference` is unique, making "one review per booking" a schema
   guarantee.
+  **⚠ THAT IS ALSO WHY A REVIEW'S PUBLIC AUTHOR MAY NEVER COME FROM AN IDENTIFIER, AND WHY
+  "`customerName` IS PRESENT" IS NOT "A NAME WAS SUPPLIED"** (D104, backlog NEW-81). `authorName` and
+  `authorInitials` are served by a `permitAll` endpoint on a page needing no account, and no endpoint
+  can correct a row — so what is wrong there is wrong permanently. **booking launders the login into
+  `customerName`**: `CustomerBookingResource:148` writes
+  `request.customerName() == null || isBlank() ? login : request.customerName()`, which is right where
+  it is (a professional's inbox is an authenticated counterparty to that booking) and arrives at catalog
+  **non-null and equal to the login** for every booking made without a display name — `verify-cycle.sh`
+  sends none, and p1's profile rendered `kojo.ampia.addison` as a person's name for ten of its
+  seventeen reviews. **So catalog must refuse a `customerName` that EQUALS EITHER identifier it holds**
+  — the JWT subject *and* `summary.customerLogin()`, trimmed and case-folded. They are the same string
+  today only because booking 404s a booking that is not the caller's, which is a **cross-service**
+  invariant held in another project's javadoc, and not relying on it costs one `||`. Equality and never
+  resemblance: a rule refusing anything "login-shaped" refuses `Ama Mensah` for a customer logging in as
+  `ama`. `ReviewAuthor` is the one place both fields are composed:
+  `A BridgeCare customer` and a **null** monogram when the booking named nobody, the supplied name
+  unchanged otherwise. `authorName` is `@NotNull` so the label is **stored prose** rather than a
+  client-rendered label, which is argued in D104 §4 along with the three losers; `authorInitials` is
+  nullable so absence is available there, and it is deliberately **not** the erasure's `··` — an
+  erasure and a nameless booking must stay distinguishable.
+  **The item itself said the `== null ? login` fallback was the defect and that branch is UNREACHABLE
+  from `POST /api/bookings`** — the `/proc/1/cmdline` family with the wrong sentence in the work order,
+  so a fix to the fallback alone passes every assertion written to the item's description and changes
+  nothing. **THREE mechanisms hold three different things, and D104 §9 credited the wrong one TWICE**
+  (§9 as re-reviewed) — which is why the shape is worth carrying rather than the sentence: the CI step's
+  **call-site grep** holds only **that the call is present**; the **sweep** holds every *other* file in
+  catalog — the second writer no test there can see, D60's argument one column along — **and that no
+  write composes**; and `TheReviewAuthorIsNeverALoginTest` holds the **value**, which neither CI half
+  reads. The second wrong version said the grep catches a concatenation *onto* the call, and
+  **concatenating onto a call does not make the call disappear**: measured, the ternary exits 1 via the
+  grep, `+` exits 1 via the **sweep**, and `.concat` exited **0 via neither**.
+  **An allowance is a TOKEN on the line, scoped per FILE with anchored paths, and SIX composition
+  spellings revoke it** — `+`, `.concat(`, `String.format`, `.formatted(`, `String.join`,
+  `StringBuilder`. It was `+` alone for one commit while the success line read *"none of them
+  concatenating"*, and four spellings published a login through it. The token is what does the work: a
+  wrong-path file with no composition is already refused, so per-file scoping is **surface narrowing**
+  and not the guard. Keep each write on **one line**: the pattern matches `.authorName(` followed by a
+  non-`)` character or by end of line, so a prettier-wrapped argument is refused, fail-closed, exactly
+  as D60's `.zoneId(` is. `review-author-guard-test.sh` drives the shipped step in a **synthetic tree**
+  and **prints its own case count** — read that line, not a number from here.
+  The erasure half needed no code and is answered: `ErasureWorkflow:106-108` redacts **both** fields and
+  `ErasureResourceIT` asserts both — the initials **by value** (`"··"`), because nothing else in catalog
+  pins that string. **The ten rows on quality are uncorrected** — that stack is exited and a reseed is
+  the operator's. `initials` still takes the first UTF-16 **unit**, which is pre-existing and is
+  **NEW-88**: measured, `𝒜nna` yields a lone high surrogate and `...` yields null, colliding with the
+  no-name state. **And the suppression is SILENT — NEW-89**: nothing logs that a name was refused, so a
+  `booking` that stopped sending `customerLogin` would turn every subsequent review into
+  `A BridgeCare customer`, correct by the rule and permanent in a column nothing can edit. A WARN
+  belongs in `ReviewWriteResource` and not in `ReviewAuthor` (D97: the level is authored by the code
+  that knows which of the two it is, and a static utility knows neither), carrying
+  `summary.reference()` — platform-minted — and neither name nor either login.
 - Two verification scripts run against a live estate and are the fastest way to know it still
   works end to end. Both need `/tmp/tok-pro.txt` and `/tmp/tok-cust.txt` — HS512 tokens minted with
   the estate's `JWT_BASE64_SECRET`, subject = login, authorities in the `auth` claim:

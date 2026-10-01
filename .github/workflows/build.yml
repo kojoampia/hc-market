@@ -2191,6 +2191,178 @@ jobs:
           [ "$fail" -eq 0 ] && echo "ok   $scanned files scanned, $writes zone writes — every one of them parses or is a checked constant"
           exit "$fail"
 
+      # A review's public author may not be composed from an identifier — decisions.md D104,
+      # backlog NEW-81. The write-side twin of the zone check above, in the one column where the
+      # mistake is published to people with no account and cannot afterwards be taken back.
+      #
+      # WHY A CHECK AND NOT ONLY A TEST, AND WHICH OF THE TWO HOLDS WHAT. This step has two
+      # mechanisms guarding two different things, and saying it the other way round — as the first
+      # version of D104 §9 did — credits the sweep with work the call-site grep is doing.
+      #
+      #   the call-site grep   holds THAT THE CALL IS PRESENT, and nothing more. Replace the
+      #                        composition with something else and the literal stops appearing, so
+      #                        this exits 1.
+      #   the sweep            holds EVERY OTHER FILE — a SECOND writer of the column, which no test
+      #                        in catalog can see (D60's argument one column along, and the exact
+      #                        shape NEW-15 had: nothing in the estate could see an omission from a
+      #                        list, so the list is a sweep) — AND that no write composes.
+      #   the TEST             holds THE VALUE, and it is the only thing that sees a conforming call
+      #                        whose RESULT is then altered.
+      #
+      # ⚠ THIS SAID THE GREP HOLDS "THE LIVE WRITE … INCLUDING BY CONCATENATING ONTO IT", AND THAT
+      # SENTENCE CONTAINED ITS OWN COUNTEREXAMPLE: concatenating onto the call does not make the call
+      # disappear. Measured — the ternary mutation exits 1 via the grep; `+` exits 1 via the SWEEP's
+      # message; `.concat` exited 0 via neither. No property was lost (the test turns 9 red of 12 on
+      # `.concat(login)`), but the credit was wrong in the paragraph written to stop exactly that.
+      #
+      # Review is catalog's entity and no other service maps it, so the sweep is catalog's alone.
+      # That enumeration is acceptable for D60's reason and no better one: every failure mode this
+      # check has today exits 1 loudly, including finding nothing to scan and finding nothing to
+      # match, so it cannot report ok having read nothing.
+      #
+      # WHAT IT DOES NOT ESTABLISH, stated because the error message reads stronger than the match is.
+      # An allowance is that the LINE names its token, not that the VALUE is that token's. The two
+      # ways that was bypassable are closed below — allowances are scoped per FILE, and a `+` on an
+      # author-write line revokes any of them — but a conforming line can still hand the composer a
+      # wrong argument (`ReviewAuthor.displayName(name, name)`), and only the test can see that.
+      - name: A review's public author may not be composed from an identifier
+        run: |
+          fail=0
+          # The shared stripper must EXIST, for the reason every other caller here states: absent,
+          # `awk -f` errors, nothing is matched, and this reports ok having read nothing (D56's review).
+          [ -f .github/checks/strip-comments.awk ] || { echo "::error::.github/checks/strip-comments.awk is missing — this check would strip nothing, match nothing and pass. See decisions.md D56."; exit 1; }
+          # The composer must exist. This check's whole remedy is "go through it", so a rename would
+          # leave every error message pointing at nothing while the allowance silently stopped matching.
+          author=catalog/src/main/java/net/jojoaddison/service/ReviewAuthor.java
+          [ -f "$author" ] || { echo "::error::$author is gone or renamed — nothing composes a review's public author any more, and this check keys on that name. See decisions.md D104."; exit 1; }
+          # …and the one live write must still route through it, by name and by method. The sweep below
+          # would catch a value resolved into a local variable first, but not the call going missing
+          # while a conforming line stayed: `.authorName(ReviewAuthor.ANONYMOUS_NAME)` names the class
+          # and publishes a label for every reviewer, which is the control's mutation, not the ban's.
+          resource=catalog/src/main/java/net/jojoaddison/web/rest/ReviewWriteResource.java
+          # Stripped ONCE into a file and grepped from the file, never `awk … | grep -q`: under
+          # pipefail a match arrives as the producer's 141 and reads as "not found" (D98, NEW-71).
+          # build.yml has no pipefail today, which is what makes the neighbours above correct, and
+          # it is one `defaults: run: shell:` away from not being.
+          stripped=$(mktemp)
+          awk -f .github/checks/strip-comments.awk "$resource" > "$stripped" || { echo "::error::could not strip $resource"; exit 1; }
+          for call in 'ReviewAuthor.displayName(' 'ReviewAuthor.initials('; do
+            if ! grep -qF "$call" "$stripped"; then
+              echo "::error file=$resource::POST /api/reviews no longer composes the author through $call — booking stores the LOGIN in customerName for a booking made without a display name, so the value this writes instead is an account identifier on a page that needs no account, in a row no endpoint can correct. See decisions.md D104, backlog NEW-81."
+              fail=1
+            fi
+          done
+          scanned=0
+          writes=0
+          writers=""
+          dir=catalog/src/main/java/net/jojoaddison
+          [ -d "$dir" ] || { echo "::error::$dir does not exist — this check would scan nothing and pass. See decisions.md D104."; exit 1; }
+          while IFS= read -r f; do
+            # An empty find yields one EMPTY line through a here-string, not none.
+            [ -z "$f" ] && continue
+            scanned=$((scanned + 1))
+            awk -f .github/checks/strip-comments.awk "$f" > "$stripped" || { echo "::error::could not strip $f"; exit 1; }
+            hits=$(grep -nE '\.authorName\([^)]|\.authorName\([[:space:]]*$|\.authorInitials\([^)]|\.authorInitials\([[:space:]]*$|\.setAuthorName\(|\.setAuthorInitials\(' "$stripped" | cut -d: -f1)
+            for n in $hits; do
+              writes=$((writes + 1))
+              # Deduped on the PATH and printed relative to $dir, not on `basename`: two writers in
+              # different packages sharing a file name printed as one, so the breakdown could not show
+              # the population changing, which is the one thing it is here for.
+              rel=${f#"$dir"/}
+              case " $writers " in *" $rel "*) : ;; *) writers="$writers $rel" ;; esac
+              line=$(sed -n "${n}p" "$stripped")
+              allowed=no
+              # THE ALLOWANCE IS A TOKEN ON THE LINE, SCOPED TO THE FILE THAT LEGITIMATELY HAS IT.
+              # The token is what does the work — a mis-placed file cannot publish anything on its
+              # own, because a bare `r.setAuthorName(login)` in any file matches no token and is
+              # refused (measured). The per-file scoping is SURFACE NARROWING on top of that: it
+              # removes the ability to borrow another file's token, so `this.setAuthorName(login)` in
+              # a new service class no longer satisfies the entity's allowance.
+              #
+              # Paths are ANCHORED at $dir rather than `*/…`, so a copy of a legitimate file under
+              # some other package cannot inherit its allowance by tail-matching.
+              #
+              # ⚠ Today's population is 8 writes in 4 files, DERIVED on every run and printed below.
+              # The ALLOWANCE LIST is not held against it: delete CatalogSeeder's two writes and
+              # nothing here observes that an allowance now names a file writing nothing, so the list
+              # can rot in the quiet direction. A FIFTH file, by contrast, matches nothing and is
+              # refused out loud — a new legitimate writer has to be argued in D104 to get in.
+              case "$f" in
+                "$dir"/web/rest/ReviewWriteResource.java)
+                  # the one composer
+                  case "$line" in *ReviewAuthor.*) allowed=yes ;; esac ;;
+                "$dir"/service/ErasureWorkflow.java)
+                  # the erasure's own stand-ins
+                  case "$line" in *REDACTED_NAME*|*REDACTED_INITIALS*) allowed=yes ;; esac ;;
+                "$dir"/service/seed/CatalogSeeder.java)
+                  # the seed file's own field, read back into the same field
+                  case "$line" in *.authorName\(*.authorName\(\)*|*.authorInitials\(*.authorInitials\(\)*) allowed=yes ;; esac ;;
+                "$dir"/domain/Review.java)
+                  # the entity's own fluent setter delegating to its own setter
+                  case "$line" in *this.setAuthorName\(*|*this.setAuthorInitials\(*) allowed=yes ;; esac ;;
+              esac
+              # AND A COMPOSITION REVOKES EVERY ALLOWANCE, IN EVERY FILE — SIX SPELLINGS, NOT ONE.
+              # An allowed token says a legitimate value appears on the line; it does not say the
+              # value WRITTEN is that one. `.authorName(ReviewAuthor.displayName(…) + login)` names
+              # the composer and publishes a login beside what it returned.
+              #
+              # ⚠ THIS WAS `*+*` ALONE AND THAT WAS A LIVE HOLE, measured against the live write and
+              # against ErasureWorkflow on the previous commit:
+              #
+              #     + login          rc=1   caught          .formatted(…) + …   rc=1   (caught by the +)
+              #     .concat(login)   rc=0   PUBLISHED       String.format(…)    rc=0   PUBLISHED
+              #     String.join(…)   rc=0   PUBLISHED       new StringBuilder   rc=0   PUBLISHED
+              #
+              # and the success line went on asserting "none of them concatenating" — the house
+              # defect of a message reading stronger than the match, in the rule written to close it.
+              # None of the eight real writes uses any of the six, so refusing all of them costs
+              # nothing today and fails CLOSED. `String.format` is listed beside `.formatted(`
+              # deliberately: modernizer rejects the former, so it should never appear — and a check
+              # that relies on another plugin's ban is relying on something it cannot see.
+              composed=no
+              case "$line" in
+                *+*|*.concat\(*|*String.format*|*.formatted\(*|*String.join*|*StringBuilder*) composed=yes; allowed=no ;;
+              esac
+              [ "$allowed" = yes ] && continue
+              # The original line, not the stripped one — quote what is written.
+              echo "  $f:$n:$(sed -n "${n}p" "$f")"
+              if [ "$composed" = yes ]; then
+                echo "::error file=$f,line=$n::a review's public author is COMPOSED here — the line names a legitimate value and builds something else out of it, which is how an account login is published beside the stand-in that was supposed to replace it. Hand over a single expression. See decisions.md D104 §9a, backlog NEW-81."
+              else
+                echo "::error file=$f,line=$n::a review's public author is written here without going through ReviewAuthor — authorName and authorInitials are served by a permitAll endpoint and there is deliberately no endpoint that could ever correct a review, so an identifier written here is published permanently. If this file legitimately writes the column, say so in decisions.md D104 and add it here. See decisions.md D104, backlog NEW-81."
+              fi
+              fail=1
+            done
+          done <<< "$(find "$dir" -name '*.java' -type f | sort)"
+          rm -f "$stripped"
+          if [ "$scanned" -eq 0 ]; then
+            echo "::error::no Java file was scanned — this check is now blind. See decisions.md D104."
+            exit 1
+          fi
+          # And the sweep itself must still match something. Renaming the field would leave catalog
+          # clean by finding nothing at all, which is this family's recurring fail-open.
+          if [ "$writes" -eq 0 ]; then
+            echo "::error::no author write was found in catalog — the accessors have been renamed and this check is scanning for names nothing uses. See decisions.md D104."
+            exit 1
+          fi
+          # The breakdown is printed rather than a bare count, so a file joining or leaving the
+          # population is visible in the log of a passing run. It is derived on every run — read this
+          # line, not a number from a document.
+          # The breakdown is printed rather than a bare count, so a file joining or leaving the
+          # population is visible in the log of a passing run. It is derived on every run — read this
+          # line, not a number from a document. The claim is deliberately narrow: each write names an
+          # allowed token in the file entitled to it, and none of them composes in any of the six
+          # spellings above. It does NOT claim the value is right — only the test can say that.
+          [ "$fail" -eq 0 ] && echo "ok   $scanned files scanned, $writes author writes in$writers — each naming its own file's token, none composing"
+          exit "$fail"
+
+      # D104 §9a claimed this guard had been "driven against 19 states" with no script anybody else
+      # could run, so two reviewers and a coordinator each wrote their own lifter to check it — and
+      # one of them found the `.concat` hole the claim's own success line denied. D63's rule: a recipe
+      # nobody can re-run is a claim rather than a check. It prints its own derived case count.
+      - name: …and that check must fail on each of the states it exists to refuse
+        run: ./.github/checks/review-author-guard-test.sh
+
       # The moment a rate is struck at travels on the event, so both ends must spell it the same way —
       # decisions.md D53, backlog NEW-13.
       #

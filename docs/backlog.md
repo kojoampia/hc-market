@@ -6661,7 +6661,81 @@ theirs to route.
 
 ---
 
-## NEW-81 — a public profile publishes a customer's login as a review author · READY
+## NEW-81 — a public profile publishes a customer's login as a review author · DONE (D104)
+
+> **CLOSED 2026-10-02 — `decisions.md` D104. A review's public author is composed by `ReviewAuthor`
+> and by nothing else: `A BridgeCare customer` when the booking named nobody, a null monogram beside
+> it, and a genuine display name published unchanged.**
+>
+> ⛔ **THIS ITEM'S STATED MECHANISM IS WRONG, AND A FIX WRITTEN TO IT WOULD HAVE BEEN A NO-OP.** The
+> paragraph below says *"the fallback is the defect and the null is reachable"*, on the premise that
+> `customerName` *"is absent for every review the ten `verify-cycle.sh` runs wrote"*. It is not absent.
+> Booking's `CustomerBookingResource:148` writes
+> `request.customerName() == null || isBlank() ? login : request.customerName()`, `BookingView`
+> declares the field, `BookingMapper.toView` passes it and catalog's `BookingSummary` binds it — so a
+> booking made without a display name arrives at catalog **non-null and equal to the login**, the
+> ternary takes its **else** branch, and `.authorName(summary.customerName())` is the line that
+> publishes `kojo.ampia.addison`. **The `== null` branch is unreachable from `POST /api/bookings`
+> altogether.**
+>
+> Measured rather than argued: the new test run against the unmodified resource reports
+> **`Tests run: 9, Failures: 6`**, the live-path case printing
+> `Expecting actual: "kojo.ampia.addison" not to be equal to: "kojo.ampia.addison"`. Repairing the
+> fallback alone leaves every assertion written to this item's description green while the defect is
+> fully live — which is why D104 §4(d) argues that non-fix as a rejected shape rather than skipping it.
+> It is the `/proc/1/cmdline` family with the inaccurate sentence in the **work order**, the one
+> document an implementer is least likely to re-derive.
+>
+> **The naming question's hard constraint closed it before taste could.** `authorName` is `required`
+> in `jdl/catalog.jdl:222` and `@NotNull` on the entity, so **null is unavailable** without
+> regenerating `Review`'s changelog and invalidating every existing database's checksum — so the answer
+> had to be a non-null, non-identifying **stored** value. This item's own suggestion won; the three
+> losers (initials-as-name, null-plus-a-translated-label, and fixing the fallback) are each argued in
+> D104 §4, with the condition under which the null answer becomes right later.
+>
+> **The discriminator is the part this item could not have known it needed.** Since booking launders
+> the login in, catalog must also refuse a `customerName` that **equals the `customerLogin`** —
+> trimmed and case-folded, because a name differing from a login only in case or surrounding space is
+> the same disclosure, and *equality* rather than resemblance, because a rule refusing anything
+> "login-shaped" would refuse `Ama Mensah` for a customer logging in as `ama`.
+>
+> **`authorInitials` is answered in the same breath and goes the other way: null.** That column IS
+> nullable, so absence is available and is honest — there are no initials of a name never given, and
+> `initialsOf(login)` produced a fragment of an identifier (`jdoe123` → `J`), not a monogram. It is
+> deliberately **not** the erasure's `··`: "nobody supplied a name" and "this person asked to be
+> forgotten" are different facts and the second is irreversible.
+>
+> **THE ERASURE HALF IS ANSWERED AND NEEDED NO CODE.** `ErasureWorkflow:106-108` sets
+> `REDACTED_NAME` **and** `REDACTED_INITIALS` inside the `findByCustomerLogin` loop; `ErasureFanoutLegIT:126`
+> asserts `authorName == "[erased]"`, `ErasureResourceIT:112-113` asserts **both** fields, and
+> `:217-218` is the bystander control. So the sweep does reach `authorName`, in both directions, and
+> this item's *"not established here"* is now established. **One case nothing covered has been added**:
+> every existing fixture starts from a real name, so "the redaction happens" was only asserted over
+> rows that had something to redact — `ErasureResourceIT.erasesAReviewThatNeverHadAName` is the row
+> D104 newly makes possible, where `authorName` hides nothing and `customerLogin` must still move.
+>
+> **Booking's `:148` is UNCHANGED, on argument.** Its fallback is right where it is: a professional's
+> inbox is an authenticated counterparty to that very booking who already knows who booked them. The
+> repair belongs at the boundary that **publishes** — D44's and D22's placement — and removing
+> booking's fallback would take a feature away from an inbox to fix a defect one service along.
+>
+> **Evidence.** `catalog` `./mvnw clean verify`: **surefire 137, failsafe 94, 0 failures, 0 errors, 0
+> Checkstyle violations, modernizer silent, BUILD SUCCESS**. Each guarded property was mutated
+> **separately** and reddens a disjoint minimal set (six mutations, tabulated in D104 §9) — including
+> the control's own mutation, "every author is anonymous", which reddens the control **alone**. The new
+> CI sweep *"A review's public author may not be composed from an identifier"* was driven against
+> **14 states, 10 refusals and 4 green controls, all 14 as expected**, by lifting the shipped step out
+> of `build.yml` by name; it prints `ok 133 files scanned, 8 author writes` on a correct tree.
+>
+> **⚠ THE TEN EXISTING ROWS ARE NOT CORRECTED AND NOT RE-MEASURED.** `hc-market-quality` is `Exited`,
+> so nothing here ran against a live estate and no claim is made about what a rendered profile shows —
+> the ten, p1's seventeen and the seven seeded names stay this item's measurements, carried. Correcting
+> them is a reseed (`./quality/startup.sh --local --clean`, then `TAG=<sha> ./quality/startup.sh
+> --local`) and it is the operator's, not a package's.
+>
+> **Opened by this: NEW-87** — the label is English in a data column on a client where translation is
+> on, and `authorInitials` is now nullable where `marketplace.model.ts` types it `string`. No `web/`
+> file was touched, deliberately.
 
 **Found 2026-09-24 by looking at a rendered page** (NEW-48 Stage B, `decisions.md` D103). p1's public
 profile on the quality estate renders reviews whose author reads **`kojo.ampia.addison`** — a login, on
@@ -6915,3 +6989,158 @@ reading behind.
 
 Nobody needs to decide anything. It needs a measurement (which call parks, and on which scheduler) and
 one test assertion, both in `gateway`.
+
+---
+
+## NEW-87 — the client does not model a review with no author, and the label is English in a column · READY
+
+**Opened by NEW-81** (`decisions.md` D104 §5, §10), 2026-10-02, as the stated cost of that item's
+answer rather than as a defect it left behind. **One new state, two client-side consequences**, and the
+reason both are an item rather than part of that commit is NEW-48's fence: changing a marketplace
+screen is Stage C–E's.
+
+Since D104 a review written for a booking that named nobody carries
+
+```
+authorName     "A BridgeCare customer"      (stored prose — authorName is @NotNull, see below)
+authorInitials null                         (the FIRST null that column has ever held)
+```
+
+**The initials half is a type lie from that commit onward.** `web/src/main/webapp/app/marketplace/marketplace.model.ts:144`
+reads `authorInitials: string`, and the API can now answer `null`. Nothing renders it on the one screen
+that exists — `professional.html` renders `authorName` alone — so **no visitor meets it today**, which
+is exactly why it is cheap now and will not be once a monogram is drawn in an avatar circle.
+
+**The prose half costs nothing yet and that is a fact about the bundle, not about the design.**
+`web/.yo-rc.json` has `languages: ['en']` and `i18n/` holds only `en`, so an English string in a data
+column renders correctly for every reader there is. `enableTranslation` is **on**, so the day a second
+language arrives, every review ever written through the API reads in English on a page served in
+another — and ⚠ **there is no endpoint that could correct a review**, so those rows keep the English
+wording for ever, whatever a later client does.
+
+**Done means** `authorInitials` typed `string | null` in the client model with the profile screen
+branching on it, and a decision about the label. D104 §4(c) already argues the shape that answer
+should take and names its blocker: storing `null` in `authorName` and letting the client render a
+translated label is the **cleanest** answer and is blocked only by `authorName String required` in
+`jdl/catalog.jdl:222`, because regenerating `Review` invalidates the Liquibase checksum every existing
+database recorded. **So the trigger for revisiting this is either of two things happening for some
+other reason**: a second language landing in `web/`, or a `Review` JDL change being paid for by another
+item in the same changelog. Mapping the literal in the client is the interim answer and is strictly
+cheaper — the value is one exact string, pinned by `TheReviewAuthorIsNeverALoginTest` precisely so it
+cannot drift into two.
+
+**What this is NOT.** It is not a request to re-word the label; re-wording is red by that test on
+purpose, and the rows already written would keep the old wording regardless. And it is not NEW-83: that
+one is a number no endpoint publishes, this one is a string the API publishes correctly in one language.
+
+### Not blocked
+
+Nobody needs to decide anything to do the typing half, which is the half with a wrong type in it
+today. The label half is worth one line from the architect **only if** a second language is actually
+coming; until then D104's answer stands and this item is a record of its cost.
+
+---
+
+## NEW-88 — a monogram is built from UTF-16 units, so three names publish something that is not a monogram · READY
+
+**Found 2026-10-02 at NEW-81's review**, and **PRE-EXISTING** — identical on `main`, carried verbatim
+from the `initialsOf` that `ReviewAuthor.initials` replaced. It is an item rather than part of D104
+because that package's fence is the login disclosure and this logic did not change; what changed is
+that it now lives in a named, tested class with a mutation harness around it, **which is the cheapest
+moment this will ever have**.
+
+`ReviewAuthor.initials` does `parts[i].charAt(0)` — the first **UTF-16 code unit**, not the first code
+point — and appends whatever `Character.toUpperCase(char)` makes of it. Measured on Oracle JDK 25:
+
+| name | initials | hex | well-formed UTF-16? |
+| --- | --- | --- | --- |
+| `Selina Amoah` | `SA` | `U+0053 U+0041` | yes — the control |
+| `Äkua Boateng` | `ÄB` | `U+00C4 U+0042` | yes — a BMP accent is fine, which is the second control |
+| `𝒜nna Mensah` | — | **`U+D835 U+004D`** | **no — a lone high surrogate** |
+| `😀 Smiley` | — | **`U+D83D U+0053`** | **no — same shape** |
+| `!!!` | `!` | `U+0021` | yes, and it is not a monogram |
+| `...` | **null** | — | **collides with the no-name state** |
+
+**Three distinct defects, and they are not equally bad.**
+
+- **The lone surrogate is the sharp one.** The two units fit `@Size(max = 4)`, so this is **not** a
+  length problem — ⚠ and **what the JDBC driver and PostgreSQL do with an unpaired surrogate on the way
+  into a `varchar(4)` is NOT MEASURED**. Encodings that replace it give a `?` on a public page;
+  encodings that refuse it give a 500 on `POST /api/reviews` after a review has been earned. Measure
+  before assuming either.
+- **`"..."` → null is a collapse**, and this repository's own rule about collapsing states applies:
+  null is what D104 chose to mean *"the booking named nobody"*, so a name of only dots is
+  indistinguishable from an anonymous reviewer. Harmless in effect, wrong as a model.
+- **`"!!!"` → `"!"` is cosmetic** and the mildest row.
+
+**Done means** `codePointAt` with `offsetByCodePoints`, or `String.codePoints()`, plus a decision about
+the punctuation cases — the natural answer being that a part contributing no letter contributes no
+initial, so `"..."` and `"!!!"` both yield null and the anonymous path owns null alone, which would mean
+distinguishing them from D104's null after all. **Measure the surrogate's fate through a real
+PostgreSQL first**: if it is a 500 this is a defect on a money-adjacent path and not a cosmetic item,
+and that measurement decides which.
+
+⚠ **It also affects `authorName`, which is NOT truncated at all** — a punctuation-only display name is
+published verbatim, so `"-"` is a reviewer called `-`. D104 deliberately publishes a supplied name
+unchanged (the alternative is the platform editing what people call themselves), so this half may well
+be a `WON'T`; it is named here so the next reader does not have to find it twice.
+
+**The seeded 63 are unaffected** — every seeded `authorName` is a plain Latin display name and the
+seeder writes the seed file's own `authorInitials` rather than deriving one.
+
+### Not blocked
+
+Nobody needs to decide anything to measure it. The fix is one `codePointAt` plus a line about
+punctuation; what needs settling before writing it is whether PostgreSQL refuses the surrogate, which
+decides whether this is cosmetic or a 500.
+
+---
+
+## NEW-89 — a suppressed author name is silent, and the row it writes cannot be corrected · READY
+
+**Opened at NEW-81's delta re-review** (`decisions.md` D104 §11), 2026-10-02. Not a defect in what
+D104 built — the suppression is correct and is the whole point of that item — but **nothing anywhere
+records that it happened**, and this is the one column in the estate where that combination is
+expensive.
+
+`ReviewAuthor.displayName` answers `A BridgeCare customer` whenever the booking named nobody, and
+`ReviewWriteResource` stores it. Both are right. What is missing is that **the suppression is
+indistinguishable from the ordinary case in every log, metric and response**:
+
+- a client that stops sending `customerName` looks identical to one that never sent it;
+- **if `booking` ever stopped sending `customerLogin`** on the booking summary, `ReviewAuthor`'s
+  fail-closed null arm refuses *every* name — so **every subsequent review becomes
+  `A BridgeCare customer`**, correct by the rule and wrong about the world, permanently;
+- ⚠ **and there is no endpoint to correct a review**, so the window between a regression and somebody
+  noticing it is written into rows nothing can edit. That is D52's uncorrectability applied to a value
+  that stands in for a person's name.
+
+**Done means a WARN at the suppression site, and it can carry no forbidden value.** `summary.reference()`
+is platform-minted (`"b-" + a UUID prefix`), so a line naming the booking reference and the *reason*
+discloses nothing: **not** `customerName`, **not** either login, and nothing derived from them. Something
+like *"review for booking b-2f8c11a4 published without a display name (the booking named none)"*, with a
+distinguishable second message for the null-identifier arm — those are two different facts and D104 §5's
+own rule is that they must not collapse.
+
+**It belongs in `ReviewWriteResource`, not in `ReviewAuthor`.** D97's rule is that the level is authored
+by the code that knows which of the two it is, and `ReviewAuthor` is a static utility with no logger —
+giving it one would make a pure function log, and it cannot tell a caller's refusal from an estate fault
+anyway. The resource knows it is writing an uncorrectable public row, which is what makes this a WARN
+rather than DEBUG. **WARN, never ERROR** — a booking made without a display name is an ordinary caller
+state, not a fact about this estate that is wrong (D97, and the zero-ERROR argument NEW-70 re-measured).
+
+**Why a counter is the weaker answer and not the answer here.** A `reviews.author.suppressed` meter would
+show the rate moving, but D84's rule applies — no login or name may ever become a tag, so the meter could
+not say *which* booking — and `gateway_identity_*` is the estate's cautionary tale: those series are
+registered, correct, and **transported nowhere by default** (D84 §7, D85). A WARN line lands where
+somebody already reads. A meter beside it later is fine; it is not a substitute.
+
+**What this is NOT.** It is not a reason to publish the name instead, and it is not a reason to loosen the
+null-identifier arm: `anUnreadableIdentifierRefusesRatherThanPublishes` exists because that direction was
+asserted by nothing until a mutation harness said so. The point is to make the refusal **audible**, not
+rarer.
+
+### Not blocked
+
+Nobody needs to decide anything. It is one `LOG.warn` in `ReviewWriteResource` plus a unit assertion, and
+the only judgement is the wording — which must name the booking reference and nothing else.
