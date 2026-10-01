@@ -2712,8 +2712,12 @@ time.**
   it is (a professional's inbox is an authenticated counterparty to that booking) and arrives at catalog
   **non-null and equal to the login** for every booking made without a display name — `verify-cycle.sh`
   sends none, and p1's profile rendered `kojo.ampia.addison` as a person's name for ten of its
-  seventeen reviews. **So catalog must refuse a `customerName` that EQUALS the `customerLogin`**,
-  trimmed and case-folded, and `ReviewAuthor` is the one place both fields are composed:
+  seventeen reviews. **So catalog must refuse a `customerName` that EQUALS EITHER identifier it holds**
+  — the JWT subject *and* `summary.customerLogin()`, trimmed and case-folded. They are the same string
+  today only because booking 404s a booking that is not the caller's, which is a **cross-service**
+  invariant held in another project's javadoc, and not relying on it costs one `||`. Equality and never
+  resemblance: a rule refusing anything "login-shaped" refuses `Ama Mensah` for a customer logging in as
+  `ama`. `ReviewAuthor` is the one place both fields are composed:
   `A BridgeCare customer` and a **null** monogram when the booking named nobody, the supplied name
   unchanged otherwise. `authorName` is `@NotNull` so the label is **stored prose** rather than a
   client-rendered label, which is argued in D104 §4 along with the three losers; `authorInitials` is
@@ -2722,13 +2726,22 @@ time.**
   **The item itself said the `== null ? login` fallback was the defect and that branch is UNREACHABLE
   from `POST /api/bookings`** — the `/proc/1/cmdline` family with the wrong sentence in the work order,
   so a fix to the fallback alone passes every assertion written to the item's description and changes
-  nothing. A **test** drives the resource and asserts over the row (six mutations, disjoint red sets);
-  a **CI sweep** — *"A review's public author may not be composed from an identifier"* — is what sees a
-  second writer appearing elsewhere in catalog, which no test there can. Its allowance is that the line
-  **names** `ReviewAuthor`, not that the value is `ReviewAuthor`'s. The erasure half needed no code and
-  is answered: `ErasureWorkflow:106-108` redacts **both** fields and `ErasureResourceIT:112-113` has
-  always asserted both. **The ten rows on quality are uncorrected** — that stack is exited and a reseed
-  is the operator's.
+  nothing. **THREE mechanisms hold three different things and crediting the wrong one is how this gets
+  loosened** (D104 §9, corrected at review): the CI step's **call-site grep** holds the live write in
+  `ReviewWriteResource` — plant a concatenation there and *it* is what exits 1, not the sweep; the
+  **sweep** holds every *other* file in catalog, which is the second writer no test there can see
+  (D60's argument one column along); and `TheReviewAuthorIsNeverALoginTest` holds the **value**, which
+  neither CI half reads. **Allowances are scoped per FILE and a `+` on an author-write line revokes any
+  of them** — line-wide allowances were four holes, not the one §9 first stated, and the sharp one
+  printed `ok 134 files scanned, 9 author writes` for a new `service/` class writing the login. Keep
+  each write on **one line**: the pattern matches `.authorName(` followed by a non-`)` character or by
+  end of line, so a prettier-wrapped argument is refused, fail-closed, exactly as D60's `.zoneId(` is.
+  The erasure half needed no code and is answered: `ErasureWorkflow:106-108` redacts **both** fields and
+  `ErasureResourceIT` asserts both — the initials **by value** (`"··"`), because nothing else in catalog
+  pins that string. **The ten rows on quality are uncorrected** — that stack is exited and a reseed is
+  the operator's. `initials` still takes the first UTF-16 **unit**, which is pre-existing and is
+  **NEW-88**: measured, `𝒜nna` yields a lone high surrogate and `...` yields null, colliding with the
+  no-name state.
 - Two verification scripts run against a live estate and are the fastest way to know it still
   works end to end. Both need `/tmp/tok-pro.txt` and `/tmp/tok-cust.txt` — HS512 tokens minted with
   the estate's `JWT_BASE64_SECRET`, subject = login, authorities in the `auth` claim:

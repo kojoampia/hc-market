@@ -115,6 +115,41 @@ class TheReviewAuthorIsNeverALoginTest {
         assertThat(written.getAuthorName()).isNotEqualTo(LOGIN).isEqualTo(ANONYMOUS);
     }
 
+    /**
+     * The second identifier earns its {@code ||} — review finding.
+     *
+     * <p>The composer is handed the JWT subject <em>and</em> the summary's own {@code customerLogin},
+     * and this is the case only the second one can refuse. It cannot arise while booking 404s a booking
+     * that is not the caller's, which is the point: the rule holds without that invariant rather than
+     * because of it, and a comparison nothing drives is one nobody would notice losing.
+     */
+    @Test
+    @DisplayName("a customerName equal to the BOOKING's customer login is refused too")
+    void theBookingsOwnCustomerLoginIsAlsoRefused() {
+        Review written = publishReviewedBy("yaa.boakye", "yaa.boakye");
+
+        assertThat(written.getAuthorName()).isEqualTo(ANONYMOUS).isNotEqualTo("yaa.boakye");
+        assertThat(written.getAuthorInitials()).isNull();
+    }
+
+    /**
+     * An identifier this service cannot read is one it cannot rule out — and nothing drove this until
+     * the mutation harness said so.
+     *
+     * <p>Inverting {@code isLogin}'s null arm to publish rather than refuse reddened <strong>no
+     * test</strong> when measured, so the fail-closed direction was a comment rather than a property.
+     * It is reachable only through the booking summary, since the resource answers 401 when the JWT
+     * carries no subject at all.
+     */
+    @Test
+    @DisplayName("a booking that names no customer does not get its display name published")
+    void anUnreadableIdentifierRefusesRatherThanPublishes() {
+        Review written = publishReviewedBy("Selina Amoah", null);
+
+        assertThat(written.getAuthorName()).isEqualTo(ANONYMOUS).isNotEqualTo("Selina Amoah");
+        assertThat(written.getAuthorInitials()).isNull();
+    }
+
     // --------------------------------------------------------------------------- the controls --
 
     @Test
@@ -123,6 +158,20 @@ class TheReviewAuthorIsNeverALoginTest {
         Review written = publishReviewedBy("Selina Amoah");
 
         assertThat(written.getAuthorName()).isEqualTo("Selina Amoah");
+    }
+
+    /**
+     * And it does not over-reach: a real name is still published when the booking's customer login is
+     * some other string. Without this, refusing <em>everything</em> on the second comparison passes the
+     * case above.
+     */
+    @Test
+    @DisplayName("a genuine display name survives a booking whose customer login differs from the subject")
+    void aGenuineDisplayNameSurvivesADifferentBookingLogin() {
+        Review written = publishReviewedBy("Selina Amoah", "yaa.boakye");
+
+        assertThat(written.getAuthorName()).isEqualTo("Selina Amoah");
+        assertThat(written.getAuthorInitials()).isEqualTo("SA");
     }
 
     // ------------------------------------------------------------------------------- initials --
@@ -152,7 +201,6 @@ class TheReviewAuthorIsNeverALoginTest {
     @Test
     @DisplayName("the anonymous author and the erased author are different values")
     void theTwoStandInsDoNotCollapse() {
-        assertThat(ANONYMOUS).isNotEqualTo(ERASED);
         assertThat(publishReviewedBy(LOGIN).getAuthorName()).isNotEqualTo(ERASED);
     }
 
@@ -167,13 +215,25 @@ class TheReviewAuthorIsNeverALoginTest {
      * this test is about.
      */
     private Review publishReviewedBy(String customerName) {
+        return publishReviewedBy(customerName, LOGIN);
+    }
+
+    /**
+     * The same, for a booking whose own {@code customerLogin} is not the JWT subject.
+     *
+     * <p>That state is unreachable today — booking answers 404 for a booking that is not the caller's,
+     * so {@code mineOr404} makes the two strings equal — which is exactly why it is driven here: the
+     * second comparison exists so the rule does not depend on another service's invariant, and a
+     * comparison nothing exercises is a comparison that is merely present.
+     */
+    private Review publishReviewedBy(String customerName, String bookingCustomerLogin) {
         ReviewRepository reviews = Mockito.mock(ReviewRepository.class);
         MarketplaceQueryRepository marketplace = Mockito.mock(MarketplaceQueryRepository.class);
         BookingClient booking = Mockito.mock(BookingClient.class);
 
         SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(LOGIN, null, List.of()));
         when(booking.findBooking(anyString(), anyString())).thenReturn(
-            Optional.of(new BookingSummary("b-2f8c11a4", LOGIN, customerName, "p1", "COMPLETED", false))
+            Optional.of(new BookingSummary("b-2f8c11a4", bookingCustomerLogin, customerName, "p1", "COMPLETED", false))
         );
         when(marketplace.findByReference("p1")).thenReturn(Optional.of(new Professional()));
         when(reviews.save(any(Review.class))).thenAnswer(invocation -> invocation.getArgument(0));

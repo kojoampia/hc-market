@@ -20645,11 +20645,24 @@ it were weighed:
 **A customer whose display name genuinely equals their own login is treated as having supplied none,
 and that is correct either way** — publishing it publishes their login, whatever they intended by it.
 
-**A null login fails closed**: a name that *might* be an unknown identifier is not published. It is
-unreachable (`Booking.customerLogin` is not-null and booking 404s for a booking that is not the
-caller's, so the JWT subject and the summary's login are the same string) and it costs nothing to
-refuse. That one comparison therefore covers **both** identifiers this service holds beside the name,
-which is why the signature takes one and not two.
+**A null login fails closed**: a name that *might* be an unknown identifier is not published. An
+identifier this service cannot read is one it cannot rule out, and it costs nothing to refuse. **That
+direction is driven by `anUnreadableIdentifierRefusesRatherThanPublishes`, and it was asserted by
+nothing until the mutation harness said so** — see §9's last table row.
+
+> **⚠ IT COMPARES AGAINST BOTH IDENTIFIERS, AND THIS SECTION ARGUED FOR ONE — corrected at review.**
+> It read that one comparison *"covers both identifiers this service holds beside the name, which is
+> why the signature takes one and not two"*, on the premise that the JWT subject and
+> `summary.customerLogin()` are the same string. **The premise is true today and is the wrong kind of
+> thing to rest on**: booking's `mineOr404` is what makes them equal, which is a *cross-service*
+> invariant held in a javadoc in another Maven project, and nothing in catalog can see it break. The
+> cost of not relying on it is one `||`.
+>
+> `displayName` and `initials` take **`callerLogin` and `bookingCustomerLogin`** and refuse a name
+> matching either. `theBookingsOwnCustomerLoginIsAlsoRefused` drives the case only the second one can
+> refuse, with `aGenuineDisplayNameSurvivesADifferentBookingLogin` beside it so refusing *everything*
+> on the second comparison does not pass — **a comparison nothing drives is a comparison that is merely
+> present**. The invariant is now a remark rather than a load-bearing step.
 
 ### §4 THE FOUR SHAPES, AND WHY EACH LOSER LOSES
 
@@ -20678,6 +20691,15 @@ right later**: a JDL change being paid for by some other item in the same change
 language arriving in `web/` — today `web/.yo-rc.json` has `languages: ['en']` and `i18n/` holds only
 `en`, which is what makes (a)'s untranslated-prose cost theoretical rather than live. Until one of
 those, (c) buys a migration and a checksum fight for a wording nobody can read differently yet.
+
+The checksum constraint is **real and not assumed**: `incrementalChangelog` is unset in
+`catalog/.yo-rc.json`, so a JDL change rewrites the *entity* changelog rather than adding one.
+**A fifth path was raised at review and loses to (a) on strictly more counts than (c) does** — a
+hand-written **additive** `dropNotNullConstraint`, on the `meeting_link` pattern the regeneration table
+records, which avoids the checksum break entirely. It still requires `@NotNull` **deleted from a
+generated file**, so it buys a regeneration-table row *and* all of NEW-87 and changes nothing a reader
+sees. It is named here rather than given a letter because it is not a different answer to the product
+question; it is a cheaper way to pay for (c)'s, and (c)'s triggers are what decide whether to pay.
 
 **(d) Fix the `== null` fallback only — what the item asks for. REJECTED, AND IT IS THE MOST VALUABLE
 REJECTION HERE, BECAUSE IT IS A NO-OP.** §1 is the whole argument: that branch is unreachable from the
@@ -20765,50 +20787,119 @@ is behaviour **and** because a one-line note there would be a second place for o
 
 **A test is the primary mechanism and a sweep is the secondary one, because they see different things.**
 `TheReviewAuthorIsNeverALoginTest` drives the resource and asserts over the `Review` handed to the
-repository, so it sees every mutation of the rule *and* of the one call site. Six mutations of
-`ReviewAuthor`, each applied alone, redden **disjoint minimal sets** — which is the property an
-aggregate exit status cannot report:
+repository, so it sees every mutation of the rule *and* of the one call site. **Eight** mutations of
+`ReviewAuthor`, each applied alone against **12** cases, redden minimal and distinguishable sets —
+which is the property an aggregate exit status cannot report:
 
 | mutation | red |
 | --- | --- |
-| drop the `isLogin` check | the three login cases **and** the initials case (4) |
-| `equalsIgnoreCase` → `equals` | the case-folding case alone (1) |
-| drop both `trim()`s | the whitespace case alone (1) |
-| initials fall back to the login, as before | the initials case alone (1) |
-| the anonymous name **is** the login | all five refusal cases, **no control** (5) |
-| every author is anonymous | **the control alone** (1) |
+| drop **both** `isLogin` checks | 6 — every refusal case, **no control** |
+| drop only the **second** (the cross-service identifier) | 2 — and only those two |
+| `equalsIgnoreCase` → `equals` | 1 — the case-folding case alone |
+| drop both `trim()`s | 1 — the whitespace case alone |
+| initials fall back to the login, as before | 3 — every case that reads the monogram |
+| the anonymous name **is** the login | 7 — every refusal case, **no control** |
+| every author is anonymous | 2 — **both controls, and only them** |
+| a null login is **published** rather than refused | 1 — the unreadable-identifier case |
 
-**What no test in catalog can see is a SECOND writer of the column appearing somewhere else** — D60's
-argument one column along, and NEW-15's root cause: nothing in the estate could see an omission from a
-list. So *"A review's public author may not be composed from an identifier"* sweeps catalog's whole
-`src/main` for `.authorName(`, `.authorInitials(`, `.setAuthorName(` and `.setAuthorInitials(`, strips
-comments with the shared `strip-comments.awk`, and allows exactly four shapes: the composer, the
-erasure's stand-ins, the seed file's own field, and the entity's own fluent setter. It prints
-`ok 133 files scanned, 8 author writes`.
+> **⚠ TWO OF THOSE ROWS ARE REVIEW FINDINGS AND THE SECOND FOUND A HOLE IN THE TEST.** The first draft
+> of this table had **six** rows, and its "drop the `isLogin` check" row was mislabelled: the `sed`
+> pattern matched only the *second* check, so two rows of the table were the same mutation reporting
+> the same single failure. And the last row **reddened nothing at all** when first run — inverting
+> `isLogin`'s null arm to publish rather than refuse left all eleven cases green, so §3's fail-closed
+> direction was *a comment rather than a property*.
+> `anUnreadableIdentifierRefusesRatherThanPublishes` is the case that now drives it, through a booking
+> summary naming no customer (the JWT subject cannot be null — the resource answers 401 first).
+> **A direction nothing drives is a direction nobody would notice losing**, which is the same sentence
+> §3 uses about the second comparison, found by the harness rather than by reading.
 
-Driven against **14 states — 10 refusals and 4 green controls, all 14 as expected** — by lifting the
-**shipped** step out of `build.yml` by name (the lift refuses an empty result and refuses a block that
-does not contain `ReviewAuthor.displayName(`, so a renamed or reindented step cannot be reported as
-passing). The refusals include the original defect restored verbatim, the author set to the login
-outright, a second writer planted in `MarketplaceService`, the accessors renamed estate-wide (the
-sweep's positive control — it must not pass having matched nothing), the stripper missing, and **a
-comment naming both calls**, which is the fail-open this repository has now found nine times.
+**⚠ THERE ARE TWO MECHANISMS AND THIS SECTION CREDITED THE WRONG ONE — corrected at review, and the
+correction is a better argument for the guard than the original was.** It read as though the sweep is
+what protects the live write. It is not. **Measured**: plant any of the concatenation shapes in
+`ReviewWriteResource` itself and the step exits 1 through the **call-site grep** — *"no longer composes
+the author through `ReviewAuthor.displayName(`"* — because that literal stops appearing. The sweep's
+subject is **every other file**.
+
+| | holds | how it is driven |
+| --- | --- | --- |
+| the call-site grep | **the live write** in `ReviewWriteResource` | cases 1-4, 9, 10, 14 |
+| the sweep | **every other file in catalog** — a second writer, which no test there can see (D60's argument one column along, NEW-15's root cause: nothing in the estate could see an omission from a list) | cases 5, 15-18 |
+| `TheReviewAuthorIsNeverALoginTest` | **the value**, asserted over the row | six mutations above |
+
+Neither CI half reads a row; between them they establish that the column is written in one place and by
+one rule. *A stated reason that is true but is not the reason doing the work is a defect* — this
+repository's own rule, applied to its own decision.
+
+The sweep walks catalog's whole `src/main` for `.authorName(`, `.authorInitials(`, `.setAuthorName(`
+and `.setAuthorInitials(`, strips comments with the shared `strip-comments.awk`, and prints its own
+breakdown: `ok 133 files scanned, 8 author writes in Review.java ErasureWorkflow.java
+CatalogSeeder.java ReviewWriteResource.java`. **Read that line, not a count from here** — a file joining
+or leaving the population is then visible in the log of a *passing* run.
+
+### §9a THE ALLOWANCES ARE SCOPED PER FILE, AND THAT WAS FOUR HOLES RATHER THAN THE ONE STATED
+
+The first version allowed four shapes **line-wide**, and §9 named one hole. **There were four, all
+measured.** The sharp one is the cross-file case, because it is the only one where the guard *reports
+success about a write it never vetted*:
+
+```
+control                                       ok  133 files scanned, 8 author writes   rc=0
+a new class in service/ carrying its own
+setAuthorName whose body is this.setAuthorName(login)
+                                              ok  134 files scanned, 9 author writes   rc=0
+```
+
+The counters rose and the success line still read *"every one of them is composed, seeded or erased"*,
+which was then false. **A guard printing a reassuring sentence about a write it never looked at is this
+repository's recurring defect**, not a cosmetic gap — it is `/proc/1/cmdline` in a CI step.
+
+Two changes close all four, and they are different kinds of move:
+
+- **Each allowance is scoped to the file that legitimately has it** — the composer to
+  `ReviewWriteResource`, `REDACTED_*` to `ErasureWorkflow`, the seed's own field to `CatalogSeeder`,
+  `this.setAuthor*` to `domain/Review.java`. The population is **8 writes in 4 files**, re-derived
+  rather than assumed, and a **fifth file matches nothing and is refused out loud** — a new legitimate
+  writer has to be argued here rather than absorbed.
+- **A `+` on an author-write line revokes every allowance, in every file.** This is what closes the
+  rest of the width in one line: `.authorName(login + REDACTED_NAME)`,
+  `.authorName(login + r.authorName())` and
+  `.authorName(ReviewAuthor.displayName(…) + login)` each name an allowed token and publish an
+  identifier beside it. None of the eight real writes concatenates anything, so refusing `+` costs
+  nothing today and fails **closed** if that stops being true.
+
+**Driven against 19 states — 15 refusals and 4 green controls, all 19 as expected** — by lifting the
+**shipped** step out of `build.yml` by name. Cases 14-18 are the four holes, each now red.
+
+> **⚠ THE HARNESS REPORTED FOUR FALSE FAILURES FIRST, AND THE CAUSE IS THE LESSON.** Four `sed`
+> patterns carried the **two-arg** `displayName(name, login)` call text after §3's correction made the
+> signature three-arg. They matched nothing, the tree stayed **correct**, the check correctly exited 0,
+> and the harness reported *"expected red, rc=0"* — **a guard reported as broken because the instrument
+> had stopped reaching its subject.** `drive-check.sh` had no applied-mutation guard at all, so every
+> red in the previous round was valid only by luck of the patterns still matching. It now checksums
+> before and after every mutation and **refuses the case** if nothing changed. *Suspect the instrument
+> before the code* — and a mutation harness must assert that its mutation landed.
 
 **Three limits, stated because the error message reads stronger than the match is.**
 
-- **The allowance is that the LINE names `ReviewAuthor`, not that the VALUE is `ReviewAuthor`'s.**
-  A line concatenating something onto `ReviewAuthor.ANONYMOUS_NAME` passes. The test is what asserts
-  the value; the sweep asserts that no third party writes the column at all. **Argued, not measured.**
+- **A conforming line can still hand the composer a wrong argument.**
+  `ReviewAuthor.displayName(name, name, name)` satisfies both CI halves. Only
+  `TheReviewAuthorIsNeverALoginTest` can see that, which is why the test is the primary mechanism and
+  not the sweep.
 - **The sweep is catalog's alone**, enumerated rather than derived, because `Review` is catalog's entity
   and no other service maps it. That is acceptable for D60's reason and no better one: every failure
   mode it has today exits **1** loudly, including finding no file to scan and finding no write to match.
 - **It cannot see the prose going wrong.** That the label is *right* is a product judgement; the check
   only holds that it is the **only** thing written there.
 
-**It asks its question through no pipe.** The resource's two call-site greps strip once into a temp file
-and grep the file — D98's `has_in` shape. `build.yml` has no `pipefail`, which is what makes the
-neighbouring steps' `awk … | grep -q` correct today and leaves them one `defaults: run: shell:` away
-from not being; this one does not depend on that.
+**One-line writes are required and that is now stated at the site**, as D60 states it at its own
+`.zoneId(`: the pattern matches `.authorName(` followed by a non-`)` character **or** by end of line, so
+a legitimately wrapped `.authorName(\n  ReviewAuthor…)` is **refused**. Fail-closed, and worth saying
+because prettier formats Java here and would wrap a long argument with no intent to evade.
+
+**It asks its question through no pipe.** The two call-site greps strip once into a temp file and grep
+the file — D98's `has_in` shape. `build.yml` has no `pipefail`, which is what makes the neighbouring
+steps' `awk … | grep -q` correct today and leaves them one `defaults: run: shell:` away from not being;
+this one does not depend on that.
 
 ### §10 RESIDUALS
 
@@ -20821,7 +20912,19 @@ from not being; this one does not depend on that.
   correctly as prose today.
 - **No check was added for "the two stand-ins differ".** It is asserted by the unit test and by
   `ErasureResourceIT`, and a textual second mechanism for one property is how one of the two rots
-  (D80).
+  (D80). ⚠ `ErasureResourceIT` asserts the erasure's initials **by value** (`"··"`) and not merely
+  non-null, which was a review finding: nothing else in catalog pins that value anywhere, so
+  `isNotNull()` would have let the two stand-ins converge on the one column where "no name was given"
+  and "this person was erased" meet.
+- **The unit test's `assertThat(ANONYMOUS).isNotEqualTo(ERASED)` is gone** — a tautology over two
+  literals in the test file itself. What carries that property is the behavioural assertion beside it.
+- **NEW-88 (opened).** `initials` takes the first **UTF-16 unit**, carried over verbatim from the
+  `initialsOf` this replaced, so it is pre-existing and identical on `main` — an item, not a fix here.
+  Measured on JDK 25: `𝒜nna Mensah` → `U+D835 U+004D`, a **lone high surrogate**; `!!!` → `!`; and
+  `...` → **null**, which collides with this decision's own no-name state. The two units fit
+  `@Size(max = 4)`, so it is not a length problem, and **what PostgreSQL does with an unpaired
+  surrogate is not measured** — that measurement decides whether NEW-88 is cosmetic or a 500 on a path
+  where a review has already been earned.
 - **`catalog` has no `prettier:format` script** — NEW-62, three of the five services — so this package
   matched the surrounding style by hand rather than running a formatter that reformats files it never
   touched.

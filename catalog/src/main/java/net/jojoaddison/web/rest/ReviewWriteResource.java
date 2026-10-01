@@ -147,9 +147,19 @@ public class ReviewWriteResource {
             .reference("r-" + UUID.randomUUID().toString().substring(0, 8))
             .customerLogin(login)
             // NEW-81, D104: never the login, and "customerName is present" is not "a name was
-            // supplied" — see ReviewAuthor, which is the one place these two are composed.
-            .authorName(ReviewAuthor.displayName(summary.customerName(), login))
-            .authorInitials(ReviewAuthor.initials(summary.customerName(), login))
+            // supplied" — see ReviewAuthor, which is the one place these two are composed. Both
+            // identifiers are handed over: they are the same string by booking's own ownership rule,
+            // and not relying on another service's invariant costs one ||.
+            //
+            // KEEP EACH OF THESE ON ONE LINE, and do not concatenate anything onto either. D104's CI
+            // sweep matches `.authorName(` followed by a non-`)` character OR by end of line, so a
+            // wrapped `.authorName(\n  ReviewAuthor…)` is REFUSED — fail-closed, the same constraint
+            // D60 states at its own `.zoneId(` site, and worth knowing because prettier formats Java
+            // here and would wrap a long argument with no intent to evade. A `+` on either line is
+            // refused too: it is how a line that names ReviewAuthor can still publish a login beside
+            // what ReviewAuthor returned.
+            .authorName(ReviewAuthor.displayName(summary.customerName(), login, summary.customerLogin()))
+            .authorInitials(ReviewAuthor.initials(summary.customerName(), login, summary.customerLogin()))
             .stars(request.stars())
             // D52: the marketplace's day, not the container's. This value is stored, public and
             // uncorrectable — see the class javadoc.

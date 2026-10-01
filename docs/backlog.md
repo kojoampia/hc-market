@@ -7038,3 +7038,58 @@ one is a number no endpoint publishes, this one is a string the API publishes co
 Nobody needs to decide anything to do the typing half, which is the half with a wrong type in it
 today. The label half is worth one line from the architect **only if** a second language is actually
 coming; until then D104's answer stands and this item is a record of its cost.
+
+---
+
+## NEW-88 — a monogram is built from UTF-16 units, so three names publish something that is not a monogram · READY
+
+**Found 2026-10-02 at NEW-81's review**, and **PRE-EXISTING** — identical on `main`, carried verbatim
+from the `initialsOf` that `ReviewAuthor.initials` replaced. It is an item rather than part of D104
+because that package's fence is the login disclosure and this logic did not change; what changed is
+that it now lives in a named, tested class with a mutation harness around it, **which is the cheapest
+moment this will ever have**.
+
+`ReviewAuthor.initials` does `parts[i].charAt(0)` — the first **UTF-16 code unit**, not the first code
+point — and appends whatever `Character.toUpperCase(char)` makes of it. Measured on Oracle JDK 25:
+
+| name | initials | hex | well-formed UTF-16? |
+| --- | --- | --- | --- |
+| `Selina Amoah` | `SA` | `U+0053 U+0041` | yes — the control |
+| `Äkua Boateng` | `ÄB` | `U+00C4 U+0042` | yes — a BMP accent is fine, which is the second control |
+| `𝒜nna Mensah` | — | **`U+D835 U+004D`** | **no — a lone high surrogate** |
+| `😀 Smiley` | — | **`U+D83D U+0053`** | **no — same shape** |
+| `!!!` | `!` | `U+0021` | yes, and it is not a monogram |
+| `...` | **null** | — | **collides with the no-name state** |
+
+**Three distinct defects, and they are not equally bad.**
+
+- **The lone surrogate is the sharp one.** The two units fit `@Size(max = 4)`, so this is **not** a
+  length problem — ⚠ and **what the JDBC driver and PostgreSQL do with an unpaired surrogate on the way
+  into a `varchar(4)` is NOT MEASURED**. Encodings that replace it give a `?` on a public page;
+  encodings that refuse it give a 500 on `POST /api/reviews` after a review has been earned. Measure
+  before assuming either.
+- **`"..."` → null is a collapse**, and this repository's own rule about collapsing states applies:
+  null is what D104 chose to mean *"the booking named nobody"*, so a name of only dots is
+  indistinguishable from an anonymous reviewer. Harmless in effect, wrong as a model.
+- **`"!!!"` → `"!"` is cosmetic** and the mildest row.
+
+**Done means** `codePointAt` with `offsetByCodePoints`, or `String.codePoints()`, plus a decision about
+the punctuation cases — the natural answer being that a part contributing no letter contributes no
+initial, so `"..."` and `"!!!"` both yield null and the anonymous path owns null alone, which would mean
+distinguishing them from D104's null after all. **Measure the surrogate's fate through a real
+PostgreSQL first**: if it is a 500 this is a defect on a money-adjacent path and not a cosmetic item,
+and that measurement decides which.
+
+⚠ **It also affects `authorName`, which is NOT truncated at all** — a punctuation-only display name is
+published verbatim, so `"-"` is a reviewer called `-`. D104 deliberately publishes a supplied name
+unchanged (the alternative is the platform editing what people call themselves), so this half may well
+be a `WON'T`; it is named here so the next reader does not have to find it twice.
+
+**The seeded 63 are unaffected** — every seeded `authorName` is a plain Latin display name and the
+seeder writes the seed file's own `authorInitials` rather than deriving one.
+
+### Not blocked
+
+Nobody needs to decide anything to measure it. The fix is one `codePointAt` plus a line about
+punctuation; what needs settling before writing it is whether PostgreSQL refuses the surrogate, which
+decides whether this is cosmetic or a 500.

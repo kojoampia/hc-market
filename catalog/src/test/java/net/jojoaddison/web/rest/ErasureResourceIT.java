@@ -259,7 +259,10 @@ class ErasureResourceIT {
         Review after = reviews.findById(anonymous.getId()).orElseThrow();
         assertThat(after.getCustomerLogin()).isEqualTo(pseudonyms.of(CUSTOMER)).isNotEqualTo(CUSTOMER);
         assertThat(after.getAuthorName()).isEqualTo("[erased]").isNotEqualTo(ReviewAuthor.ANONYMOUS_NAME);
-        assertThat(after.getAuthorInitials()).isNotNull();
+        // The VALUE, not merely non-null — review finding. Nothing else in catalog asserts the
+        // initials stand-in's value, so `isNotNull()` here would have let the two stand-ins converge
+        // on the one column where "no name was given" and "this person was erased" meet.
+        assertThat(after.getAuthorInitials()).isEqualTo("··");
         assertThat(after.getBody()).isEqualTo("No complaints.");
     }
 

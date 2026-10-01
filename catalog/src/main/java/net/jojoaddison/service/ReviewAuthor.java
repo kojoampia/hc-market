@@ -19,7 +19,7 @@ package net.jojoaddison.service;
  * login</strong>. So a presence check is not a check: it reads "a name was supplied" for a value that
  * is an account identifier, and publishes it on a page with no account behind it.
  *
- * <p>Hence {@link #isLogin(String, String)}, and hence the comparison being <strong>trimmed and
+ * <p>Hence {@code isLogin}, and hence the comparison being <strong>trimmed and
  * case-folded</strong>. A display name that differs from its login only in case or in surrounding
  * whitespace renders as that login to a reader, so the two are the same disclosure; and nothing is
  * lost in the one case where a person's real display name happens to equal their login, because
@@ -64,17 +64,24 @@ public final class ReviewAuthor {
     private ReviewAuthor() {}
 
     /**
-     * The name to publish for a review, given what the booking service said and whose login it is.
+     * The name to publish for a review, given what the booking service said and every identifier of
+     * that customer this service is holding beside it.
+     *
+     * <p><strong>Both logins are compared, and that is not belt-and-braces.</strong> They are the same
+     * string today, by an invariant that lives in another service: booking answers 404 for a booking
+     * that is not the caller's, so {@code mineOr404} guarantees the summary's customer is the JWT's
+     * subject. That is a cross-service invariant, and the cost of not relying on it is one
+     * {@code ||} — so the published name is refused if it matches <em>either</em>, and the invariant
+     * no longer has to be argued here for the rule to be sound.
      *
      * @param customerName the booking's {@code customerName} — which may be the login, see the class
      *     javadoc
-     * @param customerLogin the account login, never published. The caller passes the JWT subject,
-     *     which is the key the review is stored under; booking's own {@code customerLogin} for that
-     *     booking is the same string, because booking answers 404 for a booking that is not the
-     *     caller's, so one comparison covers both identifiers this service holds
+     * @param callerLogin the JWT subject, which is the key the review is stored under. Never published
+     * @param bookingCustomerLogin the summary's own {@code customerLogin} — the identifier booking
+     *     laundered in. Never published
      */
-    public static String displayName(String customerName, String customerLogin) {
-        return hasName(customerName, customerLogin) ? customerName : ANONYMOUS_NAME;
+    public static String displayName(String customerName, String callerLogin, String bookingCustomerLogin) {
+        return hasName(customerName, callerLogin, bookingCustomerLogin) ? customerName : ANONYMOUS_NAME;
     }
 
     /**
@@ -82,9 +89,17 @@ public final class ReviewAuthor {
      *
      * <p>"Kojo Ampia-Addison" -&gt; "KA". Splitting on spaces and dots is what the seeded 63 are
      * consistent with; it is only ever applied to a value this class has established is a name.
+     *
+     * <p>⚠ It takes the first <strong>UTF-16 unit</strong> of each part, carried over verbatim from the
+     * {@code initialsOf} this replaced — <strong>backlog NEW-88</strong>, deliberately not fixed here
+     * because it is unchanged from the code this moved out of. Measured: {@code "𝒜nna Mensah"} yields
+     * {@code U+D835 U+004D}, a <em>lone high surrogate</em> and so not well-formed UTF-16;
+     * {@code "!!!"} yields {@code "!"}; and {@code "..."} yields <strong>null</strong>, colliding with
+     * the no-name state. What the driver and PostgreSQL do with an unpaired surrogate is <em>not</em>
+     * measured — the two units fit {@code @Size(max = 4)}, so this is not a length problem.
      */
-    public static String initials(String customerName, String customerLogin) {
-        if (!hasName(customerName, customerLogin)) {
+    public static String initials(String customerName, String callerLogin, String bookingCustomerLogin) {
+        if (!hasName(customerName, callerLogin, bookingCustomerLogin)) {
             return null;
         }
         String[] parts = customerName.trim().split("[ .]+");
@@ -98,18 +113,23 @@ public final class ReviewAuthor {
     }
 
     /** Whether the booking supplied something that is a name rather than an identifier. */
-    private static boolean hasName(String customerName, String customerLogin) {
-        return customerName != null && !customerName.isBlank() && !isLogin(customerName, customerLogin);
+    private static boolean hasName(String customerName, String callerLogin, String bookingCustomerLogin) {
+        return (
+            customerName != null &&
+            !customerName.isBlank() &&
+            !isLogin(customerName, callerLogin) &&
+            !isLogin(customerName, bookingCustomerLogin)
+        );
     }
 
     /**
-     * Whether this "display name" is the caller's own login wearing different whitespace or case.
+     * Whether this "display name" is that login wearing different whitespace or case.
      *
      * <p>A null login cannot be matched against, and is not a reason to publish: it can only mean the
      * booking service answered without one, and a name that might be an unknown login is refused in
-     * the safe direction.
+     * the safe direction. An identifier this service cannot read is one it cannot rule out.
      */
-    private static boolean isLogin(String customerName, String customerLogin) {
-        return customerLogin == null || customerName.trim().equalsIgnoreCase(customerLogin.trim());
+    private static boolean isLogin(String customerName, String login) {
+        return login == null || customerName.trim().equalsIgnoreCase(login.trim());
     }
 }

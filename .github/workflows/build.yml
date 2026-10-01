@@ -2195,11 +2195,20 @@ jobs:
       # backlog NEW-81. The write-side twin of the zone check above, in the one column where the
       # mistake is published to people with no account and cannot afterwards be taken back.
       #
-      # WHY A CHECK AND NOT ONLY A TEST. TheReviewAuthorIsNeverALoginTest drives the resource and
-      # asserts over the row it writes, so it sees every mutation of the rule and of the one call site.
-      # What no test in catalog can see is a SECOND writer of the column appearing somewhere else —
-      # D60's argument one column along, and the exact shape NEW-15 had: nothing in the estate could
-      # see an omission from a list, so the list is a sweep.
+      # WHY A CHECK AND NOT ONLY A TEST, AND WHICH OF THE TWO HOLDS WHAT. This step has two
+      # mechanisms guarding two different things, and saying it the other way round — as the first
+      # version of D104 §9 did — credits the sweep with work the call-site grep is doing.
+      #
+      #   the call-site grep   holds THE LIVE WRITE. Break the composition inside
+      #                        ReviewWriteResource — including by concatenating onto it — and this is
+      #                        what exits 1, because `ReviewAuthor.displayName(` stops appearing.
+      #   the sweep            holds EVERY OTHER FILE. A SECOND writer of the column appearing
+      #                        somewhere else is what no test in catalog can see — D60's argument one
+      #                        column along, and the exact shape NEW-15 had: nothing in the estate
+      #                        could see an omission from a list, so the list is a sweep.
+      #
+      # And TheReviewAuthorIsNeverALoginTest is what asserts the VALUE. Neither half here reads the
+      # row; between them they establish that the column is written in one place and by one rule.
       #
       # Review is catalog's entity and no other service maps it, so the sweep is catalog's alone.
       # That enumeration is acceptable for D60's reason and no better one: every failure mode this
@@ -2207,9 +2216,10 @@ jobs:
       # match, so it cannot report ok having read nothing.
       #
       # WHAT IT DOES NOT ESTABLISH, stated because the error message reads stronger than the match is.
-      # The allowance is that the LINE names ReviewAuthor, not that the VALUE is ReviewAuthor's, so a
-      # line concatenating something onto ReviewAuthor.ANONYMOUS_NAME would pass here. The test is what
-      # asserts the value; this asserts that no third party writes the column at all.
+      # An allowance is that the LINE names its token, not that the VALUE is that token's. The two
+      # ways that was bypassable are closed below — allowances are scoped per FILE, and a `+` on an
+      # author-write line revokes any of them — but a conforming line can still hand the composer a
+      # wrong argument (`ReviewAuthor.displayName(name, name)`), and only the test can see that.
       - name: A review's public author may not be composed from an identifier
         run: |
           fail=0
@@ -2239,6 +2249,7 @@ jobs:
           done
           scanned=0
           writes=0
+          writers=""
           dir=catalog/src/main/java/net/jojoaddison
           [ -d "$dir" ] || { echo "::error::$dir does not exist — this check would scan nothing and pass. See decisions.md D104."; exit 1; }
           while IFS= read -r f; do
@@ -2249,17 +2260,45 @@ jobs:
             hits=$(grep -nE '\.authorName\([^)]|\.authorName\([[:space:]]*$|\.authorInitials\([^)]|\.authorInitials\([[:space:]]*$|\.setAuthorName\(|\.setAuthorInitials\(' "$stripped" | cut -d: -f1)
             for n in $hits; do
               writes=$((writes + 1))
+              case " $writers " in *" $(basename "$f") "*) : ;; *) writers="$writers $(basename "$f")" ;; esac
               line=$(sed -n "${n}p" "$stripped")
-              case "$line" in
-                # the one composer, the erasure's own stand-ins, the seed file's own field, and the
-                # entity's own fluent setter delegating to its own setter
-                *ReviewAuthor.*|*REDACTED_NAME*|*REDACTED_INITIALS*) continue ;;
-                *.authorName\(*.authorName\(\)*|*.authorInitials\(*.authorInitials\(\)*) continue ;;
-                *this.setAuthorName\(*|*this.setAuthorInitials\(*) continue ;;
+              allowed=no
+              # EACH ALLOWANCE IS SCOPED TO THE FILE THAT LEGITIMATELY HAS IT. A line-wide allowance
+              # set is bypassable by moving a shape to a file with no business using it — measured:
+              # a NEW class in service/ carrying its own `setAuthorName` whose body is
+              # `this.setAuthorName(login)` satisfied the entity's allowance, and the counters rose
+              # to `134 files scanned, 9 author writes` while the success line still read "every one
+              # of them is composed, seeded or erased". A guard printing a reassuring sentence about
+              # a write it never vetted is this repository's recurring defect, not a cosmetic gap.
+              #
+              # Today's population is 8 writes in 4 files, re-derived rather than assumed. A FIFTH
+              # file matches nothing here and is refused out loud, which is the point: a new
+              # legitimate writer has to be argued in the decision rather than absorbed.
+              case "$f" in
+                */web/rest/ReviewWriteResource.java)
+                  # the one composer
+                  case "$line" in *ReviewAuthor.*) allowed=yes ;; esac ;;
+                */service/ErasureWorkflow.java)
+                  # the erasure's own stand-ins
+                  case "$line" in *REDACTED_NAME*|*REDACTED_INITIALS*) allowed=yes ;; esac ;;
+                */service/seed/CatalogSeeder.java)
+                  # the seed file's own field, read back into the same field
+                  case "$line" in *.authorName\(*.authorName\(\)*|*.authorInitials\(*.authorInitials\(\)*) allowed=yes ;; esac ;;
+                */domain/Review.java)
+                  # the entity's own fluent setter delegating to its own setter
+                  case "$line" in *this.setAuthorName\(*|*this.setAuthorInitials\(*) allowed=yes ;; esac ;;
               esac
+              # AND A CONCATENATION REVOKES EVERY ALLOWANCE, IN EVERY FILE. This is what closes the
+              # rest of the width: `.authorName(login + REDACTED_NAME)`, `.authorName(login +
+              # r.authorName())` and `.authorName(ReviewAuthor.displayName(a, b) + login)` each name
+              # an allowed token and publish an identifier beside it. None of the eight real writes
+              # concatenates anything — each hands over a single expression — so refusing `+` on an
+              # author-write line costs nothing today and fails CLOSED if that ever stops being true.
+              case "$line" in *+*) allowed=no ;; esac
+              [ "$allowed" = yes ] && continue
               # The original line, not the stripped one — quote what is written.
               echo "  $f:$n:$(sed -n "${n}p" "$f")"
-              echo "::error file=$f::a review's public author is written here without going through ReviewAuthor — authorName and authorInitials are served by a permitAll endpoint and there is deliberately no endpoint that could ever correct a review, so an identifier written here is published permanently. See decisions.md D104, backlog NEW-81."
+              echo "::error file=$f::a review's public author is written here without going through ReviewAuthor — authorName and authorInitials are served by a permitAll endpoint and there is deliberately no endpoint that could ever correct a review, so an identifier written here is published permanently. If this file legitimately writes the column, say so in decisions.md D104 and add it here. See decisions.md D104, backlog NEW-81."
               fail=1
             done
           done <<< "$(find "$dir" -name '*.java' -type f | sort)"
@@ -2274,7 +2313,10 @@ jobs:
             echo "::error::no author write was found in catalog — the accessors have been renamed and this check is scanning for names nothing uses. See decisions.md D104."
             exit 1
           fi
-          [ "$fail" -eq 0 ] && echo "ok   $scanned files scanned, $writes author writes — every one of them is composed, seeded or erased"
+          # The breakdown is printed rather than a bare count, so a file joining or leaving the
+          # population is visible in the log of a passing run. It is derived on every run — read this
+          # line, not a number from a document.
+          [ "$fail" -eq 0 ] && echo "ok   $scanned files scanned, $writes author writes in$writers — each one allowed in the file that legitimately does it, and none of them concatenating"
           exit "$fail"
 
       # The moment a rate is struck at travels on the event, so both ends must spell it the same way —
