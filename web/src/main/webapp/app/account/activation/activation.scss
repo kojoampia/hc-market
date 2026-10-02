@@ -1,0 +1,9 @@
+/* Deliberately almost empty. Every primitive this screen uses — `.abm-account*` and `.abm-state*` —
+   lives in `content/scss/global.scss`, hoisted there because the two account screens render one
+   surface and Angular scopes a component stylesheet, so anything here would be a second copy.
+   That is D103 §9's answer to `anyComponentStyle` (2 kB warn / 4 kB error) carried to NEW-60:
+   hoist the shared primitive, never raise the budget. See D105 §6. */
+
+:host {
+  display: block;
+}

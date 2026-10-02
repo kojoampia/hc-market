@@ -47,6 +47,38 @@ const routes: Routes = [
     title: 'login.title',
   },
   /**
+   * ⚠ THE TWO ADDRESSES THE ACTIVATION AND PASSWORD-RESET MAILS COMPOSE — NEW-60, D105.
+   *
+   * <p>`${baseUrl}/account/activate?key=…` and `${baseUrl}/account/reset/finish?key=…`, read off
+   * the two shipped templates in `gateway/src/main/resources/templates/mail/`. Nothing in this
+   * client served either until 2026-10-02, so following the link on an API-only estate answered
+   * <b>401</b> — a credential challenge for the page that exists to let somebody authenticate.
+   *
+   * <p>It is declared above both `path: ''` entries so this array reads in the order a URL is
+   * tried. ⚠ <b>That placement is NOT load-bearing, and the first version of this comment said it
+   * was — measured, D105 §5.</b> The ⚠ block below is about the EXACT EMPTY URL: a `path: ''` parent
+   * with an empty children array consumes `''` and has nothing to render, which is the terminal case
+   * that cannot backtrack. A NAMED sibling is a different question, and the answer is the opposite —
+   * with this entry moved below both empty-path parents, all four behavioural assertions in
+   * `app.routes.spec.ts` stayed <b>green</b> and only a positional assertion fired. That positional
+   * assertion was then deleted rather than kept, because a test pinning a position with no
+   * behavioural consequence pins a coincidence and goes red on a correct change.
+   *
+   * <p>So <b>do not read the ⚠ block below as applying to this entry.</b> What keeps these two URLs
+   * reachable is `...errorRoute` staying last — moved above this entry, the wildcard swallows
+   * everything and ten of twelve cases go red at once, which is loud rather than silent.
+   *
+   * <p>⚠ <b>Serving the route is ONE of three conditions for the link working, and the only one this
+   * commit closes.</b> The client is built and served at no origin (Phase 5), so
+   * `JHIPSTER_MAIL_BASE_URL` still honestly names the API edge and the link still answers 401
+   * everywhere. The five documents that say so remain TRUE — D105 §3 lists them and says not to
+   * "update" any of them.
+   */
+  {
+    path: 'account',
+    loadChildren: () => import('./account/account-lifecycle.routes'),
+  },
+  /**
    * ⚠ THE MARKETPLACE MUST COME BEFORE `entity.routes`, AND THE REASON IS A MEASUREMENT.
    *
    * <p>`entity.routes` is the generated `Routes = [/* jhipster-needle-add-entity-route *\/]` — an

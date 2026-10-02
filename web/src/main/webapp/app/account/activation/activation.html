@@ -1,0 +1,37 @@
+<div class="abm-account">
+  <h1 class="abm-account__title" abmTranslate="activate.title">Activation</h1>
+
+  @switch (screen()) {
+    @case ('activated') {
+      <div class="alert alert-success abm-account__outcome" data-cy="activateSuccess" role="status">
+        <!-- `activate.messages.success` is the generated bundle's own string and ends with "Please ",
+             which is why the link is a sibling rather than inside it. -->
+        <span abmTranslate="activate.messages.success"><strong>Your user account has been activated.</strong> Please </span>
+        <a class="alert-link" routerLink="/login" data-cy="activateSignIn" abmTranslate="activate.signin">sign in</a>.
+      </div>
+      <a class="btn btn-outline-secondary" routerLink="/" abmTranslate="activate.backToMarketplace">Back to the marketplace</a>
+    }
+    @case ('loading') {
+      <abm-load-state kind="loading" loadingTitleKey="activate.state.loading.title" loadingDetailKey="activate.state.loading.detail" />
+    }
+    @case ('failed') {
+      <!-- A key that matches nobody and an estate that cannot be reached render IDENTICALLY, and
+           deliberately: a visitor can act on neither, an already-activated account is one of the
+           two, and a page that distinguishes its refusals is an oracle. -->
+      <abm-load-state
+        kind="failed"
+        failedTitleKey="activate.state.failed.title"
+        failedDetailKey="activate.messages.error"
+        (retry)="activate()"
+      />
+      <a class="btn btn-outline-secondary mt-3" routerLink="/" abmTranslate="activate.backToMarketplace">Back to the marketplace</a>
+    }
+    @case ('nokey') {
+      <!-- No request is made at all. `GET /api/activate` with no key answers 400 with "Required
+           query parameter 'key' is not present", which would be reported to a visitor as a failed
+           activation when nothing was ever attempted. -->
+      <abm-load-state kind="empty" emptyTitleKey="activate.state.nokey.title" emptyDetailKey="activate.state.nokey.detail" />
+      <a class="btn btn-outline-secondary mt-3" routerLink="/" abmTranslate="activate.backToMarketplace">Back to the marketplace</a>
+    }
+  }
+</div>

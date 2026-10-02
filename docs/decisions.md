@@ -20982,3 +20982,400 @@ this one does not depend on that.
 - **`catalog` has no `prettier:format` script** — NEW-62, three of the five services — so this package
   matched the surrounding style by hand rather than running a formatter that reformats files it never
   touched.
+
+---
+
+## D105 — The link in the mail lands somewhere, and that is one of three conditions
+
+**Recorded 2026-10-02**, against branch `new-60-the-activation-link-lands-somewhere` off `51bc3c3`.
+Closes backlog **NEW-60**. Changes nothing outside `web/`, `.github/`, `docs/backlog.md`, `CLAUDE.md`
+and this file. **No Java service, no compose file, no vhost and no mail template is touched.**
+
+`gateway/src/main/resources/templates/mail/activationEmail.html` has composed
+`${baseUrl}/account/activate?key=…` since the scaffold, and `passwordResetEmail.html`
+`${baseUrl}/account/reset/finish?key=…`. Nothing in this estate served either path. On an API-only
+estate the honest origin for `JHIPSTER_MAIL_BASE_URL` is the gateway's own edge, where those paths
+match no route and **reactive Spring Security denies an exchange no `authorizeExchange` rule
+matched** — so following the link answered **401**: a credential challenge for the page that exists
+to let somebody authenticate.
+
+This package serves both. **It does not make the link work on any estate**, and §3 is the part of
+this decision to read before any other.
+
+### §1 Re-derived, because every fact in the item was somebody else's measurement
+
+| claim | how it was re-established, 2026-10-02 |
+| --- | --- |
+| the client has no `account/` route | `ls web/src/main/webapp/app/` → `admin config core entities layouts login marketplace shared`. **No `account/` directory at all**; `app.routes.ts` declared `''`→navbar, `admin`, `login`, `''`→marketplace, `''`→entities, `...errorRoute` |
+| the two paths are exactly those two | `grep -rhoE '\$\{baseUrl\}/[a-z/]+\?[a-z]+=' gateway/…/templates/mail/*.html` → `${baseUrl}/account/activate?key=` and `${baseUrl}/account/reset/finish?key=` (the latter twice — the template writes it as both an href and a visible URL) |
+| the frontend path answers 401 | `GET http://127.0.0.1:15509/account/activate?key=zzz-not-a-key` → **401** |
+| `GET /api/activate` is the one that works | same key → **400**, `{"detail":"No user was found for this activation key","title":"Account resource request invalid"}` |
+| both API paths are `permitAll` | `gateway/…/config/SecurityConfiguration.java:74,76` — `.pathMatchers("/api/activate")` and `.pathMatchers("/api/account/reset-password/finish")` |
+| `activate.json`, `reset.json`, `password.json` exist and are unused | all three present in `i18n/en/`; **their keys are reused rather than new copy invented** — `activate.messages.success` and `.error`, `reset.finish.messages.info`, `.success`, `.error` and `.keymissing`, and `global.messages.validate.newpassword.*` |
+
+**All six held.** Two things the item did not say and that this package needed:
+
+- **A bad activation key is 400, not 500.** `AccountResource`'s private `AccountResourceException`
+  carries `@ResponseStatus(BAD_REQUEST)`, so the activate and reset-finish refusals share a status.
+- **`GET /api/activate` with no `key` at all is a 400** — *"Required query parameter 'key' is not
+  present"* — which is exactly the answer a screen must never produce, because it would report a
+  failed activation for a request nobody made. Hence the fourth state in §4.
+
+### §2 The two refusals on the reset screen are told apart by the PROBLEM TYPE, measured
+
+Both arrive as **400 from one endpoint**, and the client has to distinguish them because only one is
+something the person at the keyboard can fix. Driven against the live quality gateway rather than read
+off the Java:
+
+```
+POST /api/account/reset-password/finish  {"key":"zzz-not-a-reset-key","newPassword":"a-good-password"}
+  -> 400  type=https://www.jhipster.tech/problem/problem-with-message
+          title="Account resource request invalid"  detail="No user was found for this reset key"
+
+POST /api/account/reset-password/finish  {"key":"zzz-not-a-reset-key","newPassword":"ab"}
+  -> 400  type=https://www.jhipster.tech/problem/invalid-password
+          title="Bad Request"
+```
+
+`NewPassword.refusalFrom` keys on `type` against `INVALID_PASSWORD_TYPE`, which already existed in
+`app/shared/jhipster/error.constants.ts`. **The password arm is checked first and everything else
+that is a 400 is read as the key**; anything that is not a 400, and anything that is not an
+`HttpErrorResponse` at all, is `unreachable`.
+
+**The default is `unreachable` and NOT `key`, and that is the decision rather than the fall-through.**
+Telling somebody holding a perfectly good link that it has expired sends them to request another one
+and leaves them there; telling somebody holding an expired link to try again costs them one attempt
+and then the real message. One is recoverable and the other is a dead end.
+
+### §3 ⚠ THE LINK STILL ANSWERS 401 ON EVERY ESTATE, AND FIVE DOCUMENTS THAT SAY SO REMAIN TRUE
+
+**A working link needs three things. This package closes the first and only the first.**
+
+| | condition | whose | state |
+| --- | --- | --- | --- |
+| 1 | the two routes exist in the client, call the API behind them, and branch on every outcome | this package | **closed** |
+| 2 | the client is **built and served at some origin** | Phase 5 | **open** — `web/` is deployed nowhere; it runs under `npm start` against a gateway and has never been served from anything else (D101 §6) |
+| 3 | `JHIPSTER_MAIL_BASE_URL` **names that origin** | an operator, at deploy time | open, and not this repository's to close |
+
+So `deploy/prod-server/secrets.env.example`, `deploy-prod.sh`'s hint for `HC_MAIL_BASE_URL`,
+`quality/compose.yml`, `gateway/…/application-prod.yml` and `deploy/prod-server/README.md` all still
+say the link answers 401 and that the key in it activates through `GET /api/activate` — **and every
+one of those sentences is still true.** ⛔ **Do not "update" them on the strength of these routes
+existing.** The instinct on closing an item is to go and correct the documents that describe it, and
+here that would make five documents false in the commit that was supposed to make them accurate —
+this repository's signature defect, committed on purpose.
+
+`deploy-prod.sh`'s copy is the one that matters most: it is **printed to a production operator**
+during preflight and is byte-embedded in the spec's Appendix B, where `sync-appendices.sh --check`
+was **green over the wrong sentence in both places** when those five said 404 instead of 401. That
+check verifies byte-identity, not truth. Nothing in this package touches either file, and
+`./deploy/sync-appendices.sh --check` was not re-run because neither script changed.
+
+**What this does change about NEW-61's sequencing, and it is an observation rather than an
+amendment.** NEW-61's ⛔ sequences it behind *"the frontend route"*, and D102 §1's answer has it
+**mail a fresh activation link** on every failed login. If the link only works once condition 2
+holds, then NEW-61's mailing half is sequenced behind **deployment**, not merely behind this commit.
+**NEW-61 is not changed** — one line is added to its entry pointing here, so whoever picks it up is
+not misled by "NEW-60 is DONE". Its status-code half (`ExceptionTranslator.getMappedStatus`) is
+unaffected and remains independently landable.
+
+### §4 Four states on each screen, and the fourth makes no request
+
+`CLAUDE.md`'s rule is that every screen branches on three states through `app/marketplace/load-state/`.
+Both of these have a fourth, and it is the one the item is about: **a link truncated by a mail client
+arrives with no `key`.**
+
+| | `Activation` | `NewPassword` |
+| --- | --- | --- |
+| no key | `stateEmpty`, **no request** | `stateEmpty`, **no request and NO FORM** |
+| in flight | `stateLoading`, activation-specific words | `stateLoading` |
+| succeeded | the generated `activate.messages.success` + a link to `/login` | `reset.finish.messages.success` + a link to `/login` |
+| refused | `stateFailed` with a retry | three distinct renders — §2 |
+
+**No form is rendered at all when there is no key.** A form that collects a password and then fails
+for a reason nobody can see is worse than a page saying the link is incomplete; and
+`reset.finish.messages.keymissing` — *"The reset key is missing."* — has been in the generated bundle
+since the scaffold, so the sentence is not invented here either.
+
+**`Activation`'s refusals render IDENTICALLY and `NewPassword`'s do not. That asymmetry is a
+decision.** On activation every failure ends in the same action — register again — and one of the two
+readings of that 400 is *"this account is already activated"*, which makes a distinguishing page an
+existence oracle; it is the call `professional.ts` already makes for a 404 against a 502. On the reset
+screen the person has **typed** something, one reading is *"what you typed is too short"*, and
+withholding that leaves them retyping the same password against a page that will refuse it again. The
+key arm discloses nothing a holder of the link does not already have: they were sent it.
+
+**The client enforces 4–50 while the gateway accepts 4–100, and the narrower number is deliberate.**
+`ManagedUserVM.PASSWORD_MIN_LENGTH`/`MAX_LENGTH` are 4 and 100; `global.messages.validate.newpassword.maxlength`
+— the generated bundle, unchanged — tells a person 50. A form that accepts what its own message
+forbids is the worse of the two mismatches. The server's refusal is surfaced rather than trusted away,
+and the two bounds reach the message through `translateValues` from the component's constants, so the
+prose cannot drift from the validator.
+
+> ⚠ **The constants' own comment claimed BOTH numbers came from the gateway, and that was false** —
+> found at review. It read *"`ManagedUserVM.PASSWORD_MIN_LENGTH`/`PASSWORD_MAX_LENGTH`, read off the
+> gateway rather than guessed"*; re-measured, `ManagedUserVM.java:11` is `4` ✓ and `:13` is **`100`**,
+> not 50. **The value is right and only its provenance was wrong**, which is the expensive kind here:
+> that comment is exactly what somebody reads when deciding whether 50 may be widened to match the
+> server. It may — but **the bundle's sentence has to move with it, in every language**, or the form
+> accepts what its own message forbids. The comment now says 50 is the *bundle's* number and
+> deliberately below the gateway's, and names the condition for changing it. A document asserting a
+> property the code lacks is this repository's signature defect; this one was three lines long.
+
+### §5 ⚠ THE FINDING: `not.toBeNull()` IS NOT "THIS ADDRESS IS SERVED", AND IT WAS MEASURED HERE
+
+**The first assertion written for this package was fail-open, and it passed against a client with no
+`account` route at all.** `app.routes.spec.ts`'s shape is `navigateByUrl` then *"something was
+activated"*, and `...errorRoute` is a `path: '**'` wildcard at the foot of the table — so an address
+this application does **not** serve activates the error page and `activatedAt` returns a perfectly
+non-null `loadComponent`.
+
+Measured, before any route existed:
+
+```
+it.each(['/account/activate?key=abc', '/account/reset/finish?key=abc'])  ->  GREEN  (both)
+'activates a DIFFERENT component for each of the two account screens'    ->  red
+'declares the account routes ahead of both empty-path parents'           ->  red
+```
+
+So **the two cases a reader would call the subject of the file could not see their own subject**, and
+the only two that went red were a cross-comparison and an index comparison. `expectServed` now asks
+the router what `/nothing-at-this-address` activates and refuses anything equal to it. With that in
+place the red-first run was **5 failed / 7 passed**, the five being exactly the account cases, and the
+four pre-existing marketplace cases stayed green — which is the control that the tightened assertion
+is not red on a correct tree. **This generalises past routing**: a wildcard at the end of any
+dispatch table turns "did something handle it" into a question with no negative answer.
+
+**And the ordering case this package set out to write turned out to assert a coincidence.** D103's
+defect is an EMPTY children array behind `path: ''` swallowing the empty URL, and the obvious
+generalisation — that such a parent swallows everything below it — **is false.** Measured: with the
+`account` entry moved below *both* `path: ''` parents, **all four behavioural assertions stayed
+green** and only the positional index comparison fired. A `path: ''` parent consumes nothing of a
+named URL, finds no child, and the router moves to the next sibling; ordinary backtracking. The
+terminal case is the empty URL alone, where the parent has consumed the whole of it.
+
+So **the positional assertion was deleted rather than kept** — a test pinning a position with no
+behavioural consequence pins a coincidence and goes red on a correct change, which is `CLAUDE.md`'s
+own rule about `BADGE_ZONE` and `MARKET_ZONE`. What *is* load-bearing is `...errorRoute` staying
+last: measured with the wildcard moved above the account entry, **ten of twelve cases red at once**,
+including `/` and `/browse`. That is loud rather than silent, so it gets one cheap assertion.
+`app.routes.ts`'s own comment is corrected in place — its first version claimed the placement was
+load-bearing "for the same measured reason" as the block below it, and that was reasoned rather than
+measured.
+
+### §6 `LoadState` grew the screen's own words for all three states, and `empty` was the only one that had them
+
+Its defaults are *"The marketplace could not be reached / The catalogue did not answer"*, which are
+right on all three public screens and **wrong here**: somebody who clicked a link in a mail message
+has not asked about a catalogue, and pointing them at one points them at the wrong thing entirely.
+The asymmetry was invisible while every caller was a marketplace screen.
+
+`loadingTitleKey`, `loadingDetailKey`, `failedTitleKey`, `failedDetailKey` and `failedRetryKey` join
+the two `empty*` inputs, **every one defaulting to the key it replaced**, so the three public screens
+render byte-identically to what D103 read in a browser. Both account specs carry a control asserting
+the marketplace's words are **absent** — otherwise the override is a parameter nobody passes.
+
+`LoadState` stays under `app/marketplace/` and is imported from `app/account/`. `CLAUDE.md` names that
+path as *the* place a screen branches on three states, and a second copy would be a verbatim-copy
+family nobody diffs — which is how two screens come to answer a failure differently.
+
+**The change was verified in a BROWSER rather than from the suite's count**, which is the right
+instrument for it: the three public screens were driven against a dead port and all three render the
+failed state with **zero raw translation keys** in the DOM. Five inputs each defaulting to the literal
+they replaced, and five static `abmTranslate` attributes converted to bound ones — behaviourally
+identical because `TranslateDirective` re-reads in `ngOnChanges`.
+
+> ⚠ **NOTHING IN THE SUITE CAN SEE A DEFAULT THAT NAMES A KEY NO BUNDLE DEFINES — NEW-91 (opened).**
+> Measured: `failedTitleKey`'s default changed to `marketplace.state.failed.NO_SUCH_KEY`, nothing else
+> touched, **312/312 green** — and that default is the failure headline on all three public screens,
+> so the mutation ships a page reading a dotted identifier at a visitor. ngx-translate answers an
+> unknown key with the key itself and `TranslateDirective` writes it as `innerHTML`; a spec asserting
+> a *specific* sentence is present says nothing about the other keys on the page, and
+> `terms-are-not-quoted.spec.ts`'s subject is a **forbidden** sentence, which is exactly what a
+> missing one cannot be caught by.
+>
+> **It is not this package's defect and is deliberately not fixed here.** The same five renders
+> carried their keys as static `abmTranslate` attributes before this commit, equally undefended — the
+> exposure is five defaults against five attributes and did not grow. ⛔ **And it must not be closed
+> by guarding `LoadState`'s five defaults alone**: five literals in one file is the instance, not the
+> property, and a check scoped to them would read as covering the class while every other
+> `abmTranslate` in the client stayed exposed. That is the narrow-reach defect this package found
+> three separate instances of, which is the reason it is an item rather than a quick grep.
+
+**The two component stylesheets are one `:host { display: block }` each**, with the shared
+`.abm-account*` primitives hoisted into `content/scss/global.scss`. That is D103 §9's answer to
+`anyComponentStyle` (2 kB warn / 4 kB error, **per stylesheet**) carried forward: hoist the shared
+primitive, never raise the budget. Neither new stylesheet appears in the build's budget warnings; the
+three that do are Stage B's and are unchanged.
+
+### §7 The names avoid the generator, and one of them is not optional
+
+`databaseType: no` means JHipster generated **no account screens at all** here (D101 §6), so nothing
+collides today. The files are still named away from what the generator would emit, which is the cheap
+half of not relying on that:
+
+| this package | what JHipster would emit |
+| --- | --- |
+| `app/account/account-lifecycle.routes.ts` | `app/account/account.routes.ts` — the convention `admin/admin.routes.ts` and `entities/entity.routes.ts` show in this very tree |
+| `AccountLifecycleService` | `AccountService` — **and this one is live**: `app/core/auth/account.service.ts` is generated and already exists, reading `api/account` for the signed-in identity |
+| `app/account/activation/`, `app/account/new-password/` | `activate/`, `password-reset/finish/` |
+
+**`AccountLifecycleService` is the row that is not merely cautious** — the name it avoids is taken by
+a file that is in the tree right now.
+
+### §8 The guard: `mail-links-are-served.sh`, and why it is derived
+
+This is **the only invariant in this estate that spans the gateway and `web/`**, and the only one
+whose two sides share no build. The gateway does not know a client exists; the client never reads a
+template. A path renamed on either side leaves the Java suite **and** 312 client specs green while the
+link in somebody's inbox lands on a 404 page — which is the item, not a hypothetical.
+
+- **The expected set is derived from the templates and never listed.** A check holding the client
+  against a hard-coded pair cannot see a *third* template appearing, and every enumerated list in
+  this repository's CI has gone stale or failed open (NEW-15).
+- **The direction is template → client.** The templates are what is actually sent. A client route
+  with no template behind it is a screen somebody can reach by typing, which is nobody's defect.
+- **It refuses a derivation of fewer than two**, because a for-each over nothing is vacuous and would
+  print `ok` having compared nothing — this family's purest fail-open.
+- **It strips comments with the shared `strip-comments.awk`**, because `account-lifecycle.routes.ts`
+  quotes both paths in its own javadoc: unstripped, the check is satisfied by the paragraph
+  explaining it. Cases 6, 7 and 10 of its test are exactly that, in block and line comments.
+- **It also asserts the screen reads the parameter the mail sends, through `paramValue`** — not a
+  literal `paramMap.get('key')`, which is an offender to `endpoint-construction.spec.ts`.
+- **The component behind a route is found by that route's own `loadComponent`, not by position.** The
+  first version took the Nth import for the Nth derived link, correct only while `sort -u`'s order
+  equals the declaration order. **Measured** by driving that mutant through the test's `HC_CHECK=`:
+  with three templates it is **red on a correct tree** and names the wrong two files.
+
+> ⚠ **AND THE SECOND VERSION WAS STILL WRONG — the review finding, and it is a reachable fail-open
+> measured on the real tree.** The positional pairing was replaced by *"the first `import('./…')` at
+> or after the line matching `path: '$child'`"*, which is **line order**, and **key order inside a
+> JavaScript object literal is meaningless to Angular**. Writing `loadComponent` above `path` is a
+> no-op edit and an entirely plausible one; under that version the search then began *below* the
+> `path:` line, **ran past the object's closing brace**, and returned the next route's component.
+>
+> Measured on the committed tree, with `loadComponent` moved above `path` on the `activate` route and
+> nothing else changed:
+>
+> ```
+> old   ok  /account/activate      -> path: 'activate'
+>       ok  ?key= -> paramValue(params, 'key') in new-password/new-password.ts   <-- WRONG FILE
+>       ok  /account/reset/finish  -> path: 'reset/finish'
+>       ok  ?key= -> paramValue(params, 'key') in new-password/new-password.ts
+>       ✓ every link the mail composes is a route the client serves              exit 0
+> new   ok  ?key= -> paramValue(params, 'key') in activation/activation.ts       exit 0
+> ```
+>
+> **Both screens read a parameter called `key`, so the wrong file was still green.** Combine the
+> reorder with `activation.ts` reading `params.get('key') ?? undefined` — the exact literal case 9
+> exists to refuse — and the old version **printed its success line and exited 0** about a file it had
+> never opened; the fixed one exits 1 naming `activation.ts`. Both states were driven on the real
+> tree and restored from `cp` copies with checksums either side.
+>
+> The harm was bounded — `endpoint-construction.spec.ts` goes red on that literal independently — but
+> **a guard reporting success about a file it did not examine is this repository's named defect**, and
+> this is the third time in one package that a text guard's *reach* was narrower than its message.
+>
+> `route_objects` now accumulates each depth-1 object **whole, by brace depth**, so an object's own
+> braces bound the search and key order cannot matter. Nested objects (`data: { authorities: [...] }`
+> in `app.routes.ts`) sit inside their parent's buffer rather than being units, which is what makes
+> "depth-1 object" mean "top-level route" for these two files. The path-exists half asks the same
+> objects, so the two reads cannot disagree about whitespace or key order — and it is a **whole-line**
+> match (`has_line`), because a substring test would let `activate` be satisfied by a route declaring
+> `activate-account`, which is precisely the rename case 4 refuses.
+
+- **The prefix is read off the route object that IMPORTS this check's own routes file** — not from
+  `path: 'account'` appearing anywhere, which was the second review finding and the same shape one
+  level up. Repointing `loadChildren` at `./entities/entity.routes` while leaving `path: 'account'`
+  in place left the old version at **exit 0** — while its own refusal text read *"whatever
+  `$ROUTES_FILE` says, nothing mounts it"*, a message implying a check nobody had written. Checking
+  mounting and deriving the prefix are now one read, so the message is true and the prefix is not
+  hard-coded: case 26 renames the mount **and** both templates to `/profile/…` and passes, which the
+  old version was red on.
+- **Several of its cases distinguish nothing and say so.** The obvious way to pin "pairing is by
+  route" is to reverse two declarations — which cannot work with only two routes, because both
+  screens read a parameter called `key`. They are kept as the fixtures they are, with the limitation
+  written down rather than left as an empty column, and **which cases actually discriminate was
+  measured against the pre-fix version through the test's own `HC_CHECK=`** rather than assumed. The
+  first draft of that note credited the wrong case.
+
+- **The harness refuses to run if its subject is not there**, added after watching it **blame a case
+  for its own breakage**: driven from a directory where `$ROOT` resolved elsewhere, every invocation
+  exited 127 and the transcript read `FAIL 21 app.routes.ts does not exist — wanted exit 1, got 127`.
+  Refusal cases happen to fail loudly on 127 (they want exactly 1), so nothing was silently green —
+  what was wrong is the **diagnosis**, and a diagnosis nobody can act on is how a red run gets re-run
+  instead of read. *Suspect the instrument before the code*, inside the instrument.
+
+**Read its count off its own last line, and do not quote one here.** The trailer refuses to print
+unless the refusal and control counters reconcile with what `report` saw — D98's correction to the
+sibling test that printed `$((pass - 2))` and overstated in both directions. ⚠ **Three documents
+quoted a count of this very test and all three were stale within one review round**, inside their own
+instruction not to; the figures are gone rather than updated, because a count that is accidentally
+still right reads exactly like one that is maintained. Specific cases are cited by **number**, which
+an edit cannot silently invalidate.
+
+### §9 What was NOT done, and why
+
+- **The mail templates are untouched.** Pointing them at `/api/activate` would make the link work
+  today and be wrong the moment condition 2 holds — a person clicking it would get a bare 200 with an
+  empty body — and they are generated files, so the edit would be discarded by a regeneration while
+  looking permanent. NEW-60 argued this and the argument stands.
+- **No "forgot password" request screen.** The templates compose `reset/finish` only;
+  `POST /api/account/reset-password/init` is called from a screen that is NEW-48 Stage C's. Two
+  routes, two templates, no third.
+- **No guard on either route, and there must never be one.** Both API endpoints are `permitAll` and
+  have to be: somebody following an activation link has no account they can sign in to yet. A
+  `UserRouteAccessService` on either would send them to the login page, which is this item's 401 in a
+  different costume.
+- **No account was registered on the quality estate**, so **the success path of neither screen has
+  been exercised against a live gateway**. That is deliberate and not timidity: a registration writes
+  a row nothing in this repository can remove without a reseed, and it would leave an **unactivated**
+  account — which falsifies one of D102 §1's own probes for NEW-61 (*"there are zero unactivated
+  accounts on the only estate today, so nothing is being enumerated"*). The success render is covered
+  by unit spec only, and that is stated rather than implied.
+- **`activate.messages.error` sends a visitor to a registration form this client does not have** —
+  **NEW-90 (opened)**. It is the generated bundle's own sentence, unchanged since the scaffold, and
+  this package is simply the first thing in the estate ever to render it. The `login` screen was read
+  in full and has **no registration link and no password-reset link** either, so the one actionable
+  sentence on the failed-activation page points nowhere. Three strings are in that state; two render
+  nowhere at all today. **It is not fixed here because all three fixes are somebody else's**: a copy
+  rewrite that removes the only actionable sentence, or NEW-48 Stage C, which owns the registration
+  and reset-request screens and is where the sentence becomes true instead of needing rewriting.
+  **What this package did do is refuse to add a fourth instance.** `reset.finish.refused.expired` was
+  written as *"Ask for a new one from the sign-in page"* — the same defect in new copy, caught by
+  reading `login.html` rather than by any test — and now states the fact and names no action, with
+  `new-password.spec.ts` asserting it does not name the sign-in page so the wording cannot drift back
+  while NEW-90 is open.
+
+### §10 What was rendered, and what that establishes
+
+`HC_GATEWAY_PORT=15509 npx ng serve --port 14321` against the running quality gateway, read with
+`google-chrome --headless=new --dump-dom --virtual-time-budget=20000`:
+
+| URL | rendered | markers |
+| --- | --- | --- |
+| `/account/activate?key=zzz-not-a-key` | *"Activation / Your account could not be activated / Your user could not be activated. Please use the registration form to sign up. / Try again / Back to the marketplace"* | `stateFailed`, `stateRetry` |
+| `/account/activate` | *"Activation / This link is incomplete / The activation key is missing from the address…"* | `stateEmpty`, **0 `<form>`** |
+| `/account/reset/finish?key=zzz-not-a-key` | *"Reset password / Choose a new password / New password / New password confirmation / Validate new password"* | `resetPassword`, `resetConfirm`, `resetSubmit`, **1 `<form>`** |
+| `/account/reset/finish` | *"Reset password / The reset key is missing. / Open the link in your password-reset email again…"* | `stateEmpty`, **0 `<form>`** |
+
+**No status code and no server prose reaches any of them**, and no global error alert was rendered on
+any of the four — `abm-alert-error` blocks: 0, 0, 0, 0. **A human still has to look at the layout.** A
+DOM dump establishes the figures and the states and nothing about legibility, and no human has looked
+at this client's layout at all (D103).
+
+The dev server logged a wall of `Watchpack Error … ENOSPC: System limit for number of file watchers
+reached`. That is this workstation under several worktrees, not the application: all four pages
+rendered. **Not an item** — no shipped artefact is affected.
+
+### §11 Gates
+
+`npm run lint` · `npm run prettier:check` · `npm test` · `npm run webapp:prod` ·
+`npm run check:built-assets`, in `build.yml`'s order. **312 tests in 47 files, 0 failed**, from 279.
+`check:built-assets`: *84 built file(s), 0 matching `/\.(scss|sass)(\.map)?$/i`, 22 content asset(s)
+published*. The production build's three `anyComponentStyle` warnings are Stage B's three page
+stylesheets, unchanged and still deliberate.
+
+Nothing Java was built, because nothing Java changed. ⚠ **`GatewayIdentityMetricsIT` reddens unrelated
+pull requests intermittently** (NEW-86) and has already been found twice by branches containing no
+Java at all; this branch touches no `gateway` source.

@@ -4,6 +4,22 @@
     "messages": {
       "success": "<strong>Your user account has been activated.</strong> Please ",
       "error": "<strong>Your user could not be activated.</strong> Please use the registration form to sign up."
-    }
+    },
+    "pageTitle": "Activate your account",
+    "state": {
+      "loading": {
+        "title": "Activating your account…",
+        "detail": "Checking the key from your activation email."
+      },
+      "failed": {
+        "title": "Your account could not be activated"
+      },
+      "nokey": {
+        "title": "This link is incomplete",
+        "detail": "The activation key is missing from the address. Open the link in your activation email again, or copy the whole address including everything after the question mark."
+      }
+    },
+    "signin": "sign in",
+    "backToMarketplace": "Back to the marketplace"
   }
 }
