@@ -96,7 +96,9 @@ rather than a generated literal, the three public account paths have ceilings, a
 walked for real** against a live gateway and a real SMTP catcher. One thing it could not close and one
 it opened: **no message has reached a real provider**, because none is chosen (D90 §7, a budget item),
 and the link in the mail points at a frontend route nothing serves yet — **NEW-60**, which is phase 2's
-to close.
+to close. **NEW-60 is DONE as of 2026-10-02 (D105): the client serves both addresses. The link still
+answers 401, because the client is served at no origin** — D105 §3's three conditions, of which that
+commit closed the first.
 
 **Phase 2 is therefore unblocked for everything behind a token.**
 
@@ -5025,7 +5027,52 @@ only because the integration tests run sequentially, and the class javadoc says 
 
 ---
 
-## NEW-60 — the activation link points at a page nothing serves · READY
+## NEW-60 — the activation link points at a page nothing serves · DONE (D105)
+
+> **CLOSED 2026-10-02 — `decisions.md` D105.** `web/` serves the two addresses the shipped templates
+> actually compose — `/account/activate?key=…` (`app/account/activation/`) and
+> `/account/reset/finish?key=…` (`app/account/new-password/`) — each calling the API behind it and
+> branching on every outcome a real key produces, including the one this item is really about: **no
+> `key` in the query string is a decided state that makes no request at all**, because
+> `GET /api/activate` with no key answers 400 (*"Required query parameter 'key' is not present"*,
+> measured) and that would report a failed activation for a request nobody made.
+>
+> ⚠ **A ROUTE EXISTING IS ONE OF THREE CONDITIONS AND THIS ITEM CLOSES ONLY THE FIRST** — D105 §3.
+> (1) the routes exist — **closed here**; (2) the client is **built and served at some origin** —
+> **Phase 5, open**, `web/` is deployed nowhere; (3) `JHIPSTER_MAIL_BASE_URL` names that origin — an
+> operator's, at deploy time. **So the link still answers 401 on every estate**, and the five
+> documents listed below that say so are **still true**. ⛔ **Do not "update" them.** Doing so on the
+> strength of these routes existing would make five documents false in the commit that was supposed
+> to make them accurate — and `deploy-prod.sh`'s copy is *printed to a production operator*.
+>
+> **It bears on NEW-61's sequencing and NEW-61 is not amended** — see the line added to that entry.
+> D102 §1 has NEW-61 mail a fresh activation link, so its mailing half is sequenced behind
+> **deployment** rather than behind this commit. Its status-code half is unaffected.
+>
+> **The finding of the package was in the test, not the screens** (D105 §5). The obvious assertion —
+> `navigateByUrl` then *"something was activated"* — **passed against a client with no `account`
+> route at all**, because `...errorRoute` is a `path: '**'` wildcard and an unserved URL activates
+> the error page. `expectServed` compares against what `/nothing-at-this-address` activates; the
+> red-first run was then 5 failed / 7 passed with the four pre-existing marketplace cases green. **A
+> wildcard at the end of any dispatch table turns "did something handle it" into a question with no
+> negative answer.**
+>
+> **And the ordering hazard this was expected to meet does NOT transfer.** D103's empty-children
+> defect is about the exact empty URL; measured here, moving the `account` entry below both
+> `path: ''` parents left all four behavioural assertions **green**, so the positional assertion was
+> deleted rather than kept as a pinned coincidence. What is load-bearing is `...errorRoute` staying
+> last — ten of twelve cases red at once.
+>
+> **CI holds the two sides together**: `mail-links-are-served.sh` derives the expected paths **from
+> the templates** and demands the client serve each and read each parameter through `paramValue`,
+> with its own 19-case test. It is the only invariant in this estate spanning the gateway and `web/`,
+> and a rename on either side left both suites green. Read its counts off its own last lines.
+>
+> **Not done, deliberately**: the mail templates are untouched (the argument below stands), there is
+> no "forgot password" request screen (Stage C's), and **the success path of neither screen has been
+> exercised against a live estate** — registering would leave an unactivated account and falsify one
+> of D102 §1's own probes for NEW-61. Four states were rendered in headless Chrome against the
+> running quality gateway; **no human has looked at the layout**.
 
 **Opened by NEW-47's own walk, 2026-09-17**, `decisions.md` D94 §5. Small, and it is the last step
 between "the mail arrives" and "a person can use it".
@@ -5114,6 +5161,13 @@ that limit has cost anything.
 > ⛔ **Sequence it behind the frontend route.** The activation mail points at `${baseUrl}/account/activate?key=…`,
 > which answers 401 here — **NEW-60** — and NEW-48 Stage A (D101) deliberately did not close it. Land
 > this first and it mails people a link that does not work.
+>
+> ⚠ **NEW-60 IS DONE (D105) AND THAT IS NOT ENOUGH TO UNBLOCK THE MAILING HALF.** The client now
+> serves `/account/activate?key=…`, but it is **served at no origin** — so the link still answers 401
+> on every estate, and D105 §3 names the two remaining conditions: the client being built and served
+> somewhere (Phase 5), and `JHIPSTER_MAIL_BASE_URL` naming that origin. **This item's mailing half is
+> therefore sequenced behind DEPLOYMENT, not behind that commit.** Its status-code half —
+> `ExceptionTranslator.getMappedStatus`, the 500 — is unaffected and remains independently landable.
 >
 > **Two probes narrowed it and belong with the answer**: there are **zero** unactivated accounts on the
 > only estate today, so nothing is being enumerated; and the login rate limit **is** installed and in
@@ -7144,3 +7198,64 @@ rarer.
 
 Nobody needs to decide anything. It is one `LOG.warn` in `ReviewWriteResource` plus a unit assertion, and
 the only judgement is the wording — which must name the booking reference and nothing else.
+
+---
+
+## NEW-90 — three generated strings send a visitor to screens this client does not have · READY
+
+**Opened by NEW-60's own work, 2026-10-02** (`decisions.md` D105). Not a defect in what D105 built —
+it is the generated bundle's own copy, rendered to a person for the first time because until that
+commit nothing in this estate rendered it at all.
+
+`activate.messages.error` has read *"**Your user could not be activated.** Please use the registration
+form to sign up"* since the scaffold. **There is no registration form in this client.** `app/` holds
+`admin config core entities layouts login marketplace shared` and, since D105, `account` — and
+`app/account/` serves exactly the two addresses the mail templates compose and nothing else. The
+`login` screen is the generated one and was read in full: it has **no registration link and no
+password-reset link**, only a username, a password, a remember-me box and a submit button.
+
+So the failed-activation page tells somebody to go and do a thing, and there is nowhere to do it.
+
+**Three strings, and they are three different kinds of problem.** Enumerated rather than counted,
+because this item was nearly written as one:
+
+| string | where it renders | what it promises |
+| --- | --- | --- |
+| `activate.messages.error` | `Activation`'s failure state, as the detail | *"use the registration form"* — **no such screen** |
+| `global.messages.info.register.noaccount` / `.link` | nothing renders them today | *"Register a new account"* — **no such screen**, and these are the two keys that survived D103's deletion of the home page |
+| `reset.request.*` (the whole sub-tree) | nothing renders it | a "reset your password" request screen — **Stage C's**, and the reason D105 built no third route |
+
+**The first is the only one a visitor can currently reach**, and it reaches them on the one page in
+this client whose whole purpose is to help somebody who has just failed to get in.
+
+**Why D105 did not fix it, and the reasoning is the item's shape rather than reluctance.** Three
+candidate fixes and each is somebody else's decision:
+
+- **Rewrite `activate.messages.error`.** One line, and it discards the generated wording every
+  JHipster estate shares — a copy decision, and the honest replacement ("your account could not be
+  activated" and nothing else) removes the only actionable sentence on that page without putting
+  anything back.
+- **Build the registration screen.** That is NEW-48 Stage C's, which owns the authenticated customer
+  screens and `POST /api/account/reset-password/init` beside them. D105 deliberately built no third
+  route for exactly this reason: the templates compose two paths, so two routes.
+- **Link the login page to both.** Also Stage C's, and it is the one that makes the other two
+  unnecessary — a sign-in page that offers "register" and "forgotten your password" is where both
+  sentences want to point.
+
+**What D105 did do about it** is refuse to add a fourth instance: `reset.finish.refused.expired` was
+written as *"Ask for a new one from the sign-in page"*, which is the same defect in new copy, and was
+changed to state the fact and name no action. `new-password.spec.ts` asserts that sentence does **not**
+name the sign-in page, so the wording cannot drift back while this item is open.
+
+**Nobody is harmed today** and that is worth stating precisely rather than as reassurance: no estate
+can send mail until a provider is chosen (D90 §7), and the client is served at no origin (D105 §3's
+second condition), so nobody has ever reached any of these three strings. The sequencing follows —
+this is cheap to close **with** Stage C and expensive to close before it, because closing it alone
+means choosing copy for a screen that does not exist yet.
+
+### Not blocked
+
+But it should not be closed on its own. The right moment is the pull request that adds the
+registration and password-reset-request screens, because that is the one in which the generated
+sentence becomes true rather than needing rewriting. If Stage C slips, the interim fix is the first
+bullet above — one string, and it loses nothing that works.

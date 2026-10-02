@@ -474,4 +474,44 @@ Marketplace primitives — shared by Discover, Browse and the public profile
   color: var(--abm-grey);
 }
 
+/* The account-lifecycle surface — NEW-60, D105 §6.
+
+   Hoisted here rather than duplicated into the two component stylesheets, for the reason D103 §9
+   gives about `.abm-pill` and `.abm-panel`: Angular scopes a component stylesheet, so two screens
+   rendering one surface means two copies, and `anyComponentStyle` is 2 kB warn / 4 kB error per
+   stylesheet. Stage B met that budget by hoisting rather than by raising it; this follows it.
+
+   Both screens are ONE narrow column with one outcome in it, which is the whole of the design: a
+   person arriving here clicked a link in a mail message and has exactly one thing to do. */
+
+.abm-account {
+  max-width: 34rem;
+  margin: 0 auto;
+  padding: 2rem 1rem 3rem;
+}
+
+.abm-account__title {
+  margin: 0 0 1rem;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--abm-navy);
+}
+
+.abm-account__lede {
+  margin: 0 0 1rem;
+  color: var(--abm-ink);
+}
+
+.abm-account__outcome {
+  margin-bottom: 1rem;
+}
+
+.abm-account__form {
+  padding: 1.1rem;
+  border: 1px solid var(--abm-line);
+  border-radius: var(--abm-r);
+  background: var(--abm-white);
+  color: var(--abm-on-white);
+}
+
 /* jhipster-needle-scss-add-main JHipster will add new css style */

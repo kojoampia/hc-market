@@ -20,7 +20,24 @@
         "success": "<strong>Your password has been reset.</strong> Please ",
         "keymissing": "The reset key is missing.",
         "error": "Your password couldn't be reset. Remember a password request is only valid for 24 hours."
-      }
+      },
+      "pageTitle": "Choose a new password",
+      "state": {
+        "submitting": {
+          "title": "Setting your new password…",
+          "detail": "Sending it to the account service."
+        },
+        "nokey": {
+          "detail": "Open the link in your password-reset email again, or copy the whole address including everything after the question mark."
+        }
+      },
+      "refused": {
+        "password": "That password was refused. Choose one between {{min}} and {{max}} characters.",
+        "unreachable": "The account service did not answer, so nothing was changed. Try again in a moment.",
+        "expired": "This reset link is no longer valid. It may have expired, or it may already have been used."
+      },
+      "signin": "sign in",
+      "backToMarketplace": "Back to the marketplace"
     }
   }
 }

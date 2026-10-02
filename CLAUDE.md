@@ -20,7 +20,7 @@ jdl/        the five JDL files — the model of record
 deploy/     deploy-dev.sh, deploy-prod.sh, docker/, demo/, observability/, prod-server/
 quality/    the jacserver quality stack — compose, vhost, startup.sh
 docs/       the spec, the decisions log, the prototype
-web/        hcMarket   Angular 21, client-only   THREE PUBLIC SCREENS — rendered from the live estate
+web/        hcMarket   Angular 21, client-only   3 PUBLIC SCREENS + the 2 ACCOUNT-LINK screens
 api/        EMPTY. Not created by this build; left alone deliberately.
 ```
 
@@ -41,6 +41,36 @@ exactly those.
 behind them is `permitAll` in catalog, which is what makes this the part of the client somebody with no
 account can look at. What is still undecided is **which origin a built bundle addresses**, which is
 Phase 5's and is cheap because `SERVER_API_URL` is `''` and every URL is relative.
+
+**`app/account/` holds TWO MORE SCREENS since D105 (NEW-60), and they are not public screens** — they
+are the two addresses the shipped mail templates compose, `/account/activate?key=…` and
+`/account/reset/finish?key=…`, which nothing in this estate served. Both API endpoints behind them are
+`permitAll` on the **gateway** rather than in catalog, so `getEndpointFor` takes **no second argument**
+there, and neither route may ever grow a guard: somebody following an activation link has no account to
+sign in to yet. ⚠ **The second path is not the API path with the origin swapped** — the API is
+`POST /api/account/reset-password/finish` — so a prefix rule gets it wrong, which is why both literals
+live in one `AccountLifecycleService`. **The files are named away from the generator's**:
+`AccountLifecycleService` and not `AccountService` (a live generated file in `core/auth/`),
+`account-lifecycle.routes.ts` and not `account.routes.ts`, `activation/` and `new-password/`.
+⛔ **Serving the routes does not make the link work, and the five documents saying it answers 401 are
+still true** — the three-conditions block under the account-lifecycle walk below is the one to read.
+
+⚠ **`not.toBeNull()` IS NOT "THIS ADDRESS IS SERVED" — the wildcard at the foot of `app.routes.ts`
+answers for everything** (D105 §5). `...errorRoute` is `path: '**'`, so an unserved URL activates the
+error page and `app.routes.spec.ts`'s *"something was activated"* returns a non-null `loadComponent`.
+**Measured**: the two cases written for the two mail addresses were **green against a client with no
+`account` route at all**, and only a cross-comparison and an index comparison went red. `expectServed`
+compares against what `/nothing-at-this-address` activates; use it for any new address. The shape
+generalises past routing — **a wildcard at the end of a dispatch table turns "did something handle it"
+into a question with no negative answer.**
+
+⚠ **AND D103's EMPTY-CHILDREN ORDERING HAZARD DOES NOT TRANSFER TO A NAMED SIBLING ROUTE** (D105 §5).
+The ⚠ block below is about the **exact empty URL**: a `path: ''` parent with an empty children array
+consumes `''` and has nothing left to try. For a named URL it consumes nothing, finds no child, and the
+router backtracks normally — **measured**, with the `account` entry moved below *both* `path: ''`
+parents all four behavioural assertions stayed green. So the positional assertion written for it was
+**deleted** rather than kept, because it pinned a coincidence. What is load-bearing is `...errorRoute`
+staying last: moved above, ten of twelve cases go red at once.
 
 ⚠ **THE CARD'S HEADLINE PRICE IS `fromPaidPriceMinor` AND IT MUST STAY THAT WAY** (D100, D103 §2).
 `fromPriceMinor` is the literal minimum including a free service, so p12 and p13 report **0** there
@@ -88,7 +118,21 @@ green.
 retry, and empty with the screen's own words. The prototype has markup for none of them, because every
 one of its screens reads an array already in memory; **"a spinner for ever" is what a two-state template
 does on every failure** and is a decision nobody took. A **404 and a 502 render identically** on the
-profile, deliberately.
+profile, deliberately — and the same call is made on `Activation`, where one of the two readings of its
+400 is *"this account is already activated"*.
+
+**ALL THREE of `LoadState`'s renders take the screen's own words since D105 §6; `empty` was the only one
+that did.** The asymmetry was invisible while every caller was a marketplace screen, because the
+defaults — *"The marketplace could not be reached / The catalogue did not answer"* — are right on all
+three of them and **wrong on an account screen**: nobody arriving from a mail message asked about a
+catalogue. `loadingTitleKey`, `loadingDetailKey`, `failedTitleKey`, `failedDetailKey` and
+`failedRetryKey` each default to the key they replaced, so the public screens render byte-identically
+to what D103 read in a browser, and both account specs carry a control asserting the marketplace's
+words are **absent** — an override nobody passes is not a feature. The component stays under
+`app/marketplace/` and is imported from `app/account/`: a second copy would be a verbatim-copy family
+nobody diffs. **`app/account/`'s two component stylesheets are one `:host` rule each**, with the shared
+primitives hoisted into `content/scss/global.scss` — D103 §9's answer to `anyComponentStyle`, which is
+per stylesheet.
 
 **No screen states the commission rate or the cancellation window.** Both are configurable per estate
 (D57) and no endpoint publishes them without a token, so a `12%` in a template is a number that goes
@@ -214,9 +258,19 @@ curl -s -o /dev/null -w '%{http_code}\n' 'http://127.0.0.1:15509/api/activate?ke
 ```
 
 **The link in the message is NOT the path that activates** — it is `${baseUrl}/account/activate?key=…`,
-a frontend route, which answers **401** on an API-only estate (NEW-60). `GET /api/activate?key=…` is the
-one that answers 200. And an account that has registered but not activated answers **500** to its own
-correct password — NEW-61, which the walk found.
+a frontend route. `GET /api/activate?key=…` is the one that answers 200. And an account that has
+registered but not activated answers **500** to its own correct password — NEW-61, which the walk found.
+
+**`web/` SERVES THAT ROUTE SINCE D105, AND THE LINK STILL ANSWERS 401** (NEW-60, closed). Those are not
+in tension and the distinction is the whole of D105 §3: a working link needs **three** things — the
+route existing (closed), **the client being built and served at some origin** (Phase 5, and `web/` is
+deployed nowhere), and `JHIPSTER_MAIL_BASE_URL` naming that origin (an operator's). Until the second
+holds, the honest value for that variable is still the API's edge, where the path matches no route.
+⛔ **So `deploy/prod-server/secrets.env.example`, `deploy-prod.sh`'s `HC_MAIL_BASE_URL` hint,
+`quality/compose.yml`, `application-prod.yml` and `deploy/prod-server/README.md` all still say the link
+answers 401 and they are all still TRUE — do not "update" them.** `deploy-prod.sh`'s copy is printed to
+a production operator and byte-embedded in Appendix B, where `sync-appendices.sh --check` has already
+been green over a wrong sentence in both places.
 
 There is no `HC_CONSUL_PORT` and no `HC_KAFKA_PORT` any more: this repository publishes neither,
 because it runs neither. `hc-infra` publishes them once, on **18510** (Consul UI) and **19192**
@@ -781,12 +835,17 @@ printed and nothing is installed, so **no ceiling is in force anywhere yet**.
 demands the difference be **exactly** those two, so a sixth public door is red in the pull request that
 adds it.
 
-**And the link in the mail points at a page nothing serves — NEW-60.** The templates compose
-`${baseUrl}/account/activate?key=…` and `${baseUrl}/account/reset/finish?key=…`, which are *frontend*
-routes; this estate has no frontend (NEW-48), so following the activation link gives **401** — measured,
-not 404, because reactive Spring Security denies an exchange no rule matched — while the key in it
-activates the account perfectly well through `GET /api/activate?key=…` (**200**). Nobody is harmed until
-a provider is configured, which is why it is an item rather than a patch to a generated template.
+**And the link in the mail pointed at a page nothing served — NEW-60, CLOSED by D105.** The templates
+compose `${baseUrl}/account/activate?key=…` and `${baseUrl}/account/reset/finish?key=…`, which are
+*frontend* routes; nothing served either, so following the activation link gave **401** — measured, not
+404, because reactive Spring Security denies an exchange no rule matched — while the key in it activates
+the account perfectly well through `GET /api/activate?key=…` (**200**). The templates are still
+**untouched and must stay so**: pointing one at `/api/activate` would make the link work today and hand
+a person a bare 200 with an empty body the moment the client is served, and they are generated files.
+`web/`'s `app/account/` serves both paths now, and **the 401 is unchanged** because the client is served
+at no origin — see the three-conditions block in the account-lifecycle walk above, which is the sentence
+not to misread. CI's *"Every link the mail composes must be a route the client serves"* derives the
+expected paths **from these two templates**, so renaming one is red in the pull request that does it.
 
 **The gateway counts registrations and logins, and the seam is the authentication manager** (D84,
 backlog NEW-43). `GatewayIdentityMeters` (management), `CountingReactiveAuthenticationManager`
@@ -1656,6 +1715,22 @@ the deployed image is the built one.
   is not padding: the ban covers both slf4j spellings (`.error(` and the fluent `atError`), so the
   matching `atWarn` rewrite must stay green or the guard refuses correct code — which is how a ban gets
   loosened by the next person who meets it.
+  Since D105 it also holds **that a link this estate SENDS lands somewhere** —
+  *"Every link the mail composes must be a route the client serves"*, `mail-links-are-served.sh`, with
+  `mail-links-are-served-test.sh` driving it; **read the counts off those two scripts' own last lines**,
+  which they derive on every run. It is the **only invariant here spanning the gateway and `web/`**, and
+  the only one whose two sides share no build: the gateway does not know a client exists and the client
+  never reads a template, so a path renamed on either side left the Java suite *and* every client spec
+  green while the link in somebody's inbox landed on a 404 page. The expected set is derived **from the
+  two Thymeleaf templates**, so a third template composing a third path is red in the pull request that
+  adds it; the direction is template → client, because the templates are what is actually sent; and a
+  derivation of fewer than two is **refused**, because a for-each over nothing prints `ok` having
+  compared nothing. It strips comments first — `account-lifecycle.routes.ts` quotes both paths in its
+  own javadoc, so unstripped it is satisfied by the paragraph explaining it. ⚠ **The component behind a
+  route is found by that route's own `loadComponent` and not by position**: the first version took the
+  Nth import for the Nth derived link, which is right only while `sort -u`'s order equals the
+  declaration order, and driven through the test's `HC_CHECK=` it is **red on a correct tree** once a
+  third template exists. Two of its nineteen cases distinguish nothing and **say so**.
 
 **A CHECK MAY NOT ASK ITS QUESTION THROUGH A PIPE, and eleven of them did** (D98, backlog NEW-71).
 `grep -q` exits at its **first match**, its producer then takes `SIGPIPE` and dies **141**, and under

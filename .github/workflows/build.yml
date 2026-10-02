@@ -709,6 +709,29 @@ jobs:
       - name: …and that check must fail on each of the states it exists to refuse
         run: ./.github/checks/account-lifecycle-guards-test.sh
 
+      # --- THE LINK IN THE MAIL MUST LAND SOMEWHERE (decisions.md D105, backlog NEW-60) -----------
+      #
+      # The one invariant in this estate that spans the gateway and `web/`, and the only one here
+      # whose two sides share no build at all. The Thymeleaf templates compose
+      # `${baseUrl}/account/activate?key=…` and `${baseUrl}/account/reset/finish?key=…`; the client
+      # serves those paths. Nothing else links them — the gateway does not know a client exists and
+      # the client never reads a template — so a path renamed on either side leaves the Java suite
+      # AND the 312 client specs green while the link in somebody's inbox lands on a 404 page.
+      #
+      # That is the item rather than a hypothetical: for the estate's whole life those two paths were
+      # served by nothing, and following the link answered 401 because reactive Spring Security
+      # denies an exchange no rule matched. Nobody met it only because no estate can send mail yet.
+      #
+      # The expected set is DERIVED from the templates — a third template composing a third path is
+      # red in the pull request that adds it, which a hard-coded pair could never see — and the check
+      # refuses a derivation of fewer than two, because a for-each over nothing is how every
+      # enumerated list in this workflow has failed open.
+      - name: Every link the mail composes must be a route the client serves
+        run: ./.github/checks/mail-links-are-served.sh
+
+      - name: …and that check must fail on each of the states it exists to refuse
+        run: ./.github/checks/mail-links-are-served-test.sh
+
       # "The agent must be verified as INSTRUMENTING, not merely loading" has been in CLAUDE.md
       # since D25 and was a paragraph of prose that had been run once, by hand. It is a script now
       # (deploy/verify-otel-agent.sh) and this holds the two together.
