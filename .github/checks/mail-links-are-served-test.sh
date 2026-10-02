@@ -403,6 +403,135 @@ build "$D"
 rm "$D/app/app.routes.ts"
 drive '21 app.routes.ts does not exist' 1 "$D"
 
+# --- 22, 23, 24. KEY ORDER INSIDE A ROUTE OBJECT IS MEANINGLESS TO ANGULAR -----------------------
+#  THE MAIN REVIEW FINDING. Writing `loadComponent` ABOVE `path` is a no-op edit and an entirely
+#  plausible one. The version this replaces searched for the first `import('./…')` at or after the
+#  `path:` LINE, so under that shape the search began below it, ran past the object's closing brace,
+#  and returned the NEXT route's component — reporting a parameter read in the WRONG FILE and
+#  exiting 0, measured on the real tree. Both screens read a parameter called `key`, so nothing was
+#  red.
+#
+#  Three cases: the reorder must still PASS (22), and it must still catch a screen reading the key
+#  the forbidden way (23) or not at all (24).
+#
+#  ⚠ WHICH OF THE THREE ACTUALLY DISCRIMINATES WAS MEASURED, NOT ASSUMED, and the first draft of
+#  this comment had it wrong — it credited 23. Driven against the pre-fix version through `HC_CHECK=`:
+#
+#      22  old=1 (RED on a correct tree)   new=0   <- discriminates
+#      23  old=1                           new=1   <- does NOT
+#      24  old=1                           new=1   <- does NOT
+#
+#  The old version refuses 23 and 24 for the WRONG REASON: in this two-route fixture the second
+#  object has no import after it, so the overrunning search found nothing and refused "cannot find
+#  the component". Accidentally red is not covered.
+#
+#  THE COMPOSITE IS REAL AND WAS MEASURED ON THE REAL TREE INSTEAD, where a third route does follow:
+#  with `loadComponent` above `path` in `account-lifecycle.routes.ts` AND `activation.ts` reading
+#  `params.get('key') ?? undefined`, the pre-fix version printed its success line — naming
+#  `new-password/new-password.ts` for BOTH links — and exited **0**, having never examined
+#  `activation.ts` at all. The fixed version exits 1 naming that file. D105 §8.
+#
+#  The lesson is this file's own: a fixture's shape decides what a case can see, and "it went red"
+#  is not "it went red about the thing".
+control
+D="$WORK/c22"
+build "$D"
+cat >"$D/app/account/account-lifecycle.routes.ts" <<'TS'
+const routes = [
+  {
+    loadComponent: () => import('./activation/activation'),
+    path: 'activate',
+  },
+  {
+    loadComponent: () => import('./new-password/new-password'),
+    path: 'reset/finish',
+  },
+];
+export default routes;
+TS
+drive '22 control: loadComponent declared ABOVE path (an Angular no-op)' 0 "$D"
+
+refusal
+D="$WORK/c23"
+build "$D"
+cat >"$D/app/account/account-lifecycle.routes.ts" <<'TS'
+const routes = [
+  {
+    loadComponent: () => import('./activation/activation'),
+    path: 'activate',
+  },
+  {
+    loadComponent: () => import('./new-password/new-password'),
+    path: 'reset/finish',
+  },
+];
+export default routes;
+TS
+cat >"$D/app/account/activation/activation.ts" <<'TS'
+export default class Activation {
+  ngOnInit() {
+    this.route.queryParamMap.subscribe(params => this.key.set(params.get('key')));
+  }
+}
+TS
+drive '23 reordered keys AND a literal paramMap.get — the composite' 1 "$D"
+
+refusal
+D="$WORK/c24"
+build "$D"
+cat >"$D/app/account/account-lifecycle.routes.ts" <<'TS'
+const routes = [
+  {
+    loadComponent: () => import('./activation/activation'),
+    path: 'activate',
+  },
+  {
+    loadComponent: () => import('./new-password/new-password'),
+    path: 'reset/finish',
+  },
+];
+export default routes;
+TS
+cat >"$D/app/account/new-password/new-password.ts" <<'TS'
+export default class NewPassword {
+  ngOnInit() {
+    this.submit();
+  }
+}
+TS
+drive '24 reordered keys AND a screen that never reads the key' 1 "$D"
+
+# --- 25, 26. THE PREFIX MUST MOUNT THE FILE THIS CHECK READS ------------------------------------
+#  The second review finding. Asking for `path: 'account'` anywhere is wider than the message it
+#  printed: repoint `loadChildren` at another table and the old version exited 0 while its own
+#  refusal text read "whatever $ROUTES_FILE says, nothing mounts it" — a message implying a check
+#  nobody had written. The prefix is now read off the object whose import RESOLVES to the file.
+refusal
+D="$WORK/c25"
+build "$D"
+cat >"$D/app/app.routes.ts" <<'TS'
+const routes = [
+  { path: 'login', loadComponent: () => import('./login/login') },
+  {
+    path: 'account',
+    loadChildren: () => import('./entities/entity.routes'),
+  },
+];
+export default routes;
+TS
+drive '25 `path: account` kept but loadChildren repointed elsewhere' 1 "$D"
+
+control
+D="$WORK/c26"
+build "$D"
+# The prefix is DERIVED, so a different one is correct as long as the mail agrees with it. Both
+# templates are moved to /profile/… and the mount renamed to match: nothing is wrong here, and a
+# check hard-coding `account` would be red on it.
+sed -i 's@/account/activate?key=@/profile/activate?key=@' "$D/mail/activationEmail.html"
+sed -i 's@/account/reset/finish?key=@/profile/reset/finish?key=@' "$D/mail/passwordResetEmail.html"
+sed -i "s@path: 'account',@path: 'profile',@" "$D/app/app.routes.ts"
+drive '26 control: the prefix is derived, so a renamed-on-both-sides mount passes' 0 "$D"
+
 # ---------------------------------------------------------------------------------------------
 printf '\n'
 if ((refusals + controls != seen)); then

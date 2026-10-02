@@ -1730,7 +1730,8 @@ the deployed image is the built one.
   route is found by that route's own `loadComponent` and not by position**: the first version took the
   Nth import for the Nth derived link, which is right only while `sort -u`'s order equals the
   declaration order, and driven through the test's `HC_CHECK=` it is **red on a correct tree** once a
-  third template exists. Two of its nineteen cases distinguish nothing and **say so**.
+  third template exists. Several of its cases distinguish nothing and **say so**, and which ones do
+  was measured against the pre-fix version rather than assumed.
 
 **A CHECK MAY NOT ASK ITS QUESTION THROUGH A PIPE, and eleven of them did** (D98, backlog NEW-71).
 `grep -q` exits at its **first match**, its producer then takes `SIGPIPE` and dies **141**, and under

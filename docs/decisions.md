@@ -21112,6 +21112,16 @@ forbids is the worse of the two mismatches. The server's refusal is surfaced rat
 and the two bounds reach the message through `translateValues` from the component's constants, so the
 prose cannot drift from the validator.
 
+> ⚠ **The constants' own comment claimed BOTH numbers came from the gateway, and that was false** —
+> found at review. It read *"`ManagedUserVM.PASSWORD_MIN_LENGTH`/`PASSWORD_MAX_LENGTH`, read off the
+> gateway rather than guessed"*; re-measured, `ManagedUserVM.java:11` is `4` ✓ and `:13` is **`100`**,
+> not 50. **The value is right and only its provenance was wrong**, which is the expensive kind here:
+> that comment is exactly what somebody reads when deciding whether 50 may be widened to match the
+> server. It may — but **the bundle's sentence has to move with it, in every language**, or the form
+> accepts what its own message forbids. The comment now says 50 is the *bundle's* number and
+> deliberately below the gateway's, and names the condition for changing it. A document asserting a
+> property the code lacks is this repository's signature defect; this one was three lines long.
+
 ### §5 ⚠ THE FINDING: `not.toBeNull()` IS NOT "THIS ADDRESS IS SERVED", AND IT WAS MEASURED HERE
 
 **The first assertion written for this package was fail-open, and it passed against a client with no
@@ -21169,6 +21179,29 @@ the marketplace's words are **absent** — otherwise the override is a parameter
 path as *the* place a screen branches on three states, and a second copy would be a verbatim-copy
 family nobody diffs — which is how two screens come to answer a failure differently.
 
+**The change was verified in a BROWSER rather than from the suite's count**, which is the right
+instrument for it: the three public screens were driven against a dead port and all three render the
+failed state with **zero raw translation keys** in the DOM. Five inputs each defaulting to the literal
+they replaced, and five static `abmTranslate` attributes converted to bound ones — behaviourally
+identical because `TranslateDirective` re-reads in `ngOnChanges`.
+
+> ⚠ **NOTHING IN THE SUITE CAN SEE A DEFAULT THAT NAMES A KEY NO BUNDLE DEFINES — NEW-91 (opened).**
+> Measured: `failedTitleKey`'s default changed to `marketplace.state.failed.NO_SUCH_KEY`, nothing else
+> touched, **312/312 green** — and that default is the failure headline on all three public screens,
+> so the mutation ships a page reading a dotted identifier at a visitor. ngx-translate answers an
+> unknown key with the key itself and `TranslateDirective` writes it as `innerHTML`; a spec asserting
+> a *specific* sentence is present says nothing about the other keys on the page, and
+> `terms-are-not-quoted.spec.ts`'s subject is a **forbidden** sentence, which is exactly what a
+> missing one cannot be caught by.
+>
+> **It is not this package's defect and is deliberately not fixed here.** The same five renders
+> carried their keys as static `abmTranslate` attributes before this commit, equally undefended — the
+> exposure is five defaults against five attributes and did not grow. ⛔ **And it must not be closed
+> by guarding `LoadState`'s five defaults alone**: five literals in one file is the instance, not the
+> property, and a check scoped to them would read as covering the class while every other
+> `abmTranslate` in the client stayed exposed. That is the narrow-reach defect this package found
+> three separate instances of, which is the reason it is an item rather than a quick grep.
+
 **The two component stylesheets are one `:host { display: block }` each**, with the shared
 `.abm-account*` primitives hoisted into `content/scss/global.scss`. That is D103 §9's answer to
 `anyComponentStyle` (2 kB warn / 4 kB error, **per stylesheet**) carried forward: hoist the shared
@@ -21213,14 +21246,73 @@ link in somebody's inbox lands on a 404 page — which is the item, not a hypoth
   first version took the Nth import for the Nth derived link, correct only while `sort -u`'s order
   equals the declaration order. **Measured** by driving that mutant through the test's `HC_CHECK=`:
   with three templates it is **red on a correct tree** and names the wrong two files.
-- **Two of its nineteen cases distinguish nothing and say so.** The obvious way to pin
-  "pairing is by route" is to reverse two declarations — which cannot work with only two routes,
-  because both screens read a parameter called `key`. They are kept as the fixtures they are, with
-  the limitation written down rather than left as an empty column.
 
-**Read its count off its own last line.** Today: **19 cases — 16 refusals, 3 controls.** The trailer
-refuses to print unless the two counters reconcile with what `report` saw, which is D98's correction
-to the sibling test that printed `$((pass - 2))` and overstated in both directions.
+> ⚠ **AND THE SECOND VERSION WAS STILL WRONG — the review finding, and it is a reachable fail-open
+> measured on the real tree.** The positional pairing was replaced by *"the first `import('./…')` at
+> or after the line matching `path: '$child'`"*, which is **line order**, and **key order inside a
+> JavaScript object literal is meaningless to Angular**. Writing `loadComponent` above `path` is a
+> no-op edit and an entirely plausible one; under that version the search then began *below* the
+> `path:` line, **ran past the object's closing brace**, and returned the next route's component.
+>
+> Measured on the committed tree, with `loadComponent` moved above `path` on the `activate` route and
+> nothing else changed:
+>
+> ```
+> old   ok  /account/activate      -> path: 'activate'
+>       ok  ?key= -> paramValue(params, 'key') in new-password/new-password.ts   <-- WRONG FILE
+>       ok  /account/reset/finish  -> path: 'reset/finish'
+>       ok  ?key= -> paramValue(params, 'key') in new-password/new-password.ts
+>       ✓ every link the mail composes is a route the client serves              exit 0
+> new   ok  ?key= -> paramValue(params, 'key') in activation/activation.ts       exit 0
+> ```
+>
+> **Both screens read a parameter called `key`, so the wrong file was still green.** Combine the
+> reorder with `activation.ts` reading `params.get('key') ?? undefined` — the exact literal case 9
+> exists to refuse — and the old version **printed its success line and exited 0** about a file it had
+> never opened; the fixed one exits 1 naming `activation.ts`. Both states were driven on the real
+> tree and restored from `cp` copies with checksums either side.
+>
+> The harm was bounded — `endpoint-construction.spec.ts` goes red on that literal independently — but
+> **a guard reporting success about a file it did not examine is this repository's named defect**, and
+> this is the third time in one package that a text guard's *reach* was narrower than its message.
+>
+> `route_objects` now accumulates each depth-1 object **whole, by brace depth**, so an object's own
+> braces bound the search and key order cannot matter. Nested objects (`data: { authorities: [...] }`
+> in `app.routes.ts`) sit inside their parent's buffer rather than being units, which is what makes
+> "depth-1 object" mean "top-level route" for these two files. The path-exists half asks the same
+> objects, so the two reads cannot disagree about whitespace or key order — and it is a **whole-line**
+> match (`has_line`), because a substring test would let `activate` be satisfied by a route declaring
+> `activate-account`, which is precisely the rename case 4 refuses.
+
+- **The prefix is read off the route object that IMPORTS this check's own routes file** — not from
+  `path: 'account'` appearing anywhere, which was the second review finding and the same shape one
+  level up. Repointing `loadChildren` at `./entities/entity.routes` while leaving `path: 'account'`
+  in place left the old version at **exit 0** — while its own refusal text read *"whatever
+  `$ROUTES_FILE` says, nothing mounts it"*, a message implying a check nobody had written. Checking
+  mounting and deriving the prefix are now one read, so the message is true and the prefix is not
+  hard-coded: case 26 renames the mount **and** both templates to `/profile/…` and passes, which the
+  old version was red on.
+- **Several of its cases distinguish nothing and say so.** The obvious way to pin "pairing is by
+  route" is to reverse two declarations — which cannot work with only two routes, because both
+  screens read a parameter called `key`. They are kept as the fixtures they are, with the limitation
+  written down rather than left as an empty column, and **which cases actually discriminate was
+  measured against the pre-fix version through the test's own `HC_CHECK=`** rather than assumed. The
+  first draft of that note credited the wrong case.
+
+- **The harness refuses to run if its subject is not there**, added after watching it **blame a case
+  for its own breakage**: driven from a directory where `$ROOT` resolved elsewhere, every invocation
+  exited 127 and the transcript read `FAIL 21 app.routes.ts does not exist — wanted exit 1, got 127`.
+  Refusal cases happen to fail loudly on 127 (they want exactly 1), so nothing was silently green —
+  what was wrong is the **diagnosis**, and a diagnosis nobody can act on is how a red run gets re-run
+  instead of read. *Suspect the instrument before the code*, inside the instrument.
+
+**Read its count off its own last line, and do not quote one here.** The trailer refuses to print
+unless the refusal and control counters reconcile with what `report` saw — D98's correction to the
+sibling test that printed `$((pass - 2))` and overstated in both directions. ⚠ **Three documents
+quoted a count of this very test and all three were stale within one review round**, inside their own
+instruction not to; the figures are gone rather than updated, because a count that is accidentally
+still right reads exactly like one that is maintained. Specific cases are cited by **number**, which
+an edit cannot silently invalidate.
 
 ### §9 What was NOT done, and why
 

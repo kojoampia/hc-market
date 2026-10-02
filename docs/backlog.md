@@ -5065,7 +5065,7 @@ only because the integration tests run sequentially, and the class javadoc says 
 >
 > **CI holds the two sides together**: `mail-links-are-served.sh` derives the expected paths **from
 > the templates** and demands the client serve each and read each parameter through `paramValue`,
-> with its own 19-case test. It is the only invariant in this estate spanning the gateway and `web/`,
+> with its own test. It is the only invariant in this estate spanning the gateway and `web/`,
 > and a rename on either side left both suites green. Read its counts off its own last lines.
 >
 > **Not done, deliberately**: the mail templates are untouched (the argument below stands), there is
@@ -7259,3 +7259,68 @@ But it should not be closed on its own. The right moment is the pull request tha
 registration and password-reset-request screens, because that is the one in which the generated
 sentence becomes true rather than needing rewriting. If Stage C slips, the interim fix is the first
 bullet above — one string, and it loses nothing that works.
+
+---
+
+## NEW-91 — a translation key that does not exist renders as itself, and no test in the client can see it · READY
+
+**Opened at NEW-60's review, 2026-10-02** (`decisions.md` D105). **Not a regression and not D105's
+defect** — it is a gap that pre-existed that commit in a different shape, and the review found it by
+mutation rather than by reading.
+
+`ngx-translate` answers an **unknown key with the key itself**, and `TranslateDirective` sets
+`innerHTML` from that answer. So a template naming a key no bundle defines renders
+`marketplace.state.failed.title` to a visitor, in the position the sentence should be. There is no
+console error, no thrown exception and no missing-translation handler configured.
+
+**Measured on the committed tree.** `LoadState.failedTitleKey`'s default changed from
+`marketplace.state.failed.title` to `marketplace.state.failed.NO_SUCH_KEY`, nothing else touched:
+
+```
+npm test  ->  Test Files 47 passed (47)   Tests 312 passed (312)
+```
+
+**Green.** That default is the failure headline on **all three public screens** — Discover, Browse and
+the public profile — so the mutation ships a page whose failure state reads a dotted identifier at a
+visitor, and the whole suite agrees it is fine.
+
+**Why nothing catches it.** The three screen specs that load the real bundle assert over prose they
+expect to be *present* (`toContain('could not be reached')`), and `D105`'s two account specs do the
+same. An assertion that a *specific* sentence is present passes or fails on the key it names; it says
+nothing about the other keys on the page. `terms-are-not-quoted.spec.ts` reads the bundles and the
+templates, but its subject is a **forbidden** sentence, not a missing one — a key with no value is
+exactly the thing a "must not contain" guard cannot see.
+
+**The pre-existing shape, which is why this is not D105's.** Before that commit the same three
+renders carried their keys as **static `abmTranslate="…"` attributes**, equally undefended: a typo
+there rendered the key just as readably. D105 turned five of them into bound inputs with defaults,
+which moved the literal and changed nothing about whether anything checks it. **The exposure did not
+grow** — five defaults against five attributes — and stating that is the point, because "the commit
+that touched it" is not the same as "the commit that caused it".
+
+**What would actually close it**, cheapest first, and the first is probably right:
+
+- **A spec that walks every template under `app/` for `abmTranslate` literals and every
+  `[abmTranslate]`/`input('…')` default, and asserts each resolves in `i18n/en/*.json`.** It is the
+  same two walks `terms-are-not-quoted.spec.ts` already does, inverted from "must not contain" to
+  "must resolve", and it would have been red on the mutation above. The bound-input half needs care:
+  a key computed at run time (`emptyTitleKey` is passed a literal by every caller today, but need not
+  be) is not statically readable, so the walk covers literals and **says** that it does.
+- **`MissingTranslationHandler` that throws under test.** ngx-translate supports one; wiring it in the
+  TestBed would make every unresolved key fail the spec that rendered it. Broader reach than the walk,
+  and it only covers keys some spec actually renders — which is not all of them.
+- **Both.** They fail for different reasons: one about what is *written*, one about what a *render*
+  asks for. That is the same split D103 §13(b) arrived at for the brokerage terms, and the reasoning
+  there applies unchanged.
+
+⛔ **Do not close this by adding a guard for `LoadState`'s five defaults alone.** Five literals in one
+file is the instance, not the property, and a check scoped to them would leave every other
+`abmTranslate` in the client exactly as exposed while reading as though the class were covered. That
+is the narrow-reach defect this repository keeps finding, and NEW-60's own review found three
+instances of it in one package.
+
+### Not blocked
+
+Nobody needs to decide anything. It is one spec file, modelled on `terms-are-not-quoted.spec.ts`'s two
+walks. The only judgement is how to treat a non-literal key, and the honest answer is to cover the
+literals and state the limit rather than widen until it is unreadable.

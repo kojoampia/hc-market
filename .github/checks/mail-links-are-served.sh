@@ -102,12 +102,73 @@ fi
 stripped_routes=$(awk -f "$STRIPPER" "$ROUTES_FILE")
 stripped_app=$(awk -f "$STRIPPER" "$APP_ROUTES")
 
-# The prefix the lazy child table hangs under, read rather than assumed.
-prefix=$(printf '%s\n' "$stripped_app" |
-  grep -oE "path: '[A-Za-z0-9_-]+',?[[:space:]]*$|path: '[A-Za-z0-9_-]+'" |
-  grep -oE "'[A-Za-z0-9_-]+'" | tr -d "'" | grep -x 'account' || true)
-if [[ "$prefix" != 'account' ]]; then
-  refuse "$APP_ROUTES declares no top-level \`path: 'account'\` — whatever $ROUTES_FILE says, nothing mounts it"
+# ⚠ ONE ROUTE OBJECT AT A TIME, BY BRACE DEPTH — never "the first import at or after the `path:`
+# line", which is what this did until review and which is a reachable fail-open.
+#
+# Key order inside a JavaScript object literal is meaningless to Angular, so
+# `{ loadComponent: …, path: 'activate' }` is a NO-OP edit and an entirely plausible one. Under the
+# line-scanning version the search then started BELOW the `path:` line, ran past this object's
+# closing brace, and returned the NEXT route's component — measured on the real tree, which reported
+# `?key= -> paramValue(params, 'key') in new-password/new-password.ts` for BOTH links and exited 0.
+# Both screens happen to read a parameter called `key`, so the wrong file was still green; combine
+# it with one screen using a literal `params.get('key')` — the exact defect case 9 refuses — and the
+# check printed its success line about a file it had not examined.
+#
+# This walks characters and accumulates each depth-1 object whole, so an object's own braces bound
+# the search and key order cannot matter. Nested objects (`data: { authorities: [...] }` in
+# `app.routes.ts`) are inside their parent's buffer rather than units of their own, which is what
+# makes "depth-1 object" mean "top-level route" for these two files.
+ROUTE_OBJECTS_AWK='
+BEGIN { depth = 0; buf = "" }
+{
+  line = $0
+  n = length(line)
+  for (i = 1; i <= n; i++) {
+    c = substr(line, i, 1)
+    if (c == "{") { depth++; if (depth == 1) buf = "" }
+    if (depth >= 1) buf = buf c
+    if (c == "}") {
+      depth--
+      if (depth == 0) {
+        path = ""; imp = ""
+        if (match(buf, "path:[ \t]*" q "[A-Za-z0-9/_-]*" q)) {
+          seg = substr(buf, RSTART, RLENGTH)
+          sub("^path:[ \t]*" q, "", seg); sub(q "$", "", seg)
+          path = seg
+        }
+        if (match(buf, "import\\(" q "\\./[A-Za-z0-9/_.-]+" q "\\)")) {
+          seg = substr(buf, RSTART, RLENGTH)
+          sub("^import\\(" q "\\./", "", seg); sub(q "\\)$", "", seg)
+          imp = seg
+        }
+        if (path != "" || imp != "") print path "\t" imp
+        buf = ""
+      }
+    }
+  }
+  if (depth >= 1) buf = buf "\n"
+}'
+
+route_objects() { awk -v q="'" "$ROUTE_OBJECTS_AWK" <<<"$1"; }
+
+# --- 2a. WHICH top-level route mounts the file this check is about ----------------------------
+# Asking for `path: 'account'` anywhere would be wider than the message it prints. Repointing
+# `loadChildren: () => import('./account/account-lifecycle.routes')` at `./entities/entity.routes`
+# while leaving `path: 'account'` in place left this at exit 0 while its own refusal read
+# "whatever $ROUTES_FILE says, nothing mounts it" — a message implying a check nobody had written.
+# So the prefix is read off the object whose import RESOLVES to $ROUTES_FILE, which checks mounting
+# and derives the prefix in one read.
+app_dir=$(dirname "$APP_ROUTES")
+prefix=''
+while IFS=$'\t' read -r path imp; do
+  [[ -n "$imp" ]] || continue
+  [[ "$app_dir/$imp.ts" == "$ROUTES_FILE" ]] || continue
+  prefix=$path
+  break
+done < <(route_objects "$stripped_app")
+
+if [[ -z "$prefix" ]]; then
+  refuse "no top-level route in $APP_ROUTES imports $ROUTES_FILE — nothing mounts it, so neither mail address is served whatever that file says"
 fi
 
 # `has_in` rather than a pipeline into `grep -q`: a match makes `grep -q` exit at once, its producer
@@ -118,6 +179,22 @@ fi
 has_in() {
   local text=$1 pattern=$2 rc=0
   grep -qF -- "$pattern" <<<"$text" || rc=$?
+  case $rc in
+    0) return 0 ;;
+    1) return 1 ;;
+    *)
+      printf '✗ grep answered %s — neither match nor no-match. Refusing rather than guessing.\n' "$rc" >&2
+      exit 1
+      ;;
+  esac
+}
+
+# A WHOLE-LINE match, which is what a declared route path needs. `has_in` is a substring test, so
+# `activate` would be satisfied by a route declaring `activate-account` — the rename case 4 refuses,
+# passing as though it were served. Same fail-closed stdio discipline.
+has_line() {
+  local text=$1 pattern=$2 rc=0
+  grep -qxF -- "$pattern" <<<"$text" || rc=$?
   case $rc in
     0) return 0 ;;
     1) return 1 ;;
@@ -146,36 +223,32 @@ while IFS= read -r link; do
   fi
   child=${path#"$prefix"/}
 
-  if has_in "$stripped_routes" "path: '$child'"; then
+  # Asked of the route OBJECTS rather than of the raw text, so "declares this path" means the same
+  # thing here as it does to the pairing below — two reads that disagreed about whitespace or key
+  # order would be two guards with one name.
+  if has_line "$(route_objects "$stripped_routes" | cut -f1)" "$child"; then
     note "ok   /$path  ->  path: '$child' in $(basename "$ROUTES_FILE")"
   else
     refuse "the mail composes /$path but $ROUTES_FILE declares no \`path: '$child'\` — the link lands on the client's 404 page. This is NEW-60."
   fi
 
   # The parameter is read by the screen behind that route, not by the route table. Which file that
-  # is comes from THAT ROUTE'S OWN `loadComponent` — the first `import('./…')` at or after its
-  # `path:` line — so a renamed component is followed rather than guessed, and the parameter must be
-  # read through `paramValue`, because a literal `paramMap.get('key')` is an offender to
+  # is comes from THAT ROUTE OBJECT'S OWN `loadComponent`, bounded by the object's braces — so a
+  # renamed component is followed rather than guessed, and the parameter must be read through
+  # `paramValue`, because a literal `paramMap.get('key')` is an offender to
   # `endpoint-construction.spec.ts`.
   #
-  # ⚠ NOT by position in the file. The first version took the Nth import for the Nth derived link,
-  # which is correct only while `sort -u`'s order happens to equal the declaration order — a
-  # coincidence, and this repository's own rule is not to rest on one. **Measured** by driving that
-  # version through `mail-links-are-served-test.sh`'s `HC_CHECK=`: with THREE templates it is RED on
-  # a correct tree, because `sort -u` gives activate / email/confirm / reset/finish while the routes
-  # declare activate / reset/finish / email/confirm — so it looks for `?token=` in `new-password.ts`.
-  # With only two routes it is green either way, which is why the two-route reorder case proves
-  # nothing and the three-route control is the discriminator.
-  component=$(awk -v want="path: '$child'" '
-    index($0, want) { found = 1 }
-    found && match($0, /import\(\x27\.\/[A-Za-z0-9\/_-]+\x27\)/) {
-      seg = substr($0, RSTART, RLENGTH)
-      sub(/^import\(\x27\.\//, "", seg)
-      sub(/\x27\)$/, "", seg)
-      print seg
-      exit
-    }
-  ' <<<"$stripped_routes")
+  # ⚠ Neither by position in the file NOR by line order within it. Two fail-opens were measured here
+  # and `route_objects`' header carries the second; both reported a parameter read in the WRONG FILE
+  # and exited 0, because both screens read a parameter called `key`.
+  component=$(
+    while IFS=$'\t' read -r p i; do
+      if [[ "$p" == "$child" ]]; then
+        printf '%s\n' "$i"
+        break
+      fi
+    done < <(route_objects "$stripped_routes")
+  )
   screen="$(dirname "$ROUTES_FILE")/${component}.ts"
   if [[ -f "$screen" ]]; then
     stripped_screen=$(awk -f "$STRIPPER" "$screen")

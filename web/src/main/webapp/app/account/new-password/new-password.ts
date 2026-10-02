@@ -11,7 +11,25 @@ import { paramValue } from 'app/marketplace/route-params';
 
 import { AccountLifecycleService } from '../account-lifecycle.service';
 
-/** `ManagedUserVM.PASSWORD_MIN_LENGTH`/`PASSWORD_MAX_LENGTH`, read off the gateway rather than guessed. */
+/**
+ * The bounds this FORM enforces, and only the first of the two is the gateway's.
+ *
+ * <p>⚠ **These are NOT both `ManagedUserVM`'s, and this comment said they were.** Measured on the
+ * gateway: `ManagedUserVM.PASSWORD_MIN_LENGTH` is **4** and `PASSWORD_MAX_LENGTH` is **100**. The 50
+ * below is the **generated translation bundle's** number —
+ * `global.messages.validate.newpassword.maxlength` reads *"Your password cannot be longer than 50
+ * characters"* — and it is deliberately **narrower than the server's**.
+ *
+ * <p>The value is right and the provenance claim was wrong, which matters because this is exactly
+ * the comment somebody reads when deciding whether 50 may be widened to 100. It may — the server
+ * accepts it — but **the bundle's sentence has to move with it**, in every language, or the form
+ * accepts what its own message forbids. That is the worse of the two mismatches and is why the
+ * narrow number was chosen; see this class's javadoc.
+ *
+ * <p>Nothing here trusts the client's rule away: `isPasswordLengthInvalid` runs on the gateway
+ * regardless, and its refusal is surfaced rather than suppressed (`refusalFrom`'s `password` arm).
+ * A client validator is a courtesy.
+ */
 const PASSWORD_MIN_LENGTH = 4;
 const PASSWORD_MAX_LENGTH = 50;
 
