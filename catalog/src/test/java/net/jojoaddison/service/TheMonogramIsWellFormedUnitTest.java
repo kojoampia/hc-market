@@ -271,22 +271,45 @@ class TheMonogramIsWellFormedUnitTest {
 
     /**
      * Why {@link #twoAstralLettersStillSatisfyTheColumnsOwnConstraint()} is a <em>bound</em> and not an
-     * example — derived over the whole code point range rather than assumed.
+     * example — and this is the assertion that guards the thing the bound actually depends on.
      *
-     * <p>If any code point's uppercase mapping were longer in UTF-16 than the code point itself, two
-     * letters could exceed four units and the monogram could be refused at persist time by a column
-     * nobody had reason to look at. None is, so the bound is {@code MONOGRAM_LETTERS}: raise that
-     * constant to three and two astral letters plus one is 6 units against a limit of 4, which
-     * {@code varchar(4)} would accept quite happily.
+     * <p><strong>The dependency is the number of letters, and nothing about Unicode.</strong>
+     * {@code Character.toUpperCase(int)} returns a single code point — that is its return type — so
+     * {@code Character.charCount} of its result is at most 2 whatever any mapping does, now or in a
+     * later JDK. Two letters is therefore at most 4 UTF-16 units <em>unconditionally</em>, and the only
+     * way to exceed {@code @Size(max = 4)} is to take more letters.
+     *
+     * <p>So this hands the composer a name with <em>six</em> single-letter parts and asks the column's
+     * own constraint about the result. Raise {@code MONOGRAM_LETTERS} to three and the monogram is 6
+     * units against a limit of 4 — refused at persist time, on the write path of a review somebody has
+     * earned, by a column nobody had reason to look at, and {@code varchar(4)} would have accepted 3
+     * code points quite happily so the database would not have objected either. It is red here instead.
+     *
+     * <p>⚠ <strong>This replaced a sweep over all 1,114,112 code points asserting that no uppercase
+     * mapping grows in UTF-16.</strong> That claim is true (measured: 0) and it is <em>not</em> the
+     * premise — it is a consequence of the return type above. Worse, it was a test that could go red on
+     * a <em>correct</em> tree: a future JDK adding a BMP-to-supplementary uppercase mapping would redden
+     * it while {@code @Size(max = 4)} still held, which is how the next person learns to delete a guard.
+     * D107 §5 and §11 carry the correction.
      */
     @Test
-    @DisplayName("no code point's uppercase mapping is longer in UTF-16 than itself")
-    void noUppercaseMappingGrowsAMonogram() {
-        for (int codePoint = Character.MIN_CODE_POINT; codePoint <= Character.MAX_CODE_POINT; codePoint++) {
-            int upper = Character.toUpperCase(codePoint);
-            assertThat(Character.charCount(upper))
-                .as("U+%04X upper-cases to U+%04X", codePoint, upper)
-                .isLessThanOrEqualTo(Character.charCount(codePoint));
+    @DisplayName("no monogram can outgrow the column, however many parts the name has")
+    void noMonogramCanOutgrowTheColumnHoweverManyPartsTheNameHas() {
+        StringBuilder manyAstralParts = new StringBuilder();
+        for (int part = 0; part < 6; part++) {
+            manyAstralParts.appendCodePoint(SCRIPT_CAPITAL_A).append(' ');
+        }
+
+        String monogram = monogramOf(manyAstralParts.toString().trim());
+
+        assertThat(monogram).isNotNull();
+        assertThat(isWellFormed(monogram)).as("hex %s", hex(monogram)).isTrue();
+        try (ValidatorFactory factory = Validation.buildDefaultValidatorFactory()) {
+            Review row = new Review();
+            row.setAuthorInitials(monogram);
+            assertThat(factory.getValidator().validateProperty(row, "authorInitials"))
+                .as("%d UTF-16 units in %s — MONOGRAM_LETTERS has outgrown the column", monogram.length(), hex(monogram))
+                .isEmpty();
         }
     }
 

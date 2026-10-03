@@ -21929,15 +21929,30 @@ This is a coincidence and is therefore written down.
 | `varchar(4)` | `20231205141336_added_entity_Review.xml` | **code points** | 2 — comfortable |
 
 So `@Size` is **saturated, not spare**, and the thing that bounds it is `MONOGRAM_LETTERS = 2`. **Raise
-that constant to three and two astral letters plus one is 6 units against a limit of 4** — while
-`varchar(4)` would accept 3 code points quite happily, so the database would not object and the refusal
-would arrive from bean validation at persist time, on the write path for a review somebody has earned.
-The constant's javadoc says so.
+that constant to three and three astral letters is 6 units against a limit of 4** — while `varchar(4)`
+would accept 3 code points quite happily, so the database would not object and the refusal would arrive
+from bean validation at persist time, on the write path for a review somebody has earned.
 
-**The bound is derived rather than assumed.** It holds only if no code point's uppercase mapping is longer
-in UTF-16 than the code point itself. Measured over the whole range on JDK 25: **0 of 1,114,112**.
-`noUppercaseMappingGrowsAMonogram` re-derives it in the suite rather than quoting this number, so a future
-JDK that introduced such a mapping is red here.
+**The bound is UNCONDITIONAL, and it depends on nothing about Unicode.** `Character.toUpperCase(int)`
+returns **a single code point** — that is its return type — so `Character.charCount` of its result is at
+most 2 whatever any mapping does, now or in a later JDK. `MONOGRAM_LETTERS × 2 = 4` units follows from the
+contract, not from a measurement. **So the constant is the only thing that can break it**, and the guard
+is `noMonogramCanOutgrowTheColumnHoweverManyPartsTheNameHas`: it hands the composer a name of six
+single-letter astral parts and asks the column's own constraint about the result, so raising the constant
+is red in a unit test instead of at persist time.
+
+> ⚠ **THIS SECTION ARGUED THE BOUND FROM THE WRONG PREMISE, AND SHIPPED A TEST THAT COULD GO RED ON A
+> CORRECT TREE — corrected at review, §11.** It read *"The bound is derived rather than assumed. It holds
+> only if no code point's uppercase mapping is longer in UTF-16 than the code point itself. Measured over
+> the whole range on JDK 25: 0 of 1,114,112"*, with `noUppercaseMappingGrowsAMonogram` written as that
+> premise's guard. **The claim is true and it is not the dependency** — it is a *consequence* of the
+> return type above. The cost was not the wasted sweep: in the exact hypothetical the test was written
+> for, a future JDK adding a BMP-to-supplementary uppercase mapping, **that case goes red while
+> `@Size(max = 4)` still holds** and `twoAstralLettersStillSatisfyTheColumnsOwnConstraint` stays green.
+> It is the `BADGE_ZONE` shape D52 argues against — a test pinning a coincidence — and **a guard that
+> fires on correct code is how the next person learns to delete one.** It is deleted rather than
+> re-labelled, because a fact that is load-bearing for nothing does not need a test; what replaced it
+> guards the premise that *can* break and could not be reached before.
 
 `twoAstralLettersStillSatisfyTheColumnsOwnConstraint` asks the **real annotation** through a
 `jakarta.validation.Validator` rather than restating `4`, so narrowing `@Size` is red in a unit test
@@ -21970,7 +21985,7 @@ is the trap NEW-88's own table avoided by printing hex. The file carries no non-
 
 The three sets are distinguishable and M2's and M3's are **disjoint from the surrogate sweep**, which is
 the property §1 and §2 claim and which an aggregate pass/fail could not report. M1's five survivors are the
-two controls, D104's own property, the uppercase derivation and — notably —
+two controls, D104's own property, the many-parts column bound and — notably —
 `theMonogramTakesTwoLettersCountedAsCodePoints`, because `main`'s `charAt` happens to produce two code
 points: that case is a **bound** detector and not a surrogate detector, exactly as its javadoc says.
 
@@ -22044,3 +22059,45 @@ second state into null.
   the column is written only through `ReviewAuthor`.
 - **`catalog` still has no `prettier:format` script** — NEW-62 — so the surrounding style was matched by
   hand.
+
+### §11 REVIEW — THE WIDTH ARGUMENT NAMED A REASON THAT WAS NOT DOING THE WORK
+
+One finding, non-blocking, and it was a documentation defect that had shipped a **test** with it. §5 read
+*"the bound holds only if no code point's uppercase mapping is longer in UTF-16 than the code point
+itself"*, measured at 0 of 1,114,112, with `noUppercaseMappingGrowsAMonogram` written as that premise's
+guard.
+
+**The claim is true and it was not the dependency.** `Character.toUpperCase(int)` returns a **single code
+point** — its return type — so `Character.charCount` of the result is at most 2 by contract, whatever any
+mapping does now or in a later JDK. `MONOGRAM_LETTERS × 2 = 4` units is therefore **unconditional**, and
+the sweep's zero is a *consequence* of the return type rather than the premise the width rests on.
+
+**Two costs, and the second is the one this repository cares about.** It is the `BADGE_ZONE` shape D52
+argues against — a test pinning a coincidence — and **in the exact hypothetical it was written for** (a
+future JDK adding a BMP-to-supplementary uppercase mapping) **that case goes red on a correct tree**,
+while `@Size(max = 4)` still holds and `twoAstralLettersStillSatisfyTheColumnsOwnConstraint` stays green.
+A guard that fires on correct code is how the next person learns to delete a guard.
+
+**It is DELETED rather than re-labelled, and the deletion is a net gain in reach rather than a loss.**
+Re-labelling was offered and declined for one reason: **the fact is load-bearing for nothing.** Nothing
+in `initials` depends on an uppercase mapping not growing — not the width, not the monogram's shape, not
+the surrogate property — so a test asserting it guards no behaviour, and a fact with no dependent does
+not need one. The premise that *can* break has no test, and that is the real gap it was hiding:
+
+```
+MONOGRAM_LETTERS 2 -> 3, nothing else touched
+  noMonogramCanOutgrowTheColumnHoweverManyPartsTheNameHas   RED
+    6 UTF-16 units in [U+D835 U+DC9C U+D835 U+DC9C U+D835 U+DC9C] — MONOGRAM_LETTERS has outgrown the column
+  theMonogramTakesTwoLettersCountedAsCodePoints             RED
+```
+
+and **the deleted sweep was green on that mutation**, because it never touched `ReviewAuthor` at all.
+`noMonogramCanOutgrowTheColumnHoweverManyPartsTheNameHas` hands the composer a name of six single-letter
+astral parts and asks the column's own `@Size` about the result, so it needs no access to the private
+constant and **cannot go red on a correct tree**. The three documented mutations are unchanged at
+**9 / 5 / 4** — the new case is a survivor of all three, for the same reason the old one was, so §6's
+table needed only the survivor's name corrected.
+
+**What else changed: comment text only.** §5 above, and the same correction at the site in
+`ReviewAuthor.initials`' javadoc. **No main-source code was touched** — `git diff` on
+`ReviewAuthor.java` in this round is javadoc alone.

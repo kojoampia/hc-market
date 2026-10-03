@@ -121,11 +121,15 @@ public final class ReviewAuthor {
      * <p><strong>The length is safe with zero headroom, and the two constraints count different
      * things.</strong> {@code @Size(max = 4)} on {@code Review.authorInitials} counts UTF-16 units;
      * {@code varchar(4)} counts code points. Two letters is at most 4 units and exactly 2 code points,
-     * so both hold — and {@code @Size} is <em>saturated</em>, not spare. Derived rather than assumed:
-     * <strong>no</strong> code point in the whole range has an uppercase mapping that is longer in
-     * UTF-16 than itself (measured, 0 of 1,114,112 on JDK 25), so {@link #MONOGRAM_LETTERS} is what
-     * bounds it. Raise that constant to three and a name in two astral scripts is 6 units against a
-     * limit of 4, which {@code varchar(4)} would happily accept.
+     * so both hold — and {@code @Size} is <em>saturated</em>, not spare. <strong>That is
+     * unconditional, and it depends on nothing about Unicode</strong>: {@code Character.toUpperCase(int)}
+     * returns a single code point, so {@code Character.charCount} of its result is at most 2 whatever any
+     * mapping does now or in a later JDK, and {@link #MONOGRAM_LETTERS} letters is therefore at most
+     * {@code 2 × 2} units. So the constant is the <em>only</em> thing bounding it: raise it to three and
+     * a name in three astral scripts is 6 units against a limit of 4 — refused by bean validation at
+     * persist time, on the write path of a review somebody has earned, while {@code varchar(4)} would
+     * accept 3 code points quite happily so the database would not object either.
+     * {@code noMonogramCanOutgrowTheColumnHoweverManyPartsTheNameHas} is red rather than that.
      *
      * <p><strong>A name with no letters yields null, and that is the same value the anonymous path
      * writes — argued, not overlooked.</strong> {@code "..."} and {@code "!!!"} are both null now,
