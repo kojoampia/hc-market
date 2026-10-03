@@ -20979,6 +20979,13 @@ this one does not depend on that.
   `@Size(max = 4)`, so it is not a length problem, and **what PostgreSQL does with an unpaired
   surrogate is not measured** — that measurement decides whether NEW-88 is cosmetic or a 500 on a path
   where a review has already been earned.
+  > ⚠ **CLOSED BY D107, 2026-10-03, AND THE MEASUREMENT CAME BACK THE MILD WAY.** The unpaired surrogate
+  > is **accepted** by pgjdbc 42.7.11 and PostgreSQL 17 — no SQLSTATE — and comes back as `U+003F`, so it
+  > is **cosmetic** and not a 500, while still being permanent in a row no endpoint can correct. The
+  > sentence above is left as written because it was the honest state of the question then; D107 §3
+  > carries the transcript and its control. D107 also found that `charAt` → `codePointAt` **alone** is
+  > wrong, and settled the punctuation half as *letters only* — so `!!!` is null now too, on the argument
+  > that `authorName` being `@NotNull` is what keeps the two null-monogram states apart (D107 §4).
 - **`catalog` has no `prettier:format` script** — NEW-62, three of the five services — so this package
   matched the surrounding style by hand rather than running a formatter that reformats files it never
   touched.
@@ -21753,3 +21760,287 @@ and `application-dev.yml` sets `net.jojoaddison: DEBUG` — the profile the qual
 **did** emit a DEBUG line with a stack trace there. *Effectively* silent is true (DEBUG, and alerting
 keys on 5xx **rates**); *nothing logs it* is not, and the table's own `@Scheduled` row makes the same
 dev-DEBUG point in the other direction, so the file would have contradicted itself.
+
+---
+
+## D107 — A monogram is made of letters and of whole code points, and the surrogate came back as a question mark rather than as a 500
+
+**Backlog NEW-88.** Closed 2026-10-03, on branch `new-88-the-monogram-is-made-of-letters` off `37a9902`.
+**PRE-EXISTING and identical on `main`** — `ReviewAuthor.initials` carried `parts[i].charAt(0)` verbatim
+from the `initialsOf` D104 replaced, so this is an item rather than part of that package, whose fence was
+the login disclosure.
+
+The item named three defects and **the one it ranked sharpest turned out to be the mildest**, which is
+the finding and is the reason §3 comes before §4.
+
+### §1 WHAT WAS WRONG, AND IT IS TWO INDEPENDENT RULES RATHER THAN ONE DEFECT
+
+`initials` split the name on `[ .]+` and appended `Character.toUpperCase(part.charAt(0))` — the first
+**UTF-16 code unit** of each part, whatever that unit was. Two separate things follow from that line and
+**neither fixes the other**, which no reading of the item makes clear:
+
+| name | before | hex before | after | hex after |
+| --- | --- | --- | --- | --- |
+| `Selina Amoah` | `SA` | `U+0053 U+0041` | `SA` | unchanged — control |
+| `Äkua Boateng` | `ÄB` | `U+00C4 U+0042` | `ÄB` | unchanged — control |
+| `𝒜nna Mensah` | — | **`U+D835 U+004D`** (lone high surrogate) | `𝒜M` | `U+1D49C U+004D` |
+| `𞤢ɗo Diallo` (Adlam) | — | **`U+D83A U+0044`** (lone high surrogate) | `𞤠D` | `U+1E900 U+0044` |
+| `😀 Smiley` | — | **`U+D83D U+0053`** (lone high surrogate) | `S` | `U+0053` |
+| `!!!` | `!` | `U+0021` | **null** | — |
+| `...` | null | — | null | unchanged |
+| `4Real Fitness` | `4F` | `U+0034 U+0046` | `RF` | `U+0052 U+0046` |
+| `'Ama Mensah` | `'M` | `U+0027 U+004D` | `AM` | `U+0041 U+004D` |
+
+- **Whole code points** fixes rows 3 and 4 and is required for them: `𝒜` and Adlam's `𞤢` **are**
+  letters, so they must be taken entire or not at all.
+- **Letters only** fixes rows 5, 6, 8 and 9 and is required for them: `Character.isLetter(U+1F600)` is
+  **false** (category `So`), so the emoji row is answered by refusing a non-letter and **not** by pairing
+  the surrogate — taking the whole code point there would publish a grinning face as somebody's monogram,
+  which is well-formed and still not a monogram.
+
+**Adlam is why the astral half is not a curiosity.** It is a living script for **Fulani**, written across
+West Africa including Ghana's northern neighbours; `U+1E922` is a letter, is supplementary, and **has a
+case mapping** to `U+1E900` — so it is the one case that also exercises `Character.toUpperCase` on a
+supplementary code point. A fix pairing the surrogates but upper-casing the `char` leaves it lower-case,
+and the mathematical-script `𝒜` cannot see that because it is its own uppercase.
+
+### §2 THE TRAP INSIDE THE FIX, WHICH NO SURROGATE ASSERTION CAN SEE
+
+The obvious repair is `charAt` → `codePointAt`. **That alone is wrong, silently**, and it is worth more
+than the defect it half-fixes.
+
+The loop bound was `out.length() < 2` — UTF-16 units. An astral first letter is **two** units, so with
+`appendCodePoint` the bound is already satisfied after one letter and the loop ends:
+`𝒜nna Mensah` yields `𝒜` and not `𝒜M`. One letter short, **well-formed**, no surrogate anywhere, and
+therefore invisible to every assertion written about surrogates. The bound counts **code points** now, and
+it is derived from the buffer (`out.codePointCount(0, out.length())`) rather than kept in a counter beside
+it, so a second `appendCodePoint` added in some later branch cannot make the two disagree.
+
+Measured as its own mutation — §6, M3 — and it reddens **four** cases, all of whose failure hex is a
+**correct** surrogate pair.
+
+### §3 THE MEASUREMENT THE ITEM DEMANDED, AND IT DOWNGRADES THE ITEM
+
+NEW-88 said: *"what the JDBC driver and PostgreSQL do with an unpaired surrogate on the way into a
+`varchar(4)` is NOT MEASURED. Encodings that replace it give a `?` on a public page; encodings that refuse
+it give a 500 on `POST /api/reviews` after a review has been earned. Measure before assuming either."*
+
+**Measured, and it is accepted, not refused.** Throwaway `postgres:17` (removed afterwards), real
+`PreparedStatement.setString` into a real `varchar(4)`, `INSERT … RETURNING`:
+
+```
+instrument: pgjdbc 42.7.11, 17.11 (Debian 17.11-1.pgdg13+2), server_encoding=UTF8 client_encoding=UTF8
+CONTROL five code points   u5/c5 [U+0041 … U+0045]  -> REFUSED sqlstate=22001 value too long for type character varying(4)
+
+astral     charAt     u2/c2 [U+D835 U+004D] LONE  -> INSERT OK, read back u2/c2 [U+003F U+004D] ** CHANGED **
+astral     codePoint  u3/c2 [U+1D49C U+004D]       -> INSERT OK, read back u3/c2 [U+1D49C U+004D] SAME
+emoji      charAt     u2/c2 [U+D83D U+0053] LONE  -> INSERT OK, read back u2/c2 [U+003F U+0053] ** CHANGED **
+two-astral charAt     u2/c2 [U+D835 U+D835] LONE  -> INSERT OK, read back u2/c2 [U+003F U+003F] ** CHANGED **
+two-astral codePoint  u4/c2 [U+1D49C U+1D49C]      -> INSERT OK, read back u4/c2 [U+1D49C U+1D49C] SAME
+```
+
+**Three conclusions, and the first decides the item's severity.**
+
+1. **No 500.** No SQLSTATE, no refusal, nothing in the log. So by the item's **own** criterion this is
+   **cosmetic** and not a defect on a money-adjacent path. It is stated plainly here rather than inflated,
+   because the item offered the 500 reading first and a reader skimming it would carry that away.
+2. **The damage is a `?`, and it is permanent.** The surrogate is replaced on the round trip, and there is
+   **no endpoint that could ever correct a review** — so a reviewer whose name begins with an astral
+   letter gets `?M` as their monogram for the life of the row. Cosmetic **and** uncorrectable are not in
+   tension; D52's property applied to a glyph rather than to a date.
+3. **The fix fits the column.** Two astral letters is **4 UTF-16 units and 2 code points**, inside both
+   constraints — see §5.
+
+⚠ **THE CONTROL IS WHAT MAKES "INSERT OK" MEAN ANYTHING, and the brief's transcript did not carry one.**
+A probe that only ever inserts successfully cannot tell a tolerant column from a column that is not
+constraining at all. This one inserts **five code points first** and refuses to continue unless PostgreSQL
+rejects them — it answered `22001`, so the length constraint is live and every acceptance below it is a
+statement rather than a vacuum. The probe also asserts its own identity before producing a number: it
+refuses to run unless the driver it loaded is the version this repository resolves and unless both
+encodings are UTF8.
+
+⚠ **THE DRIVER IS 42.7.11 AND THE BRIEF SAID 42.7.8.** Re-derived from this tree with
+`./mvnw dependency:tree -Dincludes=org.postgresql:postgresql`. The behaviour is the same and the version
+is not, which matters only because a reader re-running this needs the right number; **do not quote 42.7.8**.
+
+### §4 THE PUNCTUATION DECISION — FOUR SHAPES, AND WHY EACH LOSER LOSES
+
+The surrogate half is not a decision; `codePointAt` is simply correct. **The punctuation cases are the
+decision**, and the item named the tension honestly: the natural rule routes a *second* case into the null
+D104 §5 chose to mean *"the booking named nobody"*.
+
+**(a) LETTERS ONLY — a part with no letter contributes no initial, so `"!!!"` and `"..."` are both null.
+CHOSEN.**
+
+Three reasons, and the second is the one that defuses the item's own objection.
+
+- **The behaviour it replaces was not a rule.** `"..."` → null and `"!!!"` → `"!"` differ **only** because
+  `.` is in the split pattern and `!` is not. That asymmetry is an artefact of a regex, not a position
+  anybody held, and this repository's standing preference is a stated rule over an inherited accident.
+- ⚠ **THE COLLAPSE IS BOUNDED BY THE COLUMN BESIDE IT, WHICH IS `@NotNull`.** The item's objection — and
+  the brief's — treats null as having to carry two facts. It does not, because `authorName` is never
+  absent: an anonymous reviewer is `A BridgeCare customer` **with** a null monogram, and a letterless one
+  is `"..."` **with** a null monogram. **The pair is unambiguous.** That is exactly why the `rating`
+  null-versus-`0.0` rule does not transfer: there, one value is all a reader has, and there is nothing
+  else in the row to disambiguate it. Here there is, and it is non-null by schema.
+- **It is what the item itself proposed**, so adopting it keeps the decision minimal and spends the
+  argument where the tension actually is.
+
+**The residue, stated rather than dressed up.** The discriminator fails for one adversarial input: a
+customer whose supplied display name *is* `A BridgeCare customer`. That is a **pre-existing** property of
+D104 §4(a)'s stored label and is NEW-87's territory (the client does not model "this review has no author
+name"); it is not created here and it is not fixed here.
+
+**(b) LETTERS ONLY PLUS A THIRD STATE, so a letterless name is distinguishable from an anonymous one in
+this column alone. REJECTED.** It needs a third stored value in a nullable column, and every stored value
+in these two columns is **rendered verbatim by the client** — `professional.html` maps neither — so it
+would be published to the public, permanently, in rows no endpoint can correct, for a name shape **nobody
+has**. It would also be a third sentinel beside `ANONYMOUS_NAME` and the erasure's `··`, and D104 §5's
+whole argument is that those two must stay apart; a third makes that a vocabulary rather than a pair.
+**And it buys nothing the row does not already give** — see (a)'s second bullet, which is why this option
+collapsed once the discriminator was identified.
+
+**(c) LEAVE PUNCTUATION ALONE and fix only the surrogate. REJECTED, and it was the brief's own reading.**
+It is genuinely defensible on cost — the measurement came back cosmetic, so the punctuation rows harm
+nobody — and it loses on two counts. It keeps `"!"` as a published monogram, which is not a monogram; and
+it keeps the regex asymmetry above, so the estate's answer to "what is a monogram made of" remains
+unstatable. The diff saved is **four lines**. Choosing (c) would also have meant writing a decision whose
+§4 said *"we looked at the punctuation and left it as it was"*, which is the kind of sentence this backlog
+has had to re-open before.
+
+**(d) LETTERS OR DIGITS. REJECTED, and the reason is a measurement rather than taste.** Because
+`firstLetterIn` scans **into** the part rather than inspecting only its first code point, a digit-leading
+name already gets a monogram made of its letters: `4Real Fitness` → **`RF`**. `isLetterOrDigit` would make
+it **`4F`**, which is worse, and `4F` is the whole case the wider rule was supposed to serve. So the
+widening has no beneficiary. `aDigitIsSkippedRatherThanTakenAsAnInitial` pins it.
+
+**The scan-into-the-part behaviour is a decision too, and it is small.** `"'Ama Mensah"` is `AM` and not
+`M`: inspecting only a part's first code point makes a leading apostrophe cost that part its initial, and
+a two-word name then publishes a one-letter monogram. `aLeadingApostropheDoesNotCostTheFirstInitial` pins
+it.
+
+### §5 THE LENGTH IS SAFE WITH ZERO HEADROOM, AND THE TWO CONSTRAINTS COUNT DIFFERENT THINGS
+
+This is a coincidence and is therefore written down.
+
+| constraint | where | counts | two astral letters |
+| --- | --- | --- | --- |
+| `@Size(max = 4)` | `Review.authorInitials` | **UTF-16 units** (`String.length()`) | **4 — exactly at the limit** |
+| `varchar(4)` | `20231205141336_added_entity_Review.xml` | **code points** | 2 — comfortable |
+
+So `@Size` is **saturated, not spare**, and the thing that bounds it is `MONOGRAM_LETTERS = 2`. **Raise
+that constant to three and two astral letters plus one is 6 units against a limit of 4** — while
+`varchar(4)` would accept 3 code points quite happily, so the database would not object and the refusal
+would arrive from bean validation at persist time, on the write path for a review somebody has earned.
+The constant's javadoc says so.
+
+**The bound is derived rather than assumed.** It holds only if no code point's uppercase mapping is longer
+in UTF-16 than the code point itself. Measured over the whole range on JDK 25: **0 of 1,114,112**.
+`noUppercaseMappingGrowsAMonogram` re-derives it in the suite rather than quoting this number, so a future
+JDK that introduced such a mapping is red here.
+
+`twoAstralLettersStillSatisfyTheColumnsOwnConstraint` asks the **real annotation** through a
+`jakarta.validation.Validator` rather than restating `4`, so narrowing `@Size` is red in a unit test
+instead of at run time. What PostgreSQL does with it is §3's measurement and deliberately **not** an IT: a
+Testcontainers class would spend two minutes re-establishing a property about a column type.
+
+### §6 THE TESTS — A SIBLING, AND THREE MUTATIONS APPLIED SEPARATELY
+
+**`TheMonogramIsWellFormedUnitTest` is a new file in `net.jojoaddison.service`, not more cases in
+`TheReviewAuthorIsNeverALoginTest`.** Three reasons: that class's own javadoc argues that every case there
+must drive `ReviewWriteResource` because the live path is the one where `customerName` is *present*, which
+is a property of the **call site**; the subject here is a property of the **composer**, so a resource,
+Mockito and a security context would add fixture and see nothing extra; and D104 §9's published mutation
+table is keyed on that class holding **12**, which adding eight cases would have invalidated in every row.
+The call site remains held by `aGenuineDisplayNameSurvivesADifferentBookingLogin` (which asserts
+`authorInitials` on the `Review` handed to the repository) and by the CI step's call-site grep.
+
+**Every expected value is built from code points, never pasted as a literal** — `startingWith(int, String)`
+— and every failure message reads out **hex**. The subject is what this file's bytes become after decoding,
+so `isEqualTo("𝒜M")` would be asserting over the source file's encoding as much as over the code, which
+is the trap NEW-88's own table avoided by printing hex. The file carries no non-ASCII in any expression.
+
+**Green control first, because an all-red run means the box and not the mutation**: 14 of 14 pass.
+
+| mutation (applied alone) | red | what the hex says |
+| --- | --- | --- |
+| **M1** — `main`'s whole body back (`charAt`, no `isLetter`, `out.length() < 2`) | **9 of 14** | `[U+D835 U+004D]`, `[U+D83A U+0044]`, `[U+D83D U+0053]`, `[U+D835 U+D835]` — the item's table, reproduced |
+| **M2** — code points kept, `isLetter` dropped | **5 of 14** | `[U+D83D U+DE00 U+0053]` — a **correct pair**, so the surrogate sweep stays green |
+| **M3** — both kept, bound back to UTF-16 units | **4 of 14** | `[U+D835 U+DC9C]` — a **correct pair** again, one letter short |
+
+The three sets are distinguishable and M2's and M3's are **disjoint from the surrogate sweep**, which is
+the property §1 and §2 claim and which an aggregate pass/fail could not report. M1's five survivors are the
+two controls, D104's own property, the uppercase derivation and — notably —
+`theMonogramTakesTwoLettersCountedAsCodePoints`, because `main`'s `charAt` happens to produce two code
+points: that case is a **bound** detector and not a surrogate detector, exactly as its javadoc says.
+
+**The pristine file was restored from a saved copy after every mutation**, never with
+`git checkout --`, and `git diff --stat` was read before the gates to confirm one changed file.
+
+### §7 `authorName` IS A `WON'T`, AND THE ALTERNATIVE CREATES THE COLLAPSE IT WOULD BE FIXING
+
+NEW-88's ⚠ paragraph notes `authorName` is not truncated at all, so `"-"` publishes a reviewer called
+`-`. **That stays, and it is a `WON'T` rather than a deferral.** Four reasons, in order of weight:
+
+1. **The honest alternative writes something FALSE into an uncorrectable row.** Replacing a
+   punctuation-only name with `ANONYMOUS_NAME` asserts *"this booking named nobody"* about a booking that
+   named somebody — and it collides with D104's anonymous state, which is **the very collapse §4(b) was
+   rejected for spending a value on**. The fix would create the defect the item complains about, one
+   column across.
+2. **D104 §4 chose to publish a supplied name unchanged**, and the alternative is the platform editing
+   what people call themselves. `"-"` is odd and it is *true*: that is what the person asked to be called.
+3. **The surrogate half is structurally impossible there.** `authorName` is stored whole, so nothing
+   slices it, and slicing is what produced the lone surrogate. A name arriving as valid UTF-8 is valid
+   UTF-16; there is no `charAt(0)` to get wrong.
+4. **Nobody has asked, and no seeded row is affected** — all 63 seeded `authorName`s are plain Latin
+   display names and the seeder writes the seed file's own `authorInitials` rather than deriving one.
+
+It is recorded in the item so a third reader does not find it a fourth time.
+
+### §8 WHAT IS NOT ESTABLISHED
+
+- **The ten rows on quality are NOT corrected and NOT read.** That estate is `running(11)` and this
+  package wrote nothing to it — no review posted, no reseed, no restart, no roll. Whether any of them
+  carries a `?` is unknown; every seeded name is plain Latin, so the candidates are the rows
+  `verify-cycle.sh` wrote, whose `customerName` is the **login** and therefore already anonymous.
+  Correcting a review is impossible by construction; the remedy is a reseed and it is the operator's.
+- **Nothing ran against a live estate**, so no claim is made about a rendered profile page.
+- **The `?` on a public page is an inference from the round trip, not an observation of a screen.** The
+  replacement is measured at the column; that a visitor sees it follows from `professional.html` rendering
+  the value verbatim, which was read and not exercised.
+- **The CI guard was not touched**, and nothing needed it to be. `ReviewAuthor.java` contains **no**
+  author-write line (`.authorName(`, `.authorInitials(`, `.setAuthorName(`, `.setAuthorInitials(`), so the
+  six banned composition spellings — `StringBuilder` among them — do not apply inside it: the ban is
+  estate-wide over **files** but is evaluated only on lines matching those four patterns. That is why the
+  pre-existing `StringBuilder` in `initials` was never an offender and why this fix needed no widening.
+  Verified by re-running `review-author-guard-test.sh` after the change: **24 refusals, 5 controls, 29
+  states driven — ok**, unchanged.
+
+### §9 GATES
+
+`cd catalog && ./mvnw clean verify` on `/usr/lib/jvm/jdk-25.0.2-oracle-x64`, never incremental:
+
+```
+surefire   Tests run: 154, Failures: 0, Errors: 0, Skipped: 0     (140 before; the 14 new ones)
+failsafe   Tests run:  94, Failures: 0, Errors: 0, Skipped: 0     (unchanged)
+modernizer no violation line printed at all
+checkstyle You have 0 Checkstyle violations.
+           BUILD SUCCESS
+```
+
+`TheReviewAuthorIsNeverALoginTest` reports **12**, so D104's property is intact —
+`anAnonymousReviewerHasNoInitials` included, which is the case that could have been broken by routing a
+second state into null.
+
+### §10 RESIDUALS
+
+- **NEW-87 is untouched and is now the home of one more sentence.** `marketplace.model.ts` types
+  `authorInitials: string` and the client does not model its absence; §4 adds a *second* way to reach
+  null, which changes nothing about the type being wrong and does make it slightly likelier to be met.
+- **No `web/` file is touched** and none needs to be: nothing renders `authorInitials` on any screen that
+  exists.
+- **No new CI check.** The property is behavioural and a unit test sees all of it; a textual second
+  mechanism for one property is how one of the two rots (D80), and the existing step already holds that
+  the column is written only through `ReviewAuthor`.
+- **`catalog` still has no `prettier:format` script** — NEW-62 — so the surrounding style was matched by
+  hand.
