@@ -2846,9 +2846,27 @@ time.**
   The erasure half needed no code and is answered: `ErasureWorkflow:106-108` redacts **both** fields and
   `ErasureResourceIT` asserts both — the initials **by value** (`"··"`), because nothing else in catalog
   pins that string. **The ten rows on quality are uncorrected** — that stack is exited and a reseed is
-  the operator's. `initials` still takes the first UTF-16 **unit**, which is pre-existing and is
-  **NEW-88**: measured, `𝒜nna` yields a lone high surrogate and `...` yields null, colliding with the
-  no-name state. **And the suppression is SILENT — NEW-89**: nothing logs that a name was refused, so a
+  the operator's.
+  **A MONOGRAM IS MADE OF LETTERS AND OF WHOLE CODE POINTS — NEW-88, closed by D107.** `initials` took
+  the first UTF-16 **unit** until then, which was pre-existing and identical on `main`: `𝒜nna Mensah`
+  yielded `U+D835 U+004D`, a lone high surrogate. **What PostgreSQL does with that is now measured and it
+  is the MILD answer** — pgjdbc 42.7.11 and PostgreSQL 17 **accept** it, no SQLSTATE, and read it back as
+  `U+003F`, so it is **cosmetic** rather than the 500 the item led with, and still **permanent** because
+  no endpoint can correct a review. Two rules, each covering a case the other does not: `isLetter`
+  answers `😀 Smiley` (an emoji is not a letter, so the monogram is `S` — pairing the surrogate would
+  publish a grinning face), and whole code points answer Adlam, a **living West African script for
+  Fulani** that is astral, *is* a letter and has a case mapping. ⚠ **`charAt` → `codePointAt` ALONE IS
+  WRONG**: leave the bound as `out.length() < 2` and an astral first letter fills it by itself, so the
+  monogram silently stops at one letter with no surrogate for a test to catch — the bound counts **code
+  points**. The length is safe with **zero headroom** and the two constraints count different things:
+  `@Size(max = 4)` counts UTF-16 units (two astral letters is exactly 4) and `varchar(4)` counts code
+  points (2), so raising `MONOGRAM_LETTERS` to three breaks bean validation while the database would not
+  object. `!!!` yields **null** now where it yielded `"!"`; that collapse onto D104's no-name null is
+  deliberate and bounded, because `authorName` is `@NotNull` and the **row** tells the two apart — the
+  `rating` null-versus-`0.0` rule does not transfer, since there one value is all a reader has. ⛔ **The
+  `authorName` half is a `WON'T`**: a punctuation-only display name publishes verbatim, and replacing it
+  with `ANONYMOUS_NAME` would write something *false* into an uncorrectable row and collide with the
+  anonymous state — do not edit display names. **And the suppression is SILENT — NEW-89**: nothing logs that a name was refused, so a
   `booking` that stopped sending `customerLogin` would turn every subsequent review into
   `A BridgeCare customer`, correct by the rule and permanent in a column nothing can edit. A WARN
   belongs in `ReviewWriteResource` and not in `ReviewAuthor` (D97: the level is authored by the code

@@ -61,6 +61,12 @@ public final class ReviewAuthor {
      */
     public static final String ANONYMOUS_NAME = "A BridgeCare customer";
 
+    /**
+     * How many letters a monogram is made of. Two, and it is the bound that makes the length safe —
+     * see {@link #initials} on why four UTF-16 units is exactly saturated rather than comfortable.
+     */
+    private static final int MONOGRAM_LETTERS = 2;
+
     private ReviewAuthor() {}
 
     /**
@@ -85,31 +91,87 @@ public final class ReviewAuthor {
     }
 
     /**
-     * The monogram to publish, or null when there is no name to take one from.
+     * The monogram to publish, or null when the name has no letters to take one from.
      *
      * <p>"Kojo Ampia-Addison" -&gt; "KA". Splitting on spaces and dots is what the seeded 63 are
      * consistent with; it is only ever applied to a value this class has established is a name.
      *
-     * <p>⚠ It takes the first <strong>UTF-16 unit</strong> of each part, carried over verbatim from the
-     * {@code initialsOf} this replaced — <strong>backlog NEW-88</strong>, deliberately not fixed here
-     * because it is unchanged from the code this moved out of. Measured: {@code "𝒜nna Mensah"} yields
-     * {@code U+D835 U+004D}, a <em>lone high surrogate</em> and so not well-formed UTF-16;
-     * {@code "!!!"} yields {@code "!"}; and {@code "..."} yields <strong>null</strong>, colliding with
-     * the no-name state. What the driver and PostgreSQL do with an unpaired surrogate is <em>not</em>
-     * measured — the two units fit {@code @Size(max = 4)}, so this is not a length problem.
+     * <h2>A monogram is made of LETTERS, and of whole code points — NEW-88, D107</h2>
+     *
+     * <p>Two rules, and <strong>each covers a case the other does not</strong>, which is why neither is
+     * a tidying of the other. <em>Letters</em> answers {@code "😀 Smiley"}: an emoji is
+     * {@code Character.isLetter == false}, so it contributes nothing and the monogram is {@code S}.
+     * <em>Whole code points</em> answers {@code "𞤢ɗo Diallo"}: Adlam is a living West African script
+     * for Fulani, it is <strong>astral</strong>, it <em>is</em> a letter and it has a case mapping
+     * (U+1E922 -&gt; U+1E900) — so it must be taken as one code point or not at all.
+     *
+     * <p>⚠ It took the first <strong>UTF-16 unit</strong> until D107, carried over verbatim from the
+     * {@code initialsOf} this replaced. Measured through a real PostgreSQL 17 and pgjdbc 42.7.11: an
+     * unpaired surrogate is <strong>accepted, not refused</strong> — no SQLSTATE — and comes back as
+     * {@code U+003F}, so the row published a permanent {@code ?} on a page needing no account, in a
+     * column no endpoint can correct. Cosmetic, and still not fixable afterwards.
+     *
+     * <p>⚠ <strong>The loop counts CODE POINTS, and {@code out.length() < 2} is the trap inside the
+     * fix.</strong> Swapping only {@code charAt} for {@code codePointAt} leaves the bound counting
+     * UTF-16 units, and an astral first letter is two of them — so the monogram silently stops at one
+     * letter, {@code 𞤢} rather than {@code 𞤢D}, with no surrogate anywhere for a test to catch. The
+     * count is derived from the buffer rather than kept beside it for the usual reason: a second
+     * {@code appendCodePoint} added in some later branch cannot make the two disagree.
+     *
+     * <p><strong>The length is safe with zero headroom, and the two constraints count different
+     * things.</strong> {@code @Size(max = 4)} on {@code Review.authorInitials} counts UTF-16 units;
+     * {@code varchar(4)} counts code points. Two letters is at most 4 units and exactly 2 code points,
+     * so both hold — and {@code @Size} is <em>saturated</em>, not spare. <strong>That is
+     * unconditional, and it depends on nothing about Unicode</strong>: {@code Character.toUpperCase(int)}
+     * returns a single code point, so {@code Character.charCount} of its result is at most 2 whatever any
+     * mapping does now or in a later JDK, and {@link #MONOGRAM_LETTERS} letters is therefore at most
+     * {@code 2 × 2} units. So the constant is the <em>only</em> thing bounding it: raise it to three and
+     * a name in three astral scripts is 6 units against a limit of 4 — refused by bean validation at
+     * persist time, on the write path of a review somebody has earned, while {@code varchar(4)} would
+     * accept 3 code points quite happily so the database would not object either.
+     * {@code noMonogramCanOutgrowTheColumnHoweverManyPartsTheNameHas} is red rather than that.
+     *
+     * <p><strong>A name with no letters yields null, and that is the same value the anonymous path
+     * writes — argued, not overlooked.</strong> {@code "..."} and {@code "!!!"} are both null now,
+     * where {@code "!!!"} used to be {@code "!"}. The two facts stay distinguishable from the row
+     * rather than from this column: {@code authorName} is {@code @NotNull}, so an anonymous reviewer is
+     * {@code A BridgeCare customer} with a null monogram and a letterless name is {@code "..."} with
+     * one. D107 §4 argues why a third stored value loses.
      */
     public static String initials(String customerName, String callerLogin, String bookingCustomerLogin) {
         if (!hasName(customerName, callerLogin, bookingCustomerLogin)) {
             return null;
         }
-        String[] parts = customerName.trim().split("[ .]+");
         StringBuilder out = new StringBuilder();
-        for (int i = 0; i < parts.length && out.length() < 2; i++) {
-            if (!parts[i].isEmpty()) {
-                out.append(Character.toUpperCase(parts[i].charAt(0)));
+        for (String part : customerName.trim().split("[ .]+")) {
+            if (out.codePointCount(0, out.length()) == MONOGRAM_LETTERS) {
+                break;
+            }
+            int letter = firstLetterIn(part);
+            if (letter >= 0) {
+                out.appendCodePoint(Character.toUpperCase(letter));
             }
         }
-        return out.length() == 0 ? null : out.toString();
+        return out.isEmpty() ? null : out.toString();
+    }
+
+    /**
+     * The first letter in one part of a name as a whole code point, or {@code -1} if it holds none.
+     *
+     * <p>It scans <em>into</em> the part rather than looking only at its first code point, so
+     * {@code "'Ama Mensah"} is {@code AM} rather than {@code M}: a leading apostrophe would otherwise
+     * make the part contribute nothing and the monogram would be one letter for a two-word name.
+     */
+    private static int firstLetterIn(String part) {
+        int i = 0;
+        while (i < part.length()) {
+            int codePoint = part.codePointAt(i);
+            if (Character.isLetter(codePoint)) {
+                return codePoint;
+            }
+            i += Character.charCount(codePoint);
+        }
+        return -1;
     }
 
     /** Whether the booking supplied something that is a name rather than an identifier. */

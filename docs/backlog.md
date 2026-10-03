@@ -7265,7 +7265,54 @@ coming; until then D104's answer stands and this item is a record of its cost.
 
 ---
 
-## NEW-88 — a monogram is built from UTF-16 units, so three names publish something that is not a monogram · READY
+## NEW-88 — a monogram is built from UTF-16 units, so three names publish something that is not a monogram · DONE (D107)
+
+> **CLOSED 2026-10-03 — `decisions.md` D107. A monogram is made of LETTERS and of WHOLE CODE POINTS:
+> `firstLetterIn` takes the first `Character.isLetter` code point of each part, `appendCodePoint`
+> writes it, and the two-letter bound counts code points rather than units.**
+>
+> ⚠ **THE MEASUREMENT THIS ITEM DEMANDED CAME BACK THE MILD WAY, AND IT DOWNGRADES THE ITEM.** The
+> bullet below says the surrogate *"is the sharp one"* and that a refusing encoding would give *"a 500
+> on `POST /api/reviews` after a review has been earned"*. Measured through a throwaway `postgres:17`
+> with **pgjdbc 42.7.11** (not 42.7.8 — re-derive it), real `setString` into a real `varchar(4)`: the
+> unpaired surrogate is **ACCEPTED, no SQLSTATE**, and comes back as `U+003F`. So it is **cosmetic** by
+> this item's own criterion — and still **permanent**, because no endpoint can correct a review. The
+> probe's own control is what makes that mean anything: five code points into the same column is
+> refused with `22001`, so the constraint is live.
+>
+> ⚠ **AND THE OBVIOUS FIX IS WRONG ON ITS OWN.** `charAt` → `codePointAt` with the bound left as
+> `out.length() < 2` makes an astral first letter satisfy the bound by itself, so the monogram stops at
+> **one** letter — well-formed, silent, and invisible to any assertion about surrogates. D107 §2.
+>
+> ⚠ **THE ITEM'S "COLLAPSE" OBJECTION DOES NOT HOLD, AND THAT IS WHY SHAPE (a) WON.** It reads null as
+> having to carry two facts. `authorName` is `@NotNull`, so the **row** tells them apart: an anonymous
+> reviewer is `A BridgeCare customer` with a null monogram, a letterless one is `"..."` with a null
+> monogram. The `rating` null-versus-`0.0` rule does not transfer, because there one value is all a
+> reader has. A third stored sentinel was costed and rejected — D107 §4(b).
+>
+> **`"!!!"` → `"!"` became `"!!!"` → null**, which is the one behaviour change beyond the surrogate;
+> `"..."` → null is unchanged. `4Real Fitness` → `RF` (was `4F`) and `'Ama Mensah` → `AM` (was `'M`)
+> fell out of the same rule and are pinned as the arguments against `isLetterOrDigit` and against
+> inspecting only a part's first code point.
+>
+> ⛔ **THE `authorName` HALF IS A `WON'T`, DECIDED RATHER THAN DEFERRED — D107 §7.** A punctuation-only
+> display name still publishes verbatim and that is correct. Replacing it with `ANONYMOUS_NAME` would
+> write something **false** into an uncorrectable row — *"this booking named nobody"* about a booking
+> that named somebody — and would collide with D104's anonymous state, which is **the very collapse
+> §4(b) was rejected for spending a value on**. The surrogate half is also structurally impossible
+> there: nothing slices `authorName`, and slicing is what produced the lone surrogate. **Do not
+> re-open it to edit display names.**
+>
+> **Guards**: `TheMonogramIsWellFormedUnitTest` — a new sibling in `net.jojoaddison.service`, 14 cases,
+> every expected value built from code points and every failure message in hex. Three mutations applied
+> separately redden **9 / 5 / 4** of 14 in distinguishable sets, and M2's and M3's are disjoint from the
+> surrogate sweep. `TheReviewAuthorIsNeverALoginTest` is unchanged at **12**, so D104's property holds.
+> **No CI change** — `ReviewAuthor.java` carries no author-write line, so the guard's six composition
+> spellings never applied inside it, and `review-author-guard-test.sh` re-ran unchanged at **24
+> refusals, 5 controls, 29 states**.
+>
+> **NOT corrected: the rows on quality.** Nothing was written to that estate, and a review cannot be
+> corrected by construction; the remedy is a reseed and it is the operator's.
 
 **Found 2026-10-02 at NEW-81's review**, and **PRE-EXISTING** — identical on `main`, carried verbatim
 from the `initialsOf` that `ReviewAuthor.initials` replaced. It is an item rather than part of D104
