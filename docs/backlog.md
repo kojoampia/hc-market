@@ -7426,9 +7426,61 @@ decides whether this is cosmetic or a 500.
 
 ---
 
-## NEW-89 — a suppressed author name is silent, and the row it writes cannot be corrected · READY
+## NEW-89 — a suppressed author name is silent, and the row it writes cannot be corrected · DONE (D110)
 
-**Opened at NEW-81's delta re-review** (`decisions.md` D104 §11), 2026-10-02. Not a defect in what
+**Closed 2026-10-03** by two `LOG.warn` lines in `ReviewWriteResource` and the `ReviewAuthor.Authorship`
+enum that lets the resource say *which* arm fired without re-deriving D104's rule. 9 new unit cases in
+`TheSuppressedAuthorNameIsAudibleTest`, each red separately under the mutation it exists for; catalog
+`clean verify` green at **163 surefire / 94 failsafe**, modernizer silent, checkstyle 0.
+
+**The two messages, verbatim**, one interpolation each and it is `summary.reference()`:
+
+```
+review published for booking {} under the anonymous author label: the booking named nobody
+review published for booking {} under the anonymous author label: an identifier could not be read, so a supplied display name was refused
+```
+
+**What this item did NOT anticipate, and it is the only judgement beyond the wording.** The resource
+could not tell the two arms apart without evaluating the condition a second time — which is exactly what
+`ReviewAuthor` exists to prevent, and the failure mode is quiet: the line would name one fact while the
+stored value came from the other evaluation, with nothing going red. So `ReviewAuthor` reports *why*
+(`SUPPLIED` / `NOT_SUPPLIED` / `IDENTIFIER_UNREADABLE`) and `hasName` asks it, so one derivation serves
+the column and the log. ⛔ It still has **no logger** — D97's rule, and this item's.
+
+**Three states, two messages**: absent, blank and the laundered login are one fact (*the booking supplied
+no display name*), and the split that matters is the unreadable identifier — D104 §5's rule, that two
+facts must not collapse into one value, in a line rather than in a column.
+
+⚠ **This item's own provenance citation was wrong and is corrected here.** It read *"`decisions.md`
+D104 §11"*; **D104 has no §11** (it ends at §9a and §10), the §11 that exists is D107's and is about the
+monogram's width argument, and `git grep NEW-89 docs/decisions.md` matched **nothing** until D110 — the
+item was opened from a review that reached `CLAUDE.md` and this file and never reached the decision log.
+
+⚠ **Two things measured during the work that this item would have got wrong.** A mutation applied with a
+dropped `;` was a **compilation** failure read as a red test, which is D98's "a fixture must be legal in
+its own language" one layer up; and the guard ordering inside `authorship` was first written up as
+keeping *"the commonest ordinary state"* out of the second arm, which is false — with both identifiers
+present only the first guard can fire, so the order decides exactly one input and the ninth test case
+exists to drive it. Both are in D110 §6.
+
+⚠ **AND REVIEW FOUND A THIRD, IN THE WORK ORDER'S OWN PREMISE — D110 §11.** The brief said *"a `switch`
+without a default over an enum is checked by the compiler"*, which is true of a switch **expression** and
+**false of the switch STATEMENT this item first shipped**: arrow labels are a syntax for both, and JLS
+14.11.2 requires exhaustiveness only where a value is yielded. Measured in-tree on `javac 25.0.2` with a
+fourth `Authorship` constant uncovered — **expression: `error: the switch expression does not cover all
+possible input values`, exit 1; statement: exit 0, silent, falls through** — and `catalog/pom.xml` carries
+no `-Werror`, `-Xlint` or `failOnWarning`, so nothing downstream would have caught it either. **A fourth
+state would have been this item's own defect for that state**: `hasName` is false for anything but
+`SUPPLIED`, so the stand-in lands in an uncorrectable row and nothing is logged, with all nine cases
+green. It is the expression form now and ⛔ **there is no `default` arm and no runtime throw** — either
+makes the expression exhaustive by construction and moves the failure to a request that would otherwise
+have succeeded. No test asserts this and none can: the property is *"it does not compile"*, so the
+compiler is the assertion and §11 carries the transcript.
+
+**Everything below is the item as opened**, including the premises that held.
+
+**Opened at NEW-81's delta re-review** (recorded in `CLAUDE.md` rather than in the decision log — see
+the correction above), 2026-10-02. Not a defect in what
 D104 built — the suppression is correct and is the whole point of that item — but **nothing anywhere
 records that it happened**, and this is the one column in the estate where that combination is
 expensive.
@@ -7474,6 +7526,11 @@ rarer.
 
 Nobody needs to decide anything. It is one `LOG.warn` in `ReviewWriteResource` plus a unit assertion, and
 the only judgement is the wording — which must name the booking reference and nothing else.
+
+> **It was TWO `LOG.warn` lines and one enum, and the second decision is above.** "One `LOG.warn`" was
+> right about the size and wrong about the shape: two arms are two messages, and the resource had no way
+> to tell them apart that did not duplicate the rule D104 centralised. Nothing else about this paragraph
+> needed revising — no architect decision was required, and the wording was the only judgement taken.
 
 ---
 

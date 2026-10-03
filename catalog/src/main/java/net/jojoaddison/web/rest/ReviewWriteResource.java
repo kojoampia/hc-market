@@ -65,6 +65,27 @@ import org.springframework.web.server.ResponseStatusException;
  * the reason the rule lives in one named place: a login published here is published permanently, and
  * there is no endpoint through which any of it could be taken back.
  *
+ * <h2>And when it is suppressed, that is said out loud — NEW-89, D110</h2>
+ *
+ * <p>The stand-in above is correct and was <strong>silent</strong>: nothing in any log, metric or
+ * response told a suppressed author from an ordinary one, so a client that stopped sending
+ * {@code customerName} looked exactly like one that never sent it — and if booking ever stopped sending
+ * {@code customerLogin}, {@link ReviewAuthor}'s fail-closed arm would refuse <em>every</em> name and
+ * every subsequent review would read {@code A BridgeCare customer}. Correct by the rule, wrong about
+ * the world, and permanent, because of "no delete" above.
+ *
+ * <p>So the suppression is recorded at <strong>WARN</strong>, in two distinguishable messages for the
+ * two arms, carrying {@code summary.reference()} and the reason and nothing a person could be
+ * identified by. The level, the two messages and the absence are asserted by
+ * {@code TheSuppressedAuthorNameIsAudibleTest} — the absence cases with values a leak could not be
+ * mistaken for.
+ *
+ * <p>⚠ <strong>A fourth {@code Authorship} state is a COMPILE ERROR and not a silent gap</strong>, and
+ * that is why the selection below is a switch <em>expression</em>: javac checks a switch expression over
+ * an enum for exhaustiveness and does <strong>not</strong> check a switch statement, arrow labels or
+ * not. As a statement it compiled, fell through and logged nothing for the new state, with every test
+ * green — see the comment at the site.
+ *
  * <h2>The date it is published on is the marketplace's day</h2>
  *
  * <p>{@code publishedOn} is <strong>stored</strong>, and it is the only public date this service
@@ -84,6 +105,28 @@ import org.springframework.web.server.ResponseStatusException;
 public class ReviewWriteResource {
 
     private static final Logger LOG = LoggerFactory.getLogger(ReviewWriteResource.class);
+
+    /**
+     * What is said when the booking named nobody — NEW-89, {@code decisions.md} D110.
+     *
+     * <p>⛔ <strong>Both messages carry {@code summary.reference()} and the reason, and nothing else.</strong>
+     * That reference is platform-minted — booking's {@code CustomerBookingResource} writes
+     * {@code "b-" + a fresh UUID prefix} — and it is the value <em>booking answered with</em> rather than
+     * {@code request.bookingReference()}, which is a caller's text. Never the name, never either login,
+     * nothing derived from them: a log is a place the erasure sweep does not reach and cannot re-key.
+     *
+     * <p>They are two constants rather than two inline literals so that the fence is stated once beside
+     * the strings it governs, and so that the two can be compared as values by a test.
+     */
+    private static final String SUPPRESSED_NO_NAME =
+        "review published for booking {} under the anonymous author label: the booking named nobody";
+
+    /**
+     * And what is said when an identifier could not be read, which is a different fact — D104 §5's rule
+     * that two facts must not collapse into one value, applied to a log line rather than to a column.
+     */
+    private static final String SUPPRESSED_UNREADABLE_IDENTIFIER =
+        "review published for booking {} under the anonymous author label: an identifier could not be read, so a supplied display name was refused";
 
     private final ReviewRepository reviews;
     private final MarketplaceQueryRepository marketplace;
@@ -175,6 +218,51 @@ public class ReviewWriteResource {
             // The unique constraint on bookingReference fired: something else reviewed this booking
             // between the check above and this write. That is the constraint doing its job.
             throw new ResponseStatusException(HttpStatus.CONFLICT, "booking %s has already been reviewed".formatted(summary.reference()));
+        }
+
+        // NEW-89, D110: THE SUPPRESSION IS AUDIBLE, AND THE LINE NAMES THE BOOKING AND NOTHING ELSE.
+        // D104's stand-in is the right value and it was indistinguishable from the ordinary case in
+        // every log, metric and response — so a `booking` that stopped sending `customerLogin` would
+        // turn every subsequent review into `A BridgeCare customer`, correct by the rule and wrong
+        // about the world, in rows the "no delete" above makes permanent.
+        //
+        // TWO MESSAGES, because the two arms are two different facts and D104 §5's own rule is that
+        // facts must not collapse into one value — one is an ordinary caller state, the other says a
+        // name was supplied and refused because an identifier could not be read.
+        //
+        // WARN and never ERROR (D97): a booking made without a display name is a caller state, not a
+        // fact about this estate that is wrong and nobody chose, and the ERROR channel is the one free
+        // signal a dead collector shows up in (D64, D73).
+        //
+        // The two messages, and the fence on what they may carry, are on the constants above.
+        // `saved.getReference()` is deliberately not on the line either: `bookingReference` is unique on
+        // Review, so the row is addressable from the booking alone. The reason comes from ReviewAuthor
+        // rather than from a condition re-derived here, or the line could name one fact while the column
+        // held the other.
+        //
+        // ⚠ A SWITCH EXPRESSION, NOT A STATEMENT, AND THAT IS THE COMPILER DOING THE GUARDING.
+        // javac checks exhaustiveness for a switch EXPRESSION over an enum and does NOT check it for a
+        // switch STATEMENT — arrow labels or not, JLS 14.11.2 — which this was until D110's review.
+        // Measured on 25.0.2 with a fourth Authorship constant uncovered: the expression is `error: the
+        // switch expression does not cover all possible input values`; the statement compiles, is silent
+        // under -Xlint:all, runs, and falls through. A fourth state would therefore have been NEW-89's
+        // own defect for that state — `hasName` is false for anything but SUPPLIED, so the stand-in goes
+        // into an uncorrectable row and NOTHING IS LOGGED — with no test red, because the cases below
+        // cover the three states that exist.
+        //
+        // ⛔ So there is NO `default` arm and no runtime throw, deliberately: either one makes the
+        // expression exhaustive by construction and hands the fourth state back to a reader's attention,
+        // which is what this shape exists to replace. Nothing in catalog's build carries -Werror, so a
+        // lint warning would not have been a gate either.
+        String suppression = switch (ReviewAuthor.authorship(summary.customerName(), login, summary.customerLogin())) {
+            case NOT_SUPPLIED -> SUPPRESSED_NO_NAME;
+            case IDENTIFIER_UNREADABLE -> SUPPRESSED_UNREADABLE_IDENTIFIER;
+            // The ordinary case, and deliberately silent: a line on every review would spend the
+            // signal the two above are, and would read as this estate suppressing every name.
+            case SUPPLIED -> null;
+        };
+        if (suppression != null) {
+            LOG.warn(suppression, summary.reference());
         }
 
         if (!booking.markReviewed(summary.reference(), authorization)) {

@@ -48,6 +48,21 @@ package net.jojoaddison.service;
  * {@code [erased]} and {@code ··} into the same two columns, and that is a different fact about a
  * review — a person asked to be forgotten, rather than a booking made without a name. Converging them
  * would make an irreversible act indistinguishable from an ordinary one.
+ *
+ * <h2>Why the rule also answers WHY, and why it still has no logger — NEW-89, D110</h2>
+ *
+ * <p>{@link #authorship} exists so that the <em>caller</em> can record a suppression without
+ * re-deriving the condition. D97's rule puts the level with the code that knows which of two facts it
+ * is, and this class knows neither: it is a pure function with no idea whether it is being asked on a
+ * write path, and a static utility cannot tell a caller's ordinary state from an estate fault. So it
+ * reports the reason and {@code ReviewWriteResource} — which knows it is about to write an
+ * uncorrectable public row — decides what that is worth saying.
+ *
+ * <p><strong>{@link #authorship} is the one place the question is answered, and {@link #displayName}
+ * and {@link #initials} both go through it.</strong> A second copy of the rule at the call site is
+ * exactly what this class was created to remove, and it would be the worse kind of copy: the log line
+ * would name a reason while the stored value came from somewhere else, so the two could disagree with
+ * nothing going red.
  */
 public final class ReviewAuthor {
 
@@ -68,6 +83,64 @@ public final class ReviewAuthor {
     private static final int MONOGRAM_LETTERS = 2;
 
     private ReviewAuthor() {}
+
+    /**
+     * Why a review's public author is the stand-in, or that it is not — NEW-89, {@code decisions.md}
+     * D110.
+     *
+     * <p>Three states and not two, because {@link #NOT_SUPPLIED} and {@link #IDENTIFIER_UNREADABLE} are
+     * different facts about the estate and D104 §5's own rule is that two facts must not collapse into
+     * one value. The first is an ordinary caller state. The second says a name <em>was</em> supplied and
+     * was refused in the safe direction because an identifier to compare it against could not be read —
+     * which, if {@code booking} ever stopped sending {@code customerLogin}, would be <strong>every
+     * review from that moment on</strong>, correct by the rule and wrong about the world.
+     */
+    public enum Authorship {
+        /** The booking supplied a display name that is nobody's identifier. It is published verbatim. */
+        SUPPLIED,
+        /**
+         * The booking named nobody. Absent, blank, or — the live shape — the login booking laundered
+         * into {@code customerName}, which is one fact rather than two: in all three the booking
+         * supplied no display name, and the caller cannot tell which spelling it used.
+         */
+        NOT_SUPPLIED,
+        /**
+         * An identifier this service holds could not be read, so a supplied name could not be ruled out
+         * and was refused. Unreachable through {@code POST /api/reviews} from the JWT subject, which the
+         * resource answers 401 without; it is the booking summary's {@code customerLogin} that can be
+         * null.
+         */
+        IDENTIFIER_UNREADABLE
+    }
+
+    /**
+     * Whether the booking supplied something publishable as a name, and if not, which fact that is.
+     *
+     * <p>The order of the two guards is the decision inside this method, and it decides exactly one
+     * combination: a name that is absent <em>and</em> an identifier that could not be read. A blank
+     * name wins, because "nobody gave a name" is then the whole of what happened and there was nothing
+     * to rule out — reversing the guards would report an estate fault about a row where no name was at
+     * risk. ⚠ It changes nothing for any other input: with both identifiers present the first guard is
+     * the only one that can fire, so the ordering is <strong>not</strong> what keeps the ordinary
+     * no-name case out of the second arm. {@code theNamelessBookingWithNoIdentifierIsTheNamelessFact}
+     * is what drives it.
+     *
+     * @param customerName the booking's {@code customerName} — which may be the login, see the class
+     *     javadoc
+     * @param callerLogin the JWT subject. Never published, and never logged
+     * @param bookingCustomerLogin the summary's own {@code customerLogin}. Never published, never logged
+     */
+    public static Authorship authorship(String customerName, String callerLogin, String bookingCustomerLogin) {
+        if (customerName == null || customerName.isBlank()) {
+            return Authorship.NOT_SUPPLIED;
+        }
+        if (callerLogin == null || bookingCustomerLogin == null) {
+            return Authorship.IDENTIFIER_UNREADABLE;
+        }
+        return isLogin(customerName, callerLogin) || isLogin(customerName, bookingCustomerLogin)
+            ? Authorship.NOT_SUPPLIED
+            : Authorship.SUPPLIED;
+    }
 
     /**
      * The name to publish for a review, given what the booking service said and every identifier of
@@ -174,24 +247,28 @@ public final class ReviewAuthor {
         return -1;
     }
 
-    /** Whether the booking supplied something that is a name rather than an identifier. */
+    /**
+     * Whether the booking supplied something that is a name rather than an identifier.
+     *
+     * <p>It asks {@link #authorship} rather than restating the condition, so the value stored and the
+     * reason {@code ReviewWriteResource} logs are the same derivation and cannot disagree (D110).
+     */
     private static boolean hasName(String customerName, String callerLogin, String bookingCustomerLogin) {
-        return (
-            customerName != null &&
-            !customerName.isBlank() &&
-            !isLogin(customerName, callerLogin) &&
-            !isLogin(customerName, bookingCustomerLogin)
-        );
+        return authorship(customerName, callerLogin, bookingCustomerLogin) == Authorship.SUPPLIED;
     }
 
     /**
      * Whether this "display name" is that login wearing different whitespace or case.
      *
-     * <p>A null login cannot be matched against, and is not a reason to publish: it can only mean the
+     * <p><strong>The login may not be null here, and that is a precondition rather than an omission.</strong>
+     * A null login cannot be matched against, and is not a reason to publish: it can only mean the
      * booking service answered without one, and a name that might be an unknown login is refused in
-     * the safe direction. An identifier this service cannot read is one it cannot rule out.
+     * the safe direction. An identifier this service cannot read is one it cannot rule out — and since
+     * D110 that refusal is {@link Authorship#IDENTIFIER_UNREADABLE}, decided in {@link #authorship}
+     * above this call so the <em>reason</em> survives to the caller. It was a {@code login == null ||}
+     * here until then, which refused identically and told nobody which of the two facts it was.
      */
     private static boolean isLogin(String customerName, String login) {
-        return login == null || customerName.trim().equalsIgnoreCase(login.trim());
+        return customerName.trim().equalsIgnoreCase(login.trim());
     }
 }

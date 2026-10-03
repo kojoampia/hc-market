@@ -22698,3 +22698,273 @@ the honest alternative and was rejected only on discoverability.
   unreachable twice over, not a defect.
 - **No estate touched, nothing deployed, Cypress still never run, and no human has looked at a
   rendering** — this package changes no markup, so there is nothing new to look at.
+
+---
+
+## D110 — A suppressed author name is audible, and the line names the booking and nothing else
+
+**Recorded 2026-10-03**, against branch `new-89-the-suppressed-author-name-is-audible` off `35d8159`.
+Closes backlog **NEW-89**. Touches `catalog/src/main/java/net/jojoaddison/service/ReviewAuthor.java`,
+`catalog/src/main/java/net/jojoaddison/web/rest/ReviewWriteResource.java`, one new test file,
+`docs/backlog.md`, `CLAUDE.md` and this file. **No JDL, no changelog, no compose file, no vhost, no CI
+check and no other service is changed, and no estate was touched** — in particular nothing was POSTed to
+the quality box, because a review row cannot be corrected.
+
+The deliverable is **two `LOG.warn` lines in `ReviewWriteResource`** and the enum that lets the resource
+say which of two facts it is looking at without re-deriving D104's rule. 9 new unit cases, each red
+separately under the mutation it exists for.
+
+### §1 WHAT WAS WRONG, AND IT WAS NOT THE VALUE
+
+D104's stand-in is correct and this decision changes **nothing** about what is stored:
+`A BridgeCare customer` and a null monogram when the booking named nobody (D104 §4, §5; D107 §4). What
+was wrong is that the suppression was **indistinguishable from the ordinary case in every log, metric
+and response**, which costs more here than it would anywhere else in the estate:
+
+- a client that *stops* sending `customerName` looks identical to one that never sent it;
+- if `booking` ever stopped sending `customerLogin` on the booking summary, `ReviewAuthor`'s
+  fail-closed arm refuses **every** name, so every subsequent review becomes the anonymous label —
+  correct by the rule and wrong about the world, indefinitely;
+- ⚠ and **there is no endpoint that can correct a review**, so the window between such a regression and
+  somebody noticing it is written permanently into rows nothing can edit. That is D52's
+  uncorrectability applied to a value standing in for a person's name.
+
+### §2 WHAT WAS ESTABLISHED BEFORE ANYTHING WAS WRITTEN
+
+| claim | how it was established, 2026-10-03 |
+| --- | --- |
+| `summary.reference()` is platform-minted and discloses nothing | **verified at the writer.** `booking`'s `CustomerBookingResource.create` mints it as `.reference("b-" + UUID.randomUUID().toString().substring(0, 8))` — no request field reaches it. (Named by method and expression rather than by line: this repository's own line citations have gone stale one commit later — D78 §7.) And it is the value **booking answered with**, not `request.bookingReference()`, which is a caller's text; the two existing 409 messages already prefer it for the same reason |
+| the two arms are genuinely distinguishable at the call site | **verified by reading, and the live reachability differs.** `hasName` is blank-or-equal; `isLogin` returned `true` for a **null** login, which is only reachable through `summary.customerLogin()` — the resource answers 401 before `callerLogin` can be null |
+| nothing already logs this | **verified.** `ReviewWriteResource` had exactly one `LOG.warn`, the unflagged-booking one, and D104 added no log line |
+| `LoggingAspect` will not double-report it | **verified by reading the advices.** `@AfterThrowing` logs a `Throwable` and `logAround`'s `catch` logs an `IllegalArgumentException`; a successful `publish` returns normally, so neither arm is reached. (Its entry/exit lines are DEBUG and `isDebugEnabled`-guarded, and the bean is `@Profile(dev)` besides) |
+
+### §3 THE SHAPE, AND THE SECOND DECISION THE ITEM DID NOT ANTICIPATE
+
+The item asked for one `LOG.warn`. It needs one thing the resource did not have: **which arm fired.**
+
+**Re-deriving the condition at the call site was refused.** It is precisely what `ReviewAuthor` was
+created to remove, and it is the worse kind of copy — the log line would name a reason while the stored
+value came from a second evaluation, so the two could disagree with nothing going red.
+
+So `ReviewAuthor` reports *why*: a public `Authorship` enum — `SUPPLIED`, `NOT_SUPPLIED`,
+`IDENTIFIER_UNREADABLE` — and one public `authorship(…)`. **`hasName` now asks it**, so `displayName`,
+`initials` and the log line are one derivation. ⛔ **`ReviewAuthor` still has no logger**, which is
+D97's rule and the item's: a pure static utility cannot tell a caller's ordinary state from an estate
+fault, and the **resource** is what knows it is about to write an uncorrectable public row.
+
+**The `login == null ||` moved out of `isLogin` and into `authorship`** rather than being duplicated.
+Keeping both would answer the null question in two places, and the failure mode is the quiet one: delete
+the new guard and the refusal still happens while the *log line names the wrong fact*. `isLogin` carries
+the precondition in its javadoc. Behaviour is unchanged for both public methods — D104's 12 cases and
+D107's 14 are green, and they are the only thing that can say so.
+
+**Three enum states, two messages.** `NOT_SUPPLIED` covers absent, blank and the laundered login,
+because in all three *the booking supplied no display name* and the caller cannot tell which spelling
+arrived — the item's own first bullet. The split that matters is the second arm, and D104 §5's rule is
+why it is a split at all: two facts must not collapse into one value, in a column or in a line.
+
+### §4 THE TWO MESSAGES, VERBATIM
+
+```
+review published for booking {} under the anonymous author label: the booking named nobody
+review published for booking {} under the anonymous author label: an identifier could not be read, so a supplied display name was refused
+```
+
+One interpolation each, and it is `summary.reference()`. **WARN, never ERROR** (D97): a booking made
+without a display name is an ordinary caller state, not a fact about this estate that is wrong and
+nobody chose, and the ERROR channel is the one free signal a dead collector shows up in (D64, D73,
+NEW-70).
+
+⛔ **`saved.getReference()` is deliberately NOT on the line.** The fence is "the reference and the
+reason, and nothing else", the review reference adds nothing an operator needs — `bookingReference` is
+**unique** on `Review`, so the row is addressable from the booking alone — and a log is a place the
+erasure sweep does not reach and cannot re-key, so the narrow line is the cheap one to keep narrow.
+
+**The line is emitted AFTER the save**, which is a decision and not placement: it claims a publication,
+and the unique constraint can still refuse one. `aRefusedWriteClaimsNoPublication` is red against the
+version that announces first — a line naming a booking reference for a review that does not exist is
+somebody's wasted afternoon.
+
+### §5 A COUNTER IS NOT THE ANSWER, AND IT IS NOT ADDED
+
+D84's rule forbids a login or a name as a tag, so a `reviews.author.suppressed` meter could not say
+*which* booking — and `gateway_identity_*` is the estate's own cautionary tale: correct series,
+registered on the right registry since D85, and **transported nowhere by default**. A WARN lands where
+somebody already reads. A meter beside it later is fine and is not a substitute; none is added here,
+and nothing about this change makes one cheaper or dearer.
+
+### §6 THE TEST, AND WHAT EACH CASE SEES
+
+`catalog/src/test/java/net/jojoaddison/web/rest/TheSuppressedAuthorNameIsAudibleTest.java`, 9 cases,
+driving the resource through `TheReviewAuthorIsNeverALoginTest`'s mock shape with a Logback
+`ListAppender` on **`ReviewWriteResource`'s own logger** — never `ROOT`, or every assertion would be a
+statement about whatever else the JVM logged while it was attached.
+
+**The absence cases are the point and their values are chosen to make a leak unmistakable**: the caller
+is `zzz.unmistakable.caller`, the booking's own login `yyy.unmistakable.booking`, the display name
+`Akosua Unmistakable Nkrumah`. None could be composed by the resource from anything else, and the two
+refusal lines are asserted not to contain any of them — the supplied name's first word included, since a
+partial leak is still a leak. A test asserting only that the reference is **present** would pass a line
+that also carried the name, which is the whole reason the two directions are separate cases.
+
+**Measured, each mutation applied to a pristine copy and the copy restored after each:**
+
+| mutation | red |
+| --- | --- |
+| both arms share one message — **two mutations, and each reddens 3**; see §12 for the correction | `theTwoReasonsAreDistinguishable`, `theNamelessBookingWithNoIdentifierIsTheNamelessFact`, and whichever presence case lost its reason |
+| the line interpolates `summary.customerName()` | `nothingIdentifyingReachesTheLineWhenAnIdentifierIsUnreadable` |
+| the line interpolates the caller's login | `nothingIdentifyingReachesTheLineWhenTheBookingNamedNobody` |
+| both arms at ERROR | `neitherReasonIsAnError`, and both presence cases |
+| the ordinary path warns too | `anOrdinaryReviewSaysNothing` **alone** |
+| announced before the save | `aRefusedWriteClaimsNoPublication` |
+| nothing is recorded (the pre-D110 state) | 5 of 9 |
+| `authorship`'s two guards swapped | `theNamelessBookingWithNoIdentifierIsTheNamelessFact` **alone**, with D104's 12 and D107's 14 green |
+
+⚠ **One of those eight was first measured RED FOR THE WRONG REASON, and it is this file's own recurring
+lesson.** The "ordinary path warns too" mutation was applied by a `perl` substitution that dropped the
+statement's `;`, so the run was a **compilation failure** reported as a red test — `[228,153] ';'
+expected`, and the harness printed `RED:` with no case name, which is the tell. Re-applied legally it is
+red on `anOrdinaryReviewSaysNothing` and nothing else. **A mutation must be legal in the language it is
+written in**, or the measurement is about the compiler — D98 §4b's finding about a text guard's fixture,
+arriving one layer up in a Java mutation.
+
+⚠ **And the ninth case exists because this decision's own first javadoc overstated its argument.** The
+guard ordering in `authorship` was written up as keeping *"the commonest ordinary state"* out of the
+second arm, which is **false**: with both identifiers present the first guard is the only one that can
+fire, so the order decides exactly one combination — a name that is absent **and** an identifier that
+could not be read. The claim is corrected at the site, and the case that drives the real property was
+added rather than left as prose. Measured: D104's and D107's suites are **green** under the swap, which
+is why nothing else could have seen it.
+
+### §7 WHAT THE CI GUARDS SAY, AND WHY A `LOG.warn` IS INVISIBLE TO ONE OF THEM
+
+*"A review's public author may not be composed from an identifier"* keys on `.authorName(`,
+`.authorInitials(` and their setters, so a log line is not an author-write line and none of the six
+composition spellings is consulted on it. **Verified by running the shipped step against this working
+tree** rather than reasoned from the expression: `ok 133 files scanned, 8 author writes in
+domain/Review.java service/ErasureWorkflow.java service/seed/CatalogSeeder.java
+web/rest/ReviewWriteResource.java — each naming its own file's token, none composing`, exit 0. Its own
+test prints **24 refusals, 5 controls, 29 states driven — ok**.
+
+*"A deliberate refusal may not be logged at ERROR, nor echo its arguments"* is scoped to each service's
+generated `LoggingAspect.java` and is untouched by this change; its test prints **19 assertions, all
+passed**. The level chosen here obeys the rule that check exists to hold, in a hand-written file the
+check does not read — which is stated rather than fixed: widening it to every `log.warn`/`log.error` in
+the estate is a different guard with a different population, and D97 §5's enumeration is explicitly
+*"evidence, not a licence to sweep"*.
+
+**No CI step was added.** The property is behavioural and the new test sees all of it; a textual second
+mechanism for one property is how one of the two rots (D80).
+
+### §8 A CITATION CORRECTED, AND IT IS WHY NO DECISION NAMES THIS ITEM
+
+NEW-89's own first line reads *"Opened at NEW-81's delta re-review (`decisions.md` D104 §11)"*. **D104
+has no §11** — it ends at §9a and §10 — and `git grep NEW-89 docs/decisions.md` matched **nothing**
+before this entry: the §11 that exists is **D107's**, and it is about the monogram's width argument and
+does not mention the suppression either. So the item was opened from a review conversation that reached
+`CLAUDE.md` (which does carry the sentence) and `backlog.md` and never reached the decision log. The
+citation is corrected in the item's own closing text rather than left for the next reader to chase, and
+no new backlog item is opened for it: a wrong cross-reference in an item being closed is cheapest to fix
+in the commit that closes it.
+
+### §9 WHAT WAS NOT DONE
+
+- **Nothing stored changed.** `A BridgeCare customer` and the null monogram are D104's and D107's
+  answers and are correct — this makes the suppression *visible*, not different. The null-identifier arm
+  is **not** loosened either; `anUnreadableIdentifierRefusesRatherThanPublishes` still holds the
+  fail-closed direction, and the point was to make the refusal audible rather than rarer.
+- **`booking` is untouched.** Its `customerName` fallback is D104 §7's deliberate decision.
+- **No meter** — §5.
+- **No `web/` file.** Nothing renders a suppression and nothing should: the line is for an operator.
+- **The ten uncorrected rows on quality are still uncorrected** (D104 §6's residual) and nothing was
+  written to that estate — a reseed is the operator's.
+- **No estate touched, nothing deployed, Cypress still never run, and no human has looked at a
+  rendering** — this package changes no markup and no response body.
+
+### §11 REVIEW — THE COMPILER DOES NOT CHECK A SWITCH *STATEMENT*, AND THE BRIEF SAID IT DID
+
+One should-fix, non-blocking, and it sits on a premise the work order carried: *"a `switch` without a
+default over an enum is checked by the compiler; an `if/else if` is not."* **That is true of a switch
+EXPRESSION and false of the switch STATEMENT this decision first committed** — arrow labels are a
+syntax for both, and JLS 14.11.2 requires exhaustiveness only where a value is yielded.
+
+**Measured in this tree, on these files, with a fourth `Authorship` constant added and covered by
+neither form** — not on a standalone toy, because the question is about *this* compilation:
+
+```
+javac 25.0.2
+
+EXPRESSION (as shipped)   ReviewWriteResource.java:[257,30] error: the switch expression
+                          does not cover all possible input values          compile exit=1
+STATEMENT  (first commit) compile exit=0 — and javac says nothing about the uncovered state
+```
+
+**So a fourth state would have been NEW-89's own defect for that state, and nothing would have been
+red.** `hasName` is `authorship(…) == SUPPLIED`, so anything else publishes the stand-in into an
+uncorrectable row — and the statement form would have fallen through and logged nothing, with the nine
+cases all green because they cover the three states that exist. `catalog/pom.xml` carries no
+`-Werror`, no `-Xlint` and no `failOnWarning`, so a lint warning would not have been a gate either;
+there is not even a warning to escalate.
+
+**The expression form is taken rather than `default -> throw`.** Both close the hole; they differ in
+*when*. A `default` arm makes the expression exhaustive **by construction**, so javac stops asking and
+the fourth state becomes a runtime throw on a request that would otherwise have succeeded — on the
+write path of a review somebody has earned, which is the one place this estate refuses to move a
+failure later. ⛔ **There is therefore no `default` and no runtime throw, and adding either re-opens
+this.**
+
+**No test asserts it, and that is the honest answer rather than a gap.** The property is *"a fourth
+state does not compile"*, so there is nothing for a test to execute: a case that planted a fourth
+constant would have to be a separate compilation, and the repository already knows what that costs —
+the two `strip-comments-test.sh` cases that embed the version they replaced exist because a defect
+reproduced is worth more than one asserted in prose, and here the compiler **is** the assertion. The
+transcript above is the record, the script that produced it is written out, and the site comment says
+which form is load-bearing and why.
+
+**Two consequences for shape.** The two messages are `private static final` constants now
+(`SUPPRESSED_NO_NAME`, `SUPPRESSED_UNREADABLE_IDENTIFIER`) rather than inline literals — the
+expression yields a value, the fence on what a line may carry is stated once beside the strings it
+governs, and neither line is 140 characters wide. And `case SUPPLIED -> null` with
+`if (suppression != null)` is the silence: a sentinel, and a deleted guard logs `null` rather than
+leaking anything, which `anOrdinaryReviewSaysNothing` is red for.
+
+### §12 TWO FURTHER CORRECTIONS FROM THE SAME ROUND, BOTH TO THIS DECISION'S OWN RECORD
+
+**§6's "both arms share one message" row said 2 reddened cases. It is 3, and in BOTH directions — and
+the reason it read 2 is the lesson.** That row was measured **before the ninth case existed**: §6's own
+paragraph records that `theNamelessBookingWithNoIdentifierIsTheNamelessFact` was added later in the same
+package, and it compares the two rendered messages for inequality, so it reddens on a collapse as well.
+The row was never re-measured after the case that changed its answer landed. Re-measured now, on the
+constants:
+
+```
+A. IDENTIFIER_UNREADABLE given the no-name message   → theNamelessBooking…, theTwoReasonsAreDistinguishable, theUnreadableIdentifierIsRecorded
+B. NOT_SUPPLIED given the unreadable message         → theNamelessBooking…, theTwoReasonsAreDistinguishable, theBookingThatNamedNobodyIsRecorded
+```
+
+**It is also two mutations and the table called it one.** They are not symmetric — each loses a
+different presence case — and a table listing one direction describes half the guard. **A mutation
+table is a measurement with a date on it**: adding a case invalidates every row it touches, and the
+rows do not announce that they are stale.
+
+**And a line-number citation is replaced by the expression it quotes.** §2 cited
+`CustomerBookingResource:146` for the reference minting; this repository's rule is D78 §7's — thirteen
+line numbers there were stale one commit later — so it names `CustomerBookingResource.create` and the
+expression instead, here and in `CLAUDE.md`. The `:148` citations elsewhere in D104 are that decision's
+and were left alone.
+
+### §13 THE GATES, RE-RUN ON THE EXPRESSION FORM
+
+`cd catalog && ./mvnw clean verify` on `JAVA_HOME=/usr/lib/jvm/jdk-25.0.2-oracle-x64`: **BUILD
+SUCCESS**, surefire **163**, failsafe **94**, modernizer printed no violation line, checkstyle 0.
+
+⚠ **This section first said 164, written before the run, "because the ninth case landed with this
+round".** Both halves were wrong: the ninth case landed **before** §6's figure was taken, so 163 already
+counted it and the round that produced this section added **no test at all** — the class reads
+`Tests run: 9` in both logs. It is the defect this whole decision keeps naming, committed inside the
+review correcting another instance of it: **a count derived from an argument instead of from a run**, and
+the argument was plausible enough that nothing about it looked like a guess.
+`review-author-guard-test.sh`: **24 refusals, 5 controls, 29 states driven — ok**.
+`refusal-logging-level-test.sh`: **19 assertions, all passed**. The shipped author-composition step run
+against this tree: `ok 133 files scanned, 8 author writes in 4 files — each naming its own file's
+token, none composing`.
