@@ -248,6 +248,12 @@ public class ExceptionTranslator extends ResponseEntityExceptionHandler implemen
         // its alerting on 5xx rates, so it would silence the alert too. Returning null falls through to
         // 500, which is this estate's standing direction: an ERROR is a fact about the estate that is
         // wrong and nobody chose (D97).
+        // NOTE WHAT THAT null RESTS ON: `toStatus` then tries `resolveResponseStatus`, which RECURSES
+        // INTO getCause() — and `InternalAuthenticationServiceException` exists to wrap. So "excluded
+        // means 500" holds only while no cause carries @ResponseStatus. It holds today (the gateway's one
+        // annotated throwable is AccountResource's private AccountResourceException, thrown nowhere near
+        // authentication, and a Mongo or socket cause carries no annotation), and a cause that did carry
+        // one would rightly win.
         if (err instanceof AuthenticationServiceException) return null;
         // EVERY OTHER WAY OF FAILING TO AUTHENTICATE IS 401, BY SUPERCLASS AND NOT BY ENUMERATION.
         // The body mapping in `getProblemDetailWithCause` has always branched on `AuthenticationException`
@@ -257,10 +263,18 @@ public class ExceptionTranslator extends ResponseEntityExceptionHandler implemen
         // `401` meant "not registered", askable about any login or address with no credential at all
         // (`POST /api/register` is permitAll, and the exception is thrown by the lookup BEFORE the
         // password encoder is consulted, so the supplied password could not change the answer). The title
-        // leaked it a second time, because `customizeProblem` derives the title from the status's reason
-        // phrase and overwrote "Unauthorized" with "Internal Server Error".
+        // and the `message` property leaked it a second and third time, because `customizeProblem` derives
+        // both from the status: "Internal Server Error" rather than "Unauthorized", and `error.http.500`
+        // rather than `error.http.401`. All three move with this line.
+        // THIS WIDENS SIX BUCKETS, NOT ONE, and all six are right at a login endpoint. Measured
+        // main-vs-head: `UserNotActivatedException` plus `DisabledException`, `LockedException`,
+        // `AccountExpiredException`, `CredentialsExpiredException` and `CompromisedPasswordException` all
+        // go 500 -> 401. The five extras are unreachable today — `UserWithId.fromUser` sets every account
+        // flag true and no `CompromisedPasswordChecker` is configured — so this is a door closed before
+        // anyone walked through it, not a behaviour change anybody will see.
         // The two arms below are now redundant and are kept deliberately: they are generated lines, and
-        // they are the floor a regeneration that drops this one falls back to.
+        // they are the floor a regeneration that drops this one falls back to. (Verified dead: deleting
+        // both leaves the unit test 5/5 green, because the arm above already answers for them.)
         if (err instanceof AuthenticationException) return HttpStatus.UNAUTHORIZED;
         if (err instanceof BadCredentialsException) return HttpStatus.UNAUTHORIZED;
         if (err instanceof UsernameNotFoundException) return HttpStatus.UNAUTHORIZED;

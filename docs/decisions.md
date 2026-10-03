@@ -21416,6 +21416,11 @@ owner of an unactivated account meeting a server error, and it says exactly as m
 the estate said before — `"Invalid credentials"`, unchanged, asserted by value in both new test files
 so that changing it is a deliberate edit rather than a drift.
 
+⚠ **THE CLAIM IS "INDISTINGUISHABLE IN THE RESPONSE", NOT "TO A CALLER"** — narrowed at review, and the
+first version of this section overstated by one word. There is a **timing** channel and it is not closed;
+it is **NEW-93**. §10 carries the measurement and why its *direction* vindicates this fix rather than
+undercutting it.
+
 ### §2 The defect, re-derived rather than taken from the item
 
 | claim | how it was re-established, 2026-10-03 |
@@ -21425,7 +21430,7 @@ so that changing it is a deliberate edit rather than a drift.
 | `getMappedStatus` enumerates subclasses and omits it | `AccessDeniedException`→403, `ConcurrencyFailureException`→409, `BadCredentialsException`→401, `UsernameNotFoundException`→401, `ConstraintViolationException`→400, else `null` |
 | `toStatus` turns that `null` into 500 | `Optional.ofNullable(getMappedStatus(…)).orElse(… .orElse(HttpStatus.INTERNAL_SERVER_ERROR))` |
 | the body half branches on the **superclass** | `getProblemDetailWithCause` — `if (ex instanceof AuthenticationException)`, under a comment reading *"Ensure no information about existing users is revealed via failed authentication attempts"* |
-| it really answers 500 end to end | `UnactivatedLoginIsIndistinguishableIT` against the suite's own Testcontainers Mongo: **3 of 7 red**, each `Status expected:<401 UNAUTHORIZED> but was:<500 INTERNAL_SERVER_ERROR>` |
+| it really answers 500 end to end | `UnactivatedLoginIsIndistinguishableInTheResponseIT` against the suite's own Testcontainers Mongo: **3 of 7 red**, each `Status expected:<401 UNAUTHORIZED> but was:<500 INTERNAL_SERVER_ERROR>` |
 
 **All six held. One did not, and it is the work order's own claim.**
 
@@ -21506,15 +21511,69 @@ InternalAuthenticationServiceException  extends AuthenticationServiceException
 ```
 
 **The exclusion is PROSPECTIVE, and saying so is the honest version.** Nothing in this gateway throws
-either one today, and Spring's reactive `AbstractUserDetailsReactiveAuthenticationManager` does **not**
-wrap — measured by disassembling it on 7.0.6, where the only exception it constructs is
-`BadCredentialsException`. So on today's estate the exclusion changes no response. It is there because
+either one today, and Spring's reactive `AbstractUserDetailsReactiveAuthenticationManager` constructs
+neither. So on today's estate the exclusion changes no response. It is there because
 the superclass arm makes a claim about a *class*, and a claim about a class has to say which members it
 does not cover; the two candidates arrive the moment anything adopts the servlet convention, and
 `CountingReactiveAuthenticationManager` is exactly the kind of decorator that would.
 
+> ⚠ **"THE ONLY EXCEPTION IT CONSTRUCTS IS `BadCredentialsException`" WAS FALSE — it constructs SIX**,
+> and that sentence stood in this section, in `AuthenticationFailureStatusUnitTest`'s javadoc and in
+> NEW-92 before review. Measured, `javap` on 7.0.6: `BadCredentialsException`, `DisabledException`,
+> `LockedException`, `AccountExpiredException`, `CredentialsExpiredException` and
+> **`CompromisedPasswordException`**. The conclusion survives — none is an
+> `AuthenticationServiceException`, so the exclusion is still prospective — but the evidence did not.
+>
+> **Suspect the instrument, and this one is a one-character lesson.** The grep behind the claim anchored
+> on `org/springframework/security/authentication/[A-Za-z]*Exception`, and
+> `CompromisedPasswordException` lives one package down, in `.../authentication/password/`. **A pattern
+> that names a package cannot see a subpackage.** It then went wrong a second time in the same spot and
+> the other way: the review's own count of what the superclass arm *widened* listed five and the true
+> number is **six** — the missing one being `CompromisedPasswordException` again. Two readers, two
+> directions, one package boundary.
+
 **The order is load-bearing and is held by a test, not by the comment beside it.** Moved below the
 superclass arm the exclusion is unreachable and an outage is a 401 — see §6, mutant 3.
+
+**WHAT THE `null` RESTS ON, which neither the code nor this section stated until review.** `toStatus`
+falls from `getMappedStatus`'s `null` to `resolveResponseStatus`, which **recurses into `getCause()`** —
+and `InternalAuthenticationServiceException` exists precisely to wrap something. So *"excluded means
+500"* holds only while no cause in the chain carries `@ResponseStatus`. **It holds today**: the one
+annotated throwable in this gateway is `AccountResource`'s private `AccountResourceException`, thrown
+nowhere near authentication, and a realistic cause here is a Mongo or socket failure carrying no
+annotation — which is why the test wraps an `IllegalStateException` rather than something exotic, and
+makes that fixture representative rather than arbitrary. A cause that *did* carry an annotation would
+win, and that would be correct rather than a defect. Stated at the site as well as here.
+
+### §4a What the superclass arm actually widened, measured main-vs-head
+
+The item, the commit and the first draft of this decision all describe the change as being about
+**one** custom subclass. It is **six**, and a reader asking "what did this widen" deserves the list:
+
+| exception | before | after | reachable today? |
+| --- | --- | --- | --- |
+| `UserNotActivatedException` | 500 | **401** | **yes** — the subject |
+| `DisabledException` | 500 | **401** | no |
+| `LockedException` | 500 | **401** | no |
+| `AccountExpiredException` | 500 | **401** | no |
+| `CredentialsExpiredException` | 500 | **401** | no |
+| `CompromisedPasswordException` | 500 | **401** | no |
+| `BadCredentialsException` | 401 | 401 | yes |
+| `UsernameNotFoundException` | 401 | 401 | yes |
+| `AuthenticationServiceException` | 500 | **500** | no — excluded |
+| `InternalAuthenticationServiceException` | 500 | **500** | no — excluded |
+
+Measured by driving all ten through the real translator twice, differing only in whether the superclass
+arm is present. **The five extras are unreachable** — `UserWithId.fromUser` sets every account flag
+`true`, so no `AccountStatusException` can be raised, and no `CompromisedPasswordChecker` is configured —
+and **401 is the right answer for each at a login endpoint** regardless. So the widening is a door closed
+before anybody walked through it, and the change is correct and was merely under-described.
+
+**`message` moved with the status too, and that is three fields rather than two.** The same measurement
+shows `message` going `error.http.500` → `error.http.401`, because `customizeProblem` composes it as
+`"error.http." + problem.getStatus()` unless `getMappedMessageKey` answers. So the pre-fix response named
+the bucket in **status, title and `message`**, and only `detail` was ever shared. See §6 for why
+`message` is now asserted despite needing no fix.
 
 **One asymmetry is deliberately left, and it is NEW-92.** The *body* half still generalises where the
 status half now does not, so an `AuthenticationServiceException` would answer **500 with
@@ -21535,16 +21594,40 @@ further buckets becoming 500. The addition is the superclass arm; the enumeratio
 
 Two new files, both of which survive `jhipster jdl --force` because neither is generated.
 
-**`UnactivatedLoginIsIndistinguishableIT`** — 7 cases, a **real** unactivated account written to the
+**`UnactivatedLoginIsIndistinguishableInTheResponseIT`** — 7 cases, a **real** unactivated account written to the
 suite's Testcontainers Mongo with `activated = false`, which is what `POST /api/register` writes. Not a
 mock: the defect lives in the seam between what `DomainUserDetailsService` throws, what Spring's
 reactive manager does and does not re-wrap, and how the translator maps the result, so mocking any of
 the three asserts over the arrangement instead of over the estate. Six refusal cases — unactivated with
 a **wrong** password, unactivated with the **right** password, unactivated probed by its **email
 address**, an unknown login, an unknown address, an activated account with a wrong password — each
-asserting **401**, no `Authorization` header, and the body's `status`, `title` and `detail`. Plus the
-**positive control**: an activated account with its own password still answers **200 with a token**,
-without which every assertion above is satisfied by a gateway that refuses everybody.
+asserting **401**, no `Authorization` header, and the body's `status`, `title`, `detail` **and
+`message`**. Plus the **positive control**: an activated account with its own password still answers
+**200 with a token**, without which every assertion above is satisfied by a gateway that refuses
+everybody. (The positive control is one of the four that were **green on `main`**, which is the
+discriminating detail: the three reds are the defect, not a broken fixture.)
+
+> ⚠ **`message` WAS THE FOURTH FIELD AND WAS ASSERTED BY NEITHER TEST — added at review.** The body has
+> five serialised members: `status`, `title`, `detail` and the two properties `message` and `path`. The
+> first draft asserted three.
+>
+> **Measured by the reviewer**: one arm in `getMappedMessageKey` returning `"error.account.notActivated"`
+> for `UserNotActivatedException` puts the bucket name on the wire with status, title and detail all
+> identical — and **`AuthenticationFailureStatusUnitTest` stayed 5/5 green**, bytecode demonstrably
+> changed. The IT was blind by construction too.
+>
+> **And this is D106 §2's own sentence, one field along.** That section says *"an assertion over `detail`
+> alone would have passed a translator that still named the bucket in its title"* — and then the fix
+> asserted `title` and left `message` in exactly the state `title` had been in: **status-derived,
+> therefore unable to drift without an edit, therefore asserted by nobody, therefore available to leak.**
+> Writing down the mechanism is not the same as applying it to the next instance of itself.
+>
+> Closed two ways rather than one, because a third field would otherwise be found the same way:
+> `expectTheOneRefusal` asserts `$.message` by value, and `theThreeFailureBucketsAreIndistinguishable`
+> compares **the whole `getProperties()` map** rather than a list of names — so a *sixth* member added
+> later is covered without anybody remembering to extend an enumeration. All three are translated from
+> one exchange, so `path` is equal by construction and the only member that can differ is one keyed on
+> the exception.
 
 It removes its two fixtures **by login** and never calls `deleteAll()`: every IT here shares one Mongo
 container and one context, and that context's `InitialSetupMigration` writes `admin` and `user` once at
@@ -21563,11 +21646,19 @@ Each guarded thing was mutated separately, and the attributions do not overlap:
 | remove the superclass arm | **the regeneration**, exactly | unit **2/5** (`anUnactivatedAccountIsAnUnauthorizedAndNotAServerError`, `theThreeFailureBucketsAreIndistinguishable`); IT **3/7** at `expected:<401> but was:<500>` |
 | remove the `AuthenticationServiceException` exclusion | an outage disguised as a refused credential | unit **2/5** (`aBrokenUserStoreIsStillAServerError`, `theWrappedUserStoreFailureIsStillAServerErrorToo`) |
 | move the exclusion **below** the superclass arm | the exclusion still present and unreachable | unit **2/5**, the same two |
+| delete **both** redundant arms (M4, reviewer's) | the dead-code tidy §5 argues against | **nothing — 5/5 green** |
+| one arm in `getMappedMessageKey` naming the bucket (M5, reviewer's) | the leak §6's box is about | **nothing before review**; re-driven after the fix, unit **2/5** and IT **3/7** |
 
 The third is the one worth having: it is satisfied by reading the file and is invisible to any
 assertion that merely checks both lines exist. Because it is covered behaviourally, **no positional
 assertion was written** — the comment at the site says the arm must stay above the next one, and a test
-is what holds it.
+is what holds it. Re-driven independently at review, including by the reviewer rather than the author.
+
+**M4's green is the honest answer to §5 and does not overturn it.** The two redundant arms are
+**demonstrably dead** — nothing holds them, and no test would notice their removal. They stay on the
+regeneration-floor argument alone, which is a claim about what happens *after* `--force` rather than
+about today's behaviour, and therefore is exactly the kind of thing no test can assert. Recorded here so
+the next person to find them dead does not delete them and rediscover why.
 
 The first mutation is also why **no CI check was added**. `ExceptionTranslator` is generated, so a
 regeneration silently restores the 500 and reopens the oracle — and both new files are new files, so
@@ -21620,3 +21711,45 @@ that the build starts and discards.
 - **The rate-limit contradiction** — `CLAUDE.md` says no ceiling is in force anywhere and the login
   limit *is* installed on quality. That is **NEW-75**.
 - **The body-half asymmetry** of §4, opened as **NEW-92**.
+- **The timing channel**, opened at review as **NEW-93** — §10.
+
+### §10 Reviewed 2026-10-03, five narrowings, none blocking
+
+The shape, the exclusion, all three rejections and every mutation were re-argued and re-driven
+independently and stand unchanged. The reviewer drove M3, M4 and M5 themselves. Four of the five
+findings were **wording**, and the fifth — `message` — was a real coverage gap that is now closed; both
+are folded into the sections above rather than summarised here. What is new and belongs in one place:
+
+**A timing channel exists, is measured, and its direction vindicates this fix.** Spring's reactive
+`AbstractUserDetailsReactiveAuthenticationManager` carries **no** equivalent of the servlet stack's
+`mitigateAgainstTimingAttack`, so BCrypt (strength 10) runs only when the user is found **and**
+activated. Measured through the live quality gateway, interleaved, n=8 each:
+
+| bucket | median |
+| --- | --- |
+| activated account, wrong password | **0.0565 s** |
+| login nobody registered | **0.0048 s** |
+
+11.8×, no overlap, decidable in one request. **But the gap partitions `{activated}` from
+`{unknown ∪ unactivated}`, which is the complement of the oracle this decision closed**: an unactivated
+account throws in `createSpringSecurityUser` and an unknown login in the service's own `switchIfEmpty`,
+both *before* the `filter` that runs the encoder, so both are BCrypt-free. **Nothing can tell an
+unactivated account from an unregistered one in either channel.** The activation-state oracle is
+genuinely gone; what remains is the classic account-existence one, pre-existing and untouched by this
+diff. Hence the narrowing of §1's wording, the class rename to
+`UnactivatedLoginIsIndistinguishableInTheResponseIT`, and **NEW-93**.
+
+⚠ **The unactivated bucket's membership in the fast group is REASONED FROM THE CODE PATH, NOT
+MEASURED** — there are only two rows in that table for a reason. Measuring the third needs an
+unactivated account on quality, which §8 forbids because it would falsify D102 §1's own
+zero-unactivated probe for the deferred half of this very item. NEW-93 says so rather than presenting
+three measured buckets, and that honesty is the point: a two-row table with a reasoned third is a
+different claim from a three-row measurement, and this file has been wrong before by flattening exactly
+that distinction.
+
+**One claim in the new regeneration row was too strong and is corrected.** It read *"Completely silent:
+nothing logs it."* `handleAnyException` opens with `LOG.debug("Converting Exception to Problem Details:", ex)`
+and `application-dev.yml` sets `net.jojoaddison: DEBUG` — the profile the quality box runs — so the 500
+**did** emit a DEBUG line with a stack trace there. *Effectively* silent is true (DEBUG, and alerting
+keys on 5xx **rates**); *nothing logs it* is not, and the table's own `@Scheduled` row makes the same
+dev-DEBUG point in the other direction, so the file would have contradicted itself.

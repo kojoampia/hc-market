@@ -47,6 +47,21 @@ import org.springframework.test.web.reactive.server.WebTestClient;
  * and the body's own embedded {@code status} field, which comes from {@code toStatus(ex)} and was
  * rendering {@code 500} inside a body whose title read {@code "Unauthorized"}.
  *
+ * <p>⚠ <strong>"IN THE RESPONSE" IS IN THE CLASS NAME BECAUSE THERE IS A TIMING CHANNEL AND IT IS NOT
+ * CLOSED.</strong> Spring's reactive {@code AbstractUserDetailsReactiveAuthenticationManager} carries no
+ * equivalent of the servlet stack's {@code mitigateAgainstTimingAttack}, so BCrypt runs only when the
+ * user is found <em>and</em> activated. Measured through the live gateway, interleaved, n=8 each: an
+ * activated account with a wrong password takes a median <strong>56.5 ms</strong>, a login nobody
+ * registered <strong>4.8 ms</strong> — 11.8×, no overlap, decidable in one request.
+ *
+ * <p><strong>The direction is what matters, and it vindicates this fix rather than undercutting it.</strong>
+ * That gap separates {@code {activated}} from {@code {unknown ∪ unactivated}} — the
+ * <em>complement</em> of the oracle D106 closed, because both an unactivated account and an unknown login
+ * throw before the {@code filter} that runs the encoder. So nothing here can tell an unactivated account
+ * from an unregistered one in either channel; what remains is the classic account-existence oracle,
+ * pre-existing and untouched by D106. It is <strong>NEW-93</strong>, and this class asserts over
+ * responses only — it does not and cannot speak for the clock.
+ *
  * <p><strong>The message is deliberately unchanged.</strong> D102 §1 ratified new wording — <em>"Sorry
  * you can not log in. If your login is correct, check your email for further instructions."</em> — and
  * a resend of the activation link. D106 ships the <strong>status only</strong>, because the client that
@@ -61,7 +76,7 @@ import org.springframework.test.web.reactive.server.WebTestClient;
  */
 @AutoConfigureWebTestClient(timeout = IntegrationTest.DEFAULT_TIMEOUT)
 @IntegrationTest
-class UnactivatedLoginIsIndistinguishableIT {
+class UnactivatedLoginIsIndistinguishableInTheResponseIT {
 
     private static final String UNACTIVATED_LOGIN = "new61-never-activated";
     private static final String UNACTIVATED_EMAIL = "new61-never-activated@example.test";
@@ -186,9 +201,18 @@ class UnactivatedLoginIsIndistinguishableIT {
     }
 
     /**
-     * The one refusal all six failure cases must give, asserted on the status line AND on all three
-     * parts of the body a caller can read. Asserting only the status would leave a translator free to
-     * distinguish the buckets in the body, which is the same oracle one layer in.
+     * The one refusal all six failure cases must give, asserted on the status line AND on every part of
+     * the body a caller can read. Asserting only the status would leave a translator free to distinguish
+     * the buckets in the body, which is the same oracle one layer in.
+     *
+     * <p><strong>{@code message} is asserted for the reason {@code title} had to be.</strong> It is
+     * status-derived today — {@code "error.http." + problem.getStatus()} — so it moved from
+     * {@code error.http.500} to {@code error.http.401} with the status and needed no separate fix. But
+     * {@code getMappedMessageKey} is a per-exception branch sitting right beside it, so one arm there
+     * returning something like {@code "error.account.notActivated"} would name the bucket on the wire
+     * with the status, title and detail all still identical. That is exactly what was true of
+     * {@code title} before D106, and it was missed for the same reason: a field nobody asserted because
+     * it could not drift without an edit.
      */
     private void expectTheOneRefusal(String username, String password) {
         authenticate(username, password)
@@ -203,6 +227,8 @@ class UnactivatedLoginIsIndistinguishableIT {
             .isEqualTo("Unauthorized")
             .jsonPath("$.detail")
             .isEqualTo("Invalid credentials")
+            .jsonPath("$.message")
+            .isEqualTo("error.http.401")
             .jsonPath("$.id_token")
             .doesNotExist();
     }

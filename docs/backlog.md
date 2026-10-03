@@ -5144,15 +5144,24 @@ that limit has cost anything.
 > STILL OPEN FOR THEM.**
 >
 > **What shipped.** Every failure mode of `POST /api/authenticate` answers **401** with the body
-> unchanged — `title: "Unauthorized"`, `detail: "Invalid credentials"`, and the body's own `status`
-> field now `401` too. So the four outcomes are indistinguishable to a caller, the enumeration oracle
-> is closed, and a customer who has not activated no longer meets a 500 telling them the platform is
-> broken. One line, in `ExceptionTranslator.getMappedStatus`: the status half now branches on
-> **`AuthenticationException`** rather than enumerating subclasses, which is the asymmetry that was the
-> defect — with `AuthenticationServiceException` **excluded** above it, so a broken account store stays
-> a 5xx and the alert that keys on 5xx rates still fires. Guarded by two new files,
-> `UnactivatedLoginIsIndistinguishableIT` (7 cases, a real unactivated account in Testcontainers Mongo,
-> with the activated-and-correct-password control) and `AuthenticationFailureStatusUnitTest` (5).
+> unchanged — `title: "Unauthorized"`, `detail: "Invalid credentials"`, and the body's own `status` and
+> `message` fields now `401` / `error.http.401` too. So the four outcomes are **indistinguishable in the
+> response** (⚠ not *"to a caller"* — see NEW-93), the enumeration oracle is closed, and a customer who
+> has not activated no longer meets a 500 telling them the platform is broken. One line, in
+> `ExceptionTranslator.getMappedStatus`: the status half now branches on **`AuthenticationException`**
+> rather than enumerating subclasses, which is the asymmetry that was the defect — with
+> `AuthenticationServiceException` **excluded** above it, so a broken account store stays a 5xx and the
+> alert that keys on 5xx rates still fires. Guarded by two new files,
+> `UnactivatedLoginIsIndistinguishableInTheResponseIT` (7 cases, a real unactivated account in
+> Testcontainers Mongo, with the activated-and-correct-password control) and
+> `AuthenticationFailureStatusUnitTest` (5).
+>
+> **It widened SIX buckets, not one, and the item said one.** Measured main-vs-head:
+> `UserNotActivatedException` plus `DisabledException`, `LockedException`, `AccountExpiredException`,
+> `CredentialsExpiredException` and `CompromisedPasswordException` all went 500 → 401. The five extras
+> are **unreachable today** — `UserWithId.fromUser` sets every account flag true and no
+> `CompromisedPasswordChecker` is configured — and 401 is right for each at a login endpoint, so this is
+> a door closed before anybody walked through it. D106 §4a has the table.
 >
 > **What did NOT ship, and is the remainder of this item.** D102 §1's **wording** — *"Sorry you can not
 > log in. If your login is correct, check your email for further instructions."* — and the **resend of
@@ -5172,14 +5181,16 @@ that limit has cost anything.
 > the password is checked, so a resend there fires for anyone naming the login and one after it only for
 > the owner. Both leak nothing; it is a choice about what is promised.
 >
-> **One thing D106 found that the measurement table below gets wrong.** The oracle was **two fields
-> wide, not one**: `customizeProblem` derives the title from the status, so the 500 response's `title`
-> read **`Internal Server Error`** while every 401's read `Unauthorized`. The table records `detail`
-> only, which is why it looked like a single field. Both closed by the same line.
+> **One thing D106 found that the measurement table below gets wrong.** The oracle was **three fields
+> wide, not one**: `customizeProblem` derives both the title and the `message` property from the status,
+> so the 500 response read `title: "Internal Server Error"` and `message: "error.http.500"` while every
+> 401 read `Unauthorized` / `error.http.401`. The table records `detail` only — the one field that was
+> always shared — which is why it looked like a single field. All three closed by the same line.
 >
-> **A residue was opened rather than fixed: NEW-92.** The *body* half still generalises where the status
-> half now does not, so an `AuthenticationServiceException` would answer 500 with
-> `detail: "Invalid credentials"`. Unreachable today and outside D106's fence.
+> **Two residues were opened rather than fixed.** **NEW-92**: the *body* half still generalises where the
+> status half now does not, so an `AuthenticationServiceException` would answer 500 with
+> `detail: "Invalid credentials"` — unreachable today and outside D106's fence. **NEW-93**: a measured
+> timing channel, which is why the claim above says *in the response*.
 
 > **ANSWERED by the architect 2026-09-24 — `decisions.md` D102 §1.** **401 for every failure mode,
 > with one message: *"Sorry you can not log in. If your login is correct, check your email for further
@@ -5288,7 +5299,7 @@ the exception earlier in `DomainUserDetailsService`, which would take the metric
 
 **That last line is spent: option 1 was picked (D102 §1) and its status half is BUILT (D106).** The
 paragraph above is kept as the record of what was weighed, and the test shape it asks for is what
-`UnactivatedLoginIsIndistinguishableIT` implements — including the by-email probe it calls "the row this
+`UnactivatedLoginIsIndistinguishableInTheResponseIT` implements — including the by-email probe it calls "the row this
 item was missing", and including its warning against converting the exception earlier, which D106 §3
 re-states as the reason shape (d) was not available at all.
 
@@ -5319,8 +5330,10 @@ a password that was never the problem.
 
 **Unreachable on today's estate, which is why it is an item and not a patch.** Nothing in this gateway
 throws either service exception, and Spring's reactive `AbstractUserDetailsReactiveAuthenticationManager`
-does not wrap one (measured, `spring-security-core` 7.0.6: the only exception it constructs is
-`BadCredentialsException`). It becomes live the moment anything adopts the servlet convention of wrapping
+constructs neither — it constructs **six** exceptions (`BadCredentials`, `Disabled`, `Locked`,
+`AccountExpired`, `CredentialsExpired` and `CompromisedPassword`; D106 §4 records why an earlier version
+of this sentence said one, and the package boundary that hid the sixth from two readers). It becomes live
+the moment anything adopts the servlet convention of wrapping
 a user-store failure — a custom `ReactiveAuthenticationManager`, a decorator beside
 `CountingReactiveAuthenticationManager`, or a framework change.
 
@@ -5339,6 +5352,68 @@ the same reason, which is the property D106 §4 says is now asserted on one side
 `AuthenticationFailureStatusUnitTest` is where the case belongs: it already drives both service
 exceptions through the real translator and reads `title` and `detail` off the composed
 `ProblemDetailWithCause`, so the assertion is two lines.
+
+---
+
+
+## NEW-93 — `POST /api/authenticate` answers in 4.8 ms or 56.5 ms, and which one tells you whether the account exists · READY
+
+**Opened 2026-10-03 at D106's review**, which found it while confirming that D106 had closed the
+*activation-state* oracle. It had, and this is a different one.
+
+**Spring's reactive stack has no `mitigateAgainstTimingAttack`.** The servlet
+`AbstractUserDetailsAuthenticationProvider` runs the password encoder against a dummy hash when the user
+is not found, precisely so the two paths cost the same; `AbstractUserDetailsReactiveAuthenticationManager`
+carries no equivalent, so BCrypt (strength 10) runs only when the user is found **and** activated.
+Measured through the live quality gateway, interleaved, n=8 each:
+
+| bucket | median | how established |
+| --- | --- | --- |
+| activated account, wrong password | **0.0565 s** | **measured** |
+| a login nobody registered | **0.0048 s** | **measured** |
+| registered but never activated | expected in the fast group | ⚠ **REASONED FROM THE CODE PATH, NOT MEASURED** |
+
+11.8×, no overlap, decidable in a single request with no credential.
+
+⚠ **The third row is reasoned and must not be quoted as measured.** Establishing it needs an unactivated
+account on the quality estate, and D102 §1's own probe is that the estate holds **zero** of them — that
+probe is what bounds this whole family of disclosure to a hypothetical today, and an unactivated account
+cannot be removed without a reseed, so creating one would falsify the premise of NEW-61's own deferred
+half. The reasoning: `createSpringSecurityUser` throws inside the lookup's `.map()`, which is **upstream
+of the `filter` that invokes the encoder**, so an unactivated account never reaches BCrypt — the same
+reason an unknown login does not. Measure it on a throwaway estate, or in an IT, before writing it down
+as a number.
+
+**What this is and is not.** The partition is `{activated}` against `{unknown ∪ unactivated}` — the
+**complement** of what D106 closed, which is why D106 is not undermined by it: nothing here can tell an
+unactivated account from an unregistered one in either channel. What is left is the **classic
+account-existence oracle**, pre-existing, present before D106 and untouched by it: *is this address an
+activated account on this platform?*, askable about anybody, at the login rate limit's ceiling (1r/s,
+burst 5 — installed on quality, which is NEW-75's contradiction).
+
+**Why it is an item rather than a fix in that package.** It is not in `ExceptionTranslator` and not in
+any response, so it is outside the fence NEW-61 sets; and the remedy is a real decision rather than a
+line. Three shapes, none obviously right:
+
+1. **Match the servlet stack** — encode the presented password against a dummy hash on the
+   not-found and not-activated paths. Correct and well-trodden, and it spends ~50 ms of event-loop-adjacent
+   work on every failed login, which is also a cheap amplification lever for whoever is probing. Note the
+   encoder call in this stack runs on `this.scheduler`, so where the dummy work goes needs establishing
+   rather than assuming.
+2. **A constant floor** — delay every refusal to a fixed budget. Flattens the whole family rather than
+   one pair, costs no BCrypt, and a floor that is ever exceeded by real work leaks again; it also holds a
+   request open, which is its own resource question on a reactive gateway.
+3. **Accept it and say so.** `/api/account/reset-password/init` already answers 200 for known and
+   unknown addresses alike — JHipster's choice and this estate's precedent — so the platform's position
+   on account-existence disclosure is **not** currently "closed at any cost", and a 50 ms tax on every
+   login to close a channel the reset endpoint leaves open by design would be inconsistent rather than
+   safer.
+
+**Shape 3 is the honest default and the reason to write the item**: an accepted channel and an
+unnoticed one look identical from outside, and this one was unnoticed. Whichever is chosen, the
+discipline D106 established applies — **assert over the thing, not over its proxy**: a test for this
+measures elapsed time against a threshold and is therefore load-sensitive on a box that has read load
+average 200+ (NEW-70), so it needs an interleaved design and a stated control, not a bare timeout.
 
 ---
 
