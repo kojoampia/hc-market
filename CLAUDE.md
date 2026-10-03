@@ -164,6 +164,40 @@ narrow enough to let a professional's own `88% rebook` through, with a control t
 > **The lesson is the one about a count: `templates.length > 4` against a real 6** let the walk lose a
 > file in silence, and it is four named files now.
 
+**AND THE INVERSE OF THAT GUARD NOW EXISTS, BECAUSE A KEY WITH NO VALUE IS EXACTLY WHAT A "MUST NOT
+CONTAIN" GUARD CANNOT SEE** (D109, backlog NEW-91). `translation-keys-resolve.spec.ts` asks whether every
+key this client writes as a **literal** resolves, in **four walks that are red separately**: every literal
+a *template* names (246 sites), every literal a *component input defaults to* (`LoadState`'s 7), every
+literal a *route definition* carries (14 `title:` + 2 `errorMessage:`), and every *prefix* a key is
+assembled from — subtree only. **267 literal sites, zero unresolved.** It reads files and uses **no
+`TestBed`**; the resolver is ngx-translate's own exported `getValue`, which is not convenience — a
+hand-rolled split-on-dot reported **seven unresolved keys on a correct tree**, because the generated
+bundles hold **flat keys containing dots** (`"username.label"` nested under `global.form`) and `getValue`
+accumulates segments until one matches.
+
+⚠ **AN UNKNOWN KEY DOES NOT RENDER AS THE BARE KEY IN THE APPLICATION, AND NEW-91 SAID IT DID.** A
+`MissingTranslationHandler` **is** configured — `MissingTranslationHandlerImpl` in
+`app/config/translation.config.ts`, installed by `provideTranslation()` since the scaffold — so a visitor
+sees **`translation-not-found[marketplace.state.failed.title]`**. The bare key is what a **spec** sees,
+because every spec here calls bare `provideTranslateService()`, whose default handler returns
+`params.key`. Measured both ways by rendering `LoadState` against the real bundle. The paragraph above is
+correctly scoped to *"in a `TestBed` with no bundle loaded"* — **do not generalise it to the running
+client**, which is the mistake the item made and is why *"wire a handler"* is not the fix: there is one,
+and it is part of the symptom.
+
+⛔ **The three ways this guard does NOT shrink silently, none of which may be swapped for a count.** Two
+independent directory derivations compared for **equality** (a `withFileTypes` descent against node's own
+`recursive: true`); **seven named files**, which is what catches narrowing *both* derivations together;
+and a **named representative per shape**, because a pattern that stops matching takes its whole walk with
+it — **measured, with the `abmTranslate` pattern broken all four walks stayed green and only that
+assertion fired**. Every shape is defined **once, as data**, so the shape guard and the limit case re-run
+the shipped expressions rather than transcriptions of them. The limit is **driven**: run-time keys are
+written to a scratch file and every shape must see nothing in them. Two things stay outside and say so at
+the site — `AppPageTitleStrategy`'s `'global.title'` fallback, covered only by the coincidence that
+`navbar.html` renders it, and **non-English bundles, of which there are none** (`languages: ["en"]`); the
+day a second language lands, `fallbackLang` means a missing *translation* and a missing *key* stop being
+one question.
+
 **The seeded availability is anchored in the past**, so every profile's ten-day strip renders its empty
 state on quality today (measured on five professionals; the seed is at 2026-08-10). That is **NEW-84**
 and not a client defect — do not go looking for a bug in the panel.

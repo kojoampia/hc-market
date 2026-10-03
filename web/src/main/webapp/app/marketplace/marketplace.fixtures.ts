@@ -23,7 +23,14 @@ import { CategoryView, Facets, Page, ProfessionalCard, ProfessionalDetail, Revie
  */
 
 /**
- * Loads the REAL `i18n/en/*.json` into the TestBed's translate service, deep-merged.
+ * The fourteen REAL `i18n/en/*.json` bundles deep-merged into one tree, as the running application
+ * holds them — **and with no TestBed, so a spec that only reads FILES can use it without building
+ * one.** {@link loadEnglish} is this plus the two lines that hand it to a translate service.
+ *
+ * <p>Split out for `translation-keys-resolve.spec.ts` (D109 §9), which asks whether every key this
+ * client writes resolves and needs the tree rather than a service. **One merge with one set of
+ * caveats, two consumers**: a second copy would be the verbatim-copy family this repository keeps
+ * diffing, with the caveat below stated in only one of them.
  *
  * <p>The merge agrees with `build-plugins/i18n-esbuild.ts` **for this data and not by construction**
  * (D103 §14): that plugin uses npm `deepmerge`, which CONCATENATES arrays, while the hand-rolled
@@ -32,20 +39,11 @@ import { CategoryView, Facets, Page, ProfessionalCard, ProfessionalDetail, Revie
  * `global.json`) which both algorithms deep-merge identically. So the day a bundle grows an array,
  * this claim needs re-measuring or this function needs `deepmerge`.
  *
- * <p><b>Call this in any spec that asserts over rendered TEXT.</b> `provideTranslateService()` alone
- * loads nothing, and `TranslateDirective` sets `innerHTML` from the translation — so with no bundle
- * ngx-translate returns the KEY, every `abmTranslate` element renders
- * `marketplace.price.free` rather than "Free", and **a template's fallback prose is never in the
- * test DOM at all**. That is not a cosmetic difference: it is what made the first version of the
- * commission-rate guard reach only the one site nobody would ever use — measured, the 12% sentence
- * could be pasted into a fallback or into the bundle and 267 tests stayed green. See
- * `terms-are-not-quoted.spec.ts`.
- *
  * <p>⚠ **This module is TEST-ONLY and uses `node:fs`.** Nothing under `app/` that the application
  * reaches may import it, or the production build breaks — it is reachable from specs alone, and
  * `terms-are-not-quoted.spec.ts` is where a rule about that would go if it ever needs one.
  */
-export const loadEnglish = (): void => {
+export const mergedEnglishBundle = (): Record<string, unknown> => {
   const dir = 'src/main/webapp/i18n/en';
   const merge = (into: Record<string, unknown>, from: Record<string, unknown>): Record<string, unknown> => {
     for (const [key, value] of Object.entries(from)) {
@@ -62,6 +60,30 @@ export const loadEnglish = (): void => {
   for (const file of readdirSync(dir).filter(name => name.endsWith('.json'))) {
     merged = merge(merged, JSON.parse(readFileSync(path.join(dir, file), 'utf8')) as Record<string, unknown>);
   }
+  return merged;
+};
+
+/**
+ * Loads {@link mergedEnglishBundle} into the TestBed's translate service.
+ *
+ * <p><b>Call this in any spec that asserts over rendered TEXT.</b> `provideTranslateService()` alone
+ * loads nothing, and `TranslateDirective` sets `innerHTML` from the translation — so with no bundle
+ * ngx-translate returns the KEY, every `abmTranslate` element renders
+ * `marketplace.price.free` rather than "Free", and **a template's fallback prose is never in the
+ * test DOM at all**. That is not a cosmetic difference: it is what made the first version of the
+ * commission-rate guard reach only the one site nobody would ever use — measured, the 12% sentence
+ * could be pasted into a fallback or into the bundle and 267 tests stayed green. See
+ * `terms-are-not-quoted.spec.ts`.
+ *
+ * <p>⚠ **"Returns the KEY" is true HERE and not of the running client** (D109 §2). Bare
+ * `provideTranslateService()` installs ngx-translate's `DefaultMissingTranslationHandler`, which
+ * returns `params.key`; the application installs `MissingTranslationHandlerImpl` through
+ * `provideTranslation()`, which returns `translation-not-found[<key>]`. Both are a dotted identifier
+ * where a sentence belongs, so nothing above changes — but do not reason from this paragraph about
+ * what a visitor sees.
+ */
+export const loadEnglish = (): void => {
+  const merged = mergedEnglishBundle();
   const translate = TestBed.inject(TranslateService);
   // The bundle is read off disk, so its type is `unknown` at every leaf; ngx-translate's
   // `TranslationObject` is the same shape with `string` leaves. This is the one place a cast is

@@ -22381,3 +22381,246 @@ this one **has not fired**, and the row says so.
 - **`allowCypressEnv` is untouched**, and so are the e2e specs and `commands.ts`.
 - **NEW-94 opened**: `username`/`password` default to the administrator rather than to `user`, which
   is the generator's duplication and a behaviour change to correct.
+
+---
+
+## D109 — A translation key that does not exist renders as itself, and nothing in the client could see it
+
+**Recorded 2026-10-03**, against branch `new-91-every-translation-key-resolves` off `e4a8ff4`. Closes
+backlog **NEW-91**. Touches `web/src/main/webapp/app/marketplace/` (one new spec, one exported helper),
+`docs/backlog.md`, `CLAUDE.md` and this file. **No Java service, no compose file, no vhost, no mail
+template and no `i18n` bundle is changed, and no estate was touched.**
+
+The deliverable is one spec — `app/marketplace/translation-keys-resolve.spec.ts` — which reads **files**
+and needs no `TestBed`. 8 cases, 4 walks, and it is red on the mutation the item was opened by.
+
+### §1 Re-derived first, and ONE OF THE ITEM'S OWN PREMISES IS FALSE
+
+| claim, as the item states it | re-established here, 2026-10-03 |
+| --- | --- |
+| the suite is green on the mutation | **held.** Baseline `47 files / 312 tests`; with `LoadState.failedTitleKey`'s default changed to `marketplace.state.failed.NO_SUCH_KEY` and nothing else touched, **`47 files / 312 tests`, identical** |
+| ngx-translate returns the key for an unknown key | **held, and read off the package rather than its name.** `@ngx-translate/core@18.0.0`, `fesm2022/ngx-translate-core.mjs:getParsedResultForKey` — `const res = handler.handle({…}); return res !== undefined ? res : key;`, and `DefaultMissingTranslationHandler.handle` is `return params.key` |
+| `TranslateDirective` sets `innerHTML` | **held.** `app/shared/language/translate.directive.ts`, `getTranslation()`'s `next: value => { this.el.nativeElement.innerHTML = value; }` |
+| the five bound defaults | **held, and there are SEVEN inputs, five of which D105 added.** `emptyTitleKey`, `emptyDetailKey` (pre-existing) + `loadingTitleKey`, `loadingDetailKey`, `failedTitleKey`, `failedDetailKey`, `failedRetryKey` |
+| ⛔ *"no missing-translation handler is configured"* | **FALSE.** See §2 |
+
+### §2 ⚠ A HANDLER *IS* CONFIGURED, AND A VISITOR DOES NOT SEE THE BARE KEY
+
+`app/config/translation.config.ts` has carried `MissingTranslationHandlerImpl` since the scaffold, and
+`provideTranslation()` installs it through `provideTranslateService({ missingTranslationHandler: … })`.
+It returns `` `${translationNotFoundMessage}[${key}]` ``. Measured by rendering `LoadState` twice
+against the real bundle, differing only in the handler, with one unknown key:
+
+```
+provideTranslateService()                -> "marketplace.state.failed.NO_SUCH_KEY"
+provideTranslation()'s handler (the app) -> "translation-not-found[marketplace.state.failed.NO_SUCH_KEY]"
+```
+
+**The first is what every spec in this client sees** — every one calls bare
+`provideTranslateService()` — **and the second is what ships.**
+
+**Three things follow and none of them weakens the item.** The defect is unchanged: both strings are a
+dotted identifier where a sentence belongs, and the second is arguably worse, since it says
+*translation-not-found* to a member of the public. The *reason* the suite cannot see it is unchanged,
+because the handler runs in the application and not under test. And **it removes one of the item's three
+candidate fixes**: *"a `MissingTranslationHandler` that throws under test"* reads as new wiring, and the
+wiring exists — what would be new is making it throw, which is a change to a file the application loads
+and would need its own argument. §4 declines it on other grounds too.
+
+**The lesson is this repository's own, in its mildest form**: the sentence *"no handler is configured"*
+was true of the **TestBed** and false of the **application**, and both are reachable from the same
+`provideTranslate*` vocabulary. Nobody had opened `translation.config.ts`; the claim came from the
+suite's behaviour and was written as a claim about the estate. `/proc/1/cmdline` again.
+
+### §3 The survey, because scope had to be a decision rather than a discovery
+
+Every literal and every non-literal key site in `app/`, enumerated before a line of the spec was
+written. **267 literal sites, zero unresolved**; 17 non-literal.
+
+| shape | sites | covered |
+| --- | --- | --- |
+| `abmTranslate="LITERAL"` | 213 | WALK 1 |
+| `<name>Key="LITERAL"` on `<abm-load-state>` | 22 | WALK 1 |
+| `'LITERAL' \| translate` | 11 | WALK 1 |
+| `[abmTranslate]="'LITERAL'"` | 0 | WALK 1 — covered so the first is not a gap |
+| `<name>Key = input('LITERAL')` | 7 | WALK 2a — **the item's mutation lives here** |
+| `title: 'LITERAL'` in a route file | 14 | WALK 2b |
+| `errorMessage: 'LITERAL'` in a route file | 2 | WALK 2b — **found by this survey, see §7** |
+| `[abmTranslate]="'prefix.' + expr"` | 4 | WALK 3, **prefix only** |
+| `'prefix.' + expr \| translate` | 6 | WALK 3, **prefix only** |
+| `[abmTranslate]="someKey()"` | 7 | **nothing directly** — `LoadState`'s own template; the *defaults* are WALK 2a and the *overrides* WALK 1 |
+| `translateService.get/instant` with a computed key | 5 | **nothing** — §5 |
+
+**Two of those rows were not in the item and are the survey's whole justification.** The 22 `*Key`
+attributes are **plain HTML attributes**, not `abmTranslate` — a walk written to the item's description
+(*"every template under `app/` for `abmTranslate` literals"*) would have missed every one of them,
+including `activate.state.nokey.title` on the activation screen. And `errorMessage` is §7.
+
+**The 17 non-literal sites, enumerated**, because a count is not a record:
+
+```
+app/admin/health/health.html          'health.indicator.' + componentHealth.key
+app/admin/health/health.html          'health.status.' + (componentHealth.value?.status ?? 'UNKNOWN')
+app/admin/health/modal/…              'health.indicator.' + health.key
+app/marketplace/professional/…        'marketplace.verification.' + profile.card.verification
+app/marketplace/browse/browse.html    'marketplace.browse.sort.' + option  |  'marketplace.mode.' + facet.value
+app/marketplace/discover/…            'marketplace.mode.' + facet.value
+app/marketplace/professional-card/…   'marketplace.mode.' + facet.value
+app/marketplace/professional/…        'marketplace.verification.' + …  |  'marketplace.mode.' + …
+app/marketplace/load-state/…          loadingTitleKey() loadingDetailKey() failedTitleKey()
+                                      failedDetailKey() failedRetryKey() emptyTitleKey() emptyDetailKey()
+```
+
+All five distinct prefixes resolve to a **subtree** today: `health.indicator`, `health.status`,
+`marketplace.browse.sort`, `marketplace.mode`, `marketplace.verification`.
+
+### §4 ⭐ THE DECISION: cover the literals, check a prefix's subtree, state the limit, and DO NOT wire a handler
+
+**Reach versus legibility, and the item's own recommendation is taken.** A key assembled at run time, a
+key handed in by a parent and a key held in a variable cannot be resolved by a file walk, and the
+alternatives are each worse than the limit:
+
+- **Enumerating the members of a prefix** would mean this spec knowing catalog's `DeliveryMode` and
+  `VerificationStatus` enums and the Browse sort vocabulary — three APIs' value sets copied into a
+  client test, which is a second place for them to be wrong.
+- **Parsing the TypeScript** (resolving `failedTitleKey()` to its declaration) is a type-checker's job
+  and would make the file unreadable for the one case already covered from the other end.
+
+**What IS taken past the literals is the one thing a prefix genuinely states: that the family exists.**
+WALK 3 asserts each distinct prefix resolves to a subtree — five lines, red if `marketplace.mode` is
+renamed away, silent if one delivery mode is dropped from it. **That asymmetry is stated in the walk
+rather than implied**, because the realistic failure is the rename (a subtree and its members move
+together) and the realistic *miss* is the dropped member.
+
+⛔ **A `MissingTranslationHandler` that throws is NOT adopted, and §2 is only half the reason.** The
+other half: it would alter what a visitor sees on **every page** if it ever reached a non-test
+configuration, it covers only keys some spec actually *renders* — which is not all of them, and is
+nothing at all on the admin screens, which have no rendered-text specs — and it would need its own
+decision about `prod`. The two mechanisms fail for different reasons and the honest split is D103
+§13(b)'s: **this one is about what is WRITTEN.** If anybody wants the render-side half later, §5 says
+what it would catch that this does not.
+
+### §5 What would catch the rest, for whoever needs it
+
+- **The 7 `someKey()` bindings in `load-state.html`** are covered from both ends already: WALK 2a reads
+  the defaults, WALK 1 reads every literal a caller passes. What is *not* covered is a caller passing a
+  computed key, which no caller does.
+- **The 5 `translateService.get/instant` computed keys** would need a render-side handler or a
+  type-aware pass. Two of the five are generated entity plumbing in `alert-error.ts`, one of them
+  `` `hcMarketApp.${objectName}.${field}` ``, whose prefix `hcMarketApp` is **absent from every bundle**.
+  It is unreachable twice over — this client has no entities (`entity.routes` is the empty generated
+  array) **and `<abm-alert-error>` is declared in no template at all** — so it is recorded here and **no
+  item is opened**: it is correct generated code awaiting entities, not a defect.
+- **A second language** is §8.
+
+### §6 The walk cannot shrink silently, and that is TWO independent properties plus a classification
+
+`CLAUDE.md` records D103 §14's `templates.length > 4` against a real 6 letting `footer.html` fall out of
+a walk in silence. **No floor under a count appears in this file.** Instead:
+
+1. **Two independent directory derivations, compared for equality.** A recursive `withFileTypes`
+   descent and node's own `readdirSync(…, { recursive: true })` over the same root must produce the
+   same sorted list. A descent that loses a branch disagrees with the listing.
+2. **Named files, never a count** — four templates and three sources, chosen to pin the *reach*: one
+   public screen, one template **outside `app/marketplace`** (D103 §14's widening), one admin screen,
+   one account screen, plus `LoadState` and two route files. This is what catches narrowing *both*
+   derivations together, which property 1 cannot see.
+3. **A named representative per shape**, because a pattern that stops matching takes its whole walk
+   with it and `unresolved([])` is `[]`. **Measured: with the `abmTranslate` pattern broken, all four
+   walks stayed GREEN and only the shape assertion fired.** `bound literal` deliberately has no
+   representative (there are none in the client) and is asserted *empty* with a comment saying why, so
+   its absence from the list is not evidence the shape was forgotten.
+
+**Every shape is defined exactly once, as data.** The first draft held them as closures and then
+transcribed the patterns twice more — into the shape guard and into the limit case — which is this
+repository's drift shape appearing inside the guard against it. `SHAPES` is now a map of
+`{ files, patterns, group?, dedupe? }`, `sitesOfShape(name, over?)` is the one place a shape becomes a
+list of sites, and the limit case **re-runs the shipped expressions** against a scratch file by passing
+`over`. The map's own key set is asserted, so a shape deleted from it is red rather than quietly
+dropping out of a walk.
+
+### §7 Red-first, with its control — seven drives
+
+Baseline, committed tree: **48 files / 320 tests, green** (the control for every row below; +1 file,
++8 tests over the 47/312 baseline).
+
+| # | mutation, nothing else touched | result |
+| --- | --- | --- |
+| 1 | **the item's own**: `failedTitleKey` default → `marketplace.state.failed.NO_SUCH_KEY` | **1 failed / 319** — *resolves every literal key a component input defaults to*, naming `app/marketplace/load-state/load-state.ts: marketplace.state.failed.NO_SUCH_KEY`. Was **312/312 green** before this spec existed |
+| 2 | `discover.html`'s `abmTranslate="marketplace.scope.body"` → `…bdoy` | **3 failed / 317** — WALK 1 naming file and key, the shape guard, *and* `discover.spec.ts`' rendered-prose case: two mechanisms, as designed |
+| 3a | walk root narrowed `app/` → `app/marketplace` | **2 failed** — the NAMED-file assertion (`footer.html`, `health.html`, `activation.html` all absent) |
+| 3b | `descend` made to skip the `account` directory | **2 failed** — *the template descent disagrees with a recursive listing: expected […(29)] to deeply equal […(31)]* |
+| 4 | the `abmTranslate` pattern broken in its **single definition** | **1 failed** — the shape guard only; **all four walks green**, which is the measurement property 3 exists for |
+| 5 | `resolves` made to answer `true` for everything | **2 failed** — *an absent key must not resolve: expected true to be false*. Without that negative control the whole file passes against a bundle it never loaded |
+| 6 | `marketplace.routes.ts`' `title: 'marketplace.browse.pageTitle'` → `…pageTitel` | **1 failed** — WALK 2b, naming the route file and the key |
+| 7 | `marketplace.mode` renamed away in `i18n/en/marketplace.json` | **4 failed** — WALK 3 naming `browse.html: marketplace.mode.*`, plus three screen specs |
+
+**Each of the four walks is red separately** (rows 1, 2, 6, 7) — the item asked for two and there are
+four, because an aggregate firing once cannot say which mechanism still works. Every drive was run with
+a pristine copy restored immediately afterwards; `git status` was clean of mutations before the gates.
+
+**And the survey found a real gap in this package's own first scope.** `errorMessage: 'error.http.403'`
+and `'error.http.404'` are literal keys in `errorRoute`'s route data, rendered as the error page's only
+sentence through `Error.ngOnInit` → `translateService.get`. That page is reached by `path: '**'` —
+**every unserved URL in the client** — which makes `error.http.404` plausibly the most-reached key here,
+and **no walk written to the item's description, or to this package's first draft, covered it.** WALK 2b
+covers both now, scoped to `*.route.ts`/`*.routes.ts` because `title:` is an ordinary property name
+(`problem-details.ts` declares `title: string`) and an unscoped walk would be red on correct code.
+
+### §8 The limits, stated where a reader meets them
+
+All four are in the spec's own header or at the site, not only here — *a `—` in a column whose other
+rows carry numbers is not neutral*.
+
+- **Non-literal keys are not seen**, and the limit case **drives** that rather than asserting it in
+  prose: four run-time expressions written to a scratch file, handed to every shape, and every shape
+  except the prefix one must see **nothing**. The prefix one must see exactly `marketplace.state.failed`
+  and nothing past it. The exercised set is **derived from `SHAPES`**, so a shape added without thinking
+  about the limit is covered the day it exists.
+- **`'a.b' + '.c'` is seen only as far as its first half**, which the limit case's fourth line pins —
+  the honest reading of "literal".
+- **One literal key is outside every shape**: `AppPageTitleStrategy`'s `pageTitle ??= 'global.title'`
+  fallback, a literal in a non-route `.ts` and not an argument to the call. It *happens* to be covered
+  because `navbar.html` renders `abmTranslate="global.title"` — **a coincidence, not a guarantee**, and
+  said so at the site: deleting that one `<span>` un-covers the title of every page with no route title.
+- **English only, and that is the whole estate today.** `.yo-rc.json` declares `languages: ["en"]` and
+  `i18n/` holds no other directory, so `i18n/en` is not a sample. **The day a second language lands this
+  walk silently stops being estate-wide**: the fix is to walk every `i18n/*` directory *and* to reckon
+  with `fallbackLang`, since `setFallbackLang('en')` means a key present in `en` and absent in the new
+  language resolves through the fallback rather than failing — so a missing translation and a missing
+  key stop being the same question.
+
+### §9 Two smaller decisions
+
+**The resolver is the library's own `getValue`, and that was forced by a measurement.** The first
+version split keys on `.` and indexed the merged tree, and reported **seven unresolved keys on a correct
+tree** — `global.form.username.label`, `global.form.newpassword.label`,
+`global.form.confirmpassword.label`, `health.refresh.button`, `metrics.refresh.button`,
+`global.form.username.placeholder`, `login.form.password.placeholder`. **The tree was right and the walk
+was wrong**: the generated JHipster bundles hold **flat keys containing dots** — `"username.label":
+"Username"` nested under `global.form`, `"refresh.button"` under `health` — and `getValue` accumulates
+segments until one matches rather than splitting once. Importing it makes "resolves" mean here exactly
+what it means at run time, by construction rather than by transcription; two controls pin the nested case
+and the flat-dotted case, so a change in the library's algorithm is red there rather than inventing
+failures in the walks. **It is public and typed** — `types/ngx-translate-core.d.ts:695`, exported.
+
+**`mergedEnglishBundle()` is split out of `marketplace.fixtures.ts`' `loadEnglish()`** rather than
+copied: one merge with one set of caveats (the `deepmerge`-equivalence caveat D103 §14 records), two
+consumers, no `TestBed` needed by the file-reading one. `terms-are-not-quoted.spec.ts` is **untouched**
+— it keeps its own subject, and its per-file `valuesOf` walk serves a need this one does not have.
+
+**The file sits under `app/marketplace/` while walking `app/`**, for its neighbour's reason: a reader who
+finds one file-reading guard should find both. `app/shared/language/`, beside `TranslateDirective`, is
+the honest alternative and was rejected only on discoverability.
+
+### §10 WHAT WAS NOT DONE
+
+- **No `MissingTranslationHandler` change** — §4, and it would need its own decision.
+- **`LoadState`'s seven defaults and every template key are untouched.** They are all correct today;
+  the job was to make a wrong one detectable.
+- **No CI step added.** `build.yml`'s `web` job already runs `npm test`, so this spec is in CI by being
+  a spec — unlike the `consistency` guards, which need a step each.
+- **No item opened for `hcMarketApp.`** — §5 argues it is correct generated code awaiting entities and
+  unreachable twice over, not a defect.
+- **No estate touched, nothing deployed, Cypress still never run, and no human has looked at a
+  rendering** — this package changes no markup, so there is nothing new to look at.
