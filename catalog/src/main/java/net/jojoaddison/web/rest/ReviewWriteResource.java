@@ -65,6 +65,21 @@ import org.springframework.web.server.ResponseStatusException;
  * the reason the rule lives in one named place: a login published here is published permanently, and
  * there is no endpoint through which any of it could be taken back.
  *
+ * <h2>And when it is suppressed, that is said out loud — NEW-89, D110</h2>
+ *
+ * <p>The stand-in above is correct and was <strong>silent</strong>: nothing in any log, metric or
+ * response told a suppressed author from an ordinary one, so a client that stopped sending
+ * {@code customerName} looked exactly like one that never sent it — and if booking ever stopped sending
+ * {@code customerLogin}, {@link ReviewAuthor}'s fail-closed arm would refuse <em>every</em> name and
+ * every subsequent review would read {@code A BridgeCare customer}. Correct by the rule, wrong about
+ * the world, and permanent, because of "no delete" above.
+ *
+ * <p>So the suppression is recorded at <strong>WARN</strong>, in two distinguishable messages for the
+ * two arms, carrying {@code summary.reference()} and the reason and nothing a person could be
+ * identified by. The level, the two messages and the absence are asserted by
+ * {@code TheSuppressedAuthorNameIsAudibleTest} — the absence cases with values a leak could not be
+ * mistaken for.
+ *
  * <h2>The date it is published on is the marketplace's day</h2>
  *
  * <p>{@code publishedOn} is <strong>stored</strong>, and it is the only public date this service
@@ -175,6 +190,42 @@ public class ReviewWriteResource {
             // The unique constraint on bookingReference fired: something else reviewed this booking
             // between the check above and this write. That is the constraint doing its job.
             throw new ResponseStatusException(HttpStatus.CONFLICT, "booking %s has already been reviewed".formatted(summary.reference()));
+        }
+
+        // NEW-89, D110: THE SUPPRESSION IS AUDIBLE, AND THE LINE NAMES THE BOOKING AND NOTHING ELSE.
+        // D104's stand-in is the right value and it was indistinguishable from the ordinary case in
+        // every log, metric and response — so a `booking` that stopped sending `customerLogin` would
+        // turn every subsequent review into `A BridgeCare customer`, correct by the rule and wrong
+        // about the world, in rows the "no delete" above makes permanent.
+        //
+        // TWO MESSAGES, because the two arms are two different facts and D104 §5's own rule is that
+        // facts must not collapse into one value — one is an ordinary caller state, the other says a
+        // name was supplied and refused because an identifier could not be read.
+        //
+        // WARN and never ERROR (D97): a booking made without a display name is a caller state, not a
+        // fact about this estate that is wrong and nobody chose, and the ERROR channel is the one free
+        // signal a dead collector shows up in (D64, D73).
+        //
+        // ⛔ IT MAY CARRY `summary.reference()` AND THE REASON, AND NOTHING ELSE. That reference is
+        // platform-minted — `CustomerBookingResource` writes `"b-" + a fresh UUID prefix` — and it is
+        // the value BOOKING answered with rather than `request.bookingReference()`, which is a caller's
+        // text. Not the name, not either login, nothing derived from them: a log is a place the erasure
+        // sweep does not reach and cannot re-key. `saved.getReference()` is left off for the same fence
+        // and costs nothing, because `bookingReference` is unique on Review so the row is addressable
+        // from the booking alone. The reason comes from ReviewAuthor rather than from a condition
+        // re-derived here, or the line could name one fact while the column held the other.
+        switch (ReviewAuthor.authorship(summary.customerName(), login, summary.customerLogin())) {
+            case NOT_SUPPLIED -> LOG.warn(
+                "review published for booking {} under the anonymous author label: the booking named nobody",
+                summary.reference()
+            );
+            case IDENTIFIER_UNREADABLE -> LOG.warn(
+                "review published for booking {} under the anonymous author label: an identifier could not be read, so a supplied display name was refused",
+                summary.reference()
+            );
+            // The ordinary case, and deliberately silent: a line on every review would spend the
+            // signal the two above are, and would read as this estate suppressing every name.
+            case SUPPLIED -> {}
         }
 
         if (!booking.markReviewed(summary.reference(), authorization)) {

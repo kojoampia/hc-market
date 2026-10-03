@@ -2970,12 +2970,28 @@ time.**
   `rating` null-versus-`0.0` rule does not transfer, since there one value is all a reader has. ⛔ **The
   `authorName` half is a `WON'T`**: a punctuation-only display name publishes verbatim, and replacing it
   with `ANONYMOUS_NAME` would write something *false* into an uncorrectable row and collide with the
-  anonymous state — do not edit display names. **And the suppression is SILENT — NEW-89**: nothing logs that a name was refused, so a
-  `booking` that stopped sending `customerLogin` would turn every subsequent review into
-  `A BridgeCare customer`, correct by the rule and permanent in a column nothing can edit. A WARN
-  belongs in `ReviewWriteResource` and not in `ReviewAuthor` (D97: the level is authored by the code
-  that knows which of the two it is, and a static utility knows neither), carrying
-  `summary.reference()` — platform-minted — and neither name nor either login.
+  anonymous state — do not edit display names.
+  **AND THE SUPPRESSION IS AUDIBLE SINCE D110, AND THIS SAID IT WAS SILENT — NEW-89, CLOSED.** Nothing
+  logged that a name had been refused, so a `booking` that stopped sending `customerLogin` would have
+  turned every subsequent review into `A BridgeCare customer` — correct by the rule and permanent in a
+  column nothing can edit. `ReviewWriteResource` now records it at **WARN** in **two** messages, because
+  "the booking named nobody" and "an identifier could not be read" are two facts and D104 §5's own rule
+  is that facts must not collapse into one value. ⛔ **The line carries `summary.reference()` and the
+  reason and nothing else** — platform-minted (`"b-" + a UUID prefix`, `CustomerBookingResource:146`),
+  and it is the value *booking answered with* rather than the caller's `request.bookingReference()`. Not
+  the name, not either login, nothing derived from them, and **not `saved.getReference()`** either:
+  `bookingReference` is unique on `Review`, so the row is addressable from the booking alone, and a log
+  is a place the erasure sweep does not reach and cannot re-key.
+  ⚠ **`ReviewAuthor` reports WHY and still has no logger** (D97's rule, and the item's). It answers
+  `SUPPLIED` / `NOT_SUPPLIED` / `IDENTIFIER_UNREADABLE` from one `authorship(…)` that `hasName` also
+  asks, so the stored value and the logged reason are **one derivation** — re-deriving the condition at
+  the call site is the shape that lets a line name one fact while the column holds the other, with
+  nothing going red. The `login == null ||` moved out of `isLogin` into that method rather than being
+  copied, for the same reason. **The line is emitted after the save**, because it claims a publication
+  the unique constraint can still refuse. The CRUD-era author guard cannot see any of this — a
+  `LOG.warn` is not an author-write line, measured by running the shipped step — so what holds it is
+  `TheSuppressedAuthorNameIsAudibleTest`, whose **absence** cases matter more than its presence ones and
+  use values a leak could not be mistaken for.
 - Two verification scripts run against a live estate and are the fastest way to know it still
   works end to end. Both need `/tmp/tok-pro.txt` and `/tmp/tok-cust.txt` — HS512 tokens minted with
   the estate's `JWT_BASE64_SECRET`, subject = login, authorities in the `auth` claim:
