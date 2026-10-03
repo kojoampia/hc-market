@@ -172,6 +172,41 @@ and not a client defect — do not go looking for a bug in the panel.
 **no human has looked at the layout** — a DOM dump establishes figures and states and nothing about
 legibility.
 
+**THE E2E CREDENTIALS COME FROM THE ENVIRONMENT, AND THE FILE THAT HOLDS THEM IS THE ONE NOTHING
+EXECUTES** (D108, backlog NEW-80). `web/cypress.config.ts`'s `expose` block bound **four** credentials
+as bare `'admin'` literals in a public repository — the item names two, and `adminUsername` and
+`username` are there too. All four read `process.env.HC_E2E_*` now with the generator's own value as a
+**documented** fallback, which is this file's standing rule inverted: *never add a default
+`base64-secret` to a profile that actually runs* means **a committed default may exist only where it
+cannot be the value a running estate uses**. Nothing about the old state was a leak — the `dev`/`test`
+rule is published here anyway and D61 makes `prod` refuse to create an administrator without
+`HC_GATEWAY_ADMIN_PASSWORD` — and what was wrong is that a reader had to reconstruct all of that from
+three documents before concluding so.
+**Nothing executes that file, so nothing tests it**: no `tsc` reads it (ESLint's typed block is
+anchored at `src/main/webapp/**/*.ts`), lint parses it, prettier formats it, and no spec can notice a
+regression because **no estate runs Cypress at all**. The guard is therefore a CI check —
+`e2e-credentials-are-not-committed.sh`, field set derived from `commands.ts`' own `interface
+Credentials`, per field, on the field's own line — with a test beside it whose **own last line carries
+its count**. Keep each binding on **one** line; a prettier-wrapped one is refused, as D60's `.zoneId(`
+is.
+
+⚠ **`allowCypressEnv: false` DOES NOT CONTROL `CYPRESS_*`, AND THAT CLAIM HAS BEEN WRITTEN DOWN
+WRONG** (D108 §4). Measured against `cypress@15.18.1`'s own types, it governs whether the
+**deprecated browser-side `Cypress.env()` API** exists in a spec — Cypress recommends disabling it and
+intends to remove it — while `CYPRESS_*` variables still reach `cy.env()`. Keep it `false` on *that*
+argument, and note that reading `process.env` in this config is unrelated to the flag rather than a way
+around it: the file is TypeScript evaluated in Node. **There is also a SECOND override, generated**:
+`commands.ts` reads `cy.env(['E2E_USERNAME', 'E2E_PASSWORD'])`, so `CYPRESS_E2E_USERNAME` and
+`CYPRESS_E2E_PASSWORD` **win over the config** — one username and one password for all four slots,
+where `HC_E2E_*` is per-slot. Set one pair or the other, not both.
+
+**And the sibling sweep NEW-80 asked for is run, with two of its three predictions false** (D108 §2):
+`hc-patient/web` and `hc-professional/web` have **no `cypress.config.ts` at all**, and `hc-admin/app`
+— deployed — carries the same shape with a **different** value and its own provenance comment. ⛔ That
+is `hc-admin`'s to route; it was read and not edited. ⚠ The sweep's first pattern, `password:
+*'admin'`, answered **0** for the product that does carry a literal — **match the shape, never a
+value.**
+
 ### Read these in this order
 
 1. **`docs/decisions.md`** — the answers that amend everything else. D1–D14 are decisions taken;
@@ -664,6 +699,8 @@ regeneration.
 | The **whole of** `InitialSetupMigration` | gateway `config/dbmigrations/` | **the worst row in this table, because what comes back is a working credential** (D61, NEW-22). This is the only entry here that is a Java class rather than config, and it is here because the generated version is not a stub to fill in — it is the defect. `--force` restores `@ChangeUnit(id = "users-initialization")` with **no `@Profile`**, creating `admin` with a committed bcrypt hash of the string `admin`, activated, carrying `ROLE_ADMIN`. `mongock.migration-scan-package` is in the **base** `application.yml`, so it runs in `prod` too, and a first production deploy creates exactly the empty database it seeds. **Completely silent**: the estate comes up, every test passes, and `admin`/`admin` works against the gateway that issues tokens all five services accept. What is lost is the `ApplicationRunner` rewrite — the not-production gate on the demo accounts, the configured `gateway.admin-password`, the refusal to create an administrator without one, and `saveUserIfMissing`'s idempotency, which is what stops a restart resetting a rotated password. **CI catches this one**, and deliberately by sweeping for the *hash* rather than for the logic (`.github/checks/admin-seed-wiring.sh`), because a check reasoning about the new logic would be matching a file that no longer contains any of it |
 | Both `.warn` in `logAfterThrowing` and the one in `logAround`'s catch, and the **absence** of `Arrays.toString(joinPoint.getArgs())` from that catch | **all five** `aop/logging/LoggingAspect.java` | **it spends the estate's one free signal and puts a bank reference in the log, and the second one is the smaller half** (D97, NEW-65). The second Java class in this table. `--force` restores `log.error` in **both** advices and `Arrays.toString(joinPoint.getArgs())` in the `IllegalArgumentException` arm, so every refusal this estate makes **on purpose** is an ERROR again — `Illegal argument: [PAY-202602-p1-01, GCB-TRF-99881726] in settle()`, measured, which is D95's desk refusing a settlement and publishing the bank reference it was handed. The signal half is the larger one: an ERROR line here is the only way a dead collector or an unattached agent is visible (D64, D73, and `quality/compose.yml`'s own note), and nothing pages on it because `hc-market-rules.yaml` keys on 5xx rates. **Do not quote a live count from this table** — all five quality services had carried **zero** across their whole life at 09:54 on 2026-09-18 and were at 49/38/35/27/24 by 13:10 the same day, from an OTLP collector that could not accept and a broker starved at load 200+, with nothing announcing either (backlog NEW-70). The argument for WARN rests on an ERROR line *meaning* something, not on the number being zero today. **Do not read this as one line.** `logAfterThrowing` is a *separate* advice on the same pointcut and logs every `Throwable`, so an `IllegalArgumentException` refusal is **two** ERROR lines and an `IllegalStateException` one — which is most of the desk — is **one**, through an advice the item that found this never mentioned: a `:113`-only repair leaves the count non-zero. It fires on `dev` and `test` and **not on `prod`**, because `LoggingAspectConfiguration` gates the bean on `@Profile(SPRING_PROFILE_DEVELOPMENT)` and `spring.profiles.group.prod` is `[kafka]` — so quality, which runs `dev,test`, is exactly the estate the zero-ERROR argument rests on. **CI catches this one** (*"A deliberate refusal may not be logged at ERROR, nor echo its arguments"*, derived from `jdl/*.jdl`, with `refusal-logging-level-test.sh` driving its own states — read the count off its last line, which it derives on every run, rather than from here) **and so does `LoggingAspectRefusalUnitTest`**, which is a new file in all five and is therefore the only thing left red after the regeneration that undoes the config |
 | The **`AuthenticationException` arm and the `AuthenticationServiceException` exclusion above it** in `getMappedStatus` | gateway `web/rest/errors/ExceptionTranslator.java` | **the login enumeration oracle comes back, silently, and the caller it harms most is the owner of the account** (D106, NEW-61). **A Java class rather than config — and ENUMERATE those rows rather than counting them**: `InitialSetupMigration` calls itself *"the only entry here that is a Java class"* and `LoggingAspect` calls itself *"the second"*, with the `@Scheduled` removal from `UserService` sitting above both, so the three ordinals already in this table cannot all be right and this row deliberately adds no fourth. `--force` restores the generated enumeration — `AccessDenied`/`ConcurrencyFailure`/`BadCredentials`/`UsernameNotFound`/`ConstraintViolation`, else `null` — which does not name `UserNotActivatedException`, this estate's own custom `AuthenticationException`. `toStatus` turns that `null` into **500**, so `POST /api/authenticate` answers 500 for a registered-but-never-activated account and 401 for everything else: `500` means "registered here and never activated", `401` means "not registered", askable about **any login or email address with no credential at all** (`POST /api/register` is `permitAll`, and the exception is thrown by the lookup *before* the password encoder is consulted, so the supplied password cannot change the answer). **It regresses three fields, not one** — `customizeProblem` derives the title *and* the `message` property from the status, so the 500 also reads `title: "Internal Server Error"` and `message: "error.http.500"` while every 401 reads `"Unauthorized"` / `"error.http.401"`. **And it widens back SIX buckets rather than one**: `UserNotActivatedException` plus `DisabledException`, `LockedException`, `AccountExpiredException`, `CredentialsExpiredException` and `CompromisedPasswordException` all return to 500, measured main-vs-head — the five extras being unreachable today (`UserWithId.fromUser` sets every account flag true, no `CompromisedPasswordChecker` is configured) and 401 being right for each at a login endpoint anyway. **Effectively silent, which is not the same as silent**: no health indicator moves and the estate's alerting keys on 5xx *rates* rather than on a 5xx that means something, but `handleAnyException` opens with `LOG.debug("Converting Exception to Problem Details:", ex)` and `application-dev.yml` sets `net.jojoaddison: DEBUG`, so on the quality box — which runs `dev,test` — the 500 **did** emit a DEBUG line with a stack trace. The first version of this row said *"nothing logs it"*, which contradicted the `@Scheduled` row above making the same dev-DEBUG point in the other direction. ⚠ **The exclusion is the half most likely to be lost separately or reordered**, and losing it inverts the harm: an unreachable account store would answer *"Invalid credentials"* with a **401**, hiding a real outage from `hc-market-rules.yaml`'s 5xx alerting. **The two redundant `BadCredentials`/`UsernameNotFound` arms are kept deliberately** so that a regeneration degrades to the old behaviour rather than sending two further buckets to 500. **No CI check guards this one, deliberately** — the guards are `UnactivatedLoginIsIndistinguishableInTheResponseIT` (7 cases, a real unactivated account) and `AuthenticationFailureStatusUnitTest` (5, carrying the two service-exception arms no request can reach), both **new files**, so they survive `--force` and are what is left red; a grep beside them would be a second mechanism for one property, which is how one of the two rots |
+
+| The four `process.env.HC_E2E_*` reads in the `expose` block | **`web/` `cypress.config.ts`** | **silent, and it is the only row in this table whose subject NOTHING EXECUTES** (D108, NEW-80). The first `web/` row, and the only one that is a **prediction rather than an observation**: `web/` has been generated once (D101) and never regenerated, so unlike the 25 August rows this one has not fired. `--force` restores `adminUsername: 'admin'`, `adminPassword: 'admin'`, `username: 'admin'`, `password: 'admin'` — four, not the two NEW-80 names — and the regenerated file **lints, formats and builds exactly as well as the correct one**. No spec can see it: `build.yml` sets `CYPRESS_INSTALL_BINARY: '0'`, so the binary is not even installed and the suite has never run anywhere. Nothing is leaked by the restoration either (the `dev`/`test` rule is published here and D61 makes `prod` refuse the path) — what is lost is that the file **states where a value comes from instead of what it is**, which is the one thing a reader of a public repository should not have to reconstruct from three documents. **CI catches this one** — *"Every e2e credential must come from the environment"*, deriving the field set from `commands.ts`' `interface Credentials` rather than listing it, with its own test beside it — and it is the **only** thing that would. Do not "tidy" a binding onto two lines: the check reads the field's own line and refuses a wrapped one, fail-closed |
 
 **Per app — generated classes to delete.** Each would otherwise win or tie an ambiguous mapping
 against the hand-written resource that replaced it:
@@ -1756,6 +1793,20 @@ the deployed image is the built one.
   declaration order, and driven through the test's `HC_CHECK=` it is **red on a correct tree** once a
   third template exists. Several of its cases distinguish nothing and **say so**, and which ones do
   was measured against the pre-fix version rather than assumed.
+  Since D108 it also holds **that no e2e credential is committed as a value** — *"Every e2e credential
+  must come from the environment"*, `e2e-credentials-are-not-committed.sh` with its own test;
+  **read both counts off those scripts' last lines**. It is the only check here whose subject **nothing
+  executes**, which is why it exists rather than why it does not: `web/cypress.config.ts` is generated,
+  `--force` restores four `'admin'` literals, and the regenerated file lints, formats and builds
+  identically while `CYPRESS_INSTALL_BINARY: '0'` means no spec could ever notice. The field set is
+  derived from `commands.ts`' `interface Credentials` — a fifth credential is answered for in the pull
+  request that adds it — and the assertion is **per field**, because a check asking only whether the
+  file mentions `HC_E2E_` passes a tree where one of four has regressed (measured, mutant M3).
+  ⚠ **Its test's first version could not see the stripper removed from the check**: the comment bait was
+  javadoc-shaped, whose `*`-prefixed lines the per-field pattern skips anyway, so the mutation changed
+  nothing and that read as proof. The bait is a **non-javadoc** block comment now — the house style, and
+  the reachable fail-open — and five of sixteen cases depend on the stripping where none did. **A
+  mutation that changes nothing is evidence about the test, not about the code.**
 
 **A CHECK MAY NOT ASK ITS QUESTION THROUGH A PIPE, and eleven of them did** (D98, backlog NEW-71).
 `grep -q` exits at its **first match**, its producer then takes `SIGPIPE` and dies **141**, and under

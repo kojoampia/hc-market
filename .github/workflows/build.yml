@@ -732,6 +732,26 @@ jobs:
       - name: …and that check must fail on each of the states it exists to refuse
         run: ./.github/checks/mail-links-are-served-test.sh
 
+      # --- THE E2E CREDENTIALS COME FROM THE ENVIRONMENT (decisions.md D108, backlog NEW-80) -------
+      #
+      # `web/cypress.config.ts` is generated, and what the generator writes is four bare `'admin'`
+      # literals in a PUBLIC repository. That is not a leak — the dev/test rule is published anyway and
+      # D61 makes `prod` refuse the path — and it is a thing a reader must RECONSTRUCT from three
+      # documents before concluding so. The estate's standing rule inverted: a committed default may
+      # exist only where it cannot be the value a running estate uses.
+      #
+      # This is the one check here whose subject NOTHING EXECUTES, which is exactly why it exists.
+      # `jhipster --force` restores the literals and the regenerated file lints, formats and builds
+      # identically; the `web` job sets CYPRESS_INSTALL_BINARY: '0', so the binary is not installed and
+      # no spec could notice. There is no suite behind this one, so a fail-open here is a fail-open
+      # with nothing under it — hence the test beside it, and hence the field set being DERIVED from
+      # `interface Credentials` in the specs' own support file rather than listed in the check.
+      - name: Every e2e credential must come from the environment
+        run: ./.github/checks/e2e-credentials-are-not-committed.sh
+
+      - name: …and that check must fail on each of the states it exists to refuse
+        run: ./.github/checks/e2e-credentials-are-not-committed-test.sh
+
       # "The agent must be verified as INSTRUMENTING, not merely loading" has been in CLAUDE.md
       # since D25 and was a paragraph of prose that had been run once, by hand. It is a script now
       # (deploy/verify-otel-agent.sh) and this holds the two together.

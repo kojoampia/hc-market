@@ -6834,7 +6834,52 @@ No decision from a person. It is one banner line and one probe, in a script this
 
 ---
 
-## NEW-80 — the marketplace client commits `admin`/`admin`, in a public repository · READY
+## NEW-80 — the marketplace client commits `admin`/`admin`, in a public repository · DONE (D108)
+
+> **CLOSED 2026-10-03 — `decisions.md` D108. All four credentials in `web/cypress.config.ts`'s
+> `expose` block read `process.env.HC_E2E_*` with the generator's own value as a documented fallback,
+> and the file now states where a value comes from instead of what it is.**
+>
+> ⚠ **IT IS FOUR LINES AND THIS ITEM NAMES TWO.** `adminUsername` and `username` are in that block
+> too, and a fix written to this description would have left half of it stating a value. All four are
+> changed, and D108 §5 argues the usernames rather than assuming them: the argument is **usefulness,
+> not sensitivity** — `cy.login(username, password)` takes them as a pair, so a config whose password
+> can be pointed at another estate and whose login cannot is a config that cannot be pointed anywhere.
+>
+> **THE SIBLING SWEEP IS RUN, AND THIS ITEM'S PREDICTION IS WRONG FOR TWO OF THE THREE.** Measured
+> read-only: `hc-patient/web` and `hc-professional/web` have **no `cypress.config.ts` at all**, and
+> `hc-admin/app` — which is deployed — carries the same shape with a **different value**
+> (`adminPassword: 'Admin@01234'`, with a comment giving its provenance). ⛔ **That is `hc-admin`'s to
+> route, not ours**; it was read and not edited, and no item here was opened about it. ⚠ The sweep's
+> own first pattern, `password: *'admin'`, answered **0** for `hc-admin/app`, which does carry a
+> literal credential — **match on the shape, never on a value**; a zero from a narrow pattern reads
+> exactly like a clean tree.
+>
+> ⚠ **`allowCypressEnv: false` DOES NOT BLOCK `CYPRESS_*`, AND THE REASONING THAT SAID SO IS
+> CORRECTED** (D108 §4). Measured against `cypress@15.18.1`'s own types: the flag governs the
+> **deprecated browser-side `Cypress.env()` API**, which Cypress recommends disabling and intends to
+> remove. It stays `false` on that better argument; reading `process.env` in a Node-evaluated config is
+> unrelated to it. **And `commands.ts` already carries a second override** —
+> `cy.env(['E2E_USERNAME', 'E2E_PASSWORD'])`, which wins over the config — deliberately left as the
+> outer link of one chain, because that pair is one username and one password for all four slots.
+>
+> **NOTHING EXECUTES THIS FILE, SO NOTHING TESTS THE CHANGE.** No `tsc` reads it (ESLint's typed block
+> is anchored at `src/main/webapp/**/*.ts`); lint parses it and prettier formats it, and that is the
+> whole of the behavioural coverage. What guards it is
+> **`.github/checks/e2e-credentials-are-not-committed.sh`** — field set derived from `interface
+> Credentials`, per field, on the field's own line, with a derivation floor — plus its test, which
+> **prints its own classified count** (16 cases, 12 refusals, 4 controls today). ⚠ **The test's first
+> version could not see a stripper removed from the check**: its comment bait was javadoc-shaped, which
+> the per-field pattern skips anyway, so the mutation changed nothing and read as proof. Five cases
+> depend on the stripping now.
+>
+> **A regeneration-table row is added** — the table's first `web/` entry, and a **prediction rather
+> than an observation**: `web/` has been generated once (D101) and never regenerated. `--force` puts
+> the four literals back, nothing fails, and the CI check is the only thing left red.
+>
+> **Not exercised**: **Cypress has still never run** (the binary is not even installed — `npm ci` with
+> `CYPRESS_INSTALL_BINARY=0`, as in CI), nothing is deployed, and **no estate was read or written**.
+> **NEW-94 opened**: `username`/`password` default to the administrator rather than to `user`.
 
 **Found 2026-09-24 at NEW-48 Stage A's merge gate**, by the secret scan rather than by review —
 neither the author nor two reviewers flagged it, because it is generated and it looks like furniture.
@@ -6882,6 +6927,11 @@ business, not this repository's, but the sweep is one `grep` and the answer chan
 
 No decision from a person, unless the sibling sweep finds something, in which case the finding is
 theirs to route.
+
+**The sweep is run and it did find something — `hc-admin/app` carries the same shape with a different
+value (D108 §2) — so this sentence is discharged in the only way it can be: recorded, and left with
+that product.** It is a different repository with its own backlog, and nothing in this package touched
+it. The two remaining siblings have no such file at all.
 
 ---
 
@@ -7541,3 +7591,46 @@ instances of it in one package.
 Nobody needs to decide anything. It is one spec file, modelled on `terms-are-not-quoted.spec.ts`'s two
 walks. The only judgement is how to treat a non-literal key, and the honest answer is to cover the
 literals and state the limit rather than widen until it is unreadable.
+
+---
+
+## NEW-94 — the e2e suite's "customer" is the administrator, in both slots · READY
+
+**Surfaced 2026-10-03 by NEW-80 (`decisions.md` D108 §3), which deliberately did not fix it.**
+
+`web/cypress.config.ts`'s `expose` block has four credential slots and the generator pointed all four
+at the same account:
+
+```
+adminUsername: … ?? 'admin',   adminPassword: … ?? 'admin',
+username:      … ?? 'admin',   password:      … ?? 'admin',
+```
+
+`commands.ts`' `interface Credentials` separates them — `adminUsername`/`adminPassword` for the
+administration specs, `username`/`password` for everything else — so the second pair exists precisely
+so a spec can act as a **non-administrator**. Pointed at `admin` it cannot: a spec asserting that an
+ordinary account does **not** see the admin menu would be signed in as the administrator and would
+assert the opposite of what it says.
+
+**The estate has the account this wants.** `dev`/`test` create `user` as well as `admin`, with
+passwords derived from their own logins by the rule this repository publishes — so the correct default
+is `'user'`/`'user'`, not an invention.
+
+**Why NEW-80 left it.** That item's subject is *where a credential comes from*, and it changed nothing
+about *what* any value is. Repointing a slot at a different account is a **behaviour change to a
+harness**, and the harness has never run — so the change cannot be verified by running anything, and
+folding it into a commit about provenance would have put an unverifiable behaviour change under a
+heading about secrets.
+
+⚠ **It is not observable by any gate that exists.** Nothing runs Cypress — `build.yml` sets
+`CYPRESS_INSTALL_BINARY: '0'` — so this is correct-looking configuration whose only test is the first
+real e2e run, which is itself blocked on a running gateway and an origin serving the client (D105 §3).
+Whoever first makes Cypress run should expect to settle this in the same package, and the two
+`HC_E2E_USERNAME`/`HC_E2E_PASSWORD` variables NEW-80 added are the seam for doing it without editing a
+generated file at all.
+
+### Not blocked
+
+No decision from a person. The only judgement is whether to change the committed default or to leave
+it and require the variables — and leaving it is what the estate does today, which is the state this
+item says is wrong.
