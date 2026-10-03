@@ -22733,7 +22733,7 @@ and response**, which costs more here than it would anywhere else in the estate:
 
 | claim | how it was established, 2026-10-03 |
 | --- | --- |
-| `summary.reference()` is platform-minted and discloses nothing | **verified at the writer.** `booking`'s `CustomerBookingResource:146` is `.reference("b-" + UUID.randomUUID().toString().substring(0, 8))` — no request field reaches it. And it is the value **booking answered with**, not `request.bookingReference()`, which is a caller's text; the two existing 409 messages already prefer it for the same reason |
+| `summary.reference()` is platform-minted and discloses nothing | **verified at the writer.** `booking`'s `CustomerBookingResource.create` mints it as `.reference("b-" + UUID.randomUUID().toString().substring(0, 8))` — no request field reaches it. (Named by method and expression rather than by line: this repository's own line citations have gone stale one commit later — D78 §7.) And it is the value **booking answered with**, not `request.bookingReference()`, which is a caller's text; the two existing 409 messages already prefer it for the same reason |
 | the two arms are genuinely distinguishable at the call site | **verified by reading, and the live reachability differs.** `hasName` is blank-or-equal; `isLogin` returned `true` for a **null** login, which is only reachable through `summary.customerLogin()` — the resource answers 401 before `callerLogin` can be null |
 | nothing already logs this | **verified.** `ReviewWriteResource` had exactly one `LOG.warn`, the unflagged-booking one, and D104 added no log line |
 | `LoggingAspect` will not double-report it | **verified by reading the advices.** `@AfterThrowing` logs a `Throwable` and `logAround`'s `catch` logs an `IllegalArgumentException`; a successful `publish` returns normally, so neither arm is reached. (Its entry/exit lines are DEBUG and `isDebugEnabled`-guarded, and the bean is `@Profile(dev)` besides) |
@@ -22811,7 +22811,7 @@ that also carried the name, which is the whole reason the two directions are sep
 
 | mutation | red |
 | --- | --- |
-| both arms share one message | `theTwoReasonsAreDistinguishable`, `theUnreadableIdentifierIsRecorded` |
+| both arms share one message — **two mutations, and each reddens 3**; see §12 for the correction | `theTwoReasonsAreDistinguishable`, `theNamelessBookingWithNoIdentifierIsTheNamelessFact`, and whichever presence case lost its reason |
 | the line interpolates `summary.customerName()` | `nothingIdentifyingReachesTheLineWhenAnIdentifierIsUnreadable` |
 | the line interpolates the caller's login | `nothingIdentifyingReachesTheLineWhenTheBookingNamedNobody` |
 | both arms at ERROR | `neitherReasonIsAnError`, and both presence cases |
@@ -22880,3 +22880,91 @@ in the commit that closes it.
   written to that estate — a reseed is the operator's.
 - **No estate touched, nothing deployed, Cypress still never run, and no human has looked at a
   rendering** — this package changes no markup and no response body.
+
+### §11 REVIEW — THE COMPILER DOES NOT CHECK A SWITCH *STATEMENT*, AND THE BRIEF SAID IT DID
+
+One should-fix, non-blocking, and it sits on a premise the work order carried: *"a `switch` without a
+default over an enum is checked by the compiler; an `if/else if` is not."* **That is true of a switch
+EXPRESSION and false of the switch STATEMENT this decision first committed** — arrow labels are a
+syntax for both, and JLS 14.11.2 requires exhaustiveness only where a value is yielded.
+
+**Measured in this tree, on these files, with a fourth `Authorship` constant added and covered by
+neither form** — not on a standalone toy, because the question is about *this* compilation:
+
+```
+javac 25.0.2
+
+EXPRESSION (as shipped)   ReviewWriteResource.java:[257,30] error: the switch expression
+                          does not cover all possible input values          compile exit=1
+STATEMENT  (first commit) compile exit=0 — and javac says nothing about the uncovered state
+```
+
+**So a fourth state would have been NEW-89's own defect for that state, and nothing would have been
+red.** `hasName` is `authorship(…) == SUPPLIED`, so anything else publishes the stand-in into an
+uncorrectable row — and the statement form would have fallen through and logged nothing, with the nine
+cases all green because they cover the three states that exist. `catalog/pom.xml` carries no
+`-Werror`, no `-Xlint` and no `failOnWarning`, so a lint warning would not have been a gate either;
+there is not even a warning to escalate.
+
+**The expression form is taken rather than `default -> throw`.** Both close the hole; they differ in
+*when*. A `default` arm makes the expression exhaustive **by construction**, so javac stops asking and
+the fourth state becomes a runtime throw on a request that would otherwise have succeeded — on the
+write path of a review somebody has earned, which is the one place this estate refuses to move a
+failure later. ⛔ **There is therefore no `default` and no runtime throw, and adding either re-opens
+this.**
+
+**No test asserts it, and that is the honest answer rather than a gap.** The property is *"a fourth
+state does not compile"*, so there is nothing for a test to execute: a case that planted a fourth
+constant would have to be a separate compilation, and the repository already knows what that costs —
+the two `strip-comments-test.sh` cases that embed the version they replaced exist because a defect
+reproduced is worth more than one asserted in prose, and here the compiler **is** the assertion. The
+transcript above is the record, the script that produced it is written out, and the site comment says
+which form is load-bearing and why.
+
+**Two consequences for shape.** The two messages are `private static final` constants now
+(`SUPPRESSED_NO_NAME`, `SUPPRESSED_UNREADABLE_IDENTIFIER`) rather than inline literals — the
+expression yields a value, the fence on what a line may carry is stated once beside the strings it
+governs, and neither line is 140 characters wide. And `case SUPPLIED -> null` with
+`if (suppression != null)` is the silence: a sentinel, and a deleted guard logs `null` rather than
+leaking anything, which `anOrdinaryReviewSaysNothing` is red for.
+
+### §12 TWO FURTHER CORRECTIONS FROM THE SAME ROUND, BOTH TO THIS DECISION'S OWN RECORD
+
+**§6's "both arms share one message" row said 2 reddened cases. It is 3, and in BOTH directions — and
+the reason it read 2 is the lesson.** That row was measured **before the ninth case existed**: §6's own
+paragraph records that `theNamelessBookingWithNoIdentifierIsTheNamelessFact` was added later in the same
+package, and it compares the two rendered messages for inequality, so it reddens on a collapse as well.
+The row was never re-measured after the case that changed its answer landed. Re-measured now, on the
+constants:
+
+```
+A. IDENTIFIER_UNREADABLE given the no-name message   → theNamelessBooking…, theTwoReasonsAreDistinguishable, theUnreadableIdentifierIsRecorded
+B. NOT_SUPPLIED given the unreadable message         → theNamelessBooking…, theTwoReasonsAreDistinguishable, theBookingThatNamedNobodyIsRecorded
+```
+
+**It is also two mutations and the table called it one.** They are not symmetric — each loses a
+different presence case — and a table listing one direction describes half the guard. **A mutation
+table is a measurement with a date on it**: adding a case invalidates every row it touches, and the
+rows do not announce that they are stale.
+
+**And a line-number citation is replaced by the expression it quotes.** §2 cited
+`CustomerBookingResource:146` for the reference minting; this repository's rule is D78 §7's — thirteen
+line numbers there were stale one commit later — so it names `CustomerBookingResource.create` and the
+expression instead, here and in `CLAUDE.md`. The `:148` citations elsewhere in D104 are that decision's
+and were left alone.
+
+### §13 THE GATES, RE-RUN ON THE EXPRESSION FORM
+
+`cd catalog && ./mvnw clean verify` on `JAVA_HOME=/usr/lib/jvm/jdk-25.0.2-oracle-x64`: **BUILD
+SUCCESS**, surefire **163**, failsafe **94**, modernizer printed no violation line, checkstyle 0.
+
+⚠ **This section first said 164, written before the run, "because the ninth case landed with this
+round".** Both halves were wrong: the ninth case landed **before** §6's figure was taken, so 163 already
+counted it and the round that produced this section added **no test at all** — the class reads
+`Tests run: 9` in both logs. It is the defect this whole decision keeps naming, committed inside the
+review correcting another instance of it: **a count derived from an argument instead of from a run**, and
+the argument was plausible enough that nothing about it looked like a guess.
+`review-author-guard-test.sh`: **24 refusals, 5 controls, 29 states driven — ok**.
+`refusal-logging-level-test.sh`: **19 assertions, all passed**. The shipped author-composition step run
+against this tree: `ok 133 files scanned, 8 author writes in 4 files — each naming its own file's
+token, none composing`.

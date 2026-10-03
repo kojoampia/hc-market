@@ -2977,8 +2977,8 @@ time.**
   column nothing can edit. `ReviewWriteResource` now records it at **WARN** in **two** messages, because
   "the booking named nobody" and "an identifier could not be read" are two facts and D104 §5's own rule
   is that facts must not collapse into one value. ⛔ **The line carries `summary.reference()` and the
-  reason and nothing else** — platform-minted (`"b-" + a UUID prefix`, `CustomerBookingResource:146`),
-  and it is the value *booking answered with* rather than the caller's `request.bookingReference()`. Not
+  reason and nothing else** — platform-minted (`CustomerBookingResource.create` mints `"b-" + a UUID
+  prefix`), and it is the value *booking answered with* rather than the caller's `request.bookingReference()`. Not
   the name, not either login, nothing derived from them, and **not `saved.getReference()`** either:
   `bookingReference` is unique on `Review`, so the row is addressable from the booking alone, and a log
   is a place the erasure sweep does not reach and cannot re-key.
@@ -2992,6 +2992,19 @@ time.**
   `LOG.warn` is not an author-write line, measured by running the shipped step — so what holds it is
   `TheSuppressedAuthorNameIsAudibleTest`, whose **absence** cases matter more than its presence ones and
   use values a leak could not be mistaken for.
+  ⚠ **THE SELECTION IS A SWITCH *EXPRESSION* AND THAT IS LOAD-BEARING: javac does NOT check a switch
+  STATEMENT for exhaustiveness, arrow labels or not** (D110 §11, found at review, where the work order
+  asserted the opposite). JLS 14.11.2 requires it only where a value is yielded — measured in-tree on
+  `javac 25.0.2` with a fourth `Authorship` constant uncovered: the expression is `error: the switch
+  expression does not cover all possible input values` and exit 1, **the statement is exit 0, silent, and
+  falls through**, and `catalog/pom.xml` has no `-Werror`, `-Xlint` or `failOnWarning` to escalate
+  anything. A fourth state would be NEW-89 again *for that state* — `hasName` is false for anything but
+  `SUPPLIED`, so the stand-in lands in an uncorrectable row and nothing is logged, with every test green.
+  ⛔ **No `default` arm and no runtime throw**: either makes the expression exhaustive by construction and
+  moves the failure onto a request that would otherwise have succeeded. The two messages are
+  `private static final` constants because the expression yields a value, and the fence belongs beside
+  them. **The compiler is the assertion here and no test can be** — the property is that it does not
+  compile. The same trap is one `->` away in any service: a statement and an expression read alike.
 - Two verification scripts run against a live estate and are the fastest way to know it still
   works end to end. Both need `/tmp/tok-pro.txt` and `/tmp/tok-cust.txt` — HS512 tokens minted with
   the estate's `JWT_BASE64_SECRET`, subject = login, authorities in the `auth` claim:

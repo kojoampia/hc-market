@@ -7463,6 +7463,20 @@ keeping *"the commonest ordinary state"* out of the second arm, which is false �
 present only the first guard can fire, so the order decides exactly one input and the ninth test case
 exists to drive it. Both are in D110 §6.
 
+⚠ **AND REVIEW FOUND A THIRD, IN THE WORK ORDER'S OWN PREMISE — D110 §11.** The brief said *"a `switch`
+without a default over an enum is checked by the compiler"*, which is true of a switch **expression** and
+**false of the switch STATEMENT this item first shipped**: arrow labels are a syntax for both, and JLS
+14.11.2 requires exhaustiveness only where a value is yielded. Measured in-tree on `javac 25.0.2` with a
+fourth `Authorship` constant uncovered — **expression: `error: the switch expression does not cover all
+possible input values`, exit 1; statement: exit 0, silent, falls through** — and `catalog/pom.xml` carries
+no `-Werror`, `-Xlint` or `failOnWarning`, so nothing downstream would have caught it either. **A fourth
+state would have been this item's own defect for that state**: `hasName` is false for anything but
+`SUPPLIED`, so the stand-in lands in an uncorrectable row and nothing is logged, with all nine cases
+green. It is the expression form now and ⛔ **there is no `default` arm and no runtime throw** — either
+makes the expression exhaustive by construction and moves the failure to a request that would otherwise
+have succeeded. No test asserts this and none can: the property is *"it does not compile"*, so the
+compiler is the assertion and §11 carries the transcript.
+
 **Everything below is the item as opened**, including the premises that held.
 
 **Opened at NEW-81's delta re-review** (recorded in `CLAUDE.md` rather than in the decision log — see
