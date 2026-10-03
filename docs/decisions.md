@@ -22196,10 +22196,38 @@ declarations** (`node_modules/cypress/types/cypress.d.ts`):
 > configuration. … This will be the default behavior in a future major version and `Cypress.env()`
 > will be removed."*
 
-So the flag governs the **deprecated browser-side API**, not the ingestion of `CYPRESS_*` variables,
-which still reach `cy.env()`. **The conclusion the brief drew is unchanged and its mechanism was
-wrong**, which matters because anyone reasoning from that mechanism about any other variable will
-reason wrongly. It is the `/proc/1/cmdline` family again, in a work order rather than in a probe.
+⚠ **THAT CITATION COVERS HALF THE CLAIM AND REVIEW WAS RIGHT TO SAY SO.** The types say what the flag
+*is*; they say nothing about `CYPRESS_*` ingestion — the prefix appears nowhere under `types/`. The
+second half is measurable in the **runner and config sources**, and those are not in `node_modules`
+(the npm package is a CLI; the runner lives in the downloaded binary, which this package did not
+install). They are on this workstation in the **binary cache**, and all three readings below were
+reproduced there rather than taken from the review, at
+`~/.cache/Cypress/15.18.1/Cypress/resources/app/packages/`:
+
+```
+runner/dist/cypress_runner.js:41661
+  this.env = !isAllowCypressEnvEnabled ? failCypressEnvWithWarning : setterGetter.create(env);
+runner/dist/cypress_runner.js:41662
+  this.expose = setterGetter.create(expose);                      <- untouched by the flag
+runner/dist/cypress_runner.js:94625
+  "`Cypress.env()` does not work when `allowCypressEnv` is set to `false`.
+   Please migrate to `cy.env()` …"                                <- Cypress saying cy.env() still works
+config/esm/project/utils.js:57-77
+  const CYPRESS_ENV_PREFIX = 'CYPRESS_';  isCypressEnvLike(key);  removeEnvPrefix(key)
+```
+
+So the flag governs the **deprecated browser-side API**, `expose` is not touched by it at all, and the
+`CYPRESS_` → `env` ingestion is in the config package, independent of the flag. **The conclusion the
+brief drew is unchanged and its mechanism was wrong** — which matters because anyone reasoning from
+that mechanism about any other variable will reason wrongly. It is the `/proc/1/cmdline` family in a
+work order rather than in a probe, and **the first version of this section committed a smaller version
+of the same error**: citing the evidence it had for the half it covered, for both halves.
+
+One thing that reading also establishes and nobody had asked: `PLAIN_OBJECT_CONFIG_KEYS_FROM_ENV` is
+`new Set(['env', 'expose'])`, so **`CYPRESS_expose` as a JSON object is itself an override path** for
+this whole block. It does not make the four variables redundant — a JSON blob is not a named per-slot
+variable, nothing documents it, and it replaces rather than explains — but it is worth knowing before
+anyone argues this file cannot be influenced from outside.
 
 It stays `false` for a **better** reason than the one offered: flipping it re-enables an API Cypress
 itself recommends disabling and intends to remove. **Reading `process.env` in the config is unrelated
@@ -22236,55 +22264,100 @@ the four has regressed, measured as mutation M3.
 
 ### §6 THE GUARD, AND WHAT NOTHING CAN COVER
 
-**Nothing executes this file, so nothing tests the change.** `npm run lint` parses it (ESLint's typed
-block is anchored at `src/main/webapp/**/*.ts`, so this file is linted **untyped** and **no `tsc`
-reads it at all** — `tsconfig.app.json` and `tsconfig.spec.json` cover the webapp), `prettier:check`
-formats it, and `webapp:prod` never looks at it. There is no spec to go red, and there cannot be one
-while Cypress has no estate to run against.
+**Nothing executes this file, so nothing tests the change — and it is worse than the first version of
+this section said.** That version read *"`npm run lint` parses it … so this file is linted untyped"*.
+⚠ **ESLint does not lint it at all**, measured at review's prompting:
+
+```
+$ npx eslint cypress.config.ts -f json
+cypress.config.ts   errors 0   warnings 1   ["File ignored because no matching configuration was supplied."]
+```
+
+`eslint.config.ts`'s TypeScript globs are `src/main/webapp/**/*.ts`, `…/*.spec.ts` and
+`src/test/javascript/cypress/**/*.ts`; a **root-level** `.ts` matches none of them. No `tsc` reads it
+either (`tsconfig.app.json` and `tsconfig.spec.json` cover the webapp), and `webapp:prod` never looks
+at it. **So `prettier:check` is the only gate in this repository that parses this file at all**, and
+the only reason a syntax error in it would be red — which makes the conclusion stronger rather than
+weaker, and is why that step is not redundant beside `lint` for a second reason now. **The error is
+this decision's own subject one layer up**: §4 corrects a work order for asserting a mechanism it had
+not measured, and §6 asserted a tool's reach from its glob in the same commit.
 
 So the guard is text: **`.github/checks/e2e-credentials-are-not-committed.sh`**, wired into the
-`consistency` job with its test beside it. Three properties, and one of them is the derivation:
+`consistency` job with its test beside it. **Review found three fail-opens in it and all three are
+closed** — each is named below at the property it broke, because a guard's history is the only honest
+account of its reach:
 
 - **The field set comes from `interface Credentials` in `commands.ts`**, brace-bounded — the specs'
   own contract, so a generator adding a fifth credential is answered for in the pull request that
-  adds it. A list of four in the check could not see that, and every enumerated list in this
-  repository's CI has gone stale or failed open (NEW-15).
-- **Per field, on the field's own line** — so one regression of four is red, and a prettier-wrapped
-  binding is refused: fail-closed, exactly as D60's `.zoneId(` is.
-- **A derivation floor**, because a for-each over nothing prints `ok` having compared nothing.
+  adds it. A list of four in the check could not see that (NEW-15).
+  ⚠ **FAIL-OPEN 1: TypeScript's optional marker.** The pattern was `<name>:`, which does not match
+  `adminUsername?:`, so that field was **silently dropped**: `derived 3 field(s)`, an honest count,
+  past a `>= 2` floor, **exit 0 with a committed literal**. Under-derivation in the one mechanism this
+  check offers as its answer to the item whose root cause was *"no test could see an omission from a
+  list"*. `\??` closes it — **and the floor was the real defect**, because a count compared against
+  nothing cannot notice a missing field.
+- **So the set is derived TWICE, from unrelated shapes, and the two must be EQUAL**: the interface's
+  field names, and the `Cypress.expose('…')` names inside the `credentials` command's own body. A
+  blindness in one regex cannot be in the other. TypeScript makes it a real invariant rather than a
+  convention — the command returns `Credentials`, so an interface field the body never assigns does
+  not compile — which is also why **the test's own case 13 had to be fixed rather than the check**: it
+  added a fifth field to the interface alone, a state the compiler forbids (D98 §4b's rule, met again).
+- **Per field, on EVERY line that binds it, inside the `expose` block.**
+  ⚠ **FAIL-OPEN 2: `grep -m1` reads the first binding and JavaScript obeys the last.** A duplicate key
+  with `process.env.…` above `password: 'admin'` exited **0** with the literal in force — and ESLint's
+  `no-dupe-keys` is no backstop, because it does not lint this file at all. Not a regeneration shape
+  (`--force` rewrites the whole block); a merge resolution or a hand-edit.
+  ⚠ **FAIL-OPEN 3: the scope was the whole file while the code's own comment claimed the `expose`
+  block.** Four correct bindings in a neighbouring `env: { }` with every credential in `expose` left a
+  literal passed as *"4 checked"*. **A comment is not a scope.** The block is brace-bounded now.
+- A prettier-wrapped binding is still refused — fail-closed, exactly as D60's `.zoneId(` is.
 
-**Driven, not asserted.** `e2e-credentials-are-not-committed-test.sh` builds a synthetic tree per case
-and **prints its own classified count** — read that line, not a number from here; today **16 cases,
-12 refusals, 4 controls**. Three mutations of the shipped check were driven through it from a
-uniquely-named scratch directory, with the unmutated check as the control in the same run:
+**Driven, not asserted, and the test prints its own classified count** — read that line, not a number
+from here; today **22 cases, 17 refusals, 5 controls**. **Eight** mutations of the shipped check were
+driven through it from a uniquely-named scratch directory, with the unmutated check as a control in
+every run:
 
-| mutant | one line changed | cases it turns green |
+| mutant | changed | cases it turns green |
 | --- | --- | --- |
-| M1 | the config is read **raw** instead of through `strip-comments.awk` | **5** — 3, 4, 5, 6, 12 |
-| M2 | the derivation floor becomes `< 0` | **2** — 7, 8 |
-| M3 | the per-field read becomes a whole-file read | **3** — 4, 5, 14 |
-| control | none | **0 of 16** |
+| M1 | the config is read **raw** rather than through `strip-comments.awk` | **3** — 6, 12, 22 |
+| M2 | the derivation floor becomes `< 0` | **0** — subsumed by the cross-check; M8 is what shows it |
+| M3 | the per-field read is scoped to the whole **file** rather than to `expose` | **1** — 22 |
+| M4 | the optional marker `\??` is dropped | **0** — the cross-check holds the line; M5 shows it |
+| M5 | M4 **and** the cross-check disabled — the pre-review fail-open in full | **2** — 17, 20 |
+| M6 | `grep -m1`: only the first binding line is read | **1** — 18 |
+| M7 | the cross-check alone disabled | **1** — 20 |
+| M8 | M7 **and** the floor disabled | **3** — 7, 8, 20 |
+| control | none | **0 of 22** |
 
-⚠ **M1 WAS NOT DISCRIMINATED BY THE FIRST VERSION OF THE TEST, and why is this package's own
-finding.** Case 3 planted the four bindings in a **javadoc-shaped** comment — `*`-prefixed
-continuation lines — which the per-field pattern `^[[:space:]]*<field>:` does not match *anyway*, so
-stripping or not stripping made no difference and all 16 cases passed under M1. The reachable
-fail-open is the **non-javadoc block comment**, which is this repository's house style and is the shape
-the subject's own comment has: an indented line inside `/* … */` reading
-`adminUsername: process.env.HC_E2E_ADMIN_USERNAME ?? 'admin',` is matched by that pattern, is found
-*first* by `grep -m1`, and satisfies an unstripped check while the real line below it says `'admin'`.
-The fixture carries that bait now — at a deeper indentation, so a case can rewrite the four-space real
-lines and leave it intact — and **five cases depend on the stripping where none did**. This is D77's
-string-blindness lesson arriving as *fixture* blindness: **a mutation that changes nothing is not
-evidence that the code is right, it is evidence that the test is not looking.**
+⚠ **TWO MUTANTS REPORT ZERO AND THAT IS THE DESIGN, NOT A GAP** — M2 and M4 are each held by a second
+rule, which is what §6's own history argues for; M5 and M8 are the pairs that establish it. **Do not
+delete the floor or the `\??` on the strength of a zero**: a mutant that reddens nothing because
+another rule caught it is not the same as one that reddens nothing because nothing is looking, and the
+only way to tell is the paired mutation.
+
+⚠ **AND WHICH CASE COVERS WHICH MUTATION HAS NOW MOVED TWICE — this is the package's finding about its
+own test.** The first version planted the comment bait in a **javadoc-shaped** comment, whose
+`*`-prefixed lines the per-field pattern skips anyway, so removing the stripper changed nothing and
+**all cases passed under M1** — read at the time as evidence the code was right. The second placed a
+correctly-shaped bait **above** `expose:`, which the new block scoping puts out of range: *a bait
+outside the scope is not a bait*. It now sits **inside** the block, where the subject's own comment is.
+Even so, cases 3, 4 and 5 — written as the stripper's subjects — are **survivors** of M1, because the
+every-binding-line rule refuses the literal whether or not the prose is also matched; the stripper's
+real subjects are the **absence** cases 6 and 22, where the only matching line is prose, and case 12,
+whose assertion reads the whole file. Every case now states what it distinguishes **today**. D77's
+string-blindness lesson arriving as *fixture* blindness, twice: **a mutation that changes nothing is
+evidence about the test, not about the code.**
 
 **What the check does not reach**, stated rather than left as an empty column: it does not run Cypress
 and cannot; it does not judge the fallback **value** (`?? 'admin'` and `?? 'hunter2'` are alike to it —
 what it holds is that a real value can arrive from outside, with the provenance left to prose and
-pinned by control case 16); and it reads lines rather than parsing the object, which is why each
-binding must stay on one line. The non-credential keys — `authenticationUrl`, `jwtStorageName` — are
-**not** in `interface Credentials` and may stay literals; control case 15 exists so a widening to
-*"no quoted literal in the `expose` block"* is red rather than adopted.
+pinned by control case 16); duplicates are not themselves refused, only committed values are (control
+21); and it reads lines rather than parsing the object, which is why each binding must stay on one
+line. The second derivation is bounded by the `credentials` command's own body, so a restructuring that
+moves those calls elsewhere is **refused rather than followed** — fail-closed, with both sets named in
+the refusal. The non-credential keys — `authenticationUrl`, `jwtStorageName` — are **not** in
+`interface Credentials` and may stay literals; control case 15 exists so a widening to *"no quoted
+literal in the `expose` block"* is red rather than adopted.
 
 ### §7 THE REGENERATION TABLE GETS A ROW, AND IT IS THE FIRST `web/` ROW
 

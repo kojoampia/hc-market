@@ -182,13 +182,19 @@ cannot be the value a running estate uses**. Nothing about the old state was a l
 rule is published here anyway and D61 makes `prod` refuse to create an administrator without
 `HC_GATEWAY_ADMIN_PASSWORD` — and what was wrong is that a reader had to reconstruct all of that from
 three documents before concluding so.
-**Nothing executes that file, so nothing tests it**: no `tsc` reads it (ESLint's typed block is
-anchored at `src/main/webapp/**/*.ts`), lint parses it, prettier formats it, and no spec can notice a
-regression because **no estate runs Cypress at all**. The guard is therefore a CI check —
-`e2e-credentials-are-not-committed.sh`, field set derived from `commands.ts`' own `interface
-Credentials`, per field, on the field's own line — with a test beside it whose **own last line carries
-its count**. Keep each binding on **one** line; a prettier-wrapped one is refused, as D60's `.zoneId(`
-is.
+⚠ **NOTHING EXECUTES THAT FILE AND `prettier:check` IS THE ONLY GATE THAT EVEN PARSES IT.** No `tsc`
+reads it, and **ESLint does not lint it at all** — measured, `npx eslint cypress.config.ts` answers
+*"File ignored because no matching configuration was supplied"* and exits 0, because
+`eslint.config.ts`'s `.ts` globs are `src/main/webapp/**/*.ts`, `…/*.spec.ts` and
+`src/test/javascript/cypress/**/*.ts`, none of which a **root-level** `.ts` matches. D108 §6 said
+*"linted untyped"* for one commit and that was a claim read off a glob rather than measured. So a syntax
+error there is red in `prettier:check` and nowhere else, which is a second reason that step is not
+redundant beside `lint`. The guard is therefore a CI check —
+`e2e-credentials-are-not-committed.sh`, field set derived **twice** (from `commands.ts`' `interface
+Credentials` *and* from the `credentials` command's own `Cypress.expose(…)` calls, which must agree),
+asserted per field on **every** line that binds it, **inside the brace-bounded `expose` block** — with a
+test beside it whose **own last line carries its count**. Keep each binding on **one** line; a
+prettier-wrapped one is refused, as D60's `.zoneId(` is.
 
 ⚠ **`allowCypressEnv: false` DOES NOT CONTROL `CYPRESS_*`, AND THAT CLAIM HAS BEEN WRITTEN DOWN
 WRONG** (D108 §4). Measured against `cypress@15.18.1`'s own types, it governs whether the
@@ -1799,13 +1805,22 @@ the deployed image is the built one.
   executes**, which is why it exists rather than why it does not: `web/cypress.config.ts` is generated,
   `--force` restores four `'admin'` literals, and the regenerated file lints, formats and builds
   identically while `CYPRESS_INSTALL_BINARY: '0'` means no spec could ever notice. The field set is
-  derived from `commands.ts`' `interface Credentials` — a fifth credential is answered for in the pull
-  request that adds it — and the assertion is **per field**, because a check asking only whether the
-  file mentions `HC_E2E_` passes a tree where one of four has regressed (measured, mutant M3).
-  ⚠ **Its test's first version could not see the stripper removed from the check**: the comment bait was
-  javadoc-shaped, whose `*`-prefixed lines the per-field pattern skips anyway, so the mutation changed
-  nothing and that read as proof. The bait is a **non-javadoc** block comment now — the house style, and
-  the reachable fail-open — and five of sixteen cases depend on the stripping where none did. **A
+  derived **twice** — from `commands.ts`' `interface Credentials` and from the `credentials` command's
+  own `Cypress.expose(…)` calls, which must be **equal** — and the assertion is **per field, on every
+  line that binds it, inside the brace-bounded `expose` block**.
+  ⚠ **Review found three fail-opens in it and each is one of those words**: `<name>:` missed
+  `adminUsername?:` and dropped that field silently (`derived 3 field(s)`, exit **0**, literal
+  committed — an honest count compared against nothing, which is why the second derivation exists);
+  `grep -m1` read the first binding where **JavaScript obeys the last**, so a duplicate key whose
+  second copy is a literal passed; and the grep was over the whole **file** while the code's own
+  comment claimed the `expose` block, so four correct bindings in a neighbouring `env: { }` satisfied
+  it — **a comment is not a scope**. ESLint backstops none of it: it does not lint that file at all.
+  ⚠ **AND WHICH CASE COVERS WHICH MUTATION HAS MOVED TWICE — read the cases, not the headings.** The
+  test's first comment bait was javadoc-shaped, whose `*`-prefixed lines the per-field pattern skips
+  anyway, so removing the stripper changed nothing and that read as proof; the second was the right
+  shape but sat **above** `expose:`, which the new scoping puts out of range — *a bait outside the scope
+  is not a bait*. Two of the eight mutants report **zero** deliberately, each held by a second rule, so
+  the paired mutations are what establish them and **a zero is not a licence to delete the rule**. **A
   mutation that changes nothing is evidence about the test, not about the code.**
 
 **A CHECK MAY NOT ASK ITS QUESTION THROUGH A PIPE, and eleven of them did** (D98, backlog NEW-71).

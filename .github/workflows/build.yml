@@ -741,11 +741,15 @@ jobs:
       # exist only where it cannot be the value a running estate uses.
       #
       # This is the one check here whose subject NOTHING EXECUTES, which is exactly why it exists.
-      # `jhipster --force` restores the literals and the regenerated file lints, formats and builds
-      # identically; the `web` job sets CYPRESS_INSTALL_BINARY: '0', so the binary is not installed and
-      # no spec could notice. There is no suite behind this one, so a fail-open here is a fail-open
-      # with nothing under it — hence the test beside it, and hence the field set being DERIVED from
-      # `interface Credentials` in the specs' own support file rather than listed in the check.
+      # `jhipster --force` restores the literals and the regenerated file passes every gate above: the
+      # `web` job sets CYPRESS_INSTALL_BINARY: '0' so the binary is not installed and no spec could
+      # notice, no tsc reads a root-level .ts, and ESLint IGNORES the file outright ("File ignored
+      # because no matching configuration was supplied", exit 0) — prettier:check is the only step that
+      # parses it. There is no suite behind this one, so a fail-open here is a fail-open with nothing
+      # under it — hence the test beside it, hence the field set being DERIVED (twice, from two
+      # unrelated shapes that must agree) rather than listed, and hence three fail-opens found at
+      # review: an optional field marker, grep -m1 against JavaScript's last-key-wins, and a whole-file
+      # grep behind a comment claiming the `expose` block.
       - name: Every e2e credential must come from the environment
         run: ./.github/checks/e2e-credentials-are-not-committed.sh
 

@@ -6863,15 +6863,24 @@ No decision from a person. It is one banner line and one probe, in a script this
 > `cy.env(['E2E_USERNAME', 'E2E_PASSWORD'])`, which wins over the config — deliberately left as the
 > outer link of one chain, because that pair is one username and one password for all four slots.
 >
-> **NOTHING EXECUTES THIS FILE, SO NOTHING TESTS THE CHANGE.** No `tsc` reads it (ESLint's typed block
-> is anchored at `src/main/webapp/**/*.ts`); lint parses it and prettier formats it, and that is the
-> whole of the behavioural coverage. What guards it is
-> **`.github/checks/e2e-credentials-are-not-committed.sh`** — field set derived from `interface
-> Credentials`, per field, on the field's own line, with a derivation floor — plus its test, which
-> **prints its own classified count** (16 cases, 12 refusals, 4 controls today). ⚠ **The test's first
-> version could not see a stripper removed from the check**: its comment bait was javadoc-shaped, which
-> the per-field pattern skips anyway, so the mutation changed nothing and read as proof. Five cases
-> depend on the stripping now.
+> **NOTHING EXECUTES THIS FILE, SO NOTHING TESTS THE CHANGE — and `prettier:check` is the ONLY gate
+> that even parses it.** No `tsc` reads it, and ⚠ **ESLint does not lint it at all**: measured,
+> `npx eslint cypress.config.ts` answers *"File ignored because no matching configuration was supplied"*
+> and exits 0, because a **root-level** `.ts` matches none of `eslint.config.ts`'s three `.ts` globs.
+> This entry said *"lint parses it"* for one commit, which was a claim read off a glob rather than
+> measured — the same error D108 §4 corrects in the work order, one layer up.
+>
+> What guards it is **`.github/checks/e2e-credentials-are-not-committed.sh`** — the field set derived
+> **twice** (from `interface Credentials` *and* from the `credentials` command's own `Cypress.expose(…)`
+> calls, which must agree), asserted per field on **every** line that binds it, inside the brace-bounded
+> `expose` block — plus its test, which **prints its own classified count** (22 cases, 17 refusals, 5
+> controls today). ⚠ **Review found three fail-opens in that check and all are closed**: an optional
+> field marker dropped a field silently and exited 0 over a committed literal; `grep -m1` read the first
+> binding where JavaScript obeys the last; and the grep was over the whole file while its own comment
+> claimed the `expose` block. ⚠ **And the test's own coverage has moved twice** — its first comment bait
+> was javadoc-shaped (a shape the pattern skips anyway, so the mutation changed nothing and read as
+> proof), its second sat outside the new scope. Eight mutants now, two reporting **zero** deliberately
+> because a second rule holds them, with the paired mutations that establish it.
 >
 > **A regeneration-table row is added** — the table's first `web/` entry, and a **prediction rather
 > than an observation**: `web/` has been generated once (D101) and never regenerated. `--force` puts

@@ -8,9 +8,16 @@
 #  planted, which is a real failure in this workspace's history.
 #
 #  WHY THIS TEST EXISTS AT ALL, for a check over a file nothing executes. Because the check is the
-#  ONLY guard: no suite runs Cypress, so a fail-open here is a fail-open with nothing behind it. Case
-#  3 is the one that settles it — the subject's real comment block names all four variables, so an
-#  unstripped check is satisfied by the prose explaining the rule it is enforcing.
+#  ONLY guard: no suite runs Cypress, so a fail-open here is a fail-open with nothing behind it. Three
+#  of the check's own fail-opens were found by review rather than here — an optional field marker
+#  (case 17), `grep -m1` where JavaScript obeys the last key (18), and a whole-file grep behind a
+#  comment claiming the `expose` block (19, 22) — which is the argument for the eight mutants rather
+#  than against them.
+#
+#  ⚠ WHICH CASE DISTINGUISHES WHICH MUTATION IS MEASURED AND HAS MOVED TWICE. Do not assume a case
+#  covers what its heading suggests: cases 3, 4 and 5 were the stripper's subjects until the
+#  every-binding-line fix refused them twice over, and the stripper's real subjects are now the
+#  ABSENCE cases, 6 and 22, plus 12. Each case says what it distinguishes today.
 #
 #  Every case classifies itself as a `refusal` or a `control`, and the trailer refuses to print unless
 #  the counters reconcile with what `report` saw (D98's correction to the account-lifecycle test,
@@ -67,29 +74,34 @@ build() {
   rm -rf "$dir"
   mkdir -p "$dir"
 
-  # ⚠ THE COMMENTS HERE ARE THE FIXTURE'S POINT, NOT DECORATION. They mirror the real subject's own
-  # prose: a NON-JAVADOC block comment (the house style, and the shape D77's string-blind stripper
-  # family keeps being caught by) whose indented lines are byte-identical to the real bindings, plus a
-  # sentence quoting `allowCypressEnv: false`. That is the bait. Cases 3 and 12 restore the defect
-  # BELOW this comment, so an unstripped check reads the comment's copy first and reports `ok` —
-  # measured: with the stripping removed from the check, both go green. A javadoc-shaped comment would
-  # NOT have discriminated, because `*`-prefixed lines do not match the per-field pattern anyway, and
-  # the first version of this fixture made exactly that mistake.
+  # ⚠ THE COMMENTS HERE ARE THE FIXTURE'S POINT, NOT DECORATION, AND WHERE THEY SIT IS HALF OF IT.
+  # They mirror the real subject: a NON-JAVADOC block comment (the house style, and the shape D77's
+  # string-blind stripper family keeps being caught by) whose indented lines are byte-identical to the
+  # real bindings — placed INSIDE the `expose` block, which is where the subject's own comment is. Cases
+  # 3 to 6 restore the defect below it, so an unstripped check reads the comment's copy and reports
+  # `ok`; measured, five cases go green with the stripping removed. Two placements have now been wrong
+  # here: a javadoc-shaped comment (whose `*`-prefixed lines the per-field pattern skips anyway, so the
+  # mutation changed nothing), and a correct-shaped one placed ABOVE `expose:`, which the block scoping
+  # added at review puts out of range. A bait outside the scope is not a bait.
+  #
+  # `allowCypressEnv: false` is quoted in a comment too, outside the block — that assertion reads the
+  # whole file, and case 12 is what holds the stripping honest for it.
   cat >"$dir/cypress.config.ts" <<'TS'
 import { defineConfig } from 'cypress';
 
 export default defineConfig({
   retries: 2,
-  /*
-      `allowCypressEnv: false` stays as generated, and the four credentials read the environment:
+  // `allowCypressEnv: false` stays exactly as generated.
+  allowCypressEnv: false,
+  expose: {
+    /*
+      The four credentials read the environment:
       adminUsername: process.env.HC_E2E_ADMIN_USERNAME ?? 'admin',
       adminPassword: process.env.HC_E2E_ADMIN_PASSWORD ?? 'admin',
       username: process.env.HC_E2E_USERNAME ?? 'admin',
       password: process.env.HC_E2E_PASSWORD ?? 'admin',
       (Six spaces, so a case below can rewrite the four-space REAL lines and leave this bait intact.)
-  */
-  allowCypressEnv: false,
-  expose: {
+    */
     adminUsername: process.env.HC_E2E_ADMIN_USERNAME ?? 'admin',
     adminPassword: process.env.HC_E2E_ADMIN_PASSWORD ?? 'admin',
     username: process.env.HC_E2E_USERNAME ?? 'admin',
@@ -168,11 +180,14 @@ export default defineConfig({
 TS
 drive '2  NEW-80 itself: all four as bare literals, as the generator writes them' 1 "$D"
 
-# --- 3. THE COMMENT FAIL-OPEN, which is why the stripper is called ----------------------------
-#  The fixture's block comment carries all four bindings verbatim; here the four real lines go back to
-#  literals, so the only `process.env.HC_E2E_` in the file is prose. Watched going green with the
-#  stripping removed from the check — this is the one case that distinguishes a stripped check from an
-#  unstripped one, and the state is reachable: the subject's real comment block is this shape.
+# --- 3. The literals back with the prose intact — a SURVIVOR of the stripper mutation, and it says so
+#  The fixture's block comment carries all four bindings verbatim and here the four real lines go back
+#  to literals. This case was written to distinguish a stripped check from an unstripped one and **no
+#  longer does**: review's every-binding-line fix means the literal line fails whether or not the
+#  comment's copy is also matched, so M1 leaves it red. It is kept because it is the shape `--force`
+#  plus a surviving comment actually produces, and because two independent rules refusing it is the
+#  point. **The stripper's own subjects are the ABSENCE cases — 6 and 22, where the only matching line
+#  is prose — and case 12, whose assertion reads the whole file.** Measured, not reasoned.
 refusal
 D="$WORK/c3"
 build "$D"
@@ -264,10 +279,23 @@ drive '12 allowCypressEnv flipped to true' 1 "$D"
 # --- 13. CONTROL: a FIFTH credential field, bound from the environment --------------------------
 #  The field set is derived, so a generator adding one is checked the moment it exists — and a
 #  correctly bound fifth field must stay GREEN or the derivation would be refusing correct code.
+#
+#  ⚠ `add_field` adds it to BOTH shapes the check derives from, because a field declared in
+#  `interface Credentials` that the `credentials` command never assigns DOES NOT COMPILE — the command
+#  returns `Credentials`. The first version of this case added it to the interface alone and was red on
+#  the cross-check; the fixture was illegal TypeScript, not the check wrong. D98 §4b's rule: a fixture
+#  for a text guard must still be legal in the language the text is written in, or its coverage story
+#  describes a state the compiler forbids.
+add_field() {
+  local dir=$1 field=$2
+  sed -i "s@^  password: string;@  password: string;\n  $field: string;@" "$dir/commands.ts"
+  sed -i "s@^      password: E2E_PASSWORD ?? Cypress.expose('password'),@      password: E2E_PASSWORD ?? Cypress.expose('password'),\n      $field: Cypress.expose('$field'),@" "$dir/commands.ts"
+}
+
 control
 D="$WORK/c13"
 build "$D"
-sed -i 's@^  password: string;@  password: string;\n  brokerageUsername: string;@' "$D/commands.ts"
+add_field "$D" brokerageUsername
 sed -i "s@^    authenticationUrl@    brokerageUsername: process.env.HC_E2E_BROKERAGE_USERNAME ?? 'brokerage',\n    authenticationUrl@" "$D/cypress.config.ts"
 drive '13 control: a fifth derived field, correctly bound, passes' 0 "$D"
 
@@ -275,7 +303,7 @@ drive '13 control: a fifth derived field, correctly bound, passes' 0 "$D"
 refusal
 D="$WORK/c14"
 build "$D"
-sed -i 's@^  password: string;@  password: string;\n  brokeragePassword: string;@' "$D/commands.ts"
+add_field "$D" brokeragePassword
 sed -i "s@^    authenticationUrl@    brokeragePassword: 'brokerage',\n    authenticationUrl@" "$D/cypress.config.ts"
 drive '14 a fifth derived field committed as a literal' 1 "$D"
 
@@ -296,6 +324,92 @@ D="$WORK/c16"
 build "$D"
 sed -i "s@?? 'admin',@?? 'changed-default',@g" "$D/cypress.config.ts"
 drive '16 control: a different fallback value is not a finding' 0 "$D"
+
+# --- 17. THE OPTIONAL MARKER. The check's own fail-open, found at review. ----------------------
+#  `adminUsername?: string;` is not matched by `<name>:`, so the first derivation returned THREE
+#  fields, printed an honest count, sailed past the `>= 2` floor and exited 0 with a literal in the
+#  config. Under-derivation in the mechanism this check calls its answer to NEW-15.
+#
+#  ⚠ TWO things keep it red now and a mutation of either alone is not enough: `\??` in the field
+#  pattern, and the SECOND derivation it is compared against. Dropping `\??` alone leaves this case red
+#  — via the cross-check — which is the designed redundancy and is measured as M4/M5.
+refusal
+D="$WORK/c17"
+build "$D"
+sed -i 's@^  adminUsername: string;@  adminUsername?: string;@' "$D/commands.ts"
+sed -i "s@^    adminUsername: process.env.*@    adminUsername: 'admin',@" "$D/cypress.config.ts"
+drive '17 an OPTIONAL field in the interface, with that field a literal' 1 "$D"
+
+# --- 18. A DUPLICATE KEY: the environment read first, the literal second ------------------------
+#  JavaScript obeys the LAST key and `grep -m1` read the first, so this exited 0 with the literal in
+#  force. Not a regeneration shape — `--force` rewrites the whole block, which is case 2 — but a merge
+#  resolution or a hand-edit. ESLint is no backstop: it does not lint this file at all (D108 §6), so
+#  `no-dupe-keys` never runs over it.
+refusal
+D="$WORK/c18"
+build "$D"
+sed -i "s@^    password: process.env.HC_E2E_PASSWORD ?? 'admin',@    password: process.env.HC_E2E_PASSWORD ?? 'admin',\n    password: 'admin',@" "$D/cypress.config.ts"
+drive '18 a duplicate binding whose LAST copy is a literal' 1 "$D"
+
+# --- 19. CORRECT BINDINGS IN THE WRONG BLOCK ---------------------------------------------------
+#  `Cypress.expose(…)` reads the `expose` object and nothing else. Four correct bindings in a
+#  neighbouring `env: { }` satisfied a whole-file grep while every credential in `expose` stayed a
+#  literal — exit 0, "4 checked". The check's own comment claimed it read the field's line "in the
+#  `expose` block"; the code did not implement it. A comment is not a scope.
+refusal
+D="$WORK/c19"
+build "$D"
+cat >"$D/cypress.config.ts" <<'TS'
+import { defineConfig } from 'cypress';
+
+export default defineConfig({
+  allowCypressEnv: false,
+  env: {
+    adminUsername: process.env.HC_E2E_ADMIN_USERNAME ?? 'admin',
+    adminPassword: process.env.HC_E2E_ADMIN_PASSWORD ?? 'admin',
+    username: process.env.HC_E2E_USERNAME ?? 'admin',
+    password: process.env.HC_E2E_PASSWORD ?? 'admin',
+  },
+  expose: {
+    adminUsername: 'admin',
+    adminPassword: 'admin',
+    username: 'admin',
+    password: 'admin',
+  },
+});
+TS
+drive '19 the environment reads are in `env`, and `expose` is all literals' 1 "$D"
+
+# --- 20. THE TWO DERIVATIONS DISAGREE ----------------------------------------------------------
+#  The interface keeps the field and the `credentials` body stops exposing it. Neither derivation can
+#  then be trusted, so the check refuses rather than taking the smaller one — which is the move that
+#  made the optional marker invisible.
+refusal
+D="$WORK/c20"
+build "$D"
+sed -i "/adminPassword: E2E_PASSWORD ?? Cypress.expose('adminPassword')/d" "$D/commands.ts"
+drive '20 a field in `interface Credentials` that the command never exposes' 1 "$D"
+
+# --- 21. CONTROL: a duplicate binding where BOTH copies read the environment ---------------------
+#  Duplicates are not what is banned — committed values are. A check refusing this would be red on a
+#  file that is merely untidy.
+control
+D="$WORK/c21"
+build "$D"
+sed -i "s@^    username: process.env.HC_E2E_USERNAME ?? 'admin',@    username: process.env.HC_E2E_USERNAME ?? 'admin',\n    username: process.env.HC_E2E_USERNAME ?? 'admin',@" "$D/cypress.config.ts"
+drive '21 control: a duplicate binding, both copies from the environment' 0 "$D"
+
+# --- 22. THE SCOPE'S OWN CASE: bound correctly in `env`, ABSENT from `expose` --------------------
+#  Case 19 is refused by a whole-file read as well, because every matching line must carry the prefix
+#  and `expose`'s literal lines still fail — so 19 does not discriminate the scoping. This does: the
+#  field is bound correctly in `env` and simply is not in `expose` at all, so a whole-file read finds
+#  the `env` line and reports ok while `Cypress.expose('password')` yields `undefined`.
+refusal
+D="$WORK/c22"
+build "$D"
+sed -i "/^    password: process.env/d" "$D/cypress.config.ts"
+sed -i "s@^  expose: {@  env: {\n    password: process.env.HC_E2E_PASSWORD ?? 'admin',\n  },\n  expose: {@" "$D/cypress.config.ts"
+drive '22 the field is in `env` and absent from `expose`' 1 "$D"
 
 # ---------------------------------------------------------------------------------------------
 printf '\n'
