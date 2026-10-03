@@ -5138,7 +5138,48 @@ that limit has cost anything.
 
 ---
 
-## NEW-61 — an unactivated login is identifiable by anyone, with no password, and answers 500 to its owner · READY — ANSWERED (D102 §1)
+## NEW-61 — an unactivated login is identifiable by anyone, with no password, and answers 500 to its owner · PARTLY DONE
+
+> ⚠ **THE STATUS HALF IS DONE (D106, 2026-10-03). THE MESSAGE AND THE RESEND ARE NOT, AND THIS ITEM IS
+> STILL OPEN FOR THEM.**
+>
+> **What shipped.** Every failure mode of `POST /api/authenticate` answers **401** with the body
+> unchanged — `title: "Unauthorized"`, `detail: "Invalid credentials"`, and the body's own `status`
+> field now `401` too. So the four outcomes are indistinguishable to a caller, the enumeration oracle
+> is closed, and a customer who has not activated no longer meets a 500 telling them the platform is
+> broken. One line, in `ExceptionTranslator.getMappedStatus`: the status half now branches on
+> **`AuthenticationException`** rather than enumerating subclasses, which is the asymmetry that was the
+> defect — with `AuthenticationServiceException` **excluded** above it, so a broken account store stays
+> a 5xx and the alert that keys on 5xx rates still fires. Guarded by two new files,
+> `UnactivatedLoginIsIndistinguishableIT` (7 cases, a real unactivated account in Testcontainers Mongo,
+> with the activated-and-correct-password control) and `AuthenticationFailureStatusUnitTest` (5).
+>
+> **What did NOT ship, and is the remainder of this item.** D102 §1's **wording** — *"Sorry you can not
+> log in. If your login is correct, check your email for further instructions."* — and the **resend of
+> the activation link**. `"Invalid credentials"` is unchanged.
+>
+> ⛔ **The remainder is blocked on DEPLOYMENT, not on NEW-60.** NEW-60 reads `DONE` and that is the
+> sentence most likely to mislead here: `web/` serves `/account/activate?key=…` since D105, but it is
+> **served at no origin**, so the link in the mail still answers **401 on every estate** — D105 §3's two
+> remaining conditions are the client being built and served somewhere (Phase 5) and
+> `JHIPSTER_MAIL_BASE_URL` naming that origin. Shipping the ratified sentence before then would tell
+> people to check an email the estate cannot usefully send, which is **worse than the 500 it replaces**:
+> a 500 is obviously a fault, an instruction that cannot be followed is a promise broken quietly.
+>
+> **Two decisions the resend still needs** (unchanged from below): a **per-account** throttle — the
+> nginx ceiling bounds the *caller*, not the *recipient*, so without one, failing a login repeatedly
+> mails that person on demand — and **where it fires**, since `DomainUserDetailsService` throws before
+> the password is checked, so a resend there fires for anyone naming the login and one after it only for
+> the owner. Both leak nothing; it is a choice about what is promised.
+>
+> **One thing D106 found that the measurement table below gets wrong.** The oracle was **two fields
+> wide, not one**: `customizeProblem` derives the title from the status, so the 500 response's `title`
+> read **`Internal Server Error`** while every 401's read `Unauthorized`. The table records `detail`
+> only, which is why it looked like a single field. Both closed by the same line.
+>
+> **A residue was opened rather than fixed: NEW-92.** The *body* half still generalises where the status
+> half now does not, so an `AuthenticationServiceException` would answer 500 with
+> `detail: "Invalid credentials"`. Unreachable today and outside D106's fence.
 
 > **ANSWERED by the architect 2026-09-24 — `decisions.md` D102 §1.** **401 for every failure mode,
 > with one message: *"Sorry you can not log in. If your login is correct, check your email for further
@@ -5244,6 +5285,60 @@ counting this outcome whichever answer is chosen — but that means **not** "fix
 the exception earlier in `DomainUserDetailsService`, which would take the metric with it.
 
 **Not blocked.** It needs the architect to pick one of the three.
+
+**That last line is spent: option 1 was picked (D102 §1) and its status half is BUILT (D106).** The
+paragraph above is kept as the record of what was weighed, and the test shape it asks for is what
+`UnactivatedLoginIsIndistinguishableIT` implements — including the by-email probe it calls "the row this
+item was missing", and including its warning against converting the exception earlier, which D106 §3
+re-states as the reason shape (d) was not available at all.
+
+---
+
+
+## NEW-92 — a 500 that says the caller's credentials are invalid · READY
+
+**Opened 2026-10-03 by D106 §4**, which left it deliberately rather than widening its own fence.
+
+D106 made `ExceptionTranslator.getMappedStatus` branch on `AuthenticationException` so that every way of
+failing to log in answers 401, and **excluded `AuthenticationServiceException`** from that arm so a
+broken account store stays a 5xx — otherwise an outage would answer *"Invalid credentials"* and, because
+`deploy/observability/hc-market-rules.yaml` keys its alerting on 5xx rates, would silence the alert too.
+
+**The body half was not touched, and it still generalises.** `getProblemDetailWithCause` branches on
+`AuthenticationException` with no such exclusion, so an `AuthenticationServiceException` now composes:
+
+```
+status  500
+title   Internal Server Error      (derived from the status by customizeProblem)
+detail  Invalid credentials        (from the AuthenticationException body branch)
+```
+
+A server error whose detail tells the caller their credentials are wrong. The *status* is right and the
+alert fires; what is wrong is the sentence beside it, which sends a reader — and a support desk — after
+a password that was never the problem.
+
+**Unreachable on today's estate, which is why it is an item and not a patch.** Nothing in this gateway
+throws either service exception, and Spring's reactive `AbstractUserDetailsReactiveAuthenticationManager`
+does not wrap one (measured, `spring-security-core` 7.0.6: the only exception it constructs is
+`BadCredentialsException`). It becomes live the moment anything adopts the servlet convention of wrapping
+a user-store failure — a custom `ReactiveAuthenticationManager`, a decorator beside
+`CountingReactiveAuthenticationManager`, or a framework change.
+
+**Why it was not folded into D106.** That package's fence is `getMappedStatus` and nowhere else, set by
+the item's own stop-sign, and the body branch is the same generated block whose comment — *"Ensure no
+information about existing users is revealed"* — is the thing D106 was making the status half agree with.
+Narrowing it is a second decision about what a caller is told when the estate is broken, and it has a
+real alternative worth arguing rather than assuming: leave the detail generic (*"Unexpected runtime
+exception"*, which `getCustomizedErrorDetails` already produces under `prod` for a package-name match),
+or say nothing at all. **Both are better than naming credentials; which is better than the other is not
+obvious**, because an empty detail on a 500 is also how an estate hides a fault from its own operator.
+
+**Shape.** One arm in `getProblemDetailWithCause`, above the `AuthenticationException` branch, mirroring
+the exclusion `getMappedStatus` already carries — so the two halves are excluded in the same place for
+the same reason, which is the property D106 §4 says is now asserted on one side only.
+`AuthenticationFailureStatusUnitTest` is where the case belongs: it already drives both service
+exceptions through the real translator and reads `title` and `detail` off the composed
+`ProblemDetailWithCause`, so the assertion is two lines.
 
 ---
 
