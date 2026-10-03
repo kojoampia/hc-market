@@ -24,6 +24,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageConversionException;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.authentication.AuthenticationServiceException;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
@@ -238,6 +239,43 @@ public class ExceptionTranslator extends ResponseEntityExceptionHandler implemen
         // Where we disagree with Spring defaults
         if (err instanceof AccessDeniedException) return HttpStatus.FORBIDDEN;
         if (err instanceof ConcurrencyFailureException) return HttpStatus.CONFLICT;
+        // A BROKEN USER STORE IS NOT A REFUSED CREDENTIAL, AND THIS ARM MUST STAY ABOVE THE NEXT ONE —
+        // decisions.md D106, backlog NEW-61. `AuthenticationServiceException` and its subclass
+        // `InternalAuthenticationServiceException` (which the servlet stack uses to wrap whatever a
+        // `UserDetailsService` threw) are `AuthenticationException`s meaning the estate is broken: an
+        // unreachable account store, a Mongo timeout. Answering 401 would tell the caller their
+        // credentials were wrong about an outage, and `deploy/observability/hc-market-rules.yaml` keys
+        // its alerting on 5xx rates, so it would silence the alert too. Returning null falls through to
+        // 500, which is this estate's standing direction: an ERROR is a fact about the estate that is
+        // wrong and nobody chose (D97).
+        // NOTE WHAT THAT null RESTS ON: `toStatus` then tries `resolveResponseStatus`, which RECURSES
+        // INTO getCause() — and `InternalAuthenticationServiceException` exists to wrap. So "excluded
+        // means 500" holds only while no cause carries @ResponseStatus. It holds today (the gateway's one
+        // annotated throwable is AccountResource's private AccountResourceException, thrown nowhere near
+        // authentication, and a Mongo or socket cause carries no annotation), and a cause that did carry
+        // one would rightly win.
+        if (err instanceof AuthenticationServiceException) return null;
+        // EVERY OTHER WAY OF FAILING TO AUTHENTICATE IS 401, BY SUPERCLASS AND NOT BY ENUMERATION.
+        // The body mapping in `getProblemDetailWithCause` has always branched on `AuthenticationException`
+        // so that no failure mode reveals whether an account exists; this half enumerated subclasses and
+        // did not name `UserNotActivatedException`, the estate's own custom member of the family. The
+        // status therefore fell through to 500 — so `500` meant "registered here and never activated" and
+        // `401` meant "not registered", askable about any login or address with no credential at all
+        // (`POST /api/register` is permitAll, and the exception is thrown by the lookup BEFORE the
+        // password encoder is consulted, so the supplied password could not change the answer). The title
+        // and the `message` property leaked it a second and third time, because `customizeProblem` derives
+        // both from the status: "Internal Server Error" rather than "Unauthorized", and `error.http.500`
+        // rather than `error.http.401`. All three move with this line.
+        // THIS WIDENS SIX BUCKETS, NOT ONE, and all six are right at a login endpoint. Measured
+        // main-vs-head: `UserNotActivatedException` plus `DisabledException`, `LockedException`,
+        // `AccountExpiredException`, `CredentialsExpiredException` and `CompromisedPasswordException` all
+        // go 500 -> 401. The five extras are unreachable today — `UserWithId.fromUser` sets every account
+        // flag true and no `CompromisedPasswordChecker` is configured — so this is a door closed before
+        // anyone walked through it, not a behaviour change anybody will see.
+        // The two arms below are now redundant and are kept deliberately: they are generated lines, and
+        // they are the floor a regeneration that drops this one falls back to. (Verified dead: deleting
+        // both leaves the unit test 5/5 green, because the arm above already answers for them.)
+        if (err instanceof AuthenticationException) return HttpStatus.UNAUTHORIZED;
         if (err instanceof BadCredentialsException) return HttpStatus.UNAUTHORIZED;
         if (err instanceof UsernameNotFoundException) return HttpStatus.UNAUTHORIZED;
         if (err instanceof ConstraintViolationException) return HttpStatus.BAD_REQUEST;
