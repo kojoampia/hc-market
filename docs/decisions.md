@@ -22101,3 +22101,283 @@ table needed only the survivor's name corrected.
 **What else changed: comment text only.** §5 above, and the same correction at the site in
 `ReviewAuthor.initials`' javadoc. **No main-source code was touched** — `git diff` on
 `ReviewAuthor.java` in this round is javadoc alone.
+
+---
+
+## D108 — A credential in a public repository states where it comes from, not what it is
+
+**Backlog NEW-80.** Closed 2026-10-03, on branch `new-80-e2e-credentials-from-the-environment` off
+`27f4379`. **PRE-EXISTING and GENERATED** — `web/cypress.config.ts` has carried these literals since
+D101 scaffolded the client, and `jhipster --force` writes them again.
+
+**Nothing here is a leak, and the item is explicit about that.** Three things make the exposure benign
+and all three were already written down: this repository **publishes the rule anyway** (`dev`/`test`
+create `admin` and `user` with passwords derived from their own logins); **production refuses that
+path** — under `prod` the gateway will not create an administrator without
+`HC_GATEWAY_ADMIN_PASSWORD` and fails the deploy rather than falling back (D61); and **nothing runs
+Cypress**, which `build.yml` states in one line — `CYPRESS_INSTALL_BINARY: '0'`, so the binary is not
+even installed. What is wrong is the **shape**: a literal credential in a public repository is a thing
+a reader must *reason* about before concluding it is safe, and the reasoning lives in three documents
+none of which is the file.
+
+The estate's own standing instruction is the same rule inverted — *"never add a default
+`base64-secret` to a profile that actually runs"*, with the committed defaults confined to
+`*-secret-samples.yml`, `src/test/resources` and a config server nothing loads. **A committed default
+may exist only where it cannot be the value a running estate uses.**
+
+### §1 IT WAS FOUR LINES, NOT THE TWO THE ITEM NAMES
+
+The item names `adminPassword` and `password`. The block binds **four** credentials and the specs read
+all four:
+
+```
+adminUsername: 'admin',   adminPassword: 'admin',   username: 'admin',   password: 'admin',
+```
+
+`commands.ts` declares `interface Credentials { adminUsername; adminPassword; username; password }`
+and `Cypress.expose(…)`s each one, so a fix to two of four would have left half the block stating a
+value — and a check written to the item's description would have passed it. **All four read the
+environment now**, with the generator's own values as the documented fallback, and §5 argues the
+usernames rather than assuming them.
+
+### §2 THE SIBLING SWEEP — THE ITEM'S PREDICTION IS WRONG FOR TWO OF THE THREE
+
+The item predicted *"`hc-admin/app`, `hc-patient/web` and `hc-professional/web` are likely to carry
+the same two lines — and those three products are **deployed**, which this one is not"*. Measured
+read-only across the workspace (no sibling file was opened for writing):
+
+| product | deployed? | finding |
+| --- | --- | --- |
+| `hc-market/web` | **no** | **4** literal lines, all `'admin'` — the subject |
+| `hc-admin/app` | **yes**, `admin.abofonsa.com` | **literal, and a DIFFERENT value** — `adminPassword: 'Admin@01234'`, `password: 'Admin@01234'`, `allowCypressEnv: false`, with a four-line comment giving the provenance (`hc-admin-gateway`'s `hc-admin-gw-data.json`, the `dev` profile's seeded admin) |
+| `hc-patient/web` | yes | **no `cypress.config.ts` at all** |
+| `hc-professional/web` | yes | **none either** |
+
+**So the prediction holds in shape for one product and is false for two.** ⛔ **`hc-admin` is not
+ours** — a different repository with its own backlog. The finding is recorded here so the next person
+does not re-run the grep, and it is **theirs to route**; nothing in this package touched it.
+
+⚠ **And the sweep's own first pattern was wrong in the direction that reads as clean.** A grep for
+`password: *'admin'` answers **0** for `hc-admin/app`, which carries a literal credential that is not
+that string. **Match on the SHAPE — a quoted literal assigned to a password-ish key — never on a
+value**: a zero from a narrow pattern is indistinguishable from a clean tree, which is this
+repository's recurring defect arriving in a one-line sweep.
+
+### §3 THE SHAPE, AND THE LOSER
+
+```ts
+adminUsername: process.env.HC_E2E_ADMIN_USERNAME ?? 'admin',
+```
+
+**A fallback, not a refusal, and the losing option is the estate's own posture elsewhere.**
+`JWT_BASE64_SECRET` and `HC_PRIVACY_PEPPER` are required with no default, and a case can be made for
+the same here. It was rejected on what the two guard: those are **running estates holding real
+people's records**, where an unset value means an orphaned alias or a usable published key. This is a
+**harness nobody has ever run**, against an account whose password this repository publishes by rule,
+and whose production counterpart already refuses to exist without a configured value (D61). Refusing
+at config load would make `npx cypress open` impossible for the first person who tries it — buying
+nothing, because there is no secret to protect: the fallback is already public and is *correct* for
+dev and quality. **The provenance comment is what the item actually asked for**, and it is in the file
+rather than three documents away.
+
+**The values are unchanged, deliberately.** `username`/`password` are the generator's duplication of
+the same administrator rather than a second account; pointing them at `user` is a behaviour change to
+a harness nobody runs, and it is **NEW-94** rather than a free ride on this commit.
+
+### §4 ⚠ `allowCypressEnv` DOES NOT DO WHAT THE WORK ORDER SAID, AND IT STAYS `false` ANYWAY
+
+The brief read: *"`allowCypressEnv: false` is JHipster's flag controlling whether `CYPRESS_*`
+environment variables are merged into `Cypress.env()`. So the obvious route —
+`CYPRESS_adminPassword=…` — is disabled."* **Measured against `cypress@15.18.1`'s own type
+declarations** (`node_modules/cypress/types/cypress.d.ts`):
+
+> *"Whether Cypress should allow `Cypress.env()` API to be available **in the browser**. Cypress
+> recommends migrating to the `cy.env()` command and disabling this within your Cypress
+> configuration. … This will be the default behavior in a future major version and `Cypress.env()`
+> will be removed."*
+
+⚠ **THAT CITATION COVERS HALF THE CLAIM AND REVIEW WAS RIGHT TO SAY SO.** The types say what the flag
+*is*; they say nothing about `CYPRESS_*` ingestion — the prefix appears nowhere under `types/`. The
+second half is measurable in the **runner and config sources**, and those are not in `node_modules`
+(the npm package is a CLI; the runner lives in the downloaded binary, which this package did not
+install). They are on this workstation in the **binary cache**, and all three readings below were
+reproduced there rather than taken from the review, at
+`~/.cache/Cypress/15.18.1/Cypress/resources/app/packages/`:
+
+```
+runner/dist/cypress_runner.js:41661
+  this.env = !isAllowCypressEnvEnabled ? failCypressEnvWithWarning : setterGetter.create(env);
+runner/dist/cypress_runner.js:41662
+  this.expose = setterGetter.create(expose);                      <- untouched by the flag
+runner/dist/cypress_runner.js:94625
+  "`Cypress.env()` does not work when `allowCypressEnv` is set to `false`.
+   Please migrate to `cy.env()` …"                                <- Cypress saying cy.env() still works
+config/esm/project/utils.js:57-77
+  const CYPRESS_ENV_PREFIX = 'CYPRESS_';  isCypressEnvLike(key);  removeEnvPrefix(key)
+```
+
+So the flag governs the **deprecated browser-side API**, `expose` is not touched by it at all, and the
+`CYPRESS_` → `env` ingestion is in the config package, independent of the flag. **The conclusion the
+brief drew is unchanged and its mechanism was wrong** — which matters because anyone reasoning from
+that mechanism about any other variable will reason wrongly. It is the `/proc/1/cmdline` family in a
+work order rather than in a probe, and **the first version of this section committed a smaller version
+of the same error**: citing the evidence it had for the half it covered, for both halves.
+
+One thing that reading also establishes and nobody had asked: `PLAIN_OBJECT_CONFIG_KEYS_FROM_ENV` is
+`new Set(['env', 'expose'])`, so **`CYPRESS_expose` as a JSON object is itself an override path** for
+this whole block. It does not make the four variables redundant — a JSON blob is not a named per-slot
+variable, nothing documents it, and it replaces rather than explains — but it is worth knowing before
+anyone argues this file cannot be influenced from outside.
+
+It stays `false` for a **better** reason than the one offered: flipping it re-enables an API Cypress
+itself recommends disabling and intends to remove. **Reading `process.env` in the config is unrelated
+to the flag rather than a way around it** — this file is TypeScript evaluated in Node, which no
+Cypress flag constrains. The check asserts the flag's value for that reason and says so in place: not
+a control, but a premise the file's own comment depends on.
+
+⚠ **AND THERE IS ALREADY A SECOND OVERRIDE, IN A GENERATED FILE, WHICH NEITHER THE ITEM NOR THE BRIEF
+MENTIONS.** `commands.ts` reads
+
+```ts
+cy.env(['E2E_USERNAME', 'E2E_PASSWORD']).then(({ E2E_USERNAME, E2E_PASSWORD }) => ({
+  adminUsername: E2E_USERNAME ?? Cypress.expose('adminUsername'), …
+```
+
+so `CYPRESS_E2E_USERNAME`/`CYPRESS_E2E_PASSWORD` already reach the suite and **win over anything in
+the config**. That is not a contradiction and the two were deliberately not merged: it is one chain,
+outer link first, and the shapes differ in a way that matters — that pair is **one** username and
+**one** password applied to all four slots, which cannot express an estate whose administrator and
+customer differ, while `HC_E2E_*` is per-slot. The precedence and the advice (*set one or the other,
+not both*) are written at the site. Pointing the config at `process.env.CYPRESS_E2E_*` instead was
+considered and rejected: it would make this repository's own file depend on the spelling of a variable
+owned by a **generated** file, in the very family whose hazard is that `--force` rewrites it.
+
+### §5 THE USERNAMES GET THE SAME TREATMENT, AND THE ARGUMENT IS NOT ABOUT SENSITIVITY
+
+`admin` as a login is published in `CLAUDE.md` anyway, so *"leave the usernames"* is defensible on
+exposure grounds. It was rejected on **usefulness**: `cy.login(username, password)` takes them as a
+pair, and a config where the password can be pointed at another estate and the login cannot is a
+config that cannot be pointed at another estate at all. Four slots, four variables. What would have
+been indefensible is changing two of four without saying so — which is also why the check is
+**per-field**: a check asserting merely that the file mentions `HC_E2E_` passes a tree where one of
+the four has regressed, measured as mutation M3.
+
+### §6 THE GUARD, AND WHAT NOTHING CAN COVER
+
+**Nothing executes this file, so nothing tests the change — and it is worse than the first version of
+this section said.** That version read *"`npm run lint` parses it … so this file is linted untyped"*.
+⚠ **ESLint does not lint it at all**, measured at review's prompting:
+
+```
+$ npx eslint cypress.config.ts -f json
+cypress.config.ts   errors 0   warnings 1   ["File ignored because no matching configuration was supplied."]
+```
+
+`eslint.config.ts`'s TypeScript globs are `src/main/webapp/**/*.ts`, `…/*.spec.ts` and
+`src/test/javascript/cypress/**/*.ts`; a **root-level** `.ts` matches none of them. No `tsc` reads it
+either (`tsconfig.app.json` and `tsconfig.spec.json` cover the webapp), and `webapp:prod` never looks
+at it. **So `prettier:check` is the only gate in this repository that parses this file at all**, and
+the only reason a syntax error in it would be red — which makes the conclusion stronger rather than
+weaker, and is why that step is not redundant beside `lint` for a second reason now. **The error is
+this decision's own subject one layer up**: §4 corrects a work order for asserting a mechanism it had
+not measured, and §6 asserted a tool's reach from its glob in the same commit.
+
+So the guard is text: **`.github/checks/e2e-credentials-are-not-committed.sh`**, wired into the
+`consistency` job with its test beside it. **Review found three fail-opens in it and all three are
+closed** — each is named below at the property it broke, because a guard's history is the only honest
+account of its reach:
+
+- **The field set comes from `interface Credentials` in `commands.ts`**, brace-bounded — the specs'
+  own contract, so a generator adding a fifth credential is answered for in the pull request that
+  adds it. A list of four in the check could not see that (NEW-15).
+  ⚠ **FAIL-OPEN 1: TypeScript's optional marker.** The pattern was `<name>:`, which does not match
+  `adminUsername?:`, so that field was **silently dropped**: `derived 3 field(s)`, an honest count,
+  past a `>= 2` floor, **exit 0 with a committed literal**. Under-derivation in the one mechanism this
+  check offers as its answer to the item whose root cause was *"no test could see an omission from a
+  list"*. `\??` closes it — **and the floor was the real defect**, because a count compared against
+  nothing cannot notice a missing field.
+- **So the set is derived TWICE, from unrelated shapes, and the two must be EQUAL**: the interface's
+  field names, and the `Cypress.expose('…')` names inside the `credentials` command's own body. A
+  blindness in one regex cannot be in the other. TypeScript makes it a real invariant rather than a
+  convention — the command returns `Credentials`, so an interface field the body never assigns does
+  not compile — which is also why **the test's own case 13 had to be fixed rather than the check**: it
+  added a fifth field to the interface alone, a state the compiler forbids (D98 §4b's rule, met again).
+- **Per field, on EVERY line that binds it, inside the `expose` block.**
+  ⚠ **FAIL-OPEN 2: `grep -m1` reads the first binding and JavaScript obeys the last.** A duplicate key
+  with `process.env.…` above `password: 'admin'` exited **0** with the literal in force — and ESLint's
+  `no-dupe-keys` is no backstop, because it does not lint this file at all. Not a regeneration shape
+  (`--force` rewrites the whole block); a merge resolution or a hand-edit.
+  ⚠ **FAIL-OPEN 3: the scope was the whole file while the code's own comment claimed the `expose`
+  block.** Four correct bindings in a neighbouring `env: { }` with every credential in `expose` left a
+  literal passed as *"4 checked"*. **A comment is not a scope.** The block is brace-bounded now.
+- A prettier-wrapped binding is still refused — fail-closed, exactly as D60's `.zoneId(` is.
+
+**Driven, not asserted, and the test prints its own classified count** — read that line, not a number
+from here; today **22 cases, 17 refusals, 5 controls**. **Eight** mutations of the shipped check were
+driven through it from a uniquely-named scratch directory, with the unmutated check as a control in
+every run:
+
+| mutant | changed | cases it turns green |
+| --- | --- | --- |
+| M1 | the config is read **raw** rather than through `strip-comments.awk` | **3** — 6, 12, 22 |
+| M2 | the derivation floor becomes `< 0` | **0** — subsumed by the cross-check; M8 is what shows it |
+| M3 | the per-field read is scoped to the whole **file** rather than to `expose` | **1** — 22 |
+| M4 | the optional marker `\??` is dropped | **0** — the cross-check holds the line; M5 shows it |
+| M5 | M4 **and** the cross-check disabled — the pre-review fail-open in full | **2** — 17, 20 |
+| M6 | `grep -m1`: only the first binding line is read | **1** — 18 |
+| M7 | the cross-check alone disabled | **1** — 20 |
+| M8 | M7 **and** the floor disabled | **3** — 7, 8, 20 |
+| control | none | **0 of 22** |
+
+⚠ **TWO MUTANTS REPORT ZERO AND THAT IS THE DESIGN, NOT A GAP** — M2 and M4 are each held by a second
+rule, which is what §6's own history argues for; M5 and M8 are the pairs that establish it. **Do not
+delete the floor or the `\??` on the strength of a zero**: a mutant that reddens nothing because
+another rule caught it is not the same as one that reddens nothing because nothing is looking, and the
+only way to tell is the paired mutation.
+
+⚠ **AND WHICH CASE COVERS WHICH MUTATION HAS NOW MOVED TWICE — this is the package's finding about its
+own test.** The first version planted the comment bait in a **javadoc-shaped** comment, whose
+`*`-prefixed lines the per-field pattern skips anyway, so removing the stripper changed nothing and
+**all cases passed under M1** — read at the time as evidence the code was right. The second placed a
+correctly-shaped bait **above** `expose:`, which the new block scoping puts out of range: *a bait
+outside the scope is not a bait*. It now sits **inside** the block, where the subject's own comment is.
+Even so, cases 3, 4 and 5 — written as the stripper's subjects — are **survivors** of M1, because the
+every-binding-line rule refuses the literal whether or not the prose is also matched; the stripper's
+real subjects are the **absence** cases 6 and 22, where the only matching line is prose, and case 12,
+whose assertion reads the whole file. Every case now states what it distinguishes **today**. D77's
+string-blindness lesson arriving as *fixture* blindness, twice: **a mutation that changes nothing is
+evidence about the test, not about the code.**
+
+**What the check does not reach**, stated rather than left as an empty column: it does not run Cypress
+and cannot; it does not judge the fallback **value** (`?? 'admin'` and `?? 'hunter2'` are alike to it —
+what it holds is that a real value can arrive from outside, with the provenance left to prose and
+pinned by control case 16); duplicates are not themselves refused, only committed values are (control
+21); and it reads lines rather than parsing the object, which is why each binding must stay on one
+line. The second derivation is bounded by the `credentials` command's own body, so a restructuring that
+moves those calls elsewhere is **refused rather than followed** — fail-closed, with both sets named in
+the refusal. The non-credential keys — `authenticationUrl`, `jwtStorageName` — are **not** in
+`interface Credentials` and may stay literals; control case 15 exists so a widening to *"no quoted
+literal in the `expose` block"* is red rather than adopted.
+
+### §7 THE REGENERATION TABLE GETS A ROW, AND IT IS THE FIRST `web/` ROW
+
+`jhipster --force` restores the four literals and **nothing fails**: the regenerated file lints,
+formats and builds exactly as well as this one, and no spec can notice because no estate runs Cypress.
+That is the table's silent-loss shape with **no suite behind it at all**, which is why the row names
+the CI check as the only thing left red — and it is the table's first entry whose subject is the
+**client** rather than one of the five Spring applications. It is a prediction rather than an
+observation: `web/` has been generated once (D101) and never regenerated, so unlike the 25 August rows
+this one **has not fired**, and the row says so.
+
+### §8 WHAT WAS NOT DONE
+
+- **Cypress still has never run**, here or anywhere. This package did not try: the suite needs a
+  running gateway *and* an origin serving the client, and `web/` is served at no origin (D105 §3).
+  `CYPRESS_INSTALL_BINARY=0` was used for the install, so the binary is not on this machine either.
+- **No estate was touched.** The quality stack was neither read nor written in this package — nothing
+  here needs one.
+- **`hc-admin` was read and not edited** (§2), and no item was opened in *this* backlog about another
+  product's code.
+- **`allowCypressEnv` is untouched**, and so are the e2e specs and `commands.ts`.
+- **NEW-94 opened**: `username`/`password` default to the administrator rather than to `user`, which
+  is the generator's duplication and a behaviour change to correct.
