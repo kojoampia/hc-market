@@ -28,11 +28,17 @@ import { mergedEnglishBundle } from './marketplace.fixtures';
  *   provideTranslation()'s handler (the app)  -> "translation-not-found[marketplace.state.failed.NO_SUCH_KEY]"
  * </pre>
  *
- * The first is what every spec in this client sees, because every spec calls bare
+ * The first is what every spec that RENDERS A TEMPLATE sees, because each of those calls bare
  * `provideTranslateService()`. The second is what ships. Both are a dotted identifier where a sentence
  * belongs, so the defect is unchanged — but the handler already existing is why *"wire a
  * `MissingTranslationHandler`"* is not available as the fix: there is one, and it is part of the
  * symptom rather than a guard against it.
+ *
+ * <p>⚠ **"every spec" would be too strong and said so for one commit** (D109 §2, narrowed at review).
+ * `app/core/util/alert.service.spec.ts` installs the real `missingTranslationHandler` — the only spec
+ * in the client that does — so the universal claim is false and the *reason* it does not matter is that
+ * the spec renders no template and asks for no key. It also slightly weakens the paragraph above: a
+ * handler supplied inside a `TestBed` is not new ground here, it is a precedent with one instance.
  *
  * <p><b>WHY NOTHING ELSE CATCHES THIS.</b> `LoadState.failedTitleKey`'s default was changed to
  * `marketplace.state.failed.NO_SUCH_KEY` on the committed tree, nothing else touched, and the suite
@@ -93,11 +99,33 @@ describe('every translation key this client writes resolves', () => {
   /**
    * Two independent listings of the same tree, compared.
    *
-   * <p>This is the anti-shrink property, and a floor under a count is NOT it: D103 §14's
-   * `templates.length > 4` against a real 6 let `footer.html` fall out of a walk in silence, and
+   * <p>This is one of THREE anti-shrink properties, and a floor under a count is none of them: D103
+   * §14's `templates.length > 4` against a real 6 let `footer.html` fall out of a walk in silence, and
    * `CLAUDE.md` names that as the lesson. A recursive `withFileTypes` descent and node's own
    * `recursive: true` are different code paths over the same directory, so a descent that loses a
-   * branch disagrees with the listing. Narrowing *both* is caught by the named files in `theWalk`.
+   * branch disagrees with the listing.
+   *
+   * <p>⚠ **It cannot see a narrowing applied to BOTH, and the named files alone were not enough** —
+   * D109 §6, found at review. `theWalk` named four templates and three sources, which pinned
+   * `app/marketplace`, `app/layouts`, `app/admin` and `app/account`; a two-place edit excluding
+   * `login` and `shared` from `descend` *and* from `listing` dropped **eleven literal key sites** —
+   * 8 in `login.html`, 3 in `filter.html` — and **every assertion in this file stayed green**
+   * (measured, 48/48). So the branch-representation case below **derives** the requirement instead: a
+   * named list that must name every branch holding a site is itself a list that can fall behind.
+   *
+   * <p><b>⛔ THE NAMED FILES AND THE DERIVED PROPERTY ARE NOT REDUNDANT — DO NOT DELETE EITHER.</b>
+   * Each catches what the other cannot, and the pair was measured both ways:
+   *
+   * <pre>
+   *   narrowing TWO places  (descend + listing)                 -> derived RED (names login, shared)
+   *                                                                named  RED
+   *   narrowing THREE places (… + branchesOf)                   -> derived GREEN — it excuses them
+   *                                                                named  RED  ("the login screen was not walked")
+   * </pre>
+   *
+   * So the derived property is the one that cannot fall behind, and the named files are the one that
+   * survives the derivation itself being narrowed. Both runs also moved the printed site count from
+   * **269 to 258** — the eleven sites in `login.html` and `filter.html`.
    */
   const descend = (dir: string, keep: (name: string) => boolean): string[] =>
     readdirSync(dir, { withFileTypes: true })
@@ -112,6 +140,27 @@ describe('every translation key this client writes resolves', () => {
       .filter(entry => keep(path.basename(entry)))
       .map(entry => path.join(dir, entry))
       .sort();
+
+  /**
+   * The top-level directories of `app/`, and what each one holds — read through their own
+   * `readdirSync` calls rather than through `descend` or `listing`.
+   *
+   * <p>⚠ **The third call site is the whole point and the obvious shortcut destroys it.** Writing
+   * `holds` as `listing(branch, …).length > 0` reuses one of the two helpers a narrowing edits, so the
+   * two-place edit D109 §6 measured would make `holds` answer `false` for `login` and `shared` and the
+   * derived property would **excuse exactly the branches it exists to catch**.
+   */
+  const branchesOf = (dir: string): string[] =>
+    readdirSync(dir, { withFileTypes: true })
+      .filter(entry => entry.isDirectory())
+      .map(entry => entry.name)
+      .sort();
+
+  const branchHoldsAFileWeRead = (dir: string): boolean =>
+    readdirSync(dir, { recursive: true, encoding: 'utf8' }).some(entry => {
+      const name = path.basename(entry);
+      return isTemplate(name) || isSource(name);
+    });
 
   // A spec's own probe keys must not be demanded to resolve. Excluded as a CLASS of file rather than
   // by name — `terms-are-not-quoted.spec.ts`' reasoning, and this very file would otherwise be red.
@@ -137,7 +186,19 @@ describe('every translation key this client writes resolves', () => {
    * input that is NOT a translation key would be red here, and that is the right direction — the
    * suffix is load-bearing for this spec's reach and must keep meaning one thing.
    */
-  const KEY_INPUT = /\b([A-Za-z]*Key)\s*=\s*input(?:\.required)?\(\s*'([^']+)'/g;
+  /**
+   * ⚠ **`\w*` and not `[A-Za-z]*`, and the difference is the one place the derivation's
+   * "covered the day it exists" claim can fail** (D109 §9). With `[A-Za-z]` an input named
+   * `empty2Key` or `_fooKey` matched nothing — there is no word boundary before a digit or an
+   * underscore — and such an input would escape **both** WALK 2a *and* the `*Key attribute` shape,
+   * silently, because the latter's patterns are built from the names this one discovers.
+   *
+   * <p>**The limit is now one character further out rather than gone**: a name reachable only through
+   * a non-word character — `$fooKey` — still escapes. No such input exists, and the convention this
+   * enforces is that an input whose name ends in `Key` holds a translation key, so a name that cannot
+   * be written as `\w*Key` is outside it.
+   */
+  const KEY_INPUT = /\b(\w*Key)\s*=\s*input(?:\.required)?\(\s*'([^']+)'/g;
   const keyInputs = sitesIn(sources, KEY_INPUT, 2);
   const keyInputNames = [...new Set(sitesIn(sources, KEY_INPUT, 1).map(site => site.key))];
 
@@ -231,25 +292,49 @@ describe('every translation key this client writes resolves', () => {
   });
 
   it('walked the whole of app/, by two derivations and by name', () => {
+    // The root is a constant and pinning it is the only thing that catches narrowing it — every
+    // derivation below is relative to it, so they all shrink together if it moves.
+    expect(APP, 'the walk root moved').toBe('src/main/webapp/app');
     // Half one: two different directory APIs over the same tree must agree. A descent that loses a
     // branch is red here even though nothing about the number changed.
     expect(templates, 'the template descent disagrees with a recursive listing').toEqual(listing(APP, isTemplate));
     expect(sources, 'the source descent disagrees with a recursive listing').toEqual(listing(APP, isSource));
-    // Half two: NAMED files, never a count. Narrowing both derivations together is only visible here,
-    // and the four are chosen to pin the reach rather than to sample it — one public screen, one
-    // template OUTSIDE app/marketplace (the scope D103 §14 had to widen), one admin screen, one
-    // account screen.
+    // Half two: NAMED files, never a count — kept because each records a lesson rather than samples
+    // the tree. `footer.html` is the file D103 §14's walk lost; `login.html` and `filter.html` are the
+    // two branches THIS file's walk could have lost (D109 §6), and they are named as well as derived
+    // because a named file says which screen in its failure message.
     const found = templates.map(relative);
     expect(found, 'Discover was not walked').toContain('app/marketplace/discover/discover.html');
     expect(found, 'the walk did not leave app/marketplace').toContain('app/layouts/footer/footer.html');
     expect(found, 'the admin screens were not walked').toContain('app/admin/health/health.html');
     expect(found, 'the account screens were not walked').toContain('app/account/activation/activation.html');
+    expect(found, 'the login screen was not walked').toContain('app/login/login.html');
+    expect(found, 'app/shared was not walked').toContain('app/shared/filter/filter.html');
     const code = sources.map(relative);
     expect(code, 'LoadState was not walked').toContain('app/marketplace/load-state/load-state.ts');
     expect(code, 'the marketplace routes were not walked').toContain('app/marketplace/marketplace.routes.ts');
     expect(code, 'the account routes were not walked').toContain('app/account/account-lifecycle.routes.ts');
     // And the files were READ, not merely listed.
     expect(templates.map(read).join('\n')).toContain('abmTranslate');
+  });
+
+  it('represents every top-level branch of app/ that holds a file it reads', () => {
+    // THE DERIVED anti-shrink property, and the one that cannot fall behind — D109 §6. The list above
+    // is a list, and a list that must name every branch holding a key site goes stale the day a branch
+    // is added; this asks the question instead, from a THIRD listing of `app/` that the two walks'
+    // own helpers do not touch. A branch added tomorrow is required the moment it exists.
+    //
+    // Keyed on FILES and not on sites deliberately: `app/config`, `app/core` and `app/entities` hold
+    // zero literal key sites today, so a site-keyed rule would excuse them — and the day one of them
+    // grows a template, a rule that had excused it stays quiet.
+    const branches = branchesOf(APP);
+    expect(branches, 'app/ has no subdirectories — every assertion here would be vacuous').toContain('marketplace');
+    const walked = [...templates, ...sources];
+    const unrepresented = branches.filter(branch => {
+      const under = path.join(APP, branch) + path.sep;
+      return branchHoldsAFileWeRead(path.join(APP, branch)) && !walked.some(file => file.startsWith(under));
+    });
+    expect(unrepresented, 'a branch of app/ holds files this spec reads and contributed none of them').toEqual([]);
   });
 
   it('still matches every shape it claims to read', () => {
@@ -298,6 +383,23 @@ describe('every translation key this client writes resolves', () => {
         'failedDetailKey',
         'failedRetryKey',
       ]),
+    );
+    // THE POPULATION IS DERIVED AND PRINTED HERE, AND IS DELIBERATELY ASSERTED NOWHERE — D109 §2.
+    // `CLAUDE.md`, `docs/backlog.md` and D109 each quoted a total of 267, which was 269: it summed the
+    // six shapes that existed when it was written and missed the two `errorMessage:` sites this package
+    // itself added, in the row D109 §7 calls its own first scope's gap. Nothing derived it, so nothing
+    // moved it. **Read this line rather than any number in a document** — and an assertion on it would
+    // be red on every new screen, which is why there is none.
+    //
+    // **The two kinds are totalled separately and that is not tidiness** — a prefix is not a literal
+    // key, and one undifferentiated total is exactly how 267 came to be quoted for 269: a single number
+    // over a mixed population invites the next reader to re-derive it differently again.
+    const per = Object.keys(SHAPES).map(shape => [shape, sitesOfShape(shape).length] as const);
+    const sum = (keep: (shape: string) => boolean): number => per.filter(([s]) => keep(s)).reduce((n, [, c]) => n + c, 0);
+    // eslint-disable-next-line no-console
+    console.log(
+      `translation key sites: ${per.map(([s, c]) => `${s}=${c}`).join(' ')} | ` +
+        `literal=${sum(s => s !== 'assembled prefix')} prefix=${sum(s => s === 'assembled prefix')}`,
     );
   });
 

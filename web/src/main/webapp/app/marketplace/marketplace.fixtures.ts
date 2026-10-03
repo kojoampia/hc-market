@@ -75,12 +75,14 @@ export const mergedEnglishBundle = (): Record<string, unknown> => {
  * could be pasted into a fallback or into the bundle and 267 tests stayed green. See
  * `terms-are-not-quoted.spec.ts`.
  *
- * <p>⚠ **"Returns the KEY" is true HERE and not of the running client** (D109 §2). Bare
+ * <p>⚠ **"Returns the KEY" is true of a spec that calls bare `provideTranslateService()` — which is
+ * every spec that renders a template — and NOT of the running client** (D109 §2). Bare
  * `provideTranslateService()` installs ngx-translate's `DefaultMissingTranslationHandler`, which
  * returns `params.key`; the application installs `MissingTranslationHandlerImpl` through
- * `provideTranslation()`, which returns `translation-not-found[<key>]`. Both are a dotted identifier
- * where a sentence belongs, so nothing above changes — but do not reason from this paragraph about
- * what a visitor sees.
+ * `provideTranslation()`, which returns `translation-not-found[<key>]`, and
+ * `app/core/util/alert.service.spec.ts` installs that one too — the only spec here that does, and it
+ * renders no template. Both answers are a dotted identifier where a sentence belongs, so nothing above
+ * changes; but do not reason from this paragraph about what a visitor sees.
  */
 export const loadEnglish = (): void => {
   const merged = mergedEnglishBundle();

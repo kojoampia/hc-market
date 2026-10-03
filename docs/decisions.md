@@ -22416,8 +22416,17 @@ provideTranslateService()                -> "marketplace.state.failed.NO_SUCH_KE
 provideTranslation()'s handler (the app) -> "translation-not-found[marketplace.state.failed.NO_SUCH_KEY]"
 ```
 
-**The first is what every spec in this client sees** — every one calls bare
+**The first is what every spec that RENDERS A TEMPLATE sees** — each of those calls bare
 `provideTranslateService()` — **and the second is what ships.**
+
+⚠ **That sentence read *"every spec in this client"* and it is false** — corrected at review.
+`app/core/util/alert.service.spec.ts` installs the real `missingTranslationHandler`, and it is the only
+spec here that does. **Nothing downstream moves**: that spec renders no template and asks for no key, so
+every measurement and every conclusion in this section holds. Two things do change. The claim is narrowed
+wherever it appears — this section, the spec's header, `marketplace.fixtures.ts`' `loadEnglish` javadoc
+and the backlog entry — and §4's *"reads as new wiring"* is **slightly weaker than it was written**: a
+handler supplied inside a `TestBed` is not new ground in this client, it is a precedent with one
+instance. The rest of §4's argument does not rest on that and is unchanged.
 
 **Three things follow and none of them weakens the item.** The defect is unchanged: both strings are a
 dotted identifier where a sentence belongs, and the second is arguably worse, since it says
@@ -22435,7 +22444,19 @@ suite's behaviour and was written as a claim about the estate. `/proc/1/cmdline`
 ### §3 The survey, because scope had to be a decision rather than a discovery
 
 Every literal and every non-literal key site in `app/`, enumerated before a line of the spec was
-written. **267 literal sites, zero unresolved**; 17 non-literal.
+written. **Zero unresolved**; 17 non-literal.
+
+⚠ **THIS SECTION'S HEADLINE READ "267 literal sites" AND THE TABLE BELOW IT SUMS TO 269** — corrected at
+review, and the way it was wrong is the reason there is no headline figure now. `267` is `246 + 7 + 14`:
+the six shapes that existed when the sentence was written, **missing the two `errorMessage:` rows** — the
+very row §7 calls *"a real gap in this package's own first scope"*, so the sentence that announced the
+finding is the one that did not count it. It was quoted in three documents, **nothing derived it**, and
+`267` is independently a *test* count in D103 (`npm test` was 267 tests over 43 files), which is what
+made a stale number read as a maintained one. **The spec prints its own per-shape population on every
+run — `literal=` and `prefix=`, totalled separately because a prefix is not a literal key — and asserts
+none of it**, because an assertion on a site count is red on every new screen. Read that line. The
+per-shape table below is kept because a shape's own number is checkable against the row beside it; the
+sum is not restated.
 
 | shape | sites | covered |
 | --- | --- | --- |
@@ -22513,7 +22534,7 @@ what it would catch that this does not.
   item is opened**: it is correct generated code awaiting entities, not a defect.
 - **A second language** is §8.
 
-### §6 The walk cannot shrink silently, and that is TWO independent properties plus a classification
+### §6 The walk cannot shrink silently, and that is FOUR properties — two of them added at review
 
 `CLAUDE.md` records D103 §14's `templates.length > 4` against a real 6 letting `footer.html` fall out of
 a walk in silence. **No floor under a count appears in this file.** Instead:
@@ -22521,11 +22542,44 @@ a walk in silence. **No floor under a count appears in this file.** Instead:
 1. **Two independent directory derivations, compared for equality.** A recursive `withFileTypes`
    descent and node's own `readdirSync(…, { recursive: true })` over the same root must produce the
    same sorted list. A descent that loses a branch disagrees with the listing.
-2. **Named files, never a count** — four templates and three sources, chosen to pin the *reach*: one
-   public screen, one template **outside `app/marketplace`** (D103 §14's widening), one admin screen,
-   one account screen, plus `LoadState` and two route files. This is what catches narrowing *both*
-   derivations together, which property 1 cannot see.
-3. **A named representative per shape**, because a pattern that stops matching takes its whole walk
+2. **The walk root pinned as a constant.** `APP` must be `src/main/webapp/app`. Every derivation here is
+   relative to it, so narrowing the root shrinks all of them together and nothing else below can see it.
+3. **Named files, never a count** — six templates and three sources, chosen to pin the *reach* and each
+   recording a lesson rather than sampling the tree: one public screen, one template **outside
+   `app/marketplace`** (D103 §14's widening), one admin screen, one account screen, **`app/login` and
+   `app/shared`** (this section's own finding), plus `LoadState` and two route files.
+4. **Every top-level branch of `app/` that holds a file the spec reads must contribute one** — derived,
+   from a **third** pair of `readdirSync` calls that neither helper in property 1 touches.
+
+> ⚠ **PROPERTIES 2 AND 4 ARE REVIEW FINDINGS, AND §6 CLAIMED PROPERTY 3 DID WHAT PROPERTY 4 DOES.** It
+> read *"this is what catches narrowing both derivations together"* — unqualified — and that holds for
+> the **four branches the named files happened to name**. The reviewer drove the shape the sentence was
+> written for: a **two-place** edit excluding `login` and `shared` from `descend` **and** from `listing`
+> — necessarily two places, since `keep` takes only a basename — dropped **eleven literal key sites**
+> (8 in `login.html`, 3 in `filter.html`) and **every assertion in the file stayed green, 48/48**.
+> **The walk was complete the whole time; the guard was not.**
+>
+> **Why property 4 rather than two more named lines.** Both, in fact — but a named list that must name
+> every branch holding a site is itself a list that can fall behind, which is NEW-15's root cause in a
+> spec. Property 4 asks the question instead, so a branch added tomorrow is required the moment it
+> exists. Two details decide whether it works: it is keyed on **files**, not sites, because
+> `app/config`, `app/core` and `app/entities` hold **zero** key sites today and a site-keyed rule would
+> excuse them permanently; and `holds` must **not** be written as `listing(branch, …).length > 0`, which
+> reuses one of the two helpers a narrowing edits and would make the derived property excuse exactly
+> the branches it exists to catch.
+>
+> **⛔ Properties 3 and 4 are NOT redundant and neither may be deleted — measured both ways:**
+>
+> | narrowing | derived (4) | named (3) |
+> | --- | --- | --- |
+> | **two** places — `descend` + `listing` | **RED**, naming `['login','shared']` | **RED** |
+> | **three** places — … + `branchesOf` | **GREEN** — it excuses them | **RED**, *"the login screen was not walked"* |
+>
+> So property 4 is the one that cannot fall behind, and property 3 is the one that survives the
+> derivation itself being narrowed. Both runs independently moved the spec's printed site count from
+> **269 to 258** — the eleven sites, counted by the mechanism rather than by a person.
+
+5. **A named representative per shape**, because a pattern that stops matching takes its whole walk
    with it and `unresolved([])` is `[]`. **Measured: with the `abmTranslate` pattern broken, all four
    walks stayed GREEN and only the shape assertion fired.** `bound literal` deliberately has no
    representative (there are none in the client) and is asserted *empty* with a comment saying why, so
@@ -22558,6 +22612,16 @@ Baseline, committed tree: **48 files / 320 tests, green** (the control for every
 **Each of the four walks is red separately** (rows 1, 2, 6, 7) — the item asked for two and there are
 four, because an aggregate firing once cannot say which mechanism still works. Every drive was run with
 a pristine copy restored immediately afterwards; `git status` was clean of mutations before the gates.
+
+**Two further drives were added at review, and they are the ones §6's table rests on:**
+
+| # | mutation | result |
+| --- | --- | --- |
+| 8 | `login` and `shared` excluded from `descend` **and** `listing` — two places, the shape §6 was written for | **before the fix: 48/48 GREEN** with eleven key sites gone. After: **2 failed**, the derived property naming `['login','shared']` and the named files naming `app/login/login.html` |
+| 9 | the same, **plus** `branchesOf` narrowed — three places | **1 failed** — the derived property is GREEN (it excuses them) and the **named** files are what fire. This is why neither mechanism is redundant |
+
+Both reduced the spec's own printed site count from **269 to 258**, which is the eleven counted by the
+walk rather than by a reader.
 
 **And the survey found a real gap in this package's own first scope.** `errorMessage: 'error.http.403'`
 and `'error.http.404'` are literal keys in `errorRoute`'s route data, rendered as the error page's only
@@ -22608,6 +22672,16 @@ failures in the walks. **It is public and typed** — `types/ngx-translate-core.
 copied: one merge with one set of caveats (the `deepmerge`-equivalence caveat D103 §14 records), two
 consumers, no `TestBed` needed by the file-reading one. `terms-are-not-quoted.spec.ts` is **untouched**
 — it keeps its own subject, and its per-file `valuesOf` walk serves a need this one does not have.
+
+**`KEY_INPUT` matches `\w*Key` and not `[A-Za-z]*Key`, which is one character and the one place the
+derivation's own claim could fail** (review finding 4). There is no word boundary before a digit or an
+underscore, so `empty2Key` and `_fooKey` matched **nothing** — and because the `*Key attribute` shape's
+patterns are *built from the names this one discovers*, such an input would have escaped **both** WALK 2a
+and WALK 1, silently, in the exact place §6's property 4 is otherwise careful. No such input exists. The
+limit is now one character further out rather than gone — a name reachable only through a non-word
+character, `$fooKey`, still escapes — and it is stated at the pattern, because the convention this
+enforces is *"an input whose name ends in `Key` holds a translation key"* and a name that cannot be
+written `\w*Key` is outside it.
 
 **The file sits under `app/marketplace/` while walking `app/`**, for its neighbour's reason: a reader who
 finds one file-reading guard should find both. `app/shared/language/`, beside `TranslateDirective`, is

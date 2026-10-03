@@ -167,9 +167,13 @@ narrow enough to let a professional's own `88% rebook` through, with a control t
 **AND THE INVERSE OF THAT GUARD NOW EXISTS, BECAUSE A KEY WITH NO VALUE IS EXACTLY WHAT A "MUST NOT
 CONTAIN" GUARD CANNOT SEE** (D109, backlog NEW-91). `translation-keys-resolve.spec.ts` asks whether every
 key this client writes as a **literal** resolves, in **four walks that are red separately**: every literal
-a *template* names (246 sites), every literal a *component input defaults to* (`LoadState`'s 7), every
-literal a *route definition* carries (14 `title:` + 2 `errorMessage:`), and every *prefix* a key is
-assembled from — subtree only. **267 literal sites, zero unresolved.** It reads files and uses **no
+a *template* names, every literal a *component input defaults to* (`LoadState`'s seven), every literal a
+*route definition* carries (`title:` and `errorMessage:`), and every *prefix* a key is assembled from —
+subtree only. **Zero unresolved**, and **the spec prints its own per-shape population on every run and
+nothing asserts it — read that line and never a number from here.** This paragraph carried `267` against
+a real `269`: it summed the six shapes that existed when it was written and missed the two
+`errorMessage:` sites, which are *the* row D109 §7 calls that package's own first-scope gap, and `267` is
+also a historic **test** count in D103, so it read as maintained. It reads files and uses **no
 `TestBed`**; the resolver is ngx-translate's own exported `getValue`, which is not convenience — a
 hand-rolled split-on-dot reported **seven unresolved keys on a correct tree**, because the generated
 bundles hold **flat keys containing dots** (`"username.label"` nested under `global.form`) and `getValue`

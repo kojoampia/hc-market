@@ -7549,12 +7549,15 @@ through under *what the item had wrong*.
 
 | | walk | population | drive that reddens it alone |
 | --- | --- | --- | --- |
-| 1 | every literal a **template** names | 246 — `abmTranslate="…"`, `'…' \| translate`, `[abmTranslate]="'…'"`, and the **22 `*Key` attributes that are not `abmTranslate` at all** | `marketplace.scope.body` → `…bdoy` |
-| 2a | every literal a **component input defaults to** | 7, all of `LoadState`'s | **this item's mutation** |
-| 2b | every literal a **route definition** carries | 16 — 14 `title:` **and 2 `errorMessage:`, which this package found** | `marketplace.browse.pageTitle` → `…pageTitel` |
-| 3 | every **prefix** a key is assembled from, subtree only | 5 distinct | renaming `marketplace.mode` away |
+| 1 | every literal a **template** names | `abmTranslate="…"`, `'…' \| translate`, `[abmTranslate]="'…'"`, and the **`*Key` attributes that are not `abmTranslate` at all** | `marketplace.scope.body` → `…bdoy` |
+| 2a | every literal a **component input defaults to** | all of `LoadState`'s | **this item's mutation** |
+| 2b | every literal a **route definition** carries | `title:` **and `errorMessage:`, which this package found** | `marketplace.browse.pageTitle` → `…pageTitel` |
+| 3 | every **prefix** a key is assembled from, subtree only | — | renaming `marketplace.mode` away |
 
-**Zero unresolved across all 267 literal sites** on the committed tree.
+**Zero unresolved** on the committed tree. ⚠ **The per-shape population is printed by the spec on every
+run and asserted nowhere — read that line, not a number here.** This entry said `267` where the real
+figure is `269`; it summed the shapes that existed before the two `errorMessage:` sites were found, and
+`267` is also a historic *test* count in D103, which is what made a stale number read as a maintained one.
 
 **What the item had wrong, and it is one line.** ~~"no missing-translation handler configured"~~ — one
 **is**: `MissingTranslationHandlerImpl` in `app/config/translation.config.ts`, installed by
@@ -7566,10 +7569,18 @@ where a sentence belongs, and the second arguably worse — but it removes the i
 and is why D109 §4 declines a handler rather than adopting one. The sentence was true of the TestBed and
 written as a claim about the application.
 
-**The walk cannot shrink silently** — ⛔ **no `> N` floor anywhere**, which is D103 §14's lesson: two
-independent directory derivations compared for *equality*, seven **named** files, and a named
-representative per shape. Measured: with the `abmTranslate` pattern broken, **all four walks stayed green
-and only the shape assertion fired**.
+**The walk cannot shrink silently** — ⛔ **no `> N` floor anywhere**, which is D103 §14's lesson, and it
+is **four** properties: two independent directory derivations compared for *equality*, the walk root
+pinned as a constant, nine **named** files, and — derived, from a third pair of `readdirSync` calls —
+**every top-level branch of `app/` that holds a file the spec reads must contribute one**. Measured: with
+the `abmTranslate` pattern broken, **all four walks stayed green and only the shape assertion fired**.
+
+⚠ **The last two of those are REVIEW FINDINGS and the named files alone were not enough** (D109 §6). A
+**two-place** edit excluding `login` and `shared` from both derivations dropped **eleven literal key
+sites** — 8 in `login.html`, 3 in `filter.html` — with **everything green, 48/48**: the named files
+pinned four branches and those two were not among them. The derived property names them now; and the two
+are **not redundant**, measured — at *three* places the derived property is defeated and the named files
+are what fire.
 
 **The stated limit, driven rather than asserted in prose.** A key assembled at run time, handed in by a
 parent or held in a variable is **not seen** — the limit case writes four such expressions to a scratch
