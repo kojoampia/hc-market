@@ -7538,7 +7538,60 @@ bullet above — one string, and it loses nothing that works.
 
 ---
 
-## NEW-91 — a translation key that does not exist renders as itself, and no test in the client can see it · READY
+## NEW-91 — a translation key that does not exist renders as itself, and no test in the client can see it · DONE (D109)
+
+**Closed 2026-10-03** by `app/marketplace/translation-keys-resolve.spec.ts` — one file-reading spec, 8
+cases, **4 walks**, no `TestBed`. Red on this item's own mutation; **48 files / 320 tests** green on the
+committed tree. Every claim below that survived re-measurement is marked; the one that did not is struck
+through under *what the item had wrong*.
+
+**The four walks, each red separately** — an aggregate firing once cannot say which mechanism works:
+
+| | walk | population | drive that reddens it alone |
+| --- | --- | --- | --- |
+| 1 | every literal a **template** names | `abmTranslate="…"`, `'…' \| translate`, `[abmTranslate]="'…'"`, and the **`*Key` attributes that are not `abmTranslate` at all** | `marketplace.scope.body` → `…bdoy` |
+| 2a | every literal a **component input defaults to** | all of `LoadState`'s | **this item's mutation** |
+| 2b | every literal a **route definition** carries | `title:` **and `errorMessage:`, which this package found** | `marketplace.browse.pageTitle` → `…pageTitel` |
+| 3 | every **prefix** a key is assembled from, subtree only | — | renaming `marketplace.mode` away |
+
+**Zero unresolved** on the committed tree. ⚠ **The per-shape population is printed by the spec on every
+run and asserted nowhere — read that line, not a number here.** This entry said `267` where the real
+figure is `269`; it summed the shapes that existed before the two `errorMessage:` sites were found, and
+`267` is also a historic *test* count in D103, which is what made a stale number read as a maintained one.
+
+**What the item had wrong, and it is one line.** ~~"no missing-translation handler configured"~~ — one
+**is**: `MissingTranslationHandlerImpl` in `app/config/translation.config.ts`, installed by
+`provideTranslation()`, since the scaffold. So a visitor sees
+`translation-not-found[marketplace.state.failed.title]` and **not** the bare key; the bare key is what a
+*spec* sees, because every spec here calls bare `provideTranslateService()`. Measured both ways by
+rendering `LoadState` against the real bundle. **The defect is unchanged** — both are a dotted identifier
+where a sentence belongs, and the second arguably worse — but it removes the item's second candidate fix
+and is why D109 §4 declines a handler rather than adopting one. The sentence was true of the TestBed and
+written as a claim about the application.
+
+**The walk cannot shrink silently** — ⛔ **no `> N` floor anywhere**, which is D103 §14's lesson, and it
+is **four** properties: two independent directory derivations compared for *equality*, the walk root
+pinned as a constant, nine **named** files, and — derived, from a third pair of `readdirSync` calls —
+**every top-level branch of `app/` that holds a file the spec reads must contribute one**. Measured: with
+the `abmTranslate` pattern broken, **all four walks stayed green and only the shape assertion fired**.
+
+⚠ **The last two of those are REVIEW FINDINGS and the named files alone were not enough** (D109 §6). A
+**two-place** edit excluding `login` and `shared` from both derivations dropped **eleven literal key
+sites** — 8 in `login.html`, 3 in `filter.html` — with **everything green, 48/48**: the named files
+pinned four branches and those two were not among them. The derived property names them now; and the two
+are **not redundant**, measured — at *three* places the derived property is defeated and the named files
+are what fire.
+
+**The stated limit, driven rather than asserted in prose.** A key assembled at run time, handed in by a
+parent or held in a variable is **not seen** — the limit case writes four such expressions to a scratch
+file and re-runs **the shipped extractors** over it, asserting every shape except the prefix one sees
+nothing. Also outside: `AppPageTitleStrategy`'s `'global.title'` fallback (covered only by coincidence,
+via `navbar.html`), and **non-English bundles**, of which there are none — `languages: ["en"]`.
+
+Everything below is the item as opened, kept because its reasoning is the reason the spec has the shape
+it has.
+
+---
 
 **Opened at NEW-60's review, 2026-10-02** (`decisions.md` D105). **Not a regression and not D105's
 defect** — it is a gap that pre-existed that commit in a different shape, and the review found it by
